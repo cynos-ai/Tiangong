@@ -36,7 +36,8 @@ Use these rules for `worker/`, AgentTeams/OpenClaw integration, tools, Gate, app
 - Time only establishes a stale-candidate threshold; determine reconciliation from the protected payload, workspace scope, target digest, approved precondition, and rollback snapshot.
 - Record reconciliation decisions separately from execution Evidence. An applied outcome may become completed, an unchanged precondition may return to approved for explicit requester replay, and a conflict must remain blocked.
 - Retain terminal idempotency metadata for the declared 90-day replay window; compact only through an explicit operator action after appending a summary Evidence event.
-- Remove raw pending payloads after completion, rejection, or applied reconciliation, but retain payloads and snapshots for uncertain or conflicting outcomes.
+- Keep normal idempotency transitions append-only and maintain unique key/invocation/approval indexes. Full active-state rewrite belongs only to explicit retention maintenance.
+- Erase raw pending payloads after completion, rejection, or applied reconciliation, but retain payloads and snapshots for uncertain or conflicting outcomes. Keep AgentTeams remote erasure internal to the runtime; never expose storage credentials or `mc` as model tools.
 - Bound new model turns by transcript entry and byte capacity while keeping deterministic approval/rejection control commands available.
 
 ## Verification

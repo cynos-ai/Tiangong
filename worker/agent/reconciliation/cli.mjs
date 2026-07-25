@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 
 import { EvidenceRecorder } from "../evidence/recorder.mjs";
 import { IdempotencyStore } from "../idempotency/store.mjs";
+import { createAgentTeamsPendingStorage } from "../pending-operation/agentteams-storage.mjs";
 import { PendingOperationStore } from "../pending-operation/store.mjs";
 import { WriteReconciler } from "./write-reconciler.mjs";
 
@@ -78,7 +79,7 @@ async function locateSession(stateDirectory, identifier) {
   for (const entry of await readdir(sessionsDirectory, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const directory = join(sessionsDirectory, entry.name);
-    const idempotencyStore = new IdempotencyStore({ filePath: join(directory, "idempotency.json") });
+    const idempotencyStore = new IdempotencyStore({ filePath: join(directory, "idempotency.jsonl") });
     const match = isApprovalId
       ? await idempotencyStore.findApproval(identifier)
       : await idempotencyStore.get(identifier);
@@ -109,6 +110,7 @@ async function main() {
     idempotencyStore: session.idempotencyStore,
     pendingOperationStore: new PendingOperationStore({
       directory: join(session.directory, "pending-operations"),
+      remoteStorage: createAgentTeamsPendingStorage({ workspaceDir: paths.workspaceDir }),
     }),
     evidence: new EvidenceRecorder({
       filePath: join(session.directory, "evidence", "events.jsonl"),

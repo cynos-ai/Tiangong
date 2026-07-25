@@ -35,9 +35,14 @@ worker_json() {
 
 purge_smoke_storage() {
   local storage_path="agentteams/agentteams-storage/agents/${WORKER_NAME}/"
+  local mirror_path="/root/hiclaw-fs/agents/${WORKER_NAME}"
   docker exec "${CONTROLLER_CONTAINER}" mc rm --recursive --force \
     "${storage_path}" >/dev/null 2>&1
-  ! docker exec "${CONTROLLER_CONTAINER}" mc ls "${storage_path}" 2>/dev/null | grep -q .
+  docker exec "${CONTROLLER_CONTAINER}" rm -rf -- "${mirror_path}"
+  docker exec "${MANAGER_CONTAINER}" rm -rf -- "${mirror_path}"
+  ! docker exec "${CONTROLLER_CONTAINER}" mc ls "${storage_path}" 2>/dev/null | grep -q . &&
+    ! docker exec "${CONTROLLER_CONTAINER}" test -e "${mirror_path}" &&
+    ! docker exec "${MANAGER_CONTAINER}" test -e "${mirror_path}"
 }
 
 wait_for_worker_channel() {
@@ -257,8 +262,8 @@ if ! approve_output="$(docker exec "${MANAGER_CONTAINER}" \
   "${room_id}" "${worker_user_id}" "${approval_nonce}" "${approval_id}")"; then
   printf '[Tiangong] Approval diagnostics for %s:\n' "${approval_id}" >&2
   docker exec "${CONTAINER_NAME}" sh -lc '
-    find "$1/.tiangong/runtime/sessions" -type f -name idempotency.json -exec \
-      jq -c --arg id "$2" ".entries | to_entries[] | select(.value.approvalId == \$id) | {status:.value.status,errorCode:.value.errorCode}" {} +
+    find "$1/.tiangong/runtime/sessions" -type f -name idempotency.jsonl -exec \
+      jq -c --arg id "$2" "select(.entry.approvalId == \$id) | {status:.entry.status,errorCode:.entry.errorCode}" {} +
   ' _ "${agent_root}" "${approval_id}" >&2 || true
   docker exec "${CONTAINER_NAME}" cat /tmp/tiangong-pi-harness.last-run >&2 || true
   docker logs --tail 80 "${CONTAINER_NAME}" 2>&1 | \
@@ -295,10 +300,26 @@ printf 'write_execution_count=%s\nwrite_replay_count=%s\n' \
 [[ "${execution_count}" == "1" && "${replay_count}" == "1" ]] || \
   die "Approval replay was not exactly once."
 printf 'matrix_write_exactly_once=pass\n'
-if docker exec "${CONTAINER_NAME}" find \
-  "${agent_root}/.tiangong/runtime/sessions" -type f -name write-content -print -quit | grep -q .; then
-  die "Terminal write payload was not removed."
+terminal_key="$(docker exec "${CONTAINER_NAME}" sh -lc '
+  find "$1/.tiangong/runtime/sessions" -type f -name idempotency.jsonl -exec \
+    jq -r --arg id "$2" "select(.entry.approvalId == \$id) | .key" {} + | tail -n 1
+' _ "${agent_root}" "${approval_id}")"
+[[ "${terminal_key}" =~ ^[0-9a-f]{64}$ ]] || die "Terminal idempotency record was not found."
+terminal_payload="$(docker exec "${CONTAINER_NAME}" find \
+  "${agent_root}/.tiangong/runtime/sessions" -type f \
+  -path "*/pending-operations/${terminal_key}/write-content" -print -quit)"
+[[ -n "${terminal_payload}" ]] || die "Terminal payload tombstone was not found."
+terminal_directory="${terminal_payload%/write-content}"
+terminal_bytes="$(docker exec "${CONTAINER_NAME}" stat -c '%s' "${terminal_payload}")"
+if [[ "${terminal_bytes}" != "0" ]]; then
+  printf '[Tiangong] Terminal payload diagnostics: bytes=%s marker=%s envelope=%s\n' \
+    "${terminal_bytes}" \
+    "$(docker exec "${CONTAINER_NAME}" test -f "${terminal_directory}/terminal.json" && echo yes || echo no)" \
+    "$(docker exec "${CONTAINER_NAME}" test -f "${terminal_directory}/envelope.json" && echo yes || echo no)" >&2
+  die "Terminal write payload was not erased."
 fi
-printf 'terminal_write_payload_cleanup=pass\n'
+[[ "$(docker exec "${CONTAINER_NAME}" jq -r '.state' "${terminal_directory}/terminal.json")" == \
+  "payload-erased" ]] || die "Terminal payload marker is invalid."
+printf 'terminal_write_payload_erasure=pass\n'
 
 log "Upstream Matrix, Worker-scoped gateway, and Tiangong pi harness passed."

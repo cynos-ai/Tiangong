@@ -12,6 +12,7 @@ import {
 const SCHEMA_VERSION = 1;
 const CONTENT_FILE = "write-content";
 const ENVELOPE_FILE = "envelope.json";
+const TERMINAL_FILE = "terminal.json";
 const KEY_PATTERN = /^[a-f0-9]{64}$/u;
 
 function requiredString(value, name) {
@@ -154,19 +155,47 @@ function assertExpected(envelope, expected) {
 export class PendingOperationStore {
   #directory;
   #clock;
+  #remoteStorage;
 
-  constructor({ directory, clock = () => new Date() }) {
+  constructor({ directory, clock = () => new Date(), remoteStorage }) {
     if (!directory) throw new TypeError("directory is required");
     this.#directory = directory;
     this.#clock = clock;
+    this.#remoteStorage = remoteStorage;
   }
 
   #operationDirectory(key) {
     return join(this.#directory, validateKey(key));
   }
 
+  async #hasTerminalMarker(key) {
+    const terminalPath = join(this.#operationDirectory(key), TERMINAL_FILE);
+    let terminalEntry;
+    try {
+      terminalEntry = await lstat(terminalPath);
+    } catch (error) {
+      if (error?.code === "ENOENT") return false;
+      throw error;
+    }
+    if (!terminalEntry.isFile()) throw new Error("Invalid pending operation terminal marker type");
+    if ((terminalEntry.mode & 0o077) !== 0) {
+      await chmod(terminalPath, 0o600);
+      terminalEntry = await lstat(terminalPath);
+      if ((terminalEntry.mode & 0o077) !== 0) {
+        throw new Error("Pending operation terminal marker permissions cannot be restricted");
+      }
+    }
+    const terminal = JSON.parse(await readFile(terminalPath, "utf8"));
+    if (terminal?.schemaVersion !== SCHEMA_VERSION || terminal.state !== "payload-erased" ||
+        terminal.idempotencyKey !== key) {
+      throw new Error("Invalid pending operation terminal marker");
+    }
+    return true;
+  }
+
   async #read(key) {
     const directory = this.#operationDirectory(key);
+    if (await this.#hasTerminalMarker(key)) throw new Error("Pending operation payload has been erased");
     const envelopePath = join(directory, ENVELOPE_FILE);
     const contentPath = join(directory, CONTENT_FILE);
     let [directoryEntry, envelopeEntry, contentEntry] = await Promise.all([
@@ -241,9 +270,44 @@ export class PendingOperationStore {
     return structuredClone(envelope);
   }
 
+  async #eraseLocal(operationKey) {
+    const directory = this.#operationDirectory(operationKey);
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await chmod(directory, 0o700);
+    await rm(join(directory, CONTENT_FILE), { force: true });
+    await writeDurableFile(join(directory, CONTENT_FILE), "");
+    await rm(join(directory, ENVELOPE_FILE), { force: true });
+    const terminalPath = join(directory, TERMINAL_FILE);
+    await rm(terminalPath, { force: true });
+    await writeDurableFile(terminalPath, `${canonicalJson({
+      schemaVersion: SCHEMA_VERSION,
+      state: "payload-erased",
+      idempotencyKey: operationKey,
+      erasedAt: this.#clock().toISOString(),
+    })}\n`);
+    await syncDirectory(directory);
+    await syncDirectory(this.#directory);
+  }
+
   async remove(key) {
-    const directory = this.#operationDirectory(validateKey(key));
-    await rm(directory, { recursive: true, force: true });
+    const operationKey = validateKey(key);
+    await this.#eraseLocal(operationKey);
+    if (this.#remoteStorage) {
+      await this.#remoteStorage.publishErasure({
+        operationDirectory: this.#operationDirectory(operationKey),
+      });
+      await this.#eraseLocal(operationKey);
+    }
+  }
+
+  async purge(key) {
+    const operationKey = validateKey(key);
+    if (!await this.#hasTerminalMarker(operationKey)) {
+      throw new Error("Pending operation payload is not terminal");
+    }
+    const operationDirectory = this.#operationDirectory(operationKey);
+    await this.#remoteStorage?.purge({ operationDirectory });
+    await rm(operationDirectory, { recursive: true, force: true });
     try {
       await syncDirectory(this.#directory);
     } catch (error) {

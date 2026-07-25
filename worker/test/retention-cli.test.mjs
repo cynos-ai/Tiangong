@@ -62,7 +62,7 @@ test("explicit retention compacts only terminal records beyond the 90-day replay
   const sessionDirectory = join(stateDirectory, "sessions", "session-one");
   await mkdir(workspaceDir);
 
-  const idempotencyStore = new IdempotencyStore({ filePath: join(sessionDirectory, "idempotency.json") });
+  const idempotencyStore = new IdempotencyStore({ filePath: join(sessionDirectory, "idempotency.jsonl") });
   const pendingOperationStore = new PendingOperationStore({
     directory: join(sessionDirectory, "pending-operations"),
   });
@@ -79,6 +79,7 @@ test("explicit retention compacts only terminal records beyond the 90-day replay
     replayResult: { content: [], details: { replayed: true } },
     completedAt: "2020-01-01T00:00:00.000Z",
   });
+  await pendingOperationStore.remove(expired.value.idempotencyKey);
 
   const active = await checkpoint(workspaceDir, "active", "active raw content\n");
   await pendingOperationStore.put(active.value, active.params);

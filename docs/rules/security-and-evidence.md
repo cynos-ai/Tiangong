@@ -26,8 +26,9 @@ Use these rules for credentials, logs, Evidence, approvals, dependencies, and ex
 - The Channel Plane may authenticate an actor identity, but Tiangong must own approval roles and must not treat an upstream owner boolean as sufficient authorization.
 - Approval text must be generated from machine operation fields, not model prose.
 - Pending approval must not block a Matrix turn. Persist it and validate a later command independently of the model.
-- Completed operations replay saved safe results without duplicate execution within the declared replay window. Expiring that window must be explicit, auditable, and preceded by Evidence summarization.
-- Remove protected raw write payloads only after a terminal outcome no longer needs them; uncertain and conflict states retain their recovery material.
+- Completed operations replay saved safe results without duplicate execution within the declared replay window. Expiring that window must be explicit, auditable, preceded by Evidence summarization, and followed by physical journal compaction.
+- Validate the idempotency journal hash chain on initial load and reject partial or ambiguous records. Serialize readers with append/compaction writers across processes.
+- Erase protected raw write payloads only after a terminal outcome no longer needs them; uncertain and conflict states retain their recovery material. Do not rely on directory deletion when the storage synchronizer may recreate deleted objects; publish a zero-length replacement and terminal marker through the official AgentTeams storage credential layer.
 - Treat an interrupted `executing` operation as outcome-uncertain until reconciliation proves its state.
 - Keep reconciliation outside model-accessible tools. Local container execution access is its authority; an operator-supplied actor label is audit attribution, not authentication.
 - External resources require explicit scope, ownership, cleanup, and user approval when the operation is destructive, costly, public, or irreversible.

@@ -16,6 +16,7 @@ import { assertApprovalSubject } from "./gates/approval-subject.mjs";
 import { PolicyGate } from "./gates/policy-gate.mjs";
 import { IdempotencyStore } from "./idempotency/store.mjs";
 import { ModelGateway } from "./model-gateway.mjs";
+import { createAgentTeamsPendingStorage } from "./pending-operation/agentteams-storage.mjs";
 import { PendingOperationStore } from "./pending-operation/store.mjs";
 import {
   assertSessionCapacity,
@@ -87,10 +88,11 @@ export class TiangongAgentRuntime {
       filePath: join(persisted.directory, "evidence", "events.jsonl"),
     });
     const idempotencyStore = new IdempotencyStore({
-      filePath: join(persisted.directory, "idempotency.json"),
+      filePath: join(persisted.directory, "idempotency.jsonl"),
     });
     const pendingOperationStore = new PendingOperationStore({
       directory: join(persisted.directory, "pending-operations"),
+      remoteStorage: createAgentTeamsPendingStorage({ workspaceDir: request.workspaceDir }),
     });
     const turns = new TurnContextController();
     const gate = new PolicyGate({ idempotencyStore });
@@ -226,6 +228,19 @@ export class TiangongAgentRuntime {
       actorId,
     });
     if (wasCompleted) {
+      try {
+        await state.pendingOperationStore.remove(match.key);
+      } catch {
+        await state.evidence.append({
+          type: "operation.payload_cleanup_deferred",
+          sessionId: checkpoint.sessionId,
+          turnId: checkpoint.turnId,
+          toolCallId: checkpoint.toolCallId,
+          approvalId: checkpoint.approvalId,
+          operationDigest: checkpoint.operationDigest,
+          idempotencyKey: match.key,
+        }).catch(() => {});
+      }
       await state.evidence.append({
         type: "tool.execution.replayed",
         sessionId: checkpoint.sessionId,

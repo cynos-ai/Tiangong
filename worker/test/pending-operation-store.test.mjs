@@ -89,9 +89,12 @@ test("pending write envelope and protected payload survive store restart", async
   await store.remove(pending.checkpoint.idempotencyKey);
   await assert.rejects(
     store.load(pending.checkpoint.idempotencyKey, pending.checkpoint),
-    { code: "ENOENT" },
+    /payload has been erased/u,
   );
+  assert.equal(await readFile(payloadPath, "utf8"), "");
+  assert.equal(JSON.parse(await readFile(join(operationDirectory, "terminal.json"), "utf8")).state, "payload-erased");
   await store.remove(pending.checkpoint.idempotencyKey);
+  assert.equal(await readFile(payloadPath, "utf8"), "");
 });
 
 test("pending write payload tampering is rejected", async (t) => {
