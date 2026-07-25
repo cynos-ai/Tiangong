@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 
 import { EvidenceRecorder } from "../evidence/recorder.mjs";
 import { IdempotencyStore } from "../idempotency/store.mjs";
+import { createAgentTeamsPendingStorage } from "../pending-operation/agentteams-storage.mjs";
 import { PendingOperationStore } from "../pending-operation/store.mjs";
 
 const REPLAY_WINDOW_MILLISECONDS = 90 * 24 * 60 * 60 * 1000;
@@ -65,7 +66,7 @@ function workerPaths() {
   return { workspaceDir: normalizedWorkspace, stateDirectory: normalizedState };
 }
 
-async function sessions(stateDirectory) {
+async function sessions(stateDirectory, workspaceDir) {
   const sessionsDirectory = join(stateDirectory, "sessions");
   let entries;
   try {
@@ -78,8 +79,11 @@ async function sessions(stateDirectory) {
     const directory = join(sessionsDirectory, entry.name);
     return {
       directory,
-      idempotencyStore: new IdempotencyStore({ filePath: join(directory, "idempotency.json") }),
-      pendingOperationStore: new PendingOperationStore({ directory: join(directory, "pending-operations") }),
+      idempotencyStore: new IdempotencyStore({ filePath: join(directory, "idempotency.jsonl") }),
+      pendingOperationStore: new PendingOperationStore({
+        directory: join(directory, "pending-operations"),
+        remoteStorage: createAgentTeamsPendingStorage({ workspaceDir }),
+      }),
       evidence: new EvidenceRecorder({ filePath: join(directory, "evidence", "events.jsonl") }),
     };
   });
@@ -93,32 +97,39 @@ async function main() {
   }
   const paths = workerPaths();
   const before = new Date(Date.now() - REPLAY_WINDOW_MILLISECONDS).toISOString();
-  const candidates = [];
-  for (const session of await sessions(paths.stateDirectory)) {
-    for (const candidate of await session.idempotencyStore.listTerminalBefore(before)) {
-      candidates.push({ session, candidate });
-    }
+  const candidateGroups = [];
+  for (const session of await sessions(paths.stateDirectory, paths.workspaceDir)) {
+    candidateGroups.push({
+      session,
+      candidates: await session.idempotencyStore.listTerminalBefore(before),
+    });
   }
+  const eligible = candidateGroups.reduce((total, group) => total + group.candidates.length, 0);
   if (parsed.command === "report") {
-    process.stdout.write(`${JSON.stringify({ replayWindowDays: 90, before, eligible: candidates.length })}\n`);
+    process.stdout.write(`${JSON.stringify({ replayWindowDays: 90, before, eligible })}\n`);
     return;
   }
 
   let compacted = 0;
-  for (const { session, candidate } of candidates) {
-    await session.pendingOperationStore.remove(candidate.key);
-    await session.evidence.append({
-      type: "retention.idempotency.expired",
-      actorId: parsed.actor,
-      idempotencyKey: candidate.key,
-      operationDigest: candidate.entry.operationDigest,
-      approvalId: candidate.entry.approvalId,
-      status: candidate.entry.status,
-      terminalAt: candidate.terminalAt,
-      replayWindowDays: 90,
-    });
-    await session.idempotencyStore.removeTerminalBefore(candidate.key, before);
-    compacted += 1;
+  for (const { session, candidates } of candidateGroups) {
+    for (const candidate of candidates) {
+      await session.pendingOperationStore.purge(candidate.key);
+      await session.evidence.append({
+        type: "retention.idempotency.expired",
+        actorId: parsed.actor,
+        idempotencyKey: candidate.key,
+        operationDigest: candidate.entry.operationDigest,
+        approvalId: candidate.entry.approvalId,
+        status: candidate.entry.status,
+        terminalAt: candidate.terminalAt,
+        replayWindowDays: 90,
+      });
+    }
+    await session.idempotencyStore.removeTerminalsBefore(
+      candidates.map((candidate) => candidate.key),
+      before,
+    );
+    compacted += candidates.length;
   }
   process.stdout.write(`${JSON.stringify({ replayWindowDays: 90, before, compacted })}\n`);
 }

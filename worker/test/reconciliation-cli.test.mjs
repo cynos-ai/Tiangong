@@ -64,7 +64,7 @@ test("operator CLI resolves a stale not-applied write without exposing its conte
   });
 
   const idempotencyStore = new IdempotencyStore({
-    filePath: join(sessionDirectory, "idempotency.json"),
+    filePath: join(sessionDirectory, "idempotency.jsonl"),
   });
   const pendingOperationStore = new PendingOperationStore({
     directory: join(sessionDirectory, "pending-operations"),

@@ -45,8 +45,8 @@
   - approved file content equals the nonce;
   - replay returns the deterministic replay message;
   - the Evidence chain associated with that approval contains one `tool.execution.started` and one `tool.execution.replayed`;
-  - the terminal protected `write-content` payload is removed before cleanup;
-  - temporary Worker and its exact MinIO prefix are removed.
+  - no terminal `write-content` object retains non-empty raw payload before cleanup;
+  - temporary Worker, its exact MinIO prefix, and its fixed Manager/Controller local mirrors are removed.
 - Required evidence: pending/approve/replay Matrix event IDs, file-content check, approval-specific Evidence path, execution/replay counts, Worker absence, and empty reserved MinIO prefix.
 - Skip/block rules: block rather than approve if the sender identity, operation digest, original tool call, persistent checkpoint, or Matrix readiness cannot be verified. Never inspect or delete storage outside the exact reserved Worker prefix.
 
@@ -81,7 +81,8 @@
 - Required outcomes:
   - completed/rejected/applied-reconciled payloads are removed; uncertain/conflict payloads remain;
   - only completed/rejected records older than 90 days are eligible for explicitly confirmed compaction;
-  - compaction appends `retention.idempotency.expired` before removing active metadata;
+  - normal idempotency transitions append to a verified journal and key/invocation/approval indexes remain unique across independent writers;
+  - compaction appends `retention.idempotency.expired` before physically removing expired journal history;
   - active/pending/approved/executing/failed records are not compacted;
   - Evidence rotates at 16 MiB with continuous sequence, previous hash, segment range, and terminal hash verification;
   - new model turns fail at transcript capacity while deterministic approval/rejection commands remain reachable.

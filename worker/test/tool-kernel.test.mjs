@@ -26,7 +26,7 @@ function createKernel({ workspaceDir, stateDir, evidenceOverride, gateOverride }
   const evidence = evidenceOverride ?? new EvidenceRecorder({
     filePath: join(stateDir, "evidence", "events.jsonl"),
   });
-  const store = new IdempotencyStore({ filePath: join(stateDir, "idempotency.json") });
+  const store = new IdempotencyStore({ filePath: join(stateDir, "idempotency.jsonl") });
   const pendingOperations = new PendingOperationStore({
     directory: join(stateDir, "pending-operations"),
   });
@@ -126,7 +126,7 @@ test("pending write survives restart, executes once after approval, and replays 
   const completed = await kernel.store.get(pending.details.idempotencyKey);
   await assert.rejects(
     kernel.pendingOperations.load(pending.details.idempotencyKey, completed),
-    { code: "ENOENT" },
+    /payload has been erased/u,
   );
   const replay = await execute(kernel, invocation);
   assert.equal(replay.details.replayed, true);
@@ -208,7 +208,7 @@ test("write rejects path escape and symbolic-link traversal", async (t) => {
     turnId: "turn-state-path",
     toolCallId: "call-state-path",
     name: "read",
-    params: { path: ".tiangong/runtime/idempotency.json" },
+    params: { path: ".tiangong/runtime/idempotency.jsonl" },
   }), /state directory is not accessible/u);
   await assert.rejects(execute(kernel, {
     turnId: "turn-credential-path",

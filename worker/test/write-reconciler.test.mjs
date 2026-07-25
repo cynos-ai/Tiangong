@@ -49,7 +49,7 @@ async function fixture(t, { previousContent } = {}) {
     operationDigest: digest,
   });
 
-  const idempotencyStore = new IdempotencyStore({ filePath: join(stateDir, "idempotency.json") });
+  const idempotencyStore = new IdempotencyStore({ filePath: join(stateDir, "idempotency.jsonl") });
   const pendingOperationStore = new PendingOperationStore({
     directory: join(stateDir, "pending-operations"),
   });
@@ -134,7 +134,7 @@ test("stale execution with desired content present becomes completed without re-
   assert.equal(result.entry.replayResult.details.reconciled, true);
   await assert.rejects(
     context.pendingOperationStore.load(context.checkpoint.idempotencyKey, result.entry),
-    { code: "ENOENT" },
+    /payload has been erased/u,
   );
   await assert.rejects(
     readFile(join(context.rollbackDir, context.checkpoint.idempotencyKey, "metadata.json")),

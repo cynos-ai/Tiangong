@@ -118,9 +118,9 @@ Container execution access is the actual authority for this local command; `--ac
 
 ### Runtime retention
 
-Raw pending write payloads are removed after successful completion, rejection, or an applied reconciliation outcome. They remain available for `pending`, `approved`, `executing`, `failed`, and conflict states because recovery still requires them.
+Raw pending write payloads are erased after successful completion, rejection, or an applied reconciliation outcome. Tiangong replaces the synchronized payload object with a zero-length file plus a non-sensitive terminal marker, publishes that erasure through AgentTeams' official MinIO credential layer, and then reasserts the local tombstone rather than relying on directory-deletion propagation. This storage adapter is internal runtime plumbing, not a model tool. Raw content remains available for `pending`, `approved`, `executing`, `failed`, and conflict states because recovery still requires it.
 
-Completed and rejected idempotency metadata has a 90-day exactly-once replay window. Expiration is never automatic: an operator first reports eligible records, then explicitly confirms compaction. Each removed record is summarized in Evidence before deletion.
+Completed and rejected idempotency metadata has a 90-day exactly-once replay window. State transitions append to a hash-chained journal with in-memory key, invocation, and approval indexes; hot-path transitions do not rewrite the full store. Expiration is never automatic: an operator first reports eligible records, then explicitly confirms compaction. Each removed record is summarized in Evidence before deletion, and that explicit maintenance step rewrites only the active journal state.
 
 ```bash
 docker exec agentteams-worker-<worker> tiangong-retain report
