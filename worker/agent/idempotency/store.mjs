@@ -2,8 +2,34 @@ import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { canonicalJson } from "../canonical-json.mjs";
+import { withFileLock } from "../persistence/file-lock.mjs";
 
 const EMPTY_STATE = Object.freeze({ version: 1, entries: {} });
+const RECONCILIATION_RESOLUTIONS = new Set(["applied", "not_applied", "conflict"]);
+const REASON_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/u;
+
+function requiredString(value, name) {
+  if (typeof value !== "string" || value === "") throw new TypeError(`${name} is required`);
+  return value;
+}
+
+function normalizeReconciliationObservation(observation) {
+  if (typeof observation?.targetExisted !== "boolean" ||
+      !Number.isSafeInteger(observation.targetBytes) || observation.targetBytes < 0 ||
+      !["absent", "valid", "invalid"].includes(observation.snapshotState)) {
+    throw new TypeError("Invalid reconciliation observation");
+  }
+  const targetDigest = observation.targetDigest;
+  if (observation.targetExisted !== (typeof targetDigest === "string" && targetDigest !== "")) {
+    throw new TypeError("Reconciliation target digest does not match existence");
+  }
+  return {
+    targetExisted: observation.targetExisted,
+    targetDigest: targetDigest ?? null,
+    targetBytes: observation.targetBytes,
+    snapshotState: observation.snapshotState,
+  };
+}
 
 async function syncDirectory(path) {
   const handle = await open(path, "r");
@@ -24,8 +50,7 @@ export class IdempotencyStore {
     this.#filePath = filePath;
   }
 
-  async #load() {
-    if (this.#state) return;
+  async #reload() {
     try {
       const parsed = JSON.parse(await readFile(this.#filePath, "utf8"));
       if (parsed?.version !== 1 || typeof parsed.entries !== "object" || parsed.entries === null) {
@@ -59,25 +84,25 @@ export class IdempotencyStore {
   }
 
   async #mutate(callback) {
-    const operation = this.#queue.then(async () => {
-      await this.#load();
+    const operation = this.#queue.then(() => withFileLock(this.#filePath, async () => {
+      await this.#reload();
       const result = callback(this.#state.entries);
       await this.#persist();
       return result;
-    });
+    }));
     this.#queue = operation.catch(() => {});
     return operation;
   }
 
   async get(key) {
     await this.#queue;
-    await this.#load();
+    await this.#reload();
     return this.#state.entries[key] ? structuredClone(this.#state.entries[key]) : undefined;
   }
 
   async findInvocation({ sessionId, turnId, toolCallId }) {
     await this.#queue;
-    await this.#load();
+    await this.#reload();
     const matches = Object.entries(this.#state.entries).filter(([, entry]) =>
       entry.sessionId === sessionId && entry.turnId === turnId && entry.toolCallId === toolCallId);
     if (matches.length > 1) throw new Error("Multiple idempotency records exist for one tool invocation");
@@ -88,7 +113,7 @@ export class IdempotencyStore {
 
   async findApproval(approvalId) {
     await this.#queue;
-    await this.#load();
+    await this.#reload();
     const matches = Object.entries(this.#state.entries).filter(([, entry]) =>
       entry.approvalId === approvalId);
     if (matches.length > 1) throw new Error("Approval identifier is not unique");
@@ -177,6 +202,67 @@ export class IdempotencyStore {
       entry.status = "failed";
       entry.failedAt = failedAt;
       entry.errorCode = errorCode;
+      return structuredClone(entry);
+    });
+  }
+
+  async reconcile(key, {
+    operationDigest,
+    resolution,
+    reconciledBy,
+    reasonCode,
+    observation,
+    replayResult,
+    reconciledAt = new Date().toISOString(),
+  }) {
+    requiredString(operationDigest, "operationDigest");
+    requiredString(reconciledBy, "reconciledBy");
+    if (!RECONCILIATION_RESOLUTIONS.has(resolution)) throw new TypeError("Invalid reconciliation resolution");
+    if (typeof reasonCode !== "string" || !REASON_CODE_PATTERN.test(reasonCode)) {
+      throw new TypeError("reasonCode must be a stable uppercase identifier");
+    }
+    const normalizedObservation = normalizeReconciliationObservation(observation);
+    if (resolution === "applied" && (!replayResult || typeof replayResult !== "object")) {
+      throw new TypeError("Applied reconciliation requires a replay result");
+    }
+
+    return this.#mutate((entries) => {
+      const entry = entries[key];
+      if (!entry || entry.operationDigest !== operationDigest) throw new Error("Operation not found");
+      if (!["executing", "failed"].includes(entry.status)) {
+        throw new Error("Operation is not eligible for reconciliation");
+      }
+      if (resolution === "not_applied" && !entry.approval?.approvedBy) {
+        throw new Error("A not-applied operation has no approval to restore");
+      }
+
+      const record = {
+        fromStatus: entry.status,
+        fromStartedAt: entry.startedAt ?? null,
+        fromFailedAt: entry.failedAt ?? null,
+        fromErrorCode: entry.errorCode ?? null,
+        resolution,
+        reconciledBy,
+        reasonCode,
+        reconciledAt,
+        observation: normalizedObservation,
+      };
+      entry.reconciliations = [...(entry.reconciliations ?? []), record];
+
+      if (resolution === "applied") {
+        entry.status = "completed";
+        entry.completedAt = reconciledAt;
+        entry.replayResult = structuredClone(replayResult);
+      } else if (resolution === "not_applied") {
+        entry.status = "approved";
+        delete entry.completedAt;
+        delete entry.replayResult;
+      }
+      if (resolution !== "conflict") {
+        delete entry.startedAt;
+        delete entry.failedAt;
+        delete entry.errorCode;
+      }
       return structuredClone(entry);
     });
   }
