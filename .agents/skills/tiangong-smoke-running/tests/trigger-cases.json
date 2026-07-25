@@ -1,0 +1,12 @@
+{
+  "shouldTrigger": [
+    "Run the Tiangong Basic Worker smoke and report cleanup.",
+    "Diagnose this failed Matrix approval Full smoke without blind reruns.",
+    "Review the Evidence and classify the failure from yesterday's focused run."
+  ],
+  "shouldNotTrigger": [
+    "Design a new Full smoke scenario.",
+    "Fix the Worker runtime implementation.",
+    "Write a new Agent Skill."
+  ]
+}

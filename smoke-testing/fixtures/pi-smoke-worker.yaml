@@ -1,0 +1,12 @@
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-pi-smoke
+spec:
+  model: qwen3.5-plus
+  runtime: openclaw
+  image: tiangong-worker:dev
+  state: Running
+  identity: |
+    Name: Tiangong Pi Smoke Worker
+    Purpose: Local runtime integration verification only.

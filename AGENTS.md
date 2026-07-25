@@ -1,76 +1,51 @@
 # AGENTS.md
 
-## Scope
+## Scope and phase
 
 These instructions apply to the entire Tiangong repository.
 
-## Current phase
+Tiangong is in project initialization. There are no released versions, external users, or compatibility commitments. Prefer the cleanest current design: delete obsolete paths instead of adding shims or migrations unless a task explicitly requires compatibility.
 
-The repository is in project initialization. Do not add runtime, application, package, deployment, or generated code unless the task explicitly authorizes that scope.
-
-## Product principles
+## Always-on boundaries
 
 - Tiangong is the project name. Do not add `Cynos` to the product or repository name.
-- The project is designed as a self-contained, Apache-2.0 open-source project built on public dependencies.
+- Keep the public project self-contained and based only on public dependencies.
 - Do not import, copy, or depend on private packages, repositories, images, fixtures, archives, or services.
-- AgentTeams provides the team/container/Matrix/storage integration layer; Tiangong owns its worker runtime, professional roles, evidence, approvals, and product experience.
+- Commit only material needed to build, test, use, secure, maintain, or govern the public project.
+- Never commit credentials, private evidence, internal research, strategy, schedules, evaluations, partner information, unpublished plans, or internal reports—even on a non-default branch.
+- Private working material must remain outside this repository and must not become a submodule or runtime, build, test, or release dependency.
+- AgentTeams owns the team/container/Matrix/storage integration layer. Tiangong owns its Worker runtime, professional roles, evidence, approvals, and product experience.
 - Prefer coarse professional roles and cohesive operations over one Worker per practice or file type.
-- Treat claims, model prose, and machine-captured evidence as different facts.
+- Treat claims, model prose, machine state, and machine-captured evidence as different facts.
+- Put authorization, idempotency, evidence gates, path restrictions, and rollback checks in code rather than prompts, rules, or Skills.
 
-## Public and internal documentation
+## Required rule loading
 
-This is a public repository. Never commit confidential competition strategy, private prior-work details, credentials, partner agreements, unpublished product plans, or internal-only reports here—even on a non-default branch.
+Read the relevant rule before changing the matching area:
 
-GitHub does not support private branches or private directories inside a public repository. Internal documents belong in a separate private repository, recommended as `cynos-ai/Tiangong-internal`, with the local sibling path `../Tiangong-internal/`. Do not add that repository as a required submodule or runtime dependency of Tiangong.
+| Task or path | Rule |
+|---|---|
+| Any code, script, refactor, or bug fix | [`docs/rules/implementation.md`](docs/rules/implementation.md) |
+| Tests, CI, smoke scenarios, external resources, or cleanup | [`docs/rules/verification.md`](docs/rules/verification.md) |
+| Credentials, logs, Evidence, approvals, dependencies, or external side effects | [`docs/rules/security-and-evidence.md`](docs/rules/security-and-evidence.md) |
+| `worker/`, AgentTeams/OpenClaw integration, tools, Gate, approval, or recovery | [`docs/rules/worker-runtime.md`](docs/rules/worker-runtime.md) |
 
-## Branch model
+Use project Skills for reusable workflows. Rules never replace deterministic runtime enforcement.
 
-Use a Git Flow–lite model:
+## Repository workflow
 
-- `main`: stable, release-ready history only. Never push directly.
-- `develop`: integration branch for the next release. Never push directly after repository bootstrap.
-- `feat/<issue>-<slug>`: product features, branched from `develop`, merged into `develop` by pull request.
-- `fix/<issue>-<slug>`: non-production bug fixes, branched from `develop`, merged into `develop` by pull request.
-- `docs/<issue>-<slug>`, `refactor/<issue>-<slug>`, `test/<issue>-<slug>`, `chore/<issue>-<slug>`: same lifecycle as feature branches.
-- `release/v<version>`: release stabilization, branched from `develop`; only release blockers, documentation, versioning, and generated release metadata are allowed. Merge into `main` by pull request, then merge the released state back into `develop`.
-- `hotfix/v<version>-<slug>`: urgent released-version fixes, branched from `main`; merge into `main` and back into `develop` by pull request.
-
-Delete short-lived branches after merge. Do not force-push shared branches.
-
-## Commits and pull requests
-
-- Use Conventional Commits: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `build:`, `ci:`, `chore:`, `perf:`, `revert:`.
+- Follow [`CONTRIBUTING.md`](CONTRIBUTING.md) for branches, commits, and pull requests.
+- Follow [`RELEASING.md`](RELEASING.md) for versions and releases.
+- Never push directly to `main` or `develop`; use a short-lived issue branch and a pull request.
+- Use Conventional Commits and sign every commit with `git commit -s`.
 - Keep commits reviewable and free of unrelated changes.
-- Use pull requests for all changes to `develop` and `main` after bootstrap.
-- Prefer squash merge for feature branches so the pull-request title becomes the canonical commit.
-- A pull request must explain motivation, scope, verification, risk, and any user-visible change.
-- Do not merge with unresolved review conversations or failing required checks.
-- Never commit secrets, local credentials, private evidence, or generated dependency directories.
+- Do not merge with failing required checks or unresolved review conversations.
+- Never force-push a shared branch or move a published tag.
 
-## Versioning and releases
+## Completion discipline
 
-Tiangong follows Semantic Versioning:
-
-- `v0.y.z` while public APIs and product contracts are still stabilizing;
-- prereleases use `-alpha.N`, `-beta.N`, or `-rc.N`;
-- stable releases use immutable annotated tags such as `v0.1.0`;
-- never move or reuse a published tag.
-
-Release flow:
-
-1. Create `release/vX.Y.Z` from `develop`.
-2. Run all required build, test, security, license, reproducibility, and clean-environment checks.
-3. Prepare changelog/release notes and record compatibility or migration changes.
-4. Merge the release pull request into `main`.
-5. Create the annotated `vX.Y.Z` tag from the merge commit and publish a GitHub Release.
-6. Publish immutable image/package digests, checksums, SBOM, provenance, and known limitations when those artifacts exist.
-7. Merge the released state back into `develop`.
-
-Until release automation exists, do not create a release tag merely for project initialization.
-
-## Change discipline
-
-- Keep architecture decisions explicit and versioned when they become public project facts.
-- Add the smallest implementation that proves the current contract; avoid speculative frameworks.
-- Put deterministic safety boundaries—authorization, idempotency, evidence gates, and rollback checks—in code rather than prompts.
-- Update this file when repository-wide workflow or release rules change.
+- Understand the current implementation and callers before editing.
+- Make the smallest change that proves the current contract; avoid speculative frameworks.
+- Verify at the cheapest deterministic layer first, then use expensive integration smoke only when its boundary is relevant.
+- Report known limitations and blocked verification explicitly; do not turn missing evidence into a success claim.
+- Update these instructions only when repository-wide workflow or safety boundaries change.
