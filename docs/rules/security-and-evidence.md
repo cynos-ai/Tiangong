@@ -8,6 +8,7 @@ Use these rules for credentials, logs, Evidence, approvals, dependencies, and ex
 - Inject provider credentials only in memory. Do not copy them into model configuration, prompts, sessions, Evidence, diagnostics, temporary files, or command arguments when a safer interface exists.
 - Copy only explicitly allowlisted non-secret provider fields across the OpenClaw/Tiangong boundary.
 - Treat raw prompts, write contents, model responses, session transcripts, and unrestricted logs as potentially sensitive.
+- When deterministic restart recovery requires a raw write payload, keep it separate from the operation envelope and Evidence, bind it by digest and stable invocation identity, restrict its filesystem permissions, and document storage-administrator visibility and retention.
 - Diagnostics must be bounded and sanitized. Record stable error codes and digests instead of raw sensitive payloads.
 
 ## Evidence semantics

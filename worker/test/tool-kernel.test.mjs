@@ -7,6 +7,7 @@ import test from "node:test";
 import { EvidenceRecorder } from "../agent/evidence/recorder.mjs";
 import { PolicyGate } from "../agent/gates/policy-gate.mjs";
 import { IdempotencyStore } from "../agent/idempotency/store.mjs";
+import { PendingOperationStore } from "../agent/pending-operation/store.mjs";
 import { createCoreToolRegistry } from "../agent/tools/registry.mjs";
 import { GateDeniedError } from "../agent/tools/wrapper.mjs";
 import { TurnContextController } from "../agent/turn-context.mjs";
@@ -26,6 +27,9 @@ function createKernel({ workspaceDir, stateDir, evidenceOverride, gateOverride }
     filePath: join(stateDir, "evidence", "events.jsonl"),
   });
   const store = new IdempotencyStore({ filePath: join(stateDir, "idempotency.json") });
+  const pendingOperations = new PendingOperationStore({
+    directory: join(stateDir, "pending-operations"),
+  });
   const gate = gateOverride ?? new PolicyGate({ idempotencyStore: store });
   const turns = new TurnContextController();
   const registry = createCoreToolRegistry({
@@ -34,9 +38,10 @@ function createKernel({ workspaceDir, stateDir, evidenceOverride, gateOverride }
     gate,
     evidence,
     idempotencyStore: store,
+    pendingOperationStore: pendingOperations,
     getInvocation: turns.current,
   });
-  return { evidence, gate, registry, store, turns };
+  return { evidence, gate, pendingOperations, registry, store, turns };
 }
 
 function tool(kernel, name) {
@@ -102,6 +107,8 @@ test("pending write survives restart, executes once after approval, and replays 
   assert.equal(JSON.stringify(checkpoint).includes("approved content"), false);
 
   kernel = createKernel(paths);
+  const recovered = await kernel.pendingOperations.load(pending.details.idempotencyKey, checkpoint);
+  assert.deepEqual(recovered.arguments, invocation.params);
   const approval = {
     operationDigest: pending.details.operationDigest,
     approvedBy: "@reviewer:example.test",
@@ -112,11 +119,13 @@ test("pending write survives restart, executes once after approval, and replays 
     kernel.store.approve(pending.details.idempotencyKey, { ...approval, approvedBy: "@other:example.test" }),
     /subject mismatch/u,
   );
-  await execute(kernel, invocation);
+  await execute(kernel, { ...invocation, params: recovered.arguments });
   assert.equal(await readFile(join(paths.workspaceDir, "output.txt"), "utf8"), "approved content\n");
 
   kernel = createKernel(paths);
-  const replay = await execute(kernel, invocation);
+  const completed = await kernel.store.get(pending.details.idempotencyKey);
+  const recoveredReplay = await kernel.pendingOperations.load(pending.details.idempotencyKey, completed);
+  const replay = await execute(kernel, { ...invocation, params: recoveredReplay.arguments });
   assert.equal(replay.details.replayed, true);
   const records = await kernel.evidence.readAll();
   assert.equal(records.filter((record) =>

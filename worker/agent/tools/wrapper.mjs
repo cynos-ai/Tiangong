@@ -55,6 +55,7 @@ export function createGatedTool({
   gate,
   evidence,
   idempotencyStore,
+  pendingOperationStore,
   getInvocation,
   sideEffect = false,
   replayResult = (result) => result,
@@ -66,7 +67,9 @@ export function createGatedTool({
   for (const [name, value] of Object.entries({ summarize, gate, evidence, getInvocation })) {
     if (!value) throw new TypeError(`${name} is required`);
   }
-  if (sideEffect && !idempotencyStore) throw new TypeError("Side-effect tools require an idempotency store");
+  if (sideEffect && (!idempotencyStore || !pendingOperationStore)) {
+    throw new TypeError("Side-effect tools require idempotency and pending-operation stores");
+  }
 
   return {
     ...definition,
@@ -142,7 +145,10 @@ export function createGatedTool({
           requestedBy: invocation.actor?.id ?? null,
         };
         const suspended = invocation.turnState.suspend(checkpoint);
-        if (sideEffect && !priorPending) await idempotencyStore.putPending(key, checkpoint);
+        if (sideEffect && !priorPending) {
+          await pendingOperationStore.put(checkpoint, params);
+          await idempotencyStore.putPending(key, checkpoint);
+        }
         return pendingResult(
           { ...decision, approvalId: suspended.approvalId },
           suspended.idempotencyKey,
