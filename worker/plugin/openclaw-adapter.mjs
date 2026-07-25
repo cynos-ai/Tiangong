@@ -114,7 +114,6 @@ export function toTurnRequest(params) {
     actor: {
       id: params.senderId,
       displayName: params.senderName ?? params.senderUsername,
-      isOwner: params.senderIsOwner,
       channel: params.messageChannel ?? params.messageProvider,
       messageId: params.currentMessageId,
     },

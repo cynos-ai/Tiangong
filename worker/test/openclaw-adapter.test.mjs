@@ -21,6 +21,7 @@ function attemptParams(overrides = {}) {
     resolvedApiKey: "worker-token",
     runId: "attempt-one",
     senderId: "@user:example.test",
+    senderIsOwner: true,
     sessionId: "session-one",
     thinkLevel: "off",
     workspaceDir: "/workspace",
@@ -52,6 +53,7 @@ test("maps OpenClaw parameters to a stable non-secret TurnRequest", () => {
   const request = toTurnRequest(attemptParams());
   assert.equal(request.turnId, "matrix:$event-one");
   assert.equal(request.actor.id, "@user:example.test");
+  assert.equal(Object.hasOwn(request.actor, "isOwner"), false);
   assert.equal(request.credential, "worker-token");
   assert.equal(JSON.stringify(request).includes("worker-token"), false);
   assert.equal(Object.keys(request).includes("credential"), false);

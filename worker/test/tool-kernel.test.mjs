@@ -55,7 +55,7 @@ async function execute(kernel, { sessionId = "session-1", turnId, toolCallId, na
   kernel.turns.begin({
     sessionId,
     turnId,
-    actor: { id: "@requester:example.test", isOwner: false },
+    actor: { id: "@requester:example.test" },
   });
   try {
     return await tool(kernel, name).execute(toolCallId, params);
@@ -139,7 +139,7 @@ test("first pending call suspends later tools in the same sequential turn", asyn
   kernel.turns.begin({
     sessionId: "session-batch",
     turnId: "turn-batch",
-    actor: { id: "@requester:example.test", isOwner: false },
+    actor: { id: "@requester:example.test" },
   });
   try {
     const first = await tool(kernel, "write").execute("call-one", {
