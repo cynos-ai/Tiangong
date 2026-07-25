@@ -61,7 +61,7 @@
 
 ## Maintenance notes
 
-- **Current status (2026-07-25)**: F1's restart-recovery step fails because approval execution cannot relocate the original write tool call in the reopened pi transcript (`findToolArguments` throws). There is no deterministic test covering that path; the unit test bypasses it by passing params directly. Do not mark F1 green until a Tiangong-owned pending-operation store replaces transcript recovery and a deterministic cross-reopen recovery test exists. Basic smoke remains the proven release path.
+- **Current status (2026-07-25)**: F1 passes with a Tiangong-owned, versioned pending-operation envelope and protected write payload. Deterministic tests reopen the store, validate invocation/digest binding, reject payload tampering and broad permissions, execute once after approval, and replay safely. The real Matrix Full smoke passes pending → Worker restart → approval → write → replay with `tool.execution.started=1`, `tool.execution.replayed=1`, and cleanup proof.
 - Promotion candidates from past runs: sender mismatch, operation mutation after approval, executing-state reconciliation, and Evidence tamper detection may move into Full once their runtime contracts stabilize.
 - Known environment sensitivities:
   - Worker `Running` and `openclaw health` do not alone prove Matrix sync readiness; wait for the room join observation after restart.

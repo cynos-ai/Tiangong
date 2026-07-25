@@ -76,7 +76,7 @@ make test-worker-image        # Also Gate, restart recovery, approval, replay, a
 
 Both levels build `tiangong-worker:dev`, create the reserved temporary Worker `tiangong-pi-smoke` through the AgentTeams declarative API, and use the real Worker-scoped Gateway and Matrix room. The Basic smoke creates a disposable read fixture, requires one gated pi `read` through Matrix, validates an exact nonce response and matching Evidence, verifies persistent pi session creation, and checks that the Worker credential entered neither temporary model configuration nor the session transcript.
 
-The Full smoke additionally asks pi to propose a constrained workspace write, verifies that the file is absent while approval is pending, restarts the Worker, waits for Matrix readiness, approves through a later Matrix turn, checks the written nonce, replays the same approval, and requires approval-specific Evidence to show exactly one execution and one replay. Cross-Worker-restart approval recovery is a known stabilization area: it depends on locating the original tool call in the reopened pi transcript, which has no deterministic coverage yet, so `make test-worker-image` may fail at that phase until a Tiangong-owned pending-operation store replaces transcript recovery.
+The Full smoke additionally asks pi to propose a constrained workspace write, verifies that the file is absent while approval is pending, restarts the Worker, waits for Matrix readiness, approves through a later Matrix turn, checks the written nonce, replays the same approval, and requires approval-specific Evidence to show exactly one execution and one replay. Cross-Worker-restart recovery uses a versioned Tiangong pending-operation envelope and does not depend on pi transcript internals.
 
 Cleanup removes the temporary Worker and the exact MinIO prefix owned by the reserved smoke identity. It never operates on another Worker prefix. Provider credentials are not copied into the image, repository, model configuration, session, or Evidence.
 
@@ -88,6 +88,7 @@ The current runtime is intentionally constrained:
 - OpenClaw parameters cross a stable Tiangong Turn DTO; provider credentials are non-enumerable request data and are injected into pi only in memory;
 - pi extensions, skills, prompt templates, and automatic repository context are disabled;
 - persistent sessions and hash-chained Evidence live under the Worker's AgentTeams-synchronized state directory;
+- restartable writes persist a digest-bound operation envelope and a separate mode-`600` content payload under that state directory; raw write content never enters Evidence, but is visible to principals with Worker storage administration access and currently follows session-state retention;
 - only gated `read` and path-restricted, atomic `write` are active; `write` requires a subject-bound persisted approval, supports restart recovery, and blocks duplicate execution;
 - runtime state, credential-bearing paths, symlink traversal, workspace escape, image input, and `bash` are unavailable.
 

@@ -15,6 +15,7 @@ import {
 import { PolicyGate } from "./gates/policy-gate.mjs";
 import { IdempotencyStore } from "./idempotency/store.mjs";
 import { ModelGateway } from "./model-gateway.mjs";
+import { PendingOperationStore } from "./pending-operation/store.mjs";
 import { defaultStateDirectory, PersistentSessionStore } from "./session-store.mjs";
 import { createCoreToolRegistry } from "./tools/registry.mjs";
 import { createTurnResult } from "./turn-contract.mjs";
@@ -43,22 +44,6 @@ function usageFromMessage(message) {
     cacheWrite,
     totalTokens: usage?.totalTokens ?? input + output + cacheRead + cacheWrite,
   };
-}
-
-function findToolArguments(state, toolCallId) {
-  const persistedMessages = state.sessionManager.getEntries()
-    .filter((entry) => entry.type === "message")
-    .map((entry) => entry.message);
-  const sources = [state.session.agent.state.messages, persistedMessages];
-  for (const messages of sources) {
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const message = messages[index];
-      if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
-      const call = message.content.find((part) => part?.type === "toolCall" && part.id === toolCallId);
-      if (call) return structuredClone(call.arguments);
-    }
-  }
-  throw new Error("The approved tool call is missing from the persistent pi session");
 }
 
 function appendControlMessage(state, content, details) {
@@ -99,6 +84,9 @@ export class TiangongAgentRuntime {
     const idempotencyStore = new IdempotencyStore({
       filePath: join(persisted.directory, "idempotency.json"),
     });
+    const pendingOperationStore = new PendingOperationStore({
+      directory: join(persisted.directory, "pending-operations"),
+    });
     const turns = new TurnContextController();
     const gate = new PolicyGate({ idempotencyStore });
     const registry = createCoreToolRegistry({
@@ -107,6 +95,7 @@ export class TiangongAgentRuntime {
       gate,
       evidence,
       idempotencyStore,
+      pendingOperationStore,
       getInvocation: turns.current,
     });
     const settingsManager = SettingsManager.inMemory({
@@ -144,6 +133,7 @@ export class TiangongAgentRuntime {
       sessionStore,
       evidence,
       idempotencyStore,
+      pendingOperationStore,
       turns,
       registry,
       provider: request.provider,
@@ -205,6 +195,7 @@ export class TiangongAgentRuntime {
     }
 
     const wasCompleted = checkpoint.status === "completed";
+    const recovered = await state.pendingOperationStore.load(match.key, checkpoint);
     await state.idempotencyStore.approve(match.key, {
       operationDigest: checkpoint.operationDigest,
       approvedBy: actorId,
@@ -220,7 +211,7 @@ export class TiangongAgentRuntime {
     });
     const definition = state.registry.definitions().find((tool) => tool.name === checkpoint.toolName);
     if (!definition) throw new Error("Approved tool is no longer registered");
-    const params = findToolArguments(state, checkpoint.toolCallId);
+    const params = recovered.arguments;
     state.turns.begin({
       sessionId: checkpoint.sessionId,
       turnId: checkpoint.turnId,

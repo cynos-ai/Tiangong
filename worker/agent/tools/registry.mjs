@@ -46,6 +46,7 @@ export function createCoreToolRegistry({
   gate,
   evidence,
   idempotencyStore,
+  pendingOperationStore,
   getInvocation,
 }) {
   const registry = new TiangongToolRegistry();
@@ -68,6 +69,7 @@ export function createCoreToolRegistry({
     gate,
     evidence,
     idempotencyStore,
+    pendingOperationStore,
     getInvocation,
     sideEffect: true,
     lifecycle: write.lifecycle,
