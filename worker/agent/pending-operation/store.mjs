@@ -1,4 +1,4 @@
-import { lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -169,7 +169,7 @@ export class PendingOperationStore {
     const directory = this.#operationDirectory(key);
     const envelopePath = join(directory, ENVELOPE_FILE);
     const contentPath = join(directory, CONTENT_FILE);
-    const [directoryEntry, envelopeEntry, contentEntry] = await Promise.all([
+    let [directoryEntry, envelopeEntry, contentEntry] = await Promise.all([
       lstat(directory),
       lstat(envelopePath),
       lstat(contentPath),
@@ -177,8 +177,24 @@ export class PendingOperationStore {
     if (!directoryEntry.isDirectory() || !envelopeEntry.isFile() || !contentEntry.isFile()) {
       throw new Error("Pending operation storage contains an unexpected file type");
     }
+    let permissionsRepaired = false;
     if ([directoryEntry, envelopeEntry, contentEntry].some((entry) => (entry.mode & 0o077) !== 0)) {
-      throw new Error("Pending operation storage permissions are too broad");
+      await Promise.all([
+        chmod(directory, 0o700),
+        chmod(envelopePath, 0o600),
+        chmod(contentPath, 0o600),
+      ]);
+      [directoryEntry, envelopeEntry, contentEntry] = await Promise.all([
+        lstat(directory),
+        lstat(envelopePath),
+        lstat(contentPath),
+      ]);
+      if ((directoryEntry.mode & 0o077) !== 0 ||
+          (envelopeEntry.mode & 0o077) !== 0 ||
+          (contentEntry.mode & 0o077) !== 0) {
+        throw new Error("Pending operation storage permissions cannot be restricted");
+      }
+      permissionsRepaired = true;
     }
     const envelope = validateEnvelope(
       JSON.parse(await readFile(envelopePath, "utf8")),
@@ -189,7 +205,7 @@ export class PendingOperationStore {
         Buffer.byteLength(content) !== envelope.payload.contentBytes) {
       throw new Error("Pending operation payload integrity check failed");
     }
-    return { envelope, content };
+    return { envelope, content, permissionsRepaired };
   }
 
   async put(checkpoint, params) {
@@ -225,11 +241,22 @@ export class PendingOperationStore {
     return structuredClone(envelope);
   }
 
+  async remove(key) {
+    const directory = this.#operationDirectory(validateKey(key));
+    await rm(directory, { recursive: true, force: true });
+    try {
+      await syncDirectory(this.#directory);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+
   async load(key, expected) {
-    const { envelope, content } = await this.#read(validateKey(key));
+    const { envelope, content, permissionsRepaired } = await this.#read(validateKey(key));
     assertExpected(envelope, expected);
     return {
       envelope: structuredClone(envelope),
+      permissionsRepaired,
       arguments: {
         path: envelope.operation.target,
         content,

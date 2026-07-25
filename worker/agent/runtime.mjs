@@ -17,7 +17,11 @@ import { PolicyGate } from "./gates/policy-gate.mjs";
 import { IdempotencyStore } from "./idempotency/store.mjs";
 import { ModelGateway } from "./model-gateway.mjs";
 import { PendingOperationStore } from "./pending-operation/store.mjs";
-import { defaultStateDirectory, PersistentSessionStore } from "./session-store.mjs";
+import {
+  assertSessionCapacity,
+  defaultStateDirectory,
+  PersistentSessionStore,
+} from "./session-store.mjs";
 import { createCoreToolRegistry } from "./tools/registry.mjs";
 import { createTurnResult } from "./turn-contract.mjs";
 import { TurnContextController } from "./turn-context.mjs";
@@ -182,6 +186,19 @@ export class TiangongAgentRuntime {
         operationDigest: checkpoint.operationDigest,
         actorId,
       });
+      try {
+        await state.pendingOperationStore.remove(match.key);
+      } catch {
+        await state.evidence.append({
+          type: "operation.payload_cleanup_deferred",
+          sessionId: checkpoint.sessionId,
+          turnId: checkpoint.turnId,
+          toolCallId: checkpoint.toolCallId,
+          approvalId: checkpoint.approvalId,
+          operationDigest: checkpoint.operationDigest,
+          idempotencyKey: match.key,
+        }).catch(() => {});
+      }
       const text = approvalOutcomeText("reject", checkpoint);
       appendControlMessage(state, text, {
         approvalId: checkpoint.approvalId,
@@ -192,7 +209,9 @@ export class TiangongAgentRuntime {
     }
 
     const wasCompleted = checkpoint.status === "completed";
-    const recovered = await state.pendingOperationStore.load(match.key, checkpoint);
+    const recovered = wasCompleted
+      ? undefined
+      : await state.pendingOperationStore.load(match.key, checkpoint);
     await state.idempotencyStore.approve(match.key, {
       operationDigest: checkpoint.operationDigest,
       approvedBy: actorId,
@@ -206,6 +225,26 @@ export class TiangongAgentRuntime {
       operationDigest: checkpoint.operationDigest,
       actorId,
     });
+    if (wasCompleted) {
+      await state.evidence.append({
+        type: "tool.execution.replayed",
+        sessionId: checkpoint.sessionId,
+        turnId: checkpoint.turnId,
+        actorId,
+        toolCallId: checkpoint.toolCallId,
+        toolName: checkpoint.toolName,
+        operationDigest: checkpoint.operationDigest,
+        idempotencyKey: match.key,
+      });
+      const text = approvalOutcomeText("approve", checkpoint, true);
+      appendControlMessage(state, text, {
+        approvalId: checkpoint.approvalId,
+        operationDigest: checkpoint.operationDigest,
+        outcome: "replayed",
+      });
+      return createTurnResult({ text, hadPotentialSideEffects: true });
+    }
+
     const definition = state.registry.definitions().find((tool) => tool.name === checkpoint.toolName);
     if (!definition) throw new Error("Approved tool is no longer registered");
     const params = recovered.arguments;
@@ -243,6 +282,7 @@ export class TiangongAgentRuntime {
     const command = parseApprovalCommand(request.prompt);
     if (command) return this.#handleApproval(request, state, command);
 
+    assertSessionCapacity(state.sessionManager.getEntries(), request.prompt);
     state.session.setActiveToolsByName(request.toolsEnabled ? state.registry.names() : []);
     let finalMessage;
     const unsubscribe = state.session.subscribe((event) => {

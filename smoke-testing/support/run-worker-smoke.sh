@@ -295,5 +295,10 @@ printf 'write_execution_count=%s\nwrite_replay_count=%s\n' \
 [[ "${execution_count}" == "1" && "${replay_count}" == "1" ]] || \
   die "Approval replay was not exactly once."
 printf 'matrix_write_exactly_once=pass\n'
+if docker exec "${CONTAINER_NAME}" find \
+  "${agent_root}/.tiangong/runtime/sessions" -type f -name write-content -print -quit | grep -q .; then
+  die "Terminal write payload was not removed."
+fi
+printf 'terminal_write_payload_cleanup=pass\n'
 
 log "Upstream Matrix, Worker-scoped gateway, and Tiangong pi harness passed."

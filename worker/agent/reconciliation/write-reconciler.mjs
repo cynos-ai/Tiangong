@@ -212,6 +212,18 @@ export class WriteReconciler {
       resolution: inspection.resolution,
       status: updated.status,
     });
+    if (inspection.resolution === "applied") {
+      try {
+        await this.#pendingOperationStore.remove(key);
+      } catch {
+        await this.#evidence.append({
+          type: "operation.payload_cleanup_deferred",
+          idempotencyKey: key,
+          operationDigest: inspection.operationDigest,
+          approvalId: inspection.approvalId,
+        }).catch(() => {});
+      }
+    }
     return { inspection, entry: updated };
   }
 }

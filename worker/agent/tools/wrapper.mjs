@@ -187,7 +187,12 @@ export function createGatedTool({
           try {
             await lifecycle?.commit?.(prepared);
           } catch {
-            await evidence.append({ type: "tool.rollback.cleanup_deferred", ...common });
+            await evidence.append({ type: "tool.rollback.cleanup_deferred", ...common }).catch(() => {});
+          }
+          try {
+            await pendingOperationStore.remove(key);
+          } catch {
+            await evidence.append({ type: "operation.payload_cleanup_deferred", ...common }).catch(() => {});
           }
         }
         return result;

@@ -19,7 +19,7 @@ COPY agent/ ./agent/
 COPY plugin/ ./plugin/
 RUN node -e 'import("./plugin/index.mjs").then((module) => { if (module.default?.id !== "tiangong-pi") process.exit(1); })'
 
-COPY --chmod=755 bin/openclaw bin/tiangong-reconcile /opt/tiangong-worker/bin/
+COPY --chmod=755 bin/openclaw bin/tiangong-reconcile bin/tiangong-retain /opt/tiangong-worker/bin/
 
 ENV PATH="/opt/tiangong-worker/bin:/opt/tiangong-worker/node_modules/.bin:${PATH}" \
     OPENCLAW_AGENT_HARNESS_FALLBACK=none \

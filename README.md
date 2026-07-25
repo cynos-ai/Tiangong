@@ -116,6 +116,21 @@ docker exec agentteams-worker-<worker> \
 
 Container execution access is the actual authority for this local command; `--actor` is bounded audit attribution, not an authentication mechanism. The CLI is not exposed to the model because `bash` and external tools remain disabled. Lowering `--minimum-age-seconds` is an explicit operator action and is unsafe unless the prior executor is independently known to be dead.
 
+### Runtime retention
+
+Raw pending write payloads are removed after successful completion, rejection, or an applied reconciliation outcome. They remain available for `pending`, `approved`, `executing`, `failed`, and conflict states because recovery still requires them.
+
+Completed and rejected idempotency metadata has a 90-day exactly-once replay window. Expiration is never automatic: an operator first reports eligible records, then explicitly confirms compaction. Each removed record is summarized in Evidence before deletion.
+
+```bash
+docker exec agentteams-worker-<worker> tiangong-retain report
+
+docker exec agentteams-worker-<worker> tiangong-retain compact \
+  --actor <operator-id> --confirm expire-90-day-replay-window
+```
+
+Evidence rotates at 16 MiB into ordered segments whose ranges and terminal hashes remain linked to the next active segment; it is not automatically deleted. Session transcripts reject new model turns at 10,000 persisted entries or 32 MiB and require an explicit session reset. Approval/rejection control commands remain available at that capacity so an outstanding operation is not stranded.
+
 ### Local security model
 
 > [!WARNING]
