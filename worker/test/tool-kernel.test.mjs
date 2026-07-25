@@ -124,8 +124,11 @@ test("pending write survives restart, executes once after approval, and replays 
 
   kernel = createKernel(paths);
   const completed = await kernel.store.get(pending.details.idempotencyKey);
-  const recoveredReplay = await kernel.pendingOperations.load(pending.details.idempotencyKey, completed);
-  const replay = await execute(kernel, { ...invocation, params: recoveredReplay.arguments });
+  await assert.rejects(
+    kernel.pendingOperations.load(pending.details.idempotencyKey, completed),
+    { code: "ENOENT" },
+  );
+  const replay = await execute(kernel, invocation);
   assert.equal(replay.details.replayed, true);
   const records = await kernel.evidence.readAll();
   assert.equal(records.filter((record) =>
@@ -243,7 +246,12 @@ test("write rolls back when durable completion evidence fails", async (t) => {
 
   await assert.rejects(execute(kernel, invocation), /injected evidence failure/u);
   await assert.rejects(readFile(join(paths.workspaceDir, "rollback.txt")), { code: "ENOENT" });
-  assert.equal((await kernel.store.get(pending.details.idempotencyKey)).status, "failed");
+  const failed = await kernel.store.get(pending.details.idempotencyKey);
+  assert.equal(failed.status, "failed");
+  assert.deepEqual(
+    (await kernel.pendingOperations.load(pending.details.idempotencyKey, failed)).arguments,
+    invocation.params,
+  );
   const records = await recorder.readAll();
   const completion = records.find((record) =>
     record.type === "tool.execution.completed" && record.status === "error");

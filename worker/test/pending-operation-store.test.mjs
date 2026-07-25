@@ -85,6 +85,13 @@ test("pending write envelope and protected payload survive store restart", async
 
   const duplicate = await store.put(pending.checkpoint, pending.params);
   assert.equal(duplicate.createdAt, envelope.createdAt);
+
+  await store.remove(pending.checkpoint.idempotencyKey);
+  await assert.rejects(
+    store.load(pending.checkpoint.idempotencyKey, pending.checkpoint),
+    { code: "ENOENT" },
+  );
+  await store.remove(pending.checkpoint.idempotencyKey);
 });
 
 test("pending write payload tampering is rejected", async (t) => {
@@ -105,10 +112,9 @@ test("pending write payload tampering is rejected", async (t) => {
   const payloadPath = join(paths.directory, pending.checkpoint.idempotencyKey, "write-content");
   await writeFile(payloadPath, pending.params.content);
   await chmod(payloadPath, 0o644);
-  await assert.rejects(
-    store.load(pending.checkpoint.idempotencyKey, pending.checkpoint),
-    /permissions are too broad/u,
-  );
+  const repaired = await store.load(pending.checkpoint.idempotencyKey, pending.checkpoint);
+  assert.equal(repaired.permissionsRepaired, true);
+  assert.equal(await mode(payloadPath), 0o600);
 });
 
 test("pending operation identity and payload must match the approved operation", async (t) => {

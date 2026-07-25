@@ -4,7 +4,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { PersistentSessionStore } from "../agent/session-store.mjs";
+import {
+  assertSessionCapacity,
+  PersistentSessionStore,
+} from "../agent/session-store.mjs";
+
+test("session capacity rejects new model turns before unbounded growth", () => {
+  assert.deepEqual(assertSessionCapacity([], "hello", { maxEntries: 2, maxBytes: 100 }), {
+    entries: 0,
+    bytes: 7,
+  });
+  assert.throws(
+    () => assertSessionCapacity([{}, {}], "hello", { maxEntries: 2, maxBytes: 100 }),
+    /entry capacity reached/u,
+  );
+  assert.throws(
+    () => assertSessionCapacity([], "too large", { maxEntries: 2, maxBytes: 5 }),
+    /byte capacity reached/u,
+  );
+});
 
 test("pi session transcript reopens from the Tiangong state directory", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "tiangong-session-store-"));

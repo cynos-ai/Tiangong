@@ -18,6 +18,7 @@ Use these rules for credentials, logs, Evidence, approvals, dependencies, and ex
 - Record proposal, Gate decision, execution start, execution completion, replay, rollback, and failure as distinct events when applicable.
 - Evidence may include normalized operation metadata and content digests; it must not include credentials or raw write content.
 - Validate an Evidence chain before appending or trusting it. Do not repair tampering silently.
+- Evidence rotation must preserve sequence continuity and terminal-hash linkage across segments. Never delete Evidence automatically; export and explicit retention approval are required.
 
 ## Authorization and side effects
 
@@ -25,7 +26,8 @@ Use these rules for credentials, logs, Evidence, approvals, dependencies, and ex
 - The Channel Plane may authenticate an actor identity, but Tiangong must own approval roles and must not treat an upstream owner boolean as sufficient authorization.
 - Approval text must be generated from machine operation fields, not model prose.
 - Pending approval must not block a Matrix turn. Persist it and validate a later command independently of the model.
-- Completed operations replay saved safe results without duplicate execution.
+- Completed operations replay saved safe results without duplicate execution within the declared replay window. Expiring that window must be explicit, auditable, and preceded by Evidence summarization.
+- Remove protected raw write payloads only after a terminal outcome no longer needs them; uncertain and conflict states retain their recovery material.
 - Treat an interrupted `executing` operation as outcome-uncertain until reconciliation proves its state.
 - Keep reconciliation outside model-accessible tools. Local container execution access is its authority; an operator-supplied actor label is audit attribution, not authentication.
 - External resources require explicit scope, ownership, cleanup, and user approval when the operation is destructive, costly, public, or irreversible.

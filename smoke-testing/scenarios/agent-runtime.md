@@ -45,6 +45,7 @@
   - approved file content equals the nonce;
   - replay returns the deterministic replay message;
   - the Evidence chain associated with that approval contains one `tool.execution.started` and one `tool.execution.replayed`;
+  - the terminal protected `write-content` payload is removed before cleanup;
   - temporary Worker and its exact MinIO prefix are removed.
 - Required evidence: pending/approve/replay Matrix event IDs, file-content check, approval-specific Evidence path, execution/replay counts, Worker absence, and empty reserved MinIO prefix.
 - Skip/block rules: block rather than approve if the sender identity, operation digest, original tool call, persistent checkpoint, or Matrix readiness cannot be verified. Never inspect or delete storage outside the exact reserved Worker prefix.
@@ -73,6 +74,18 @@
   - independent runtime/CLI writers serialize idempotency mutations and Evidence appends without stale-cache overwrite or hash-chain fork.
 - Required Evidence: `operation.reconciliation.decided` followed by `operation.reconciliation.state_updated`; neither event may claim an observed tool execution or contain raw write content.
 - Verification layer: deterministic Worker tests plus image-level `tiangong-reconcile --help`; this is not yet a Matrix Full-smoke phase.
+
+### R2: Runtime retention boundaries
+
+- Purpose: Bound sensitive payload, terminal idempotency, Evidence-file, and transcript growth without silently weakening recovery or auditability.
+- Required outcomes:
+  - completed/rejected/applied-reconciled payloads are removed; uncertain/conflict payloads remain;
+  - only completed/rejected records older than 90 days are eligible for explicitly confirmed compaction;
+  - compaction appends `retention.idempotency.expired` before removing active metadata;
+  - active/pending/approved/executing/failed records are not compacted;
+  - Evidence rotates at 16 MiB with continuous sequence, previous hash, segment range, and terminal hash verification;
+  - new model turns fail at transcript capacity while deterministic approval/rejection commands remain reachable.
+- Verification layer: deterministic Worker tests plus image-level `tiangong-retain --help`; Evidence segments are not automatically deleted.
 
 ## Maintenance notes
 

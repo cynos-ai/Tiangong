@@ -133,6 +133,10 @@ test("stale execution with desired content present becomes completed without re-
   assert.equal(result.entry.status, "completed");
   assert.equal(result.entry.replayResult.details.reconciled, true);
   await assert.rejects(
+    context.pendingOperationStore.load(context.checkpoint.idempotencyKey, result.entry),
+    { code: "ENOENT" },
+  );
+  await assert.rejects(
     readFile(join(context.rollbackDir, context.checkpoint.idempotencyKey, "metadata.json")),
     { code: "ENOENT" },
   );

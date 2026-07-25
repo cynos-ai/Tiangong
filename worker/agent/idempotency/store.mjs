@@ -13,6 +13,18 @@ function requiredString(value, name) {
   return value;
 }
 
+function terminalTimestamp(entry) {
+  if (entry.status === "completed") return entry.completedAt;
+  if (entry.status === "rejected") return entry.rejection?.rejectedAt;
+  return undefined;
+}
+
+function parseCutoff(value) {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) throw new TypeError("before must be an ISO timestamp");
+  return timestamp;
+}
+
 function normalizeReconciliationObservation(observation) {
   if (typeof observation?.targetExisted !== "boolean" ||
       !Number.isSafeInteger(observation.targetBytes) || observation.targetBytes < 0 ||
@@ -120,6 +132,40 @@ export class IdempotencyStore {
     if (matches.length === 0) return undefined;
     const [key, entry] = matches[0];
     return { key, entry: structuredClone(entry) };
+  }
+
+  async listTerminalBefore(before) {
+    await this.#queue;
+    await this.#reload();
+    const cutoff = parseCutoff(before);
+    return Object.entries(this.#state.entries)
+      .filter(([, entry]) => {
+        const terminalAt = terminalTimestamp(entry);
+        const terminalMilliseconds = Date.parse(terminalAt ?? "");
+        return Number.isFinite(terminalMilliseconds) && terminalMilliseconds <= cutoff;
+      })
+      .map(([key, entry]) => ({ key, entry: structuredClone(entry), terminalAt: terminalTimestamp(entry) }));
+  }
+
+  async removeTerminalBefore(key, before) {
+    const cutoff = parseCutoff(before);
+    return this.#mutate((entries) => {
+      const entry = entries[key];
+      const terminalAt = entry && terminalTimestamp(entry);
+      const terminalMilliseconds = Date.parse(terminalAt ?? "");
+      if (!terminalAt || !Number.isFinite(terminalMilliseconds) || terminalMilliseconds > cutoff) {
+        throw new Error("Operation is not an expired terminal record");
+      }
+      const summary = {
+        key,
+        status: entry.status,
+        operationDigest: entry.operationDigest,
+        approvalId: entry.approvalId,
+        terminalAt,
+      };
+      delete entries[key];
+      return summary;
+    });
   }
 
   async putPending(key, value) {

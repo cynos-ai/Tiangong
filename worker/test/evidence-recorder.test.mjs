@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { EvidenceRecorder } from "../agent/evidence/recorder.mjs";
@@ -41,6 +41,23 @@ test("independent recorder instances serialize without forking the hash chain", 
   assert.equal(third.sequence, 3);
   assert.equal(third.previousHash, second.hash);
   assert.equal((await secondProcess.readAll()).length, 3);
+});
+
+test("Evidence rotates into hash-linked segments without breaking verification", async (t) => {
+  const filePath = await evidenceFixture(t);
+  const recorder = new EvidenceRecorder({ filePath, maxSegmentBytes: 1 });
+  await recorder.append({ type: "one" });
+  await recorder.append({ type: "two" });
+  await recorder.append({ type: "three" });
+
+  const files = await readdir(dirname(filePath));
+  assert.equal(files.filter((name) => name.includes(".segment-")).length, 2);
+  const restarted = new EvidenceRecorder({ filePath, maxSegmentBytes: 1 });
+  const records = await restarted.readAll();
+  assert.deepEqual(records.map((entry) => entry.type), ["one", "two", "three"]);
+  assert.deepEqual(records.map((entry) => entry.sequence), [1, 2, 3]);
+  assert.equal(records[1].previousHash, records[0].hash);
+  assert.equal(records[2].previousHash, records[1].hash);
 });
 
 test("evidence tampering is detected before append", async (t) => {

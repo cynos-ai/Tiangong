@@ -39,6 +39,11 @@ grep -Fq 'tiangong-reconcile inspect' <<<"${reconciliation_help}" || {
   printf 'ERROR: the Worker reconciliation entrypoint is unavailable.\n' >&2
   exit 1
 }
+retention_help="$(docker run --rm --entrypoint tiangong-retain "${IMAGE}" --help)"
+grep -Fq 'tiangong-retain compact' <<<"${retention_help}" || {
+  printf 'ERROR: the Worker retention entrypoint is unavailable.\n' >&2
+  exit 1
+}
 
 printf '[Tiangong] Worker image ready: %s (Node.js %s, pi %s)\n' \
   "${IMAGE}" "${actual_node_version}" "${actual_pi_version}"
