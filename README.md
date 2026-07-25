@@ -99,6 +99,23 @@ make build-worker-image
 docker run --rm --entrypoint pi tiangong-worker:dev --version
 ```
 
+### Interrupted write reconciliation
+
+An interrupted `executing` or `failed` write remains fail-closed until an operator reconciles its observed outcome. The operator-only CLI accepts the user-visible approval identifier or the internal idempotency key:
+
+```bash
+docker exec agentteams-worker-<worker> \
+  tiangong-reconcile inspect <approval-id-or-idempotency-key>
+
+docker exec agentteams-worker-<worker> \
+  tiangong-reconcile resolve <approval-id-or-idempotency-key> \
+  --actor <operator-id> --reason-code STALE_WORKER_EXECUTION
+```
+
+`resolve` defaults to a five-minute minimum age for `executing` state and never blindly retries. It validates the protected pending payload, workspace scope, current target digest, approved precondition, and rollback snapshot. If the approved content is already present, it records the outcome as completed; if the exact precondition remains, it restores approved state so the original requester can explicitly replay `APPROVE <approval-id>`; any other or invalid observation records a conflict and stays blocked. Reconciliation records separate Evidence events rather than claiming that an execution was observed.
+
+Container execution access is the actual authority for this local command; `--actor` is bounded audit attribution, not an authentication mechanism. The CLI is not exposed to the model because `bash` and external tools remain disabled. Lowering `--minimum-age-seconds` is an explicit operator action and is unsafe unless the prior executor is independently known to be dead.
+
 ### Local security model
 
 > [!WARNING]

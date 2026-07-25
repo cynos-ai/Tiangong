@@ -26,6 +26,23 @@ test("evidence hash chain continues across recorder restart", async (t) => {
   assert.equal((await recorder.readAll()).length, 2);
 });
 
+test("independent recorder instances serialize without forking the hash chain", async (t) => {
+  const filePath = await evidenceFixture(t);
+  const firstProcess = new EvidenceRecorder({ filePath });
+  const secondProcess = new EvidenceRecorder({ filePath });
+
+  const first = await firstProcess.append({ type: "one" });
+  const second = await secondProcess.append({ type: "two" });
+  const third = await firstProcess.append({ type: "three" });
+
+  assert.equal(first.sequence, 1);
+  assert.equal(second.sequence, 2);
+  assert.equal(second.previousHash, first.hash);
+  assert.equal(third.sequence, 3);
+  assert.equal(third.previousHash, second.hash);
+  assert.equal((await secondProcess.readAll()).length, 3);
+});
+
 test("evidence tampering is detected before append", async (t) => {
   const filePath = await evidenceFixture(t);
   const recorder = new EvidenceRecorder({ filePath });

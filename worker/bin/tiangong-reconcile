@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+set -eu
+
+exec node /opt/tiangong-worker/agent/reconciliation/cli.mjs "$@"

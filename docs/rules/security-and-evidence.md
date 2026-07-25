@@ -27,6 +27,7 @@ Use these rules for credentials, logs, Evidence, approvals, dependencies, and ex
 - Pending approval must not block a Matrix turn. Persist it and validate a later command independently of the model.
 - Completed operations replay saved safe results without duplicate execution.
 - Treat an interrupted `executing` operation as outcome-uncertain until reconciliation proves its state.
+- Keep reconciliation outside model-accessible tools. Local container execution access is its authority; an operator-supplied actor label is audit attribution, not authentication.
 - External resources require explicit scope, ownership, cleanup, and user approval when the operation is destructive, costly, public, or irreversible.
 
 ## Dependencies and distribution

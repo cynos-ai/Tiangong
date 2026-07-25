@@ -33,6 +33,8 @@ Use these rules for `worker/`, AgentTeams/OpenClaw integration, tools, Gate, app
 - Bind approval to requester or an explicit Tiangong-owned owner policy and require the same operation digest. Until that policy exists, only the requester may approve or reject.
 - Never reconstruct authorization from a natural-language summary.
 - Do not automatically retry an `executing` operation after a crash. Reconcile first.
+- Time only establishes a stale-candidate threshold; determine reconciliation from the protected payload, workspace scope, target digest, approved precondition, and rollback snapshot.
+- Record reconciliation decisions separately from execution Evidence. An applied outcome may become completed, an unchanged precondition may return to approved for explicit requester replay, and a conflict must remain blocked.
 
 ## Verification
 

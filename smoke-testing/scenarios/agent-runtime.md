@@ -59,6 +59,21 @@
 - Required evidence: `approval.rejected`, rejected idempotency state, absent target, zero matching execution-start records.
 - Skip/block rules: currently blocked until the automated full-smoke helper gains a rejection phase. Do not infer rejection coverage from the approval test.
 
+## Deterministic recovery fixtures
+
+### R1: Interrupted write reconciliation
+
+- Purpose: Prove that stale `executing` and known `failed` writes never retry from elapsed time alone and have an operator recovery entry.
+- Inputs: protected pending envelope/payload, target observation, approved precondition, rollback snapshot, and stable operator reason code.
+- Required outcomes:
+  - unchanged precondition → `approved`, requiring explicit requester replay;
+  - approved content already present → `completed` with a safe replay result and no backend execution;
+  - unexpected target or invalid snapshot → conflict recorded while the original status remains fail-closed;
+  - recent `executing` state → reconciliation denied by the stale threshold;
+  - independent runtime/CLI writers serialize idempotency mutations and Evidence appends without stale-cache overwrite or hash-chain fork.
+- Required Evidence: `operation.reconciliation.decided` followed by `operation.reconciliation.state_updated`; neither event may claim an observed tool execution or contain raw write content.
+- Verification layer: deterministic Worker tests plus image-level `tiangong-reconcile --help`; this is not yet a Matrix Full-smoke phase.
+
 ## Maintenance notes
 
 - **Current status (2026-07-25)**: F1 passes with a Tiangong-owned, versioned pending-operation envelope and protected write payload. Deterministic tests reopen the store, validate invocation/digest binding, reject payload tampering and broad permissions, execute once after approval, and replay safely. The real Matrix Full smoke passes pending → Worker restart → approval → write → replay with `tool.execution.started=1`, `tool.execution.replayed=1`, and cleanup proof.

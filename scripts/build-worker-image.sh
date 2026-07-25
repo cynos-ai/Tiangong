@@ -34,5 +34,11 @@ actual_pi_version="$(docker run --rm --entrypoint pi "${IMAGE}" --version)"
   exit 1
 }
 
+reconciliation_help="$(docker run --rm --entrypoint tiangong-reconcile "${IMAGE}" --help)"
+grep -Fq 'tiangong-reconcile inspect' <<<"${reconciliation_help}" || {
+  printf 'ERROR: the Worker reconciliation entrypoint is unavailable.\n' >&2
+  exit 1
+}
+
 printf '[Tiangong] Worker image ready: %s (Node.js %s, pi %s)\n' \
   "${IMAGE}" "${actual_node_version}" "${actual_pi_version}"

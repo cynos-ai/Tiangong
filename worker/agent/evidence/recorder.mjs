@@ -2,6 +2,7 @@ import { mkdir, open, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { canonicalJson, sha256 } from "../canonical-json.mjs";
+import { withFileLock } from "../persistence/file-lock.mjs";
 
 const GENESIS_HASH = "0".repeat(64);
 
@@ -16,7 +17,6 @@ function verifyRecord(record, expectedSequence, previousHash) {
 export class EvidenceRecorder {
   #filePath;
   #clock;
-  #initialized = false;
   #sequence = 0;
   #previousHash = GENESIS_HASH;
   #queue = Promise.resolve();
@@ -31,8 +31,7 @@ export class EvidenceRecorder {
     return this.#filePath;
   }
 
-  async initialize() {
-    if (this.#initialized) return;
+  async #reload() {
     await mkdir(dirname(this.#filePath), { recursive: true, mode: 0o700 });
     let text = "";
     try {
@@ -41,16 +40,20 @@ export class EvidenceRecorder {
       if (error?.code !== "ENOENT") throw error;
     }
 
-    const lines = text.split("\n").filter(Boolean);
+    const records = text.split("\n").filter(Boolean).map((line) => JSON.parse(line));
     let previousHash = GENESIS_HASH;
-    for (const [index, line] of lines.entries()) {
-      const record = JSON.parse(line);
+    for (const [index, record] of records.entries()) {
       verifyRecord(record, index + 1, previousHash);
       previousHash = record.hash;
     }
-    this.#sequence = lines.length;
+    this.#sequence = records.length;
     this.#previousHash = previousHash;
-    this.#initialized = true;
+    return records;
+  }
+
+  async initialize() {
+    await this.#queue;
+    await withFileLock(this.#filePath, () => this.#reload());
   }
 
   async append(event) {
@@ -58,8 +61,8 @@ export class EvidenceRecorder {
       if (Object.hasOwn(event, field)) throw new Error(`Evidence event cannot set reserved field: ${field}`);
     }
     if (typeof event.type !== "string" || event.type === "") throw new TypeError("Evidence event type is required");
-    const operation = this.#queue.then(async () => {
-      await this.initialize();
+    const operation = this.#queue.then(() => withFileLock(this.#filePath, async () => {
+      await this.#reload();
       const unsigned = {
         ...event,
         version: 1,
@@ -78,18 +81,13 @@ export class EvidenceRecorder {
       this.#sequence = record.sequence;
       this.#previousHash = record.hash;
       return record;
-    });
+    }));
     this.#queue = operation.catch(() => {});
     return operation;
   }
 
   async readAll() {
     await this.#queue;
-    await this.initialize();
-    const text = await readFile(this.#filePath, "utf8").catch((error) => {
-      if (error?.code === "ENOENT") return "";
-      throw error;
-    });
-    return text.split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    return withFileLock(this.#filePath, () => this.#reload());
   }
 }
