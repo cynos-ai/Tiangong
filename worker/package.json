@@ -1,0 +1,21 @@
+{
+  "name": "tiangong-worker-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Tiangong Worker image runtime dependencies",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "patch-dependencies": "node scripts/patch-dependencies.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.82.0",
+    "brace-expansion": "5.0.8"
+  },
+  "overrides": {
+    "brace-expansion": "$brace-expansion"
+  }
+}

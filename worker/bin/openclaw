@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly UPSTREAM_OPENCLAW="/usr/local/bin/openclaw"
+readonly PLUGIN_ID="tiangong-pi"
+readonly PLUGIN_PATH="/opt/tiangong-worker/plugin"
+
+configure_tiangong_plugin() {
+  local config_file temporary_file
+  config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
+  [[ -f "${config_file}" ]] || {
+    printf '[tiangong-worker] ERROR: OpenClaw config not found: %s\n' "${config_file}" >&2
+    return 1
+  }
+
+  temporary_file="$(mktemp "${config_file}.tiangong.XXXXXX")"
+  trap 'rm -f "${temporary_file:-}"' RETURN
+  jq --arg plugin_id "${PLUGIN_ID}" --arg plugin_path "${PLUGIN_PATH}" '
+    .plugins = (.plugins // {})
+    | .plugins.load = (.plugins.load // {})
+    | .plugins.load.paths = ([((.plugins.load.paths // [])[]), $plugin_path] | unique)
+    | .plugins.entries = (.plugins.entries // {})
+    | .plugins.entries[$plugin_id] = ((.plugins.entries[$plugin_id] // {}) + {enabled: true})
+    | if (.plugins.allow | type) == "array" then
+        .plugins.allow = ([.plugins.allow[], $plugin_id] | unique)
+      else . end
+  ' "${config_file}" >"${temporary_file}"
+  chmod 600 "${temporary_file}"
+  mv "${temporary_file}" "${config_file}"
+  trap - RETURN
+}
+
+if [[ "${1:-}" == "gateway" && "${2:-}" == "run" ]]; then
+  configure_tiangong_plugin
+  printf '[tiangong-worker] Starting upstream OpenClaw with the Tiangong pi harness.\n' >&2
+fi
+
+exec "${UPSTREAM_OPENCLAW}" "$@"

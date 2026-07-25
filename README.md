@@ -3,11 +3,123 @@
 Tiangong is an evidence-backed AI software engineering team built on [AgentTeams](https://github.com/agentscope-ai/AgentTeams).
 
 > [!NOTE]
-> The project is currently being initialized. No runtime or product code has been published yet.
+> The project is being initialized. The current runnable scope bootstraps the upstream AgentTeams collaboration layer and provides a minimal Matrix-to-pi Worker runtime. The broader Tiangong product experience is not implemented yet.
 
 ## Vision
 
 Tiangong coordinates specialized software-engineering agents while requiring completion claims to be backed by captured evidence, independent verification, and explicit approval for high-risk actions.
+
+## Local AgentTeams quick start
+
+The bootstrap is pinned to the public AgentTeams `v1.2.0-beta.1` prerelease and verifies the upstream installer checksum before execution. Container images are still resolved by upstream tags rather than immutable digests, so this is not a fully reproducible or supply-chain-hermetic deployment.
+
+### Prerequisites
+
+- Linux or macOS
+- Bash
+- Docker with a running daemon
+- `curl` and `make`
+- An API key for Alibaba Cloud Coding Plan or another OpenAI-compatible LLM provider
+- At least 4 CPU cores and 8 GiB of memory recommended for Manager plus a small team
+
+### Configure
+
+```bash
+make init
+```
+
+Edit the generated `.env` and set at least:
+
+```dotenv
+AGENTTEAMS_LLM_API_KEY=your-api-key
+```
+
+The defaults use Alibaba Cloud Coding Plan with `qwen3.5-plus`. To use another OpenAI-compatible provider, change `AGENTTEAMS_OPENAI_BASE_URL` and `AGENTTEAMS_DEFAULT_MODEL` as well.
+
+The configuration parser accepts one `KEY=VALUE` assignment per line; it does not execute shell syntax. Never commit `.env`.
+
+Generated credentials, the Manager workspace, the host-share directory, and the verified installer cache are fixed beneath the ignored `.runtime/agentteams/` directory. AgentTeams also creates the `tiangong-agentteams-data` Docker volume, `agentteams-*` containers, the `agentteams-net` network, and tagged container images outside the repository.
+
+### Start and verify readiness
+
+```bash
+make up
+make verify
+make login
+```
+
+Open the Element URL printed by `make login`. The command reports the local generated credential file but does not print the password itself.
+
+Common operations:
+
+```bash
+make status
+make logs                         # Manager logs
+make logs SERVICE=controller      # Controller logs
+make stop                         # Preserve data
+make start
+CONFIRM=delete-tiangong-agentteams-data make uninstall  # Delete the local stack and generated data
+```
+
+Run `make help` for the complete command list. Uninstall removes the Tiangong-owned AgentTeams containers, network, Docker volume, and `.runtime/agentteams/` tree after validating their fixed targets; it preserves `.env` and downloaded container images.
+
+### Pi-enabled Worker image smoke test
+
+The local Worker image extends the public AgentTeams `v1.2.0-beta.1` Worker image at an immutable digest, retains its Node.js `22.23.1` runtime, and installs the public MIT-licensed `@earendil-works/pi-coding-agent` package at exactly `0.82.0` from `worker/package-lock.json`.
+
+With AgentTeams running, choose the fast channel smoke or the full approval smoke:
+
+```bash
+make test-worker-image-basic  # Gateway, Matrix, persistent session, credential boundary
+make test-worker-image        # Also Gate, restart recovery, approval, replay, and Evidence
+```
+
+Both levels build `tiangong-worker:dev`, create the reserved temporary Worker `tiangong-pi-smoke` through the AgentTeams declarative API, and use the real Worker-scoped Gateway and Matrix room. The Basic smoke creates a disposable read fixture, requires one gated pi `read` through Matrix, validates an exact nonce response and matching Evidence, verifies persistent pi session creation, and checks that the Worker credential entered neither temporary model configuration nor the session transcript.
+
+The Full smoke additionally asks pi to propose a constrained workspace write, verifies that the file is absent while approval is pending, restarts the Worker, waits for Matrix readiness, approves through a later Matrix turn, checks the written nonce, replays the same approval, and requires approval-specific Evidence to show exactly one execution and one replay. Cross-Worker-restart approval recovery is a known stabilization area: it depends on locating the original tool call in the reopened pi transcript, which has no deterministic coverage yet, so `make test-worker-image` may fail at that phase until a Tiangong-owned pending-operation store replaces transcript recovery.
+
+Cleanup removes the temporary Worker and the exact MinIO prefix owned by the reserved smoke identity. It never operates on another Worker prefix. Provider credentials are not copied into the image, repository, model configuration, session, or Evidence.
+
+The Worker resource retains AgentTeams' supported `openclaw` runtime, Node.js version, entrypoint, and gateway. A narrow `openclaw` command wrapper injects the Tiangong plugin path into the generated configuration and then delegates to the upstream executable. OpenClaw continues to own Matrix, configuration retrieval, storage sync, re-login, readiness, channel policy, and reply delivery. Tiangong owns the pi harness and its future evidence, approval, Concern, and Gate behavior.
+
+The current runtime is intentionally constrained:
+
+- it claims only the Worker-scoped `agentteams-gateway` provider and disables OpenClaw's fallback to another agent harness;
+- OpenClaw parameters cross a stable Tiangong Turn DTO; provider credentials are non-enumerable request data and are injected into pi only in memory;
+- pi extensions, skills, prompt templates, and automatic repository context are disabled;
+- persistent sessions and hash-chained Evidence live under the Worker's AgentTeams-synchronized state directory;
+- only gated `read` and path-restricted, atomic `write` are active; `write` requires a subject-bound persisted approval, supports restart recovery, and blocks duplicate execution;
+- runtime state, credential-bearing paths, symlink traversal, workspace escape, image input, and `bash` are unavailable.
+
+To build and inspect the image without creating a Worker:
+
+```bash
+make build-worker-image
+docker run --rm --entrypoint pi tiangong-worker:dev --version
+```
+
+### Local security model
+
+> [!WARNING]
+> This bootstrap is not a host security boundary. AgentTeams `v1.2.0-beta.1` mounts the container-runtime socket into its embedded Controller so it can create the Manager and Workers. Control of that socket is effectively control of the host: a compromised Controller, Agent, tool call, or prompt-injection path may create privileged containers or mount arbitrary host paths. The `host-share` directory limits the ordinary Manager mount; it does not mitigate container-socket authority.
+
+- Web and management ports are forced to bind to localhost.
+- Matrix end-to-end encryption is disabled for the local agent collaboration flow.
+- Configuration and generated credential files use mode `600`.
+- Generated repository-local paths are fixed beneath `.runtime/agentteams/`; uninstall rejects altered generated targets.
+- Run untrusted workloads in a disposable VM or against a dedicated rootless/isolated container daemon, not on a sensitive workstation or shared production host.
+
+Do not expose this profile beyond one machine. A multi-user deployment requires a different, deliberately designed identity, TLS, storage, network, secret-management, and container-isolation model.
+
+## Maintainer Skills
+
+Portable project Skills under [`.agents/skills/`](./.agents/skills/) guide Skill authoring and the design and execution of Tiangong smoke tests. They are maintainer workflows loaded only after project trust; they are not yet product Worker Skills.
+
+Validate their structure, public-safety checks, and trigger cases with:
+
+```bash
+make check-skills
+```
 
 ## Development
 
@@ -18,7 +130,7 @@ The repository uses a protected, Git Flow–lite workflow:
 - feature work is developed on short-lived branches and merged through pull requests;
 - releases follow Semantic Versioning.
 
-See [`AGENTS.md`](./AGENTS.md) for the current repository and release rules.
+See [`AGENTS.md`](./AGENTS.md) for repository instructions, [`CONTRIBUTING.md`](./CONTRIBUTING.md) for contribution workflow, and [`RELEASING.md`](./RELEASING.md) for releases.
 
 ## License
 
