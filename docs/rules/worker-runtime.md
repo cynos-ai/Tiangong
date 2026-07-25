@@ -30,7 +30,7 @@ Use these rules for `worker/`, AgentTeams/OpenClaw integration, tools, Gate, app
 
 - Persist pending approval as a versioned Tiangong operation envelope; do not depend permanently on an upstream transcript's internal representation.
 - Validate approval or rejection commands before entering the model loop.
-- Bind approval to requester or an explicit owner policy and require the same operation digest.
+- Bind approval to requester or an explicit Tiangong-owned owner policy and require the same operation digest. Until that policy exists, only the requester may approve or reject.
 - Never reconstruct authorization from a natural-language summary.
 - Do not automatically retry an `executing` operation after a crash. Reconcile first.
 

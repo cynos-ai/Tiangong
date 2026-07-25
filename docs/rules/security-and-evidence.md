@@ -22,6 +22,7 @@ Use these rules for credentials, logs, Evidence, approvals, dependencies, and ex
 ## Authorization and side effects
 
 - Authorization must bind actor, operation digest, policy version, workspace scope, and stable invocation identity.
+- The Channel Plane may authenticate an actor identity, but Tiangong must own approval roles and must not treat an upstream owner boolean as sufficient authorization.
 - Approval text must be generated from machine operation fields, not model prose.
 - Pending approval must not block a Matrix turn. Persist it and validate a later command independently of the model.
 - Completed operations replay saved safe results without duplicate execution.

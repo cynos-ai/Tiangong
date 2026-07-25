@@ -89,7 +89,7 @@ The current runtime is intentionally constrained:
 - pi extensions, skills, prompt templates, and automatic repository context are disabled;
 - persistent sessions and hash-chained Evidence live under the Worker's AgentTeams-synchronized state directory;
 - restartable writes persist a digest-bound operation envelope and a separate mode-`600` content payload under that state directory; raw write content never enters Evidence, but is visible to principals with Worker storage administration access and currently follows session-state retention;
-- only gated `read` and path-restricted, atomic `write` are active; `write` requires a subject-bound persisted approval, supports restart recovery, and blocks duplicate execution;
+- only gated `read` and path-restricted, atomic `write` are active; `write` requires persisted approval from the same authenticated Matrix sender that requested it, ignores upstream owner assertions for authorization, supports restart recovery, and blocks duplicate execution;
 - runtime state, credential-bearing paths, symlink traversal, workspace escape, image input, and `bash` are unavailable.
 
 To build and inspect the image without creating a Worker:

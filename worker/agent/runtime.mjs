@@ -12,6 +12,7 @@ import {
   approvalPrompt,
   parseApprovalCommand,
 } from "./gates/approval-command.mjs";
+import { assertApprovalSubject } from "./gates/approval-subject.mjs";
 import { PolicyGate } from "./gates/policy-gate.mjs";
 import { IdempotencyStore } from "./idempotency/store.mjs";
 import { ModelGateway } from "./model-gateway.mjs";
@@ -164,11 +165,7 @@ export class TiangongAgentRuntime {
     const match = await state.idempotencyStore.findApproval(command.approvalId);
     if (!match) throw new Error("Approval request not found");
     const checkpoint = match.entry;
-    const actorId = request.actor.id;
-    if (typeof actorId !== "string" || actorId === "") throw new Error("Approval subject is unavailable");
-    if (checkpoint.requestedBy !== actorId && request.actor.isOwner !== true) {
-      throw new Error("Approval subject is not authorized for this operation");
-    }
+    const actorId = assertApprovalSubject(checkpoint, request.actor.id);
 
     if (command.action === "reject") {
       await state.idempotencyStore.reject(match.key, {

@@ -23,7 +23,6 @@ export function createTurnRequest(input) {
     actor: {
       id: input.actor?.id ?? null,
       displayName: input.actor?.displayName ?? null,
-      isOwner: input.actor?.isOwner === true,
       channel: input.actor?.channel ?? null,
       messageId: input.actor?.messageId ?? null,
     },
