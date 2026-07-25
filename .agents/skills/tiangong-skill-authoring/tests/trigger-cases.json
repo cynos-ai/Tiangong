@@ -1,0 +1,12 @@
+{
+  "shouldTrigger": [
+    "Create a new Agent Skill for Tiangong.",
+    "Audit this SKILL.md and its bundled scripts.",
+    "Improve the trigger description for our smoke testing Skill."
+  ],
+  "shouldNotTrigger": [
+    "Run the existing Worker Full smoke.",
+    "Fix a failing JavaScript unit test.",
+    "Explain how Matrix approval recovery works."
+  ]
+}
