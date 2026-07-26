@@ -195,8 +195,26 @@ Only the final command creates the disposable Team and performs model turns.
 - Classification: released OpenClaw/Matrix wake boundary. Official channel health and stable lifecycle are necessary but do not prove that a specific visible mentioned event reached the Harness.
 - Exact cleanup passed. No further real-model run is permitted on this implementation without new lower-layer evidence.
 
+### Lower-layer source diagnosis after Attempt 11
+
+Read-only inspection of the pinned OpenClaw Matrix monitor narrows the unresolved interval:
+
+1. account visibility only proves the event is readable through the target account's Matrix credential;
+2. before dispatching to an Agent Harness, the monitor applies startup, dedupe, room, sender, bot, command, and mention filters and awaits Matrix room/member state lookups;
+3. the inspected call sites do not add a local timeout around those state lookups, while channel health is driven by the independent sync lifecycle;
+4. therefore a running, connected, healthy channel can coexist with a dropped event or a handler awaiting pre-Harness work. This is a candidate boundary, not a proven root cause.
+
+Draft PR #12 now writes a non-secret `status=running` Harness marker immediately on Harness entry, before awaiting the Tiangong turn, then replaces it with `pass` or `error`. The existing failure bundle already reports marker change and sanitized status. On a future evidence-justified run, the combined interpretation is:
+
+- target account cannot read the exact event: Matrix visibility/lower transport failure;
+- target account can read it, marker unchanged: OpenClaw filtering or pre-Harness handling boundary;
+- target account can read it, marker changed to `running`: Harness dispatch succeeded and the Tiangong/model turn remains in flight;
+- marker reaches `pass` or `error`: Harness completion is established separately from room delivery and nonce persistence.
+
+No Matrix trace flag, temporary image, prompt change, or additional model run was used to manufacture this distinction.
+
 ### Current result
 
 **BLOCKED.** Attempt 10 proves the previously missing Engineer ingress can succeed after active-channel stabilization, but Attempt 11 shows that the same released wake boundary can occur on the initial Admin → Coordinator event despite healthy stable channel state.
 
-Issue #11 / Draft PR #12 provide the deterministic target and one-reply correlation contract without modifying AgentTeams. The next action is lower-layer event-ingress diagnosis using the new per-target visibility facts; prompt changes or additional model retries cannot close this boundary.
+Issue #11 / Draft PR #12 provide the deterministic target, one-reply correlation, and pre-turn Harness ingress marker without modifying AgentTeams. The next action is one evidence-driven lower-layer run only after its diagnostic purpose is fixed in advance; repeated model retries cannot close this boundary.

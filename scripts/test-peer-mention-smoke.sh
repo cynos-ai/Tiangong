@@ -60,6 +60,8 @@ for required_runner_contract in \
   'coordinator_harness_before="$(harness_snapshot "${COORDINATOR_CONTAINER}")"' \
   'engineer_harness_before="$(harness_snapshot "${ENGINEER_CONTAINER}")"' \
   '[[ "${current}" != "${baseline}" ]]' \
+  "^(harness|provider|model|status)=" \
+  'Harness marker changed for %s' \
   '"${ENGINEER_ROOM_MEMBERS}" event-visible' \
   'openclaw channels status --json' \
   '.lastConnectedAt >= .lastStartAt' \

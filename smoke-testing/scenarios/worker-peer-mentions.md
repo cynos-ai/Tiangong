@@ -17,7 +17,7 @@
 | Peer pong | Engineer event contains the same nonce, Coordinator full MXID, and Coordinator in `m.mentions` | prose claiming Engineer received the event |
 | Terminal receipt | Coordinator emits a later terminal marker with the same nonce, does not mention a peer/Leader, and no peer message follows during the bounded grace window | observing only Coordinator's first turn or cleaning up before detecting a reply loop |
 | Leader silence | zero post-baseline Leader messages and unchanged stock Leader session snapshot | absence of a specific expected phrase |
-| Harness | both peer senders have a post-baseline changed, passing Tiangong Harness marker and persistent nonce-bearing session | a pre-existing marker, container health, or model self-identification alone |
+| Harness | both peer senders have a post-baseline changed, passing Tiangong Harness marker and persistent nonce-bearing session; on failure, a changed `status=running` marker distinguishes Harness entry from completion | a pre-existing marker, container health, or model self-identification alone |
 | Cleanup | exact Team, three members/containers, two aliases, helper copies, and four storage prefixes are absent | successful delete command alone or broad cleanup paths |
 
 ## Basic smoke
@@ -58,6 +58,7 @@
   - `peer_coordinator_harness=pass` and `peer_engineer_harness=pass`;
   - `matrix_peer_team_room_topology=pass`, `matrix_peer_channel_policy=pass`, and `matrix_peer_active_channel_stability=pass`;
   - on failure, sanitized target-account visibility facts for the exact Admin start and peer ping sender/nonce/visible MXID/`m.mentions`, without raw bodies or credentials;
+  - on failure, whether each Harness marker changed after the nonce baseline and its sanitized lifecycle status (`running`, `pass`, or `error`), without prompt, response, or credential data;
   - alias cleanup observations plus Team/member/container/storage absence.
 - Skip/block rules:
   - block if Docker, pinned AgentTeams, Matrix, Gateway model, reserved identity ownership, or public Worker image is unavailable;
@@ -80,3 +81,4 @@ No Full scenario is defined. Role authorization, Work Ledger, formal Assignment/
 - The global Admin is already a Team Room member under the released Team contract and sends only the initial event. All peer events must be emitted by the tested Worker Harnesses.
 - The initial body must not contain Engineer's full MXID because the released Matrix channel also recognizes full-MXID text as a mention fallback.
 - Model wording beyond stable markers is not asserted. Event sender, event ID, nonce, structured mentions, Harness markers, session state, and cleanup are separate machine observations.
+- Draft PR #12 writes `status=running` before invoking the Tiangong runtime and replaces it with `pass` or `error` at completion. Combined with target-account visibility, this separates Matrix readability, OpenClaw-to-Harness dispatch, and completed Tiangong turns without logging message bodies.
