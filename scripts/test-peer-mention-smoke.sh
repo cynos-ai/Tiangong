@@ -60,9 +60,13 @@ for required_runner_contract in \
   'coordinator_harness_before="$(harness_snapshot "${COORDINATOR_CONTAINER}")"' \
   'engineer_harness_before="$(harness_snapshot "${ENGINEER_CONTAINER}")"' \
   '[[ "${current}" != "${baseline}" ]]' \
-  '"${ENGINEER_ROOM_MEMBERS}" event-visible'; do
+  '"${ENGINEER_ROOM_MEMBERS}" event-visible' \
+  'openclaw channels status --json' \
+  '.lastConnectedAt >= .lastStartAt' \
+  '[[ "${policy_after}" == "${policy_before}" ]]' \
+  '[[ "$(jq -r '\''.lastStartAt'\'' <<<"${status_after}")" =='; do
   grep -Fq -- "${required_runner_contract}" "${RUNNER}" || \
-    fail "runner is missing the post-baseline Harness contract: ${required_runner_contract}"
+    fail "runner is missing a deterministic readiness or Harness contract: ${required_runner_contract}"
 done
 
 assert_exact_line_count 1 'apiVersion: agentteams.io/v1beta1'

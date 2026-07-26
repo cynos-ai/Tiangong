@@ -45,6 +45,7 @@
   - both ordinary Worker resources and actual containers retain `runtime=openclaw` and `tiangong-worker:dev`;
   - Team Room contains global Admin, Leader, Coordinator, and Engineer, but not Manager;
   - effective `groupAllowFrom` on each ordinary Worker contains its peer, Leader, and Admin before the probe;
+  - each official OpenClaw Matrix channel remains running, connected, healthy, non-restarting, and on one `lastStartAt` across the bounded post-policy stability interval;
   - the four correlated events occur in order: Admin start, Coordinator ping, Engineer pong, Coordinator terminal;
   - ping and pong carry the expected full-MXID `m.mentions` and never mention the stock Leader;
   - terminal contains no Engineer/Leader MXID or mention, and no Worker/Leader message follows during the bounded grace window;
@@ -55,7 +56,7 @@
   - four non-secret Matrix event IDs and `worker_peer_event_chain=pass`;
   - `stock_leader_message_count=0` and `stock_leader_model_turn_count=0`;
   - `peer_coordinator_harness=pass` and `peer_engineer_harness=pass`;
-  - `matrix_peer_team_room_topology=pass` and `matrix_peer_channel_policy=pass`;
+  - `matrix_peer_team_room_topology=pass`, `matrix_peer_channel_policy=pass`, and `matrix_peer_active_channel_stability=pass`;
   - on failure, a sanitized target-account visibility fact for the exact sender/nonce/visible MXID/`m.mentions` ping, without raw bodies or credentials;
   - alias cleanup observations plus Team/member/container/storage absence.
 - Skip/block rules:

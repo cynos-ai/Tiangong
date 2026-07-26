@@ -174,6 +174,85 @@ assert_peer_policy() {
   die "Matrix peer mention policy is incomplete for ${member}."
 }
 
+peer_policy_digest() {
+  local container="$1" member="$2"
+  local config="/root/hiclaw-fs/agents/${member}/openclaw.json"
+  docker exec "${container}" jq -cS '
+    {
+      groupAllowFrom:.channels.matrix.groupAllowFrom,
+      requireMention:.channels.matrix.groups["*"].requireMention
+    }
+  ' "${config}" | sha256sum | cut -d ' ' -f 1
+}
+
+matrix_channel_status() {
+  local container="$1"
+  docker exec "${container}" bash -lc '
+    set -euo pipefail
+    openclaw channels status --json 2>/dev/null | jq -ce '\''
+      (.channelAccounts.matrix // []) as $accounts |
+      if ($accounts | length) != 1 then error("unexpected Matrix account count")
+      else $accounts[0] | {
+        running,
+        connected,
+        restartPending,
+        healthState,
+        lastStartAt,
+        lastConnectedAt,
+        lastEventAt
+      } end
+    '\''
+  '
+}
+
+matrix_channel_is_ready() {
+  jq -e '
+    .running == true and
+    .connected == true and
+    .restartPending == false and
+    .healthState == "healthy" and
+    (.lastStartAt | type) == "number" and
+    (.lastConnectedAt | type) == "number" and
+    (.lastEventAt | type) == "number" and
+    .lastConnectedAt >= .lastStartAt and
+    .lastEventAt >= .lastStartAt
+  ' >/dev/null
+}
+
+assert_peer_channel_stable() {
+  local container="$1" member="$2"
+  local policy_before policy_after status_before status_after
+  for _ in $(seq 1 12); do
+    policy_before="$(peer_policy_digest "${container}" "${member}")" || {
+      sleep 2
+      continue
+    }
+    status_before="$(matrix_channel_status "${container}")" || {
+      sleep 2
+      continue
+    }
+    if ! matrix_channel_is_ready <<<"${status_before}"; then
+      sleep 2
+      continue
+    fi
+    sleep 10
+    policy_after="$(peer_policy_digest "${container}" "${member}")" || continue
+    status_after="$(matrix_channel_status "${container}")" || continue
+    if [[ "${policy_after}" == "${policy_before}" ]] && \
+       matrix_channel_is_ready <<<"${status_after}" && \
+       [[ "$(jq -r '.lastStartAt' <<<"${status_after}")" == \
+          "$(jq -r '.lastStartAt' <<<"${status_before}")" ]]; then
+      printf 'peer_%s_matrix_active_channel=%s\n' \
+        "${member##*-}" "${status_after}"
+      return 0
+    fi
+  done
+  status_after="$(matrix_channel_status "${container}" 2>/dev/null || printf '{"observable":false}')"
+  printf '[Tiangong] Matrix channel did not stabilize for %s: %s\n' \
+    "${member}" "${status_after}" >&2
+  return 1
+}
+
 harness_snapshot() {
   local container="$1"
   if ! docker exec "${container}" test -f /tmp/tiangong-pi-harness.last-run; then
@@ -278,7 +357,7 @@ trap 'exit 143' TERM
 
 [[ "${SMOKE_MODE}" == full || "${SMOKE_MODE}" == config ]] || \
   die "TIANGONG_PEER_SMOKE_MODE must be full or config."
-for command in docker jq grep awk; do
+for command in docker jq grep awk sha256sum; do
   command -v "${command}" >/dev/null 2>&1 || die "Missing required command: ${command}"
 done
 for path in "${MANIFEST}" "${BUILD_WORKER_IMAGE}" "${PEER_ROUNDTRIP}" \
@@ -387,6 +466,11 @@ assert_peer_policy "${COORDINATOR_CONTAINER}" "${COORDINATOR_NAME}" \
 assert_peer_policy "${ENGINEER_CONTAINER}" "${ENGINEER_NAME}" \
   "${coordinator_user_id}" "${leader_user_id}" "${admin_user_id}"
 printf 'matrix_peer_channel_policy=pass\n'
+assert_peer_channel_stable "${COORDINATOR_CONTAINER}" "${COORDINATOR_NAME}" || \
+  die "Coordinator Matrix listener did not stabilize after peer policy publication."
+assert_peer_channel_stable "${ENGINEER_CONTAINER}" "${ENGINEER_NAME}" || \
+  die "Engineer Matrix listener did not stabilize after peer policy publication."
+printf 'matrix_peer_active_channel_stability=pass\n'
 if [[ "${SMOKE_MODE}" == config ]]; then
   log "Peer mention configuration boundary passed."
   exit 0
@@ -432,6 +516,13 @@ if ! peer_output="$(docker exec "${CONTROLLER_CONTAINER}" "${CONTROLLER_PEER_ROU
       "${engineer_user_id}" "${nonce}"; then
     printf '[Tiangong] Engineer account could not prove visibility of the expected peer ping.\n' >&2
   fi
+  for diagnostic_container in "${COORDINATOR_CONTAINER}" "${ENGINEER_CONTAINER}"; do
+    diagnostic_member="${diagnostic_container#agentteams-worker-}"
+    diagnostic_channel_status="$(matrix_channel_status "${diagnostic_container}" \
+      2>/dev/null || printf '{"observable":false}')"
+    printf '[Tiangong] Sanitized Matrix channel status for %s: %s\n' \
+      "${diagnostic_member}" "${diagnostic_channel_status}" >&2
+  done
   die "Worker peer event chain failed."
 fi
 printf '%s\n' "${peer_output}"
