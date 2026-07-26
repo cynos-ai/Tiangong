@@ -159,6 +159,7 @@ export function createTiangongPiHarness(options = {}) {
     configPath,
     provider: SUPPORTED_PROVIDER,
   });
+  const harnessEvidenceFile = options.evidencePath ?? HARNESS_EVIDENCE_FILE;
 
   return {
     id: HARNESS_ID,
@@ -174,9 +175,14 @@ export function createTiangongPiHarness(options = {}) {
         data: { harness: HARNESS_ID, phase: "start", runId: params.runId },
       });
       try {
+        await writeFile(
+          harnessEvidenceFile,
+          `harness=${HARNESS_ID}\nprovider=${params.provider}\nmodel=${params.modelId}\nstatus=running\n`,
+          { mode: 0o600 },
+        );
         const result = await runtime.runTurn(toTurnRequest(params));
         await writeFile(
-          HARNESS_EVIDENCE_FILE,
+          harnessEvidenceFile,
           `harness=${HARNESS_ID}\nprovider=${params.provider}\nmodel=${params.modelId}\nstatus=pass\n`,
           { mode: 0o600 },
         );
@@ -189,7 +195,7 @@ export function createTiangongPiHarness(options = {}) {
       } catch (error) {
         const message = errorMessage(error);
         await writeFile(
-          HARNESS_EVIDENCE_FILE,
+          harnessEvidenceFile,
           `harness=${HARNESS_ID}\nprovider=${params.provider}\nmodel=${params.modelId}\nstatus=error\nerror=${message}\n`,
           { mode: 0o600 },
         ).catch(() => {});

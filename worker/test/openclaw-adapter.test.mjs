@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -163,4 +166,42 @@ test("delegates the attempt to the Tiangong runtime through the DTO boundary", a
   assert.equal(received.sessionId, "session-one");
   assert.equal(received.replyTarget.id, "@peer:example.test");
   assert.equal(result.lastAssistant.content[0].text, "answer");
+});
+
+test("marks Harness ingress before waiting for the Tiangong turn", async (t) => {
+  const evidenceDir = await mkdtemp(join(tmpdir(), "tiangong-harness-"));
+  const evidencePath = join(evidenceDir, "last-run");
+  t.after(() => rm(evidenceDir, { recursive: true, force: true }));
+
+  let finishTurn;
+  let noteTurnStarted;
+  const turnStarted = new Promise((resolve) => {
+    noteTurnStarted = resolve;
+  });
+  const turnFinished = new Promise((resolve) => {
+    finishTurn = resolve;
+  });
+  const runtime = {
+    async runTurn() {
+      noteTurnStarted();
+      return await turnFinished;
+    },
+    async reset() {},
+    async dispose() {},
+  };
+  const harness = createTiangongPiHarness({ evidencePath, runtime });
+  t.after(() => harness.dispose());
+
+  const attempt = harness.runAttempt(attemptParams());
+  await turnStarted;
+  const runningMarker = await readFile(evidencePath, "utf8");
+  assert.match(runningMarker, /^harness=tiangong-pi$/mu);
+  assert.match(runningMarker, /^status=running$/mu);
+  assert.doesNotMatch(runningMarker, /worker-token|matrix-secret/u);
+
+  finishTurn(turnResult());
+  await attempt;
+  const completedMarker = await readFile(evidencePath, "utf8");
+  assert.match(completedMarker, /^status=pass$/mu);
+  assert.doesNotMatch(completedMarker, /^status=running$/mu);
 });
