@@ -1,8 +1,26 @@
 const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+const MATRIX_REPLY_SOURCE = "openclaw.matrix.group-only-sender";
+const MATRIX_USER_ID = /^@[^:\s]+:[^\s]+$/u;
 
 function requiredString(value, name) {
   if (typeof value !== "string" || value === "") throw new TypeError(`${name} must be a non-empty string`);
   return value;
+}
+
+export function normalizeReplyTarget(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("reply target must be a validated object");
+  }
+  const keys = Object.keys(value).sort();
+  if (keys.join(",") !== "channel,id,source" ||
+      value.channel !== "matrix" ||
+      value.source !== MATRIX_REPLY_SOURCE ||
+      typeof value.id !== "string" ||
+      !MATRIX_USER_ID.test(value.id)) {
+    throw new TypeError("reply target is malformed or unsupported");
+  }
+  return Object.freeze({ channel: value.channel, id: value.id, source: value.source });
 }
 
 export function normalizeThinkingLevel(level) {
@@ -20,12 +38,13 @@ export function createTurnRequest(input) {
     modelId: requiredString(input.modelId, "modelId"),
     thinkingLevel: normalizeThinkingLevel(input.thinkingLevel),
     toolsEnabled: input.toolsEnabled !== false,
-    actor: {
+    actor: Object.freeze({
       id: input.actor?.id ?? null,
       displayName: input.actor?.displayName ?? null,
       channel: input.actor?.channel ?? null,
       messageId: input.actor?.messageId ?? null,
-    },
+    }),
+    replyTarget: normalizeReplyTarget(input.replyTarget),
     images: Array.isArray(input.images) ? input.images : [],
     abortSignal: input.abortSignal,
   };
@@ -38,18 +57,24 @@ export function createTurnRequest(input) {
   return Object.freeze(request);
 }
 
-export function createTurnResult({ text, usage, pendingApproval = null, hadPotentialSideEffects = false }) {
+export function createTurnResult(request, input) {
+  if (!input || typeof input !== "object") throw new TypeError("Turn result input must be an object");
+  if (Object.hasOwn(input, "replyTarget")) {
+    throw new TypeError("Turn result replyTarget comes only from the authenticated request");
+  }
+  const { text, usage, pendingApproval = null, hadPotentialSideEffects = false } = input;
   if (typeof text !== "string") throw new TypeError("Turn result text must be a string");
   return Object.freeze({
     text,
-    usage: {
+    usage: Object.freeze({
       input: usage?.input ?? 0,
       output: usage?.output ?? 0,
       cacheRead: usage?.cacheRead ?? 0,
       cacheWrite: usage?.cacheWrite ?? 0,
       totalTokens: usage?.totalTokens ?? 0,
-    },
+    }),
     pendingApproval,
     hadPotentialSideEffects: hadPotentialSideEffects === true,
+    replyTarget: normalizeReplyTarget(request?.replyTarget),
   });
 }

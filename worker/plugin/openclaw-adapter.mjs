@@ -2,12 +2,44 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { TiangongAgentRuntime } from "../agent/runtime.mjs";
-import { createTurnRequest } from "../agent/turn-contract.mjs";
+import { createTurnRequest, normalizeReplyTarget } from "../agent/turn-contract.mjs";
 
 const HARNESS_ID = "tiangong-pi";
 const HARNESS_EVIDENCE_FILE = "/tmp/tiangong-pi-harness.last-run";
 const SUPPORTED_PROVIDER = "agentteams-gateway";
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+const MATRIX_USER_ID = /^@[^:\s]+:[^\s]+$/u;
+
+function stringSet(value) {
+  return new Set(Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : []);
+}
+
+function matrixPeerReplyTarget(params) {
+  const channel = params.messageChannel ?? params.messageProvider;
+  const senderId = params.senderId;
+  const matrix = params.config?.channels?.matrix;
+  if (channel !== "matrix" || typeof senderId !== "string" || !MATRIX_USER_ID.test(senderId) ||
+      matrix?.groupPolicy !== "allowlist" || matrix?.dm?.policy !== "allowlist" ||
+      !Array.isArray(matrix.groupAllowFrom) || !Array.isArray(matrix.dm.allowFrom)) {
+    return null;
+  }
+  const groupAllowFrom = stringSet(matrix.groupAllowFrom);
+  const dmAllowFrom = stringSet(matrix.dm.allowFrom);
+  if (!groupAllowFrom.has(senderId) || dmAllowFrom.has(senderId)) return null;
+  return {
+    channel: "matrix",
+    id: senderId,
+    source: "openclaw.matrix.group-only-sender",
+  };
+}
+
+function projectedText(result) {
+  const text = result?.text ?? "";
+  if (text === "") return text;
+  const target = normalizeReplyTarget(result?.replyTarget);
+  if (!target || text.includes(target.id)) return text;
+  return `${target.id} ${text}`;
+}
 
 function errorMessage(error) {
   const message = error instanceof Error ? error.message : String(error);
@@ -25,8 +57,7 @@ function openClawUsage(usage) {
   };
 }
 
-function createAssistantMessage(params, result, promptError) {
-  const text = result?.text ?? "";
+function createAssistantMessage(params, result, promptError, text) {
   return {
     role: "assistant",
     content: text === "" ? [] : [{ type: "text", text }],
@@ -41,9 +72,9 @@ function createAssistantMessage(params, result, promptError) {
 }
 
 export function buildAttemptResult(params, { result, promptError = null }) {
-  const text = result?.text ?? "";
+  const text = projectedText(result);
   const hasAssistant = text !== "" || promptError !== null;
-  const assistant = hasAssistant ? createAssistantMessage(params, result, promptError) : undefined;
+  const assistant = hasAssistant ? createAssistantMessage(params, result, promptError, text) : undefined;
   const messagesSnapshot = [{ role: "user", content: params.prompt, timestamp: Date.now() }];
   if (assistant) messagesSnapshot.push(assistant);
   const abortReason = params.abortSignal?.reason;
@@ -117,6 +148,7 @@ export function toTurnRequest(params) {
       channel: params.messageChannel ?? params.messageProvider,
       messageId: params.currentMessageId,
     },
+    replyTarget: matrixPeerReplyTarget(params),
   });
 }
 

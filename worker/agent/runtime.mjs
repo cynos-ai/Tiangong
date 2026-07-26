@@ -207,7 +207,7 @@ export class TiangongAgentRuntime {
         operationDigest: checkpoint.operationDigest,
         outcome: "rejected",
       });
-      return createTurnResult({ text });
+      return createTurnResult(request, { text });
     }
 
     const wasCompleted = checkpoint.status === "completed";
@@ -257,7 +257,7 @@ export class TiangongAgentRuntime {
         operationDigest: checkpoint.operationDigest,
         outcome: "replayed",
       });
-      return createTurnResult({ text, hadPotentialSideEffects: true });
+      return createTurnResult(request, { text, hadPotentialSideEffects: true });
     }
 
     const definition = state.registry.definitions().find((tool) => tool.name === checkpoint.toolName);
@@ -280,7 +280,7 @@ export class TiangongAgentRuntime {
       operationDigest: checkpoint.operationDigest,
       outcome: wasCompleted ? "replayed" : "executed",
     });
-    return createTurnResult({ text, hadPotentialSideEffects: true });
+    return createTurnResult(request, { text, hadPotentialSideEffects: true });
   }
 
   async runTurn(request) {
@@ -321,7 +321,7 @@ export class TiangongAgentRuntime {
 
     if (completedTurn?.turnState.pending) {
       const pending = completedTurn.turnState.pending;
-      return createTurnResult({
+      return createTurnResult(request, {
         text: approvalPrompt(pending),
         usage: usageFromMessage(finalMessage),
         pendingApproval: {
@@ -334,7 +334,7 @@ export class TiangongAgentRuntime {
 
     const text = assistantText(finalMessage);
     if (text === "") throw new Error(state.session.agent.state.errorMessage || "pi returned no assistant text");
-    return createTurnResult({ text, usage: usageFromMessage(finalMessage) });
+    return createTurnResult(request, { text, usage: usageFromMessage(finalMessage) });
   }
 
   async reset(sessionId) {
