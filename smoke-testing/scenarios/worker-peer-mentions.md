@@ -17,7 +17,7 @@
 | Peer pong | Engineer event contains the same nonce, Coordinator full MXID, and Coordinator in `m.mentions` | prose claiming Engineer received the event |
 | Terminal receipt | Coordinator emits a later terminal marker with the same nonce, does not mention a peer/Leader, and no peer message follows during the bounded grace window | observing only Coordinator's first turn or cleaning up before detecting a reply loop |
 | Leader silence | zero post-baseline Leader messages and unchanged stock Leader session snapshot | absence of a specific expected phrase |
-| Harness | both peer senders have a passing Tiangong Harness marker and persistent nonce-bearing session | container health or model self-identification alone |
+| Harness | both peer senders have a post-baseline changed, passing Tiangong Harness marker and persistent nonce-bearing session | a pre-existing marker, container health, or model self-identification alone |
 | Cleanup | exact Team, three members/containers, two aliases, helper copies, and four storage prefixes are absent | successful delete command alone or broad cleanup paths |
 
 ## Basic smoke
@@ -49,7 +49,7 @@
   - ping and pong carry the expected full-MXID `m.mentions` and never mention the stock Leader;
   - terminal contains no Engineer/Leader MXID or mention, and no Worker/Leader message follows during the bounded grace window;
   - stock Leader emits no Team Room message and its session-file count/digest does not change;
-  - Coordinator and Engineer each have a passing Tiangong Harness marker and a persistent session containing the nonce;
+  - Coordinator and Engineer each have a post-baseline changed, passing Tiangong Harness marker and a persistent session containing the nonce;
   - cleanup removes only the fixed owned resources and verifies their absence.
 - Required evidence:
   - four non-secret Matrix event IDs and `worker_peer_event_chain=pass`;

@@ -173,8 +173,19 @@ assert_peer_policy() {
   die "Matrix peer mention policy is incomplete for ${member}."
 }
 
+harness_snapshot() {
+  local container="$1"
+  if ! docker exec "${container}" test -f /tmp/tiangong-pi-harness.last-run; then
+    printf 'absent\n'
+    return
+  fi
+  docker exec "${container}" stat -c '%y:%s' /tmp/tiangong-pi-harness.last-run
+}
+
 assert_harness() {
-  local container="$1" member="$2" marker
+  local container="$1" member="$2" baseline="$3" marker current
+  current="$(harness_snapshot "${container}")"
+  [[ "${current}" != "${baseline}" ]] || die "Harness marker did not change for ${member}."
   marker="$(docker exec "${container}" cat /tmp/tiangong-pi-harness.last-run)" || \
     die "Harness marker is absent for ${member}."
   grep -Fqx 'harness=tiangong-pi' <<<"${marker}" || die "Wrong Harness for ${member}."
@@ -376,6 +387,8 @@ fi
 
 sleep 5
 leader_snapshot_before="$(stock_session_snapshot)"
+coordinator_harness_before="$(harness_snapshot "${COORDINATOR_CONTAINER}")"
+engineer_harness_before="$(harness_snapshot "${ENGINEER_CONTAINER}")"
 nonce="$(cat /proc/sys/kernel/random/uuid)"
 log "Testing Coordinator -> Engineer -> Coordinator through the real Team Room"
 if ! peer_output="$(docker exec "${CONTROLLER_CONTAINER}" "${CONTROLLER_PEER_ROUNDTRIP}" run \
@@ -388,6 +401,16 @@ if ! peer_output="$(docker exec "${CONTROLLER_CONTAINER}" "${CONTROLLER_PEER_ROU
         '^(harness|provider|model|status)=' /tmp/tiangong-pi-harness.last-run >&2 || true
     else
       printf '[Tiangong] Harness status for %s: no turn marker\n' "${diagnostic_member}" >&2
+    fi
+    if [[ "${diagnostic_container}" == "${COORDINATOR_CONTAINER}" ]]; then
+      harness_before="${coordinator_harness_before}"
+    else
+      harness_before="${engineer_harness_before}"
+    fi
+    if [[ "$(harness_snapshot "${diagnostic_container}")" == "${harness_before}" ]]; then
+      printf '[Tiangong] Harness marker changed for %s: no\n' "${diagnostic_member}" >&2
+    else
+      printf '[Tiangong] Harness marker changed for %s: yes\n' "${diagnostic_member}" >&2
     fi
     nonce_file_count="$(
       { docker exec "${diagnostic_container}" grep -RlF --include='*.jsonl' \
@@ -402,8 +425,8 @@ fi
 printf '%s\n' "${peer_output}"
 grep -Fqx 'worker_peer_event_chain=pass' <<<"${peer_output}" || die "Worker peer event chain failed."
 grep -Fqx 'stock_leader_message_count=0' <<<"${peer_output}" || die "Stock Leader emitted a message."
-assert_harness "${COORDINATOR_CONTAINER}" "${COORDINATOR_NAME}"
-assert_harness "${ENGINEER_CONTAINER}" "${ENGINEER_NAME}"
+assert_harness "${COORDINATOR_CONTAINER}" "${COORDINATOR_NAME}" "${coordinator_harness_before}"
+assert_harness "${ENGINEER_CONTAINER}" "${ENGINEER_NAME}" "${engineer_harness_before}"
 assert_nonce_persisted "${COORDINATOR_CONTAINER}" "${COORDINATOR_NAME}" "${nonce}"
 assert_nonce_persisted "${ENGINEER_CONTAINER}" "${ENGINEER_NAME}" "${nonce}"
 leader_snapshot_after="$(stock_session_snapshot)"

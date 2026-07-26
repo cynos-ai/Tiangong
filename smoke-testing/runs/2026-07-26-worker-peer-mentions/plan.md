@@ -172,6 +172,7 @@ Only the final command creates the disposable Team and performs model turns.
 - The bounded correlation contract passed all deterministic tests.
 - Coordinator emitted a valid nonce-bearing ping with Engineer's exact visible MXID and `m.mentions`.
 - Engineer did not process that event during the bounded window and had no nonce-bearing session. Stock Leader emitted no message. This is the previously observed intermittent released Matrix/OpenClaw peer-wake boundary; the new correlation code is downstream of the missing Engineer ingress.
+- The generic Harness marker contained `status=pass` but no nonce-bearing session existed, so it could not prove this event's turn. The runner now snapshots each Worker marker before the nonce and requires its metadata to change, while retaining nonce persistence as a separate assertion.
 - No model retry followed. Exact cleanup passed and the AgentTeams stack was stopped with data preserved.
 
 ### Final result
