@@ -135,6 +135,18 @@ jq '(.events[] | select(.event_id == "$pong").content.body) |= sub("11111111-222
   "${positive}" >"${temporary_directory}/wrong-nonce.json"
 expect_validation_failure "${temporary_directory}/wrong-nonce.json" 'a pong with the wrong nonce'
 
+jq --arg engineer "${ENGINEER_ID}" --arg nonce "${NONCE}" '
+  (.events[] | select(.event_id == "$done").content.body) = ($engineer + " TG_PEER_DONE nonce=" + $nonce) |
+  (.events[] | select(.event_id == "$done").content["m.mentions"].user_ids) = [$engineer]
+' "${positive}" >"${temporary_directory}/terminal-rewake.json"
+expect_validation_failure "${temporary_directory}/terminal-rewake.json" 'a terminal event that re-mentions Engineer'
+
+jq --arg room "${ROOM_ID}" --arg engineer "${ENGINEER_ID}" '.events += [{
+  room_id:$room,type:"m.room.message",sender:$engineer,event_id:"$after-terminal",
+  content:{body:"unexpected after terminal", "m.mentions":{user_ids:[]}}
+}]' "${positive}" >"${temporary_directory}/post-terminal-message.json"
+expect_validation_failure "${temporary_directory}/post-terminal-message.json" 'a peer message after the terminal event'
+
 jq --arg room "${ROOM_ID}" --arg leader "${LEADER_ID}" '.events += [{
   room_id:$room,type:"m.room.message",sender:$leader,event_id:"$leader-response",
   content:{body:"unexpected", "m.mentions":{user_ids:[]}}

@@ -68,6 +68,11 @@ validate_events_json() {
           has("TG_PEER_DONE nonce=" + $nonce) and
           ((has("TG_PEER_PING") or has("TG_PEER_PONG")) | not)
         )]; "done") as $done
+      | if (($done | mentions | index($engineer)) == null) and
+           (($done | mentions | index($leader)) == null) and
+           (($done | body | contains($engineer)) | not) and
+           (($done | body | contains($leader)) | not)
+        then . else error("terminal mention boundary is invalid") end
       | [$start.event_id, $ping.event_id, $pong.event_id, $done.event_id] as $ids
       | if ($ids | all(type == "string" and length > 0)) and
            (($ids | unique | length) == 4)
@@ -82,6 +87,9 @@ validate_events_json() {
           | select(.value.event_id == $done.event_id).key][0] as $done_index
       | if $start_index < $ping_index and $ping_index < $pong_index and $pong_index < $done_index
         then . else error("peer event order is invalid") end
+      | if ([$messages[($done_index + 1):][]
+          | select(.sender == $coordinator or .sender == $engineer or .sender == $leader)] | length) == 0
+        then . else error("peer emitted a message after the terminal event") end
       | "peer_start_event=" + $start.event_id,
         "peer_ping_event=" + $ping.event_id,
         "peer_pong_event=" + $pong.event_id,

@@ -15,7 +15,7 @@
 | Initial routing | global Admin mentions only Coordinator; body contains no full Engineer or Leader MXID | exposing Engineer's full MXID and waking it through fallback text matching |
 | Peer ping | Coordinator event contains the nonce, Engineer full MXID, and Engineer in `m.mentions` | test driver sending the ping as Coordinator |
 | Peer pong | Engineer event contains the same nonce, Coordinator full MXID, and Coordinator in `m.mentions` | prose claiming Engineer received the event |
-| Terminal receipt | Coordinator emits a later terminal marker with the same nonce | observing only Coordinator's first turn |
+| Terminal receipt | Coordinator emits a later terminal marker with the same nonce, does not mention a peer/Leader, and no peer message follows during the bounded grace window | observing only Coordinator's first turn or cleaning up before detecting a reply loop |
 | Leader silence | zero post-baseline Leader messages and unchanged stock Leader session snapshot | absence of a specific expected phrase |
 | Harness | both peer senders have a passing Tiangong Harness marker and persistent nonce-bearing session | container health or model self-identification alone |
 | Cleanup | exact Team, three members/containers, two aliases, helper copies, and four storage prefixes are absent | successful delete command alone or broad cleanup paths |
@@ -47,6 +47,7 @@
   - effective `groupAllowFrom` on each ordinary Worker contains its peer, Leader, and Admin before the probe;
   - the four correlated events occur in order: Admin start, Coordinator ping, Engineer pong, Coordinator terminal;
   - ping and pong carry the expected full-MXID `m.mentions` and never mention the stock Leader;
+  - terminal contains no Engineer/Leader MXID or mention, and no Worker/Leader message follows during the bounded grace window;
   - stock Leader emits no Team Room message and its session-file count/digest does not change;
   - Coordinator and Engineer each have a passing Tiangong Harness marker and a persistent session containing the nonce;
   - cleanup removes only the fixed owned resources and verifies their absence.
@@ -70,7 +71,7 @@ No Full scenario is defined. Role authorization, Work Ledger, formal Assignment/
 
 ## Maintenance notes
 
-- **Current pinned-stack/runtime status (2026-07-26): BLOCKED.** Explicit public `groupAllowExtra` successfully establishes the effective peer allowlist, and one diagnostic attempt carried all four events. However, the final controlled run produced a valid Engineer pong without Coordinator's full MXID or `m.mentions`, so Coordinator was not awakened. Model text cannot be the deterministic return-address contract. See `smoke-testing/runs/2026-07-26-worker-peer-mentions/plan.md`.
+- **Current pinned-stack/runtime status (2026-07-26): BLOCKED.** Explicit public `groupAllowExtra` establishes the peer allowlist. Issue #11 / Draft PR #12 added a deterministic reply-target projection and proved one complete real loop with zero stock Leader interference, but that revision re-mentioned Engineer on the terminal event. Bounded one-reply correlation removes that loop deterministically; the final stacked run then hit the previously observed intermittent released wake failure after a valid Coordinator→Engineer Matrix mention. See `smoke-testing/runs/2026-07-26-worker-peer-mentions/plan.md`.
 - This scenario is independent of the blocked custom platform Team Leader boundary. It neither weakens nor satisfies that boundary.
 - The stock Leader is intentionally selected by omitting custom Leader runtime/image fields. Both ordinary Workers use the supported inline Worker image/runtime fields.
 - On `v1.2.0-beta.1`, `peerMentions: true` on this legacy inline Team path did not appear in the effective Worker `groupAllowFrom`: each Worker retained only Leader and Admin after a bounded convergence wait. The fixture therefore uses the documented public per-Worker `channelPolicy.groupAllowExtra` field with the peer Worker name, and the runner verifies the effective config before any model turn. This is an explicit transport authorization, not a professional Role Profile.

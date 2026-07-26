@@ -158,8 +158,24 @@ Only the final command creates the disposable Team and performs model turns.
 - Classification: current Tiangong/OpenClaw addressing contract gap. The transport can carry peer mentions—the earlier attempt produced a complete four-event loop—but the current model-text-only response contract cannot deterministically preserve the return mention.
 - Exact Team/member/container/alias/storage cleanup passed.
 
+### Attempt 8 — FAIL (stacked deterministic target, terminal re-wake risk)
+
+- Stacked Issue #11's deterministic reply target onto this unchanged fixture.
+- The complete four-event loop passed with unique event IDs, correct nonce, both real Tiangong Harness turns, exact pong `m.mentions`, and zero stock Leader messages/model turns.
+- Sanitized post-run history showed that the generic reply-to-group-only-sender rule also mentioned Engineer on Coordinator's terminal event. No later message was observed before cleanup, but the terminal event could wake Engineer again.
+- Classification: product routing-state gap. A successful transport loop is insufficient if terminal delivery can start another peer turn.
+- Change: add a bounded per-session expected-peer set. An explicit outbound peer MXID records one expected response; receiving that authenticated sender consumes the expectation and suppresses automatic return mention. Only Matrix IDs are retained, not model prose.
+- Exact cleanup passed.
+
+### Attempt 9 — BLOCKED (released peer wake intermittency)
+
+- The bounded correlation contract passed all deterministic tests.
+- Coordinator emitted a valid nonce-bearing ping with Engineer's exact visible MXID and `m.mentions`.
+- Engineer did not process that event during the bounded window and had no nonce-bearing session. Stock Leader emitted no message. This is the previously observed intermittent released Matrix/OpenClaw peer-wake boundary; the new correlation code is downstream of the missing Engineer ingress.
+- No model retry followed. Exact cleanup passed and the AgentTeams stack was stopped with data preserved.
+
 ### Final result
 
-**BLOCKED.** Phase 0B is not promoted on a lucky earlier model response. No further real-model retries are permitted on this implementation.
+**BLOCKED.** Phase 0B is not promoted on either a lucky model-formatted address or an earlier successful transport run when the final bounded implementation did not complete.
 
-The smallest follow-up is a deterministic, authenticated reply/mention target contract between TurnIngress, Tiangong TurnResult, and the official OpenClaw Matrix sender. It must not be implemented as prompt wording, test-driver Worker impersonation, mutable role data, or an AgentTeams patch. Until that boundary exists and this unchanged sender/mention/nonce/Leader-silence oracle passes, Worker-first Core Team coordination remains unproven.
+Issue #11 / Draft PR #12 now provide the smallest deterministic target and one-reply correlation contract without modifying AgentTeams. The real released path must still pass the strengthened sender/mention/nonce/terminal/Leader-silence oracle on the final revision. No additional real-model retry is permitted without new lower-layer evidence for the intermittent Engineer wake failure.
