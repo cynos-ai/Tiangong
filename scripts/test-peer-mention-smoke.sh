@@ -163,6 +163,30 @@ jq --arg room "${ROOM_ID}" --arg leader "${LEADER_ID}" '.events += [{
 }]' "${positive}" >"${temporary_directory}/leader-message.json"
 expect_validation_failure "${temporary_directory}/leader-message.json" 'a stock Leader response'
 
+observer_config="${temporary_directory}/openclaw.json"
+jq -n '{channels:{matrix:{homeserver:"https://matrix.test",accessToken:("fixture" + "-token")}}}' \
+  >"${observer_config}"
+chmod 600 "${observer_config}"
+mkdir "${temporary_directory}/bin"
+cat >"${temporary_directory}/bin/curl" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${FAKE_MATRIX_EVENT_MODE:-}" == visible ]]; then
+  printf '%s\n' '{"chunk":[{"type":"m.room.message","sender":"@tiangong-peer-smoke-coordinator:matrix.test","content":{"body":"@tiangong-peer-smoke-engineer:matrix.test TG_PEER_PING nonce=11111111-2222-4333-8444-555555555555","m.mentions":{"user_ids":["@tiangong-peer-smoke-engineer:matrix.test"]}}}]}'
+else
+  printf '%s\n' '{"chunk":[]}'
+fi
+EOF
+chmod 700 "${temporary_directory}/bin/curl"
+PATH="${temporary_directory}/bin:${PATH}" FAKE_MATRIX_EVENT_MODE=visible \
+  "${ROOM_MEMBERS}" event-visible "${observer_config}" "${ROOM_ID}" \
+  "${COORDINATOR_ID}" "${ENGINEER_ID}" "${NONCE}" >/dev/null || \
+  fail 'Matrix target-account visibility helper rejected the exact peer ping.'
+if PATH="${temporary_directory}/bin:${PATH}" FAKE_MATRIX_EVENT_MODE=missing \
+    "${ROOM_MEMBERS}" event-visible "${observer_config}" "${ROOM_ID}" \
+    "${COORDINATOR_ID}" "${ENGINEER_ID}" "${NONCE}" >/dev/null 2>&1; then
+  fail 'Matrix target-account visibility helper accepted a missing peer ping.'
+fi
+
 if "${ALIASES}" unsafe-mode >/dev/null 2>&1; then
   fail 'Matrix alias helper accepted an unsafe mode.'
 fi
