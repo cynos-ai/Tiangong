@@ -1,0 +1,24 @@
+apiVersion: agentteams.io/v1beta1
+kind: Team
+metadata:
+  name: tiangong-team-smoke
+spec:
+  description: Disposable Tiangong Team Leader runtime boundary verification.
+  leader:
+    name: tiangong-team-smoke-leader
+    model: qwen3.5-plus
+    runtime: openclaw
+    image: tiangong-worker:dev
+    state: Running
+    identity: |
+      Name: Tiangong Team Smoke Leader
+      Purpose: Local Team Leader runtime integration verification only.
+  workers:
+    - name: tiangong-team-smoke-engineer
+      model: qwen3.5-plus
+      runtime: openclaw
+      image: tiangong-worker:dev
+      state: Running
+      identity: |
+        Name: Tiangong Team Smoke Engineer
+        Purpose: Local Team Worker runtime integration verification only.

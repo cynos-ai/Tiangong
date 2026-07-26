@@ -4,9 +4,11 @@ SHELL := /usr/bin/env bash
 AGENTTEAMS := ./scripts/agentteams.sh
 WORKER_IMAGE_BUILD := ./scripts/build-worker-image.sh
 WORKER_IMAGE_TEST := ./smoke-testing/support/run-worker-smoke.sh
+TEAM_RUNTIME_SMOKE := ./smoke-testing/support/run-team-runtime-smoke.sh
+TEAM_RUNTIME_SMOKE_TEST := ./scripts/test-team-runtime-smoke.sh
 SKILL_CHECK := node ./scripts/check-skills.mjs
 
-.PHONY: help init up start stop down status verify config logs login uninstall check-skills build-worker-image test-worker-image-basic test-worker-image
+.PHONY: help init up start stop down status verify config logs login uninstall check-skills build-worker-image test-worker-image-basic test-worker-image test-team-runtime-smoke-contract test-team-runtime-smoke
 
 help: ## Show available commands
 	@printf '%s\n' 'Tiangong local development commands:'
@@ -52,6 +54,12 @@ test-worker-image-basic: ## Run the fast Matrix-to-pi Worker smoke and clean up
 
 test-worker-image: ## Run the full Gate/approval/recovery Worker smoke and clean up
 	@TIANGONG_WORKER_SMOKE_LEVEL=full $(WORKER_IMAGE_TEST)
+
+test-team-runtime-smoke-contract: ## Validate the Team runtime smoke fixture and helpers without external resources
+	@$(TEAM_RUNTIME_SMOKE_TEST)
+
+test-team-runtime-smoke: ## Run the focused Team Leader/Worker Matrix smoke and clean up
+	@$(TEAM_RUNTIME_SMOKE)
 
 uninstall: ## Delete local AgentTeams data; requires CONFIRM=delete-tiangong-agentteams-data
 	@CONFIRM="$(CONFIRM)" $(AGENTTEAMS) uninstall

@@ -35,6 +35,8 @@ jobs:
           shellcheck "${shell_scripts[@]}"
       - name: Test AgentTeams bootstrap
         run: ./scripts/test-agentteams.sh
+      - name: Test Team runtime smoke contract
+        run: make test-team-runtime-smoke-contract
       - name: Validate project Agent Skills
         run: |
           node --check scripts/check-skills.mjs
