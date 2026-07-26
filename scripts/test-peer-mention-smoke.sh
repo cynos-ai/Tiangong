@@ -54,6 +54,8 @@ done
 for script in "${RUNNER}" "${ROUNDTRIP}" "${ROOM_MEMBERS}" "${ALIASES}"; do
   bash -n "${script}"
 done
+# These are literal source fragments; expansion would invalidate the contract check.
+# shellcheck disable=SC2016
 for required_runner_contract in \
   'coordinator_harness_before="$(harness_snapshot "${COORDINATOR_CONTAINER}")"' \
   'engineer_harness_before="$(harness_snapshot "${ENGINEER_CONTAINER}")"' \
