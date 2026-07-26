@@ -64,7 +64,6 @@ function createAttemptAbortBoundary(params) {
   const timer = setTimeout(() => {
     controller.abort(new Error(`Tiangong Harness attempt timeout after ${timeoutMs}ms`));
   }, timeoutMs);
-  timer.unref?.();
   return {
     signal: controller.signal,
     dispose() {
