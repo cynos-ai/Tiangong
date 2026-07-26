@@ -54,10 +54,18 @@ test("rejects malformed or unsupported reply targets", () => {
   }
 });
 
-test("does not let a caller override the authenticated request target in a result", () => {
+test("allows deterministic correlation to suppress but not redirect a reply target", () => {
   const request = createTurnRequest(requestInput({ replyTarget: PEER_TARGET }));
+  assert.equal(createTurnResult(request, { text: "done", replyTarget: null }).replyTarget, null);
   assert.throws(
-    () => createTurnResult(request, { text: "pong", replyTarget: null }),
-    /replyTarget/,
+    () => createTurnResult(request, {
+      text: "pong",
+      replyTarget: {
+        channel: "matrix",
+        id: "@other:example.test",
+        source: "openclaw.matrix.group-only-sender",
+      },
+    }),
+    /cannot redirect.*replyTarget/,
   );
 });

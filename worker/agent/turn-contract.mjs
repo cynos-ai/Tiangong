@@ -59,8 +59,13 @@ export function createTurnRequest(input) {
 
 export function createTurnResult(request, input) {
   if (!input || typeof input !== "object") throw new TypeError("Turn result input must be an object");
+  const requestedTarget = normalizeReplyTarget(request?.replyTarget);
+  let replyTarget = requestedTarget;
   if (Object.hasOwn(input, "replyTarget")) {
-    throw new TypeError("Turn result replyTarget comes only from the authenticated request");
+    replyTarget = normalizeReplyTarget(input.replyTarget);
+    if (replyTarget && (!requestedTarget || replyTarget.id !== requestedTarget.id)) {
+      throw new TypeError("Turn result cannot redirect the authenticated replyTarget");
+    }
   }
   const { text, usage, pendingApproval = null, hadPotentialSideEffects = false } = input;
   if (typeof text !== "string") throw new TypeError("Turn result text must be a string");
@@ -75,6 +80,6 @@ export function createTurnResult(request, input) {
     }),
     pendingApproval,
     hadPotentialSideEffects: hadPotentialSideEffects === true,
-    replyTarget: normalizeReplyTarget(request?.replyTarget),
+    replyTarget,
   });
 }
