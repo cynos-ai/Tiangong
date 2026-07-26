@@ -41,6 +41,7 @@ function attemptParams(overrides = {}) {
     senderIsOwner: true,
     sessionId: "session-one",
     thinkLevel: "off",
+    timeoutMs: 1_000,
     workspaceDir: "/workspace",
     ...overrides,
   };
@@ -204,4 +205,82 @@ test("marks Harness ingress before waiting for the Tiangong turn", async (t) => 
   const completedMarker = await readFile(evidencePath, "utf8");
   assert.match(completedMarker, /^status=pass$/mu);
   assert.doesNotMatch(completedMarker, /^status=running$/mu);
+});
+
+test("enforces the OpenClaw Harness attempt timeout", async (t) => {
+  const evidenceDir = await mkdtemp(join(tmpdir(), "tiangong-harness-timeout-"));
+  const evidencePath = join(evidenceDir, "last-run");
+  t.after(() => rm(evidenceDir, { recursive: true, force: true }));
+
+  const runtime = {
+    async runTurn(request) {
+      return await new Promise((resolve, reject) => {
+        request.abortSignal.addEventListener("abort", () => reject(request.abortSignal.reason), { once: true });
+      });
+    },
+    async reset() {},
+    async dispose() {},
+  };
+  const harness = createTiangongPiHarness({ evidencePath, runtime });
+  t.after(() => harness.dispose());
+
+  const result = await harness.runAttempt(attemptParams({ timeoutMs: 10 }));
+  assert.equal(result.aborted, true);
+  assert.equal(result.timedOut, true);
+  assert.match(result.promptError.message, /timeout after 10ms/u);
+  const marker = await readFile(evidencePath, "utf8");
+  assert.match(marker, /^status=error$/mu);
+  assert.doesNotMatch(marker, /worker-token|matrix-secret/u);
+});
+
+test("rejects a missing OpenClaw Harness attempt timeout", async (t) => {
+  const evidenceDir = await mkdtemp(join(tmpdir(), "tiangong-harness-timeout-invalid-"));
+  const evidencePath = join(evidenceDir, "last-run");
+  t.after(() => rm(evidenceDir, { recursive: true, force: true }));
+
+  let calls = 0;
+  const runtime = {
+    async runTurn() {
+      calls += 1;
+      return turnResult();
+    },
+    async reset() {},
+    async dispose() {},
+  };
+  const harness = createTiangongPiHarness({ evidencePath, runtime });
+  t.after(() => harness.dispose());
+
+  const result = await harness.runAttempt(attemptParams({ timeoutMs: 0 }));
+  assert.equal(calls, 0);
+  assert.match(result.promptError.message, /positive OpenClaw Harness attempt timeout/u);
+  const marker = await readFile(evidencePath, "utf8");
+  assert.match(marker, /^status=error$/mu);
+});
+
+test("preserves an upstream abort without calling the runtime", async (t) => {
+  const evidenceDir = await mkdtemp(join(tmpdir(), "tiangong-harness-abort-"));
+  const evidencePath = join(evidenceDir, "last-run");
+  t.after(() => rm(evidenceDir, { recursive: true, force: true }));
+
+  let calls = 0;
+  const runtime = {
+    async runTurn() {
+      calls += 1;
+      return turnResult();
+    },
+    async reset() {},
+    async dispose() {},
+  };
+  const controller = new AbortController();
+  controller.abort(new Error("operator cancelled"));
+  const harness = createTiangongPiHarness({ evidencePath, runtime });
+  t.after(() => harness.dispose());
+
+  const result = await harness.runAttempt(attemptParams({ abortSignal: controller.signal }));
+  assert.equal(calls, 0);
+  assert.equal(result.aborted, true);
+  assert.equal(result.timedOut, false);
+  assert.equal(result.promptError.message, "operator cancelled");
+  const marker = await readFile(evidencePath, "utf8");
+  assert.match(marker, /^status=error$/mu);
 });

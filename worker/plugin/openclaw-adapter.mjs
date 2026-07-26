@@ -46,6 +46,34 @@ function errorMessage(error) {
   return message.replace(/[\r\n]+/gu, " ").slice(0, 500);
 }
 
+function abortError(signal) {
+  if (signal.reason instanceof Error) return signal.reason;
+  return new Error(signal.reason === undefined ? "Harness attempt aborted" : String(signal.reason));
+}
+
+function createAttemptAbortBoundary(params) {
+  if (!Number.isFinite(params.timeoutMs) || params.timeoutMs <= 0) {
+    throw new Error("A positive OpenClaw Harness attempt timeout is required");
+  }
+  const controller = new AbortController();
+  const upstream = params.abortSignal;
+  const abortFromUpstream = () => controller.abort(upstream.reason);
+  if (upstream?.aborted) abortFromUpstream();
+  else upstream?.addEventListener("abort", abortFromUpstream, { once: true });
+  const timeoutMs = Math.min(Math.floor(params.timeoutMs), 2_147_483_647);
+  const timer = setTimeout(() => {
+    controller.abort(new Error(`Tiangong Harness attempt timeout after ${timeoutMs}ms`));
+  }, timeoutMs);
+  timer.unref?.();
+  return {
+    signal: controller.signal,
+    dispose() {
+      clearTimeout(timer);
+      upstream?.removeEventListener("abort", abortFromUpstream);
+    },
+  };
+}
+
 function openClawUsage(usage) {
   return {
     input: usage?.input ?? 0,
@@ -174,13 +202,18 @@ export function createTiangongPiHarness(options = {}) {
         stream: "tiangong_pi.lifecycle",
         data: { harness: HARNESS_ID, phase: "start", runId: params.runId },
       });
+      let abortBoundary;
+      let effectiveParams = params;
       try {
+        abortBoundary = createAttemptAbortBoundary(params);
+        effectiveParams = { ...params, abortSignal: abortBoundary.signal };
         await writeFile(
           harnessEvidenceFile,
           `harness=${HARNESS_ID}\nprovider=${params.provider}\nmodel=${params.modelId}\nstatus=running\n`,
           { mode: 0o600 },
         );
-        const result = await runtime.runTurn(toTurnRequest(params));
+        if (effectiveParams.abortSignal.aborted) throw abortError(effectiveParams.abortSignal);
+        const result = await runtime.runTurn(toTurnRequest(effectiveParams));
         await writeFile(
           harnessEvidenceFile,
           `harness=${HARNESS_ID}\nprovider=${params.provider}\nmodel=${params.modelId}\nstatus=pass\n`,
@@ -191,7 +224,7 @@ export function createTiangongPiHarness(options = {}) {
           stream: "tiangong_pi.lifecycle",
           data: { harness: HARNESS_ID, phase: "complete", runId: params.runId },
         });
-        return buildAttemptResult(params, { result });
+        return buildAttemptResult(effectiveParams, { result });
       } catch (error) {
         const message = errorMessage(error);
         await writeFile(
@@ -203,7 +236,9 @@ export function createTiangongPiHarness(options = {}) {
           stream: "tiangong_pi.lifecycle",
           data: { harness: HARNESS_ID, phase: "error", runId: params.runId, error: message },
         });
-        return buildAttemptResult(params, { promptError: error });
+        return buildAttemptResult(effectiveParams, { promptError: error });
+      } finally {
+        abortBoundary?.dispose();
       }
     },
     async reset(params) {
