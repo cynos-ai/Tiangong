@@ -211,10 +211,19 @@ Draft PR #12 now writes a non-secret `status=running` Harness marker immediately
 - target account can read it, marker changed to `running`: Harness dispatch succeeded and the Tiangong/model turn remains in flight;
 - marker reaches `pass` or `error`: Harness completion is established separately from room delivery and nonce persistence.
 
-No Matrix trace flag, temporary image, prompt change, or additional model run was used to manufacture this distinction.
+No Matrix trace flag, temporary image, or prompt change was used to manufacture this distinction.
+
+### Attempt 12 — BLOCKED (Coordinator turn remained in flight)
+
+- This was the single evidence-driven run authorized after adding the pre-turn Harness marker; the fixture, prompt, model, timeout, sender/nonce oracle, and Leader-silence boundary were unchanged.
+- Coordinator's official Matrix account could read the exact Admin start event, and Coordinator's nonce-baselined Harness marker changed to `status=running`.
+- Therefore official OpenClaw dispatched this event into the Tiangong Harness. The previous account-visible-versus-ingress ambiguity is closed for this attempt.
+- Coordinator produced no ping and no nonce-bearing persistent session before the bounded observer expired. Engineer had no turn marker because no peer ping existed. Both Matrix channels remained running, connected, healthy, non-restarting, and on the same `lastStartAt`; stock Leader emitted zero messages.
+- Classification: Tiangong/model turn remained in flight beyond the bounded probe window. This is not a Matrix visibility, mention-filter, peer-allowlist, or pre-Harness dispatch failure. The marker does not identify whether the delay is session setup, Gateway/model execution, or another operation inside `runtime.runTurn`.
+- No retry followed. The failed run cleaned its exact Team/member/container/alias/storage resources. A subsequent no-model configuration run passed the reserved-resource precondition, channel-policy/stability boundary, and exact cleanup, after which the AgentTeams stack was stopped with data preserved.
 
 ### Current result
 
-**BLOCKED.** Attempt 10 proves the previously missing Engineer ingress can succeed after active-channel stabilization, but Attempt 11 shows that the same released wake boundary can occur on the initial Admin → Coordinator event despite healthy stable channel state.
+**BLOCKED.** Attempt 12 proves Admin → Coordinator account visibility and official OpenClaw-to-Tiangong Harness dispatch on the instrumented revision, but the Coordinator turn did not complete within the unchanged bounded window. Earlier complete loops remain insufficient because they predate bounded terminal correlation or failed terminal quiescence.
 
-Issue #11 / Draft PR #12 provide the deterministic target, one-reply correlation, and pre-turn Harness ingress marker without modifying AgentTeams. The next action is one evidence-driven lower-layer run only after its diagnostic purpose is fixed in advance; repeated model retries cannot close this boundary.
+Issue #11 / Draft PR #12 provide the deterministic target, one-reply correlation, and pre-turn Harness ingress marker without modifying AgentTeams. Repeated model retries, longer observation windows, or prompt tuning must not be used to manufacture reliability. The next action must be a lower-layer deterministic analysis of the in-flight Tiangong turn and its timeout/abort boundary; Phase 0B remains red.
