@@ -511,9 +511,14 @@ if ! peer_output="$(docker exec "${CONTROLLER_CONTAINER}" "${CONTROLLER_PEER_ROU
     printf '[Tiangong] Nonce-bearing session files for %s: %s\n' \
       "${diagnostic_member}" "${nonce_file_count}" >&2
   done
+  if ! docker exec "${COORDINATOR_CONTAINER}" "${COORDINATOR_ROOM_MEMBERS}" event-visible \
+      "${coordinator_config}" "${team_room_id}" "${admin_user_id}" \
+      "${coordinator_user_id}" "${nonce}" TG_PEER_START; then
+    printf '[Tiangong] Coordinator account could not prove visibility of the expected Admin start.\n' >&2
+  fi
   if ! docker exec "${ENGINEER_CONTAINER}" "${ENGINEER_ROOM_MEMBERS}" event-visible \
       "${engineer_config}" "${team_room_id}" "${coordinator_user_id}" \
-      "${engineer_user_id}" "${nonce}"; then
+      "${engineer_user_id}" "${nonce}" TG_PEER_PING; then
     printf '[Tiangong] Engineer account could not prove visibility of the expected peer ping.\n' >&2
   fi
   for diagnostic_container in "${COORDINATOR_CONTAINER}" "${ENGINEER_CONTAINER}"; do

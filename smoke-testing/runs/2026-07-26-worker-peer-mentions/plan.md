@@ -175,10 +175,28 @@ Only the final command creates the disposable Team and performs model turns.
 - The generic Harness marker contained `status=pass` but no nonce-bearing session existed, so it could not prove this event's turn. The runner now snapshots each Worker marker before the nonce and requires its metadata to change, while retaining nonce persistence as a separate assertion.
 - The next failed run, if new lower-layer evidence justifies one, will also query the room through Engineer's own official Matrix credential and emit only whether the exact sender/nonce/visible MXID/`m.mentions` ping is readable. This separates account-visible delivery from OpenClaw filtering/queueing without printing message content or credentials.
 - Released OpenClaw source shows that raw `groupAllowFrom` changes are dynamically read, while the simultaneously published Matrix `groups` mention policy can hot-restart the channel. The old readiness check could observe the initial join/ready logs and static file before that restart completed. The runner now requires the official `channels.status` projection to remain running, connected, healthy, non-restarting, and on one `lastStartAt` across a ten-second stable policy interval before the nonce baseline. This is a source-backed readiness hypothesis, not a passing real-smoke claim.
-- No model retry followed. Exact cleanup passed and the AgentTeams stack was stopped with data preserved.
+- No immediate model retry followed. Exact cleanup passed and the AgentTeams stack was stopped with data preserved.
 
-### Final result
+### Attempt 10 — FAIL (scenario did not relay Engineer's response contract)
 
-**BLOCKED.** Phase 0B is not promoted on either a lucky model-formatted address or an earlier successful transport run when the final bounded implementation did not complete.
+- After the source-backed readiness change, the no-model configuration run passed the new official `channels.status` stability boundary for both Workers.
+- The focused stacked real run then proved that both channels were stable before the nonce. Coordinator emitted one valid ping, Engineer's own account could read that exact ping, Engineer's Harness marker changed, and Engineer persisted the nonce. Both channels remained running, connected, healthy, and on the same pre-probe `lastStartAt`; stock Leader emitted zero messages.
+- Engineer emitted one message, but it did not contain the required `TG_PEER_PONG` marker, so the observer recorded three total events, zero pong events, and zero terminal events.
+- Classification: scenario instruction gap, not the previous wake boundary. The Admin instruction required Coordinator's output to be only the ping while separately telling Coordinator how Engineer should respond; that response instruction was therefore not present in the message Engineer actually received.
+- Change: require Coordinator's first reply to contain exactly two sentences: the addressed ping and the exact addressed pong instruction. This preserves the sender/mention/nonce oracle and still requires both messages to come from real Harness turns.
+- Exact cleanup passed.
 
-Issue #11 / Draft PR #12 now provide the smallest deterministic target and one-reply correlation contract without modifying AgentTeams. The real released path must still pass the strengthened sender/mention/nonce/terminal/Leader-silence oracle on the final revision. No additional real-model retry is permitted without new lower-layer evidence for the intermittent Engineer wake failure.
+### Attempt 11 — BLOCKED (Admin → Coordinator wake intermittency)
+
+- The corrected relay instruction was the only scenario change. Both official Matrix channels again passed the post-policy stability boundary before the nonce.
+- Only the Admin start event appeared during the bounded window. Coordinator emitted no message, neither Worker had a post-baseline Harness marker or nonce-bearing session, and stock Leader emitted zero messages.
+- Both channels remained running, connected, healthy, non-restarting, and on their pre-probe `lastStartAt` after the timeout.
+- The existing target-account diagnostic could only check a downstream peer ping, which did not exist. It has now been generalized to check the exact Admin start through Coordinator's own official Matrix credential as well as the exact peer ping through Engineer's credential, emitting only sanitized pass/fail facts.
+- Classification: released OpenClaw/Matrix wake boundary. Official channel health and stable lifecycle are necessary but do not prove that a specific visible mentioned event reached the Harness.
+- Exact cleanup passed. No further real-model run is permitted on this implementation without new lower-layer evidence.
+
+### Current result
+
+**BLOCKED.** Attempt 10 proves the previously missing Engineer ingress can succeed after active-channel stabilization, but Attempt 11 shows that the same released wake boundary can occur on the initial Admin → Coordinator event despite healthy stable channel state.
+
+Issue #11 / Draft PR #12 provide the deterministic target and one-reply correlation contract without modifying AgentTeams. The next action is lower-layer event-ingress diagnosis using the new per-target visibility facts; prompt changes or additional model retries cannot close this boundary.

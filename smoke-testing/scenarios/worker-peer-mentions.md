@@ -57,7 +57,7 @@
   - `stock_leader_message_count=0` and `stock_leader_model_turn_count=0`;
   - `peer_coordinator_harness=pass` and `peer_engineer_harness=pass`;
   - `matrix_peer_team_room_topology=pass`, `matrix_peer_channel_policy=pass`, and `matrix_peer_active_channel_stability=pass`;
-  - on failure, a sanitized target-account visibility fact for the exact sender/nonce/visible MXID/`m.mentions` ping, without raw bodies or credentials;
+  - on failure, sanitized target-account visibility facts for the exact Admin start and peer ping sender/nonce/visible MXID/`m.mentions`, without raw bodies or credentials;
   - alias cleanup observations plus Team/member/container/storage absence.
 - Skip/block rules:
   - block if Docker, pinned AgentTeams, Matrix, Gateway model, reserved identity ownership, or public Worker image is unavailable;

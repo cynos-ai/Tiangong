@@ -5,7 +5,7 @@ umask 077
 usage() {
   printf 'Usage:\n' >&2
   printf '  %s members CONFIG_PATH ROOM_ID EXPECTED_USER_IDS ABSENT_USER_IDS\n' "$0" >&2
-  printf '  %s event-visible CONFIG_PATH ROOM_ID EXPECTED_SENDER EXPECTED_USER NONCE\n' "$0" >&2
+  printf '  %s event-visible CONFIG_PATH ROOM_ID EXPECTED_SENDER EXPECTED_USER NONCE MARKER\n' "$0" >&2
   exit 2
 }
 
@@ -19,12 +19,13 @@ case "${MODE}" in
     readonly ABSENT_USER_IDS="$5"
     ;;
   event-visible)
-    (($# == 6)) || usage
+    (($# == 7)) || usage
     readonly CONFIG_PATH="$2"
     readonly ROOM_ID="$3"
     readonly EXPECTED_SENDER="$4"
     readonly EXPECTED_USER="$5"
     readonly NONCE="$6"
+    readonly MARKER="$7"
     ;;
   *) usage ;;
 esac
@@ -98,21 +99,30 @@ done
   printf 'ERROR: invalid Matrix event visibility nonce.\n' >&2
   exit 1
 }
+case "${MARKER}" in
+  TG_PEER_START|TG_PEER_PING) ;;
+  *)
+    printf 'ERROR: invalid Matrix event visibility marker.\n' >&2
+    exit 1
+    ;;
+esac
 messages="$(authed_curl \
   "${homeserver}/_matrix/client/v3/rooms/${room_path}/messages?dir=b&limit=64")"
 jq -e \
   --arg sender "${EXPECTED_SENDER}" \
   --arg user "${EXPECTED_USER}" \
-  --arg nonce "${NONCE}" '
+  --arg nonce "${NONCE}" \
+  --arg marker "${MARKER}" '
     [.chunk[] | select(
       .type == "m.room.message" and
       .sender == $sender and
-      ((.content.body // "") | contains("TG_PEER_PING nonce=" + $nonce)) and
+      ((.content.body // "") | contains($marker + " nonce=" + $nonce)) and
       ((.content.body // "") | contains($user)) and
       (((.content["m.mentions"].user_ids // []) | index($user)) != null)
     )] | length == 1
   ' <<<"${messages}" >/dev/null || {
-    printf 'ERROR: expected peer ping is not visible to the target Worker account.\n' >&2
+    printf 'ERROR: expected event is not visible to the target Worker account.\n' >&2
     exit 1
   }
-printf 'matrix_peer_ping_visible_to_target_account=pass\n'
+marker_label="${MARKER#TG_PEER_}"
+printf 'matrix_peer_%s_visible_to_target_account=pass\n' "${marker_label,,}"

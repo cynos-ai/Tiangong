@@ -218,8 +218,9 @@ run_probe() {
         "TG_PEER_START nonce=" + $nonce + ". Do not use tools. " +
         "Construct TARGET by concatenating @, localpart " + $localpart +
         ", :, and domain " + $domain + ". " +
-        "Replace TARGET with that full MXID. Your first reply must be exactly: TARGET TG_PEER_PING nonce=" + $nonce +
-        ". Reply exactly " + $coordinator + " TG_PEER_PONG nonce=" + $nonce + ". " +
+        "Replace TARGET with that full MXID. Your first reply must contain exactly these two sentences: " +
+        "TARGET TG_PEER_PING nonce=" + $nonce + ". Reply exactly " + $coordinator +
+        " TG_PEER_PONG nonce=" + $nonce + ". Do not add anything else to that reply. " +
         "After you later receive that PONG, reply exactly TG_PEER_DONE nonce=" + $nonce + ". " +
         "Never mention the platform Leader."
       ) as $instruction

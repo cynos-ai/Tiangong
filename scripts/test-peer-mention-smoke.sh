@@ -68,6 +68,10 @@ for required_runner_contract in \
   grep -Fq -- "${required_runner_contract}" "${RUNNER}" || \
     fail "runner is missing a deterministic readiness or Harness contract: ${required_runner_contract}"
 done
+grep -Fq 'Your first reply must contain exactly these two sentences:' "${ROUNDTRIP}" || \
+  fail 'peer prompt does not require relaying Engineer response instructions in the ping.'
+grep -Fq 'Do not add anything else to that reply.' "${ROUNDTRIP}" || \
+  fail 'peer prompt does not bound the relayed response instruction.'
 
 assert_exact_line_count 1 'apiVersion: agentteams.io/v1beta1'
 assert_exact_line_count 1 'kind: Team'
@@ -175,7 +179,7 @@ mkdir "${temporary_directory}/bin"
 cat >"${temporary_directory}/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${FAKE_MATRIX_EVENT_MODE:-}" == visible ]]; then
-  printf '%s\n' '{"chunk":[{"type":"m.room.message","sender":"@tiangong-peer-smoke-coordinator:matrix.test","content":{"body":"@tiangong-peer-smoke-engineer:matrix.test TG_PEER_PING nonce=11111111-2222-4333-8444-555555555555","m.mentions":{"user_ids":["@tiangong-peer-smoke-engineer:matrix.test"]}}}]}'
+  printf '%s\n' '{"chunk":[{"type":"m.room.message","sender":"@admin:matrix.test","content":{"body":"@tiangong-peer-smoke-coordinator:matrix.test TG_PEER_START nonce=11111111-2222-4333-8444-555555555555","m.mentions":{"user_ids":["@tiangong-peer-smoke-coordinator:matrix.test"]}}},{"type":"m.room.message","sender":"@tiangong-peer-smoke-coordinator:matrix.test","content":{"body":"@tiangong-peer-smoke-engineer:matrix.test TG_PEER_PING nonce=11111111-2222-4333-8444-555555555555","m.mentions":{"user_ids":["@tiangong-peer-smoke-engineer:matrix.test"]}}}]}'
 else
   printf '%s\n' '{"chunk":[]}'
 fi
@@ -183,12 +187,21 @@ EOF
 chmod 700 "${temporary_directory}/bin/curl"
 PATH="${temporary_directory}/bin:${PATH}" FAKE_MATRIX_EVENT_MODE=visible \
   "${ROOM_MEMBERS}" event-visible "${observer_config}" "${ROOM_ID}" \
-  "${COORDINATOR_ID}" "${ENGINEER_ID}" "${NONCE}" >/dev/null || \
+  "${COORDINATOR_ID}" "${ENGINEER_ID}" "${NONCE}" TG_PEER_PING >/dev/null || \
   fail 'Matrix target-account visibility helper rejected the exact peer ping.'
+PATH="${temporary_directory}/bin:${PATH}" FAKE_MATRIX_EVENT_MODE=visible \
+  "${ROOM_MEMBERS}" event-visible "${observer_config}" "${ROOM_ID}" \
+  "${ADMIN_ID}" "${COORDINATOR_ID}" "${NONCE}" TG_PEER_START >/dev/null || \
+  fail 'Matrix target-account visibility helper rejected the exact Admin start.'
 if PATH="${temporary_directory}/bin:${PATH}" FAKE_MATRIX_EVENT_MODE=missing \
     "${ROOM_MEMBERS}" event-visible "${observer_config}" "${ROOM_ID}" \
-    "${COORDINATOR_ID}" "${ENGINEER_ID}" "${NONCE}" >/dev/null 2>&1; then
+    "${COORDINATOR_ID}" "${ENGINEER_ID}" "${NONCE}" TG_PEER_PING >/dev/null 2>&1; then
   fail 'Matrix target-account visibility helper accepted a missing peer ping.'
+fi
+if PATH="${temporary_directory}/bin:${PATH}" FAKE_MATRIX_EVENT_MODE=visible \
+    "${ROOM_MEMBERS}" event-visible "${observer_config}" "${ROOM_ID}" \
+    "${COORDINATOR_ID}" "${ENGINEER_ID}" "${NONCE}" UNSAFE_MARKER >/dev/null 2>&1; then
+  fail 'Matrix target-account visibility helper accepted an unsafe marker.'
 fi
 
 if "${ALIASES}" unsafe-mode >/dev/null 2>&1; then
