@@ -62,9 +62,17 @@ Public source inspection explains the boundary:
 
 Classification: pinned AgentTeams adapter/host contract blocker, not a Tiangong runtime failure and not a model-response failure.
 
+### R4: Direct embedded config publication is also pruned
+
+A test-first follow-up evaluated whether the lower embedded config mirror/watcher could preserve the same public Team CR fixture without using the lossy HTTP request type. The exact MinIO config object and mirrored YAML retained both Leader fields, but an authenticated, field-filtered Kubernetes API observation showed `spec.leader.runtime=null` and `spec.leader.image=null` while the Worker's equivalent fields remained intact. The actual Leader again used the stock CoPaw image.
+
+The pinned Team CRD schema explains the result: its legacy `spec.leader` OpenAPI properties omit `runtime` and `image`, while `spec.workers[*]` includes both. Kubernetes structural-schema pruning removes the Leader fields before reconciliation. The experimental direct-publication change was therefore reverted rather than retained as a false workaround.
+
+Classification: pinned AgentTeams CRD contract blocker. Neither the embedded HTTP adapter nor direct config ingestion can create the required custom legacy Leader on this release.
+
 ## Current result
 
-**BLOCKED** on AgentTeams `v1.2.0-beta.1` embedded `hiclaw apply` for an explicitly configured custom Team Leader runtime/image.
+**BLOCKED** on AgentTeams `v1.2.0-beta.1` for an explicitly configured custom Team Leader runtime/image. Both the embedded apply request and the installed Team CRD omit or prune the required Leader fields.
 
 The assertion must not be weakened to accept the stock Leader. Phase 0 is intended to prove that the Tiangong trust kernel runs inside the Leader; a stock Leader would invalidate the boundary under test.
 
@@ -88,10 +96,12 @@ Cleanup passed. No broader AgentTeams resource or storage path was removed.
 
 Resolve the public platform contract before another real smoke:
 
-1. prefer an upstream AgentTeams release/API that preserves `leader.runtime` and `leader.image` through embedded declarative apply; or
-2. contribute the missing public request fields and handler mapping upstream, then update Tiangong's immutable AgentTeams pin after normal dependency review.
+1. wait for or select a reviewed public AgentTeams release containing the decoupled `Worker` + `Team.spec.workerMembers` contract already present on upstream `main` after PR #1072;
+2. update Tiangong's immutable AgentTeams pin through normal dependency review;
+3. replace the legacy inline fixture with two explicit Worker resources plus one Team membership resource; and
+4. prove an authenticated role-fact path into Tiangong TurnIngress rather than treating mutable prompt assets as authorization.
 
-Do not bypass this with prompt instructions, a stock Team Leader, global default-image mutation, private patches, or a Tiangong-owned replacement for Team/Matrix lifecycle.
+As of this run, `v1.2.0-beta.1` remains the newest public release; upstream `main` is not a releasable dependency pin. Do not bypass the gate with prompt instructions, a stock Team Leader, global default-image mutation, direct config-object publication, private patches, or a Tiangong-owned replacement for Team/Matrix lifecycle.
 
 ## Promotion decision
 
