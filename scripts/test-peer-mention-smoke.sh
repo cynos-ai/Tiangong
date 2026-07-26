@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+readonly SCRIPT_DIR REPO_ROOT
+readonly MANIFEST="${REPO_ROOT}/smoke-testing/fixtures/peer-mention-smoke-team.yaml"
+readonly RUNNER="${REPO_ROOT}/smoke-testing/support/run-peer-mention-smoke.sh"
+readonly ROUNDTRIP="${REPO_ROOT}/smoke-testing/support/matrix-peer-roundtrip.sh"
+readonly ROOM_MEMBERS="${REPO_ROOT}/smoke-testing/support/matrix-peer-room-members.sh"
+readonly ALIASES="${REPO_ROOT}/smoke-testing/support/matrix-peer-aliases.sh"
+readonly ROOM_ID='!peer-room:matrix.test'
+readonly ADMIN_ID='@admin:matrix.test'
+readonly LEADER_ID='@tiangong-peer-smoke-leader:matrix.test'
+readonly COORDINATOR_ID='@tiangong-peer-smoke-coordinator:matrix.test'
+readonly ENGINEER_ID='@tiangong-peer-smoke-engineer:matrix.test'
+readonly NONCE='11111111-2222-4333-8444-555555555555'
+
+temporary_directory="$(mktemp -d)"
+trap 'rm -rf -- "${temporary_directory}"' EXIT INT TERM
+
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
+
+assert_exact_line_count() {
+  local expected="$1" line="$2" actual
+  actual="$(grep -Fxc -- "${line}" "${MANIFEST}" || true)"
+  [[ "${actual}" == "${expected}" ]] || \
+    fail "expected ${expected} exact manifest line(s) '${line}', found ${actual}."
+}
+
+assert_pattern_count() {
+  local expected="$1" pattern="$2" label="$3" actual
+  actual="$(grep -Ec -- "${pattern}" "${MANIFEST}" || true)"
+  [[ "${actual}" == "${expected}" ]] || \
+    fail "expected ${expected} manifest ${label} line(s), found ${actual}."
+}
+
+expect_validation_failure() {
+  local file="$1" label="$2"
+  if "${ROUNDTRIP}" validate "${file}" "${ROOM_ID}" "${ADMIN_ID}" "${LEADER_ID}" \
+      "${COORDINATOR_ID}" "${ENGINEER_ID}" "${NONCE}" >/dev/null 2>&1; then
+    fail "event validator accepted ${label}."
+  fi
+}
+
+for path in "${MANIFEST}" "${RUNNER}" "${ROUNDTRIP}" "${ROOM_MEMBERS}" "${ALIASES}"; do
+  [[ -f "${path}" && ! -L "${path}" ]] || fail "required peer smoke asset is missing or symlinked: ${path}"
+done
+[[ -x "${RUNNER}" && -x "${ROUNDTRIP}" && -x "${ROOM_MEMBERS}" && -x "${ALIASES}" ]] || \
+  fail 'peer smoke support scripts must be executable.'
+for script in "${RUNNER}" "${ROUNDTRIP}" "${ROOM_MEMBERS}" "${ALIASES}"; do
+  bash -n "${script}"
+done
+
+assert_exact_line_count 1 'apiVersion: agentteams.io/v1beta1'
+assert_exact_line_count 1 'kind: Team'
+assert_exact_line_count 1 '  name: tiangong-peer-smoke'
+assert_exact_line_count 1 '  peerMentions: true'
+assert_exact_line_count 1 '    name: tiangong-peer-smoke-leader'
+assert_exact_line_count 1 '    - name: tiangong-peer-smoke-coordinator'
+assert_exact_line_count 1 '    - name: tiangong-peer-smoke-engineer'
+assert_pattern_count 3 '^[[:space:]]+model: qwen3\.5-plus$' model
+assert_pattern_count 2 '^[[:space:]]+runtime: openclaw$' runtime
+assert_pattern_count 2 '^[[:space:]]+image: tiangong-worker:dev$' image
+assert_pattern_count 3 '^[[:space:]]+state: Running$' state
+assert_pattern_count 2 '^[[:space:]]+groupAllowExtra:$' groupAllowExtra
+assert_exact_line_count 1 '          - tiangong-peer-smoke-coordinator'
+assert_exact_line_count 1 '          - tiangong-peer-smoke-engineer'
+assert_exact_line_count 1 '      enabled: false'
+
+leader_block="$(awk '
+  /^  leader:$/ { in_leader=1; next }
+  /^  workers:$/ { in_leader=0 }
+  in_leader { print }
+' "${MANIFEST}")"
+if grep -Eq '^[[:space:]]+(runtime|image):' <<<"${leader_block}"; then
+  fail 'stock Leader fixture must not request a custom runtime or image.'
+fi
+if grep -Eq '(^|[[:space:]])(package|skills|mcpServers):' "${MANIFEST}"; then
+  fail 'peer transport fixture must not enable packages, Skills, or MCP servers.'
+fi
+if grep -Eqi 'apiKey|accessToken|password|secret|token:' "${MANIFEST}"; then
+  fail 'peer transport fixture appears to contain credential-bearing fields.'
+fi
+for identity in \
+  tiangong-peer-smoke \
+  tiangong-peer-smoke-leader \
+  tiangong-peer-smoke-coordinator \
+  tiangong-peer-smoke-engineer; do
+  [[ "${identity}" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || \
+    fail "reserved identity is not DNS-safe: ${identity}"
+done
+
+positive="${temporary_directory}/positive.json"
+jq -cn \
+  --arg room "${ROOM_ID}" \
+  --arg admin "${ADMIN_ID}" \
+  --arg leader "${LEADER_ID}" \
+  --arg coordinator "${COORDINATOR_ID}" \
+  --arg engineer "${ENGINEER_ID}" \
+  --arg nonce "${NONCE}" '
+  {events:[
+    {room_id:$room,type:"m.room.message",sender:$admin,event_id:"$start",
+      content:{body:($coordinator + " TG_PEER_START nonce=" + $nonce),
+        "m.mentions":{user_ids:[$coordinator]}}},
+    {room_id:$room,type:"m.room.message",sender:$coordinator,event_id:"$ping",
+      content:{body:($engineer + " TG_PEER_PING nonce=" + $nonce + " ask " + $coordinator),
+        "m.mentions":{user_ids:[$engineer,$coordinator]}}},
+    {room_id:$room,type:"m.room.message",sender:$engineer,event_id:"$pong",
+      content:{body:($coordinator + " TG_PEER_PONG nonce=" + $nonce + " reply TG_PEER_DONE"),
+        "m.mentions":{user_ids:[$coordinator]}}},
+    {room_id:$room,type:"m.room.message",sender:$coordinator,event_id:"$done",
+      content:{body:("TG_PEER_DONE nonce=" + $nonce),"m.mentions":{user_ids:[]}}}
+  ]}
+' >"${positive}"
+validation_output="$("${ROUNDTRIP}" validate "${positive}" "${ROOM_ID}" "${ADMIN_ID}" \
+  "${LEADER_ID}" "${COORDINATOR_ID}" "${ENGINEER_ID}" "${NONCE}")"
+grep -Fqx 'worker_peer_event_chain=pass' <<<"${validation_output}" || \
+  fail 'positive peer event chain did not pass.'
+grep -Fqx 'stock_leader_message_count=0' <<<"${validation_output}" || \
+  fail 'positive peer event chain did not prove Leader silence.'
+
+jq '(.events[] | select(.event_id == "$ping").content["m.mentions"].user_ids) = []' \
+  "${positive}" >"${temporary_directory}/missing-mention.json"
+expect_validation_failure "${temporary_directory}/missing-mention.json" 'a ping without the Engineer mention'
+
+jq '(.events[] | select(.event_id == "$pong").sender) = "@unexpected:matrix.test"' \
+  "${positive}" >"${temporary_directory}/wrong-sender.json"
+expect_validation_failure "${temporary_directory}/wrong-sender.json" 'a pong from the wrong sender'
+
+jq '(.events[] | select(.event_id == "$pong").content.body) |= sub("11111111-2222-4333-8444-555555555555"; "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee")' \
+  "${positive}" >"${temporary_directory}/wrong-nonce.json"
+expect_validation_failure "${temporary_directory}/wrong-nonce.json" 'a pong with the wrong nonce'
+
+jq --arg room "${ROOM_ID}" --arg leader "${LEADER_ID}" '.events += [{
+  room_id:$room,type:"m.room.message",sender:$leader,event_id:"$leader-response",
+  content:{body:"unexpected", "m.mentions":{user_ids:[]}}
+}]' "${positive}" >"${temporary_directory}/leader-message.json"
+expect_validation_failure "${temporary_directory}/leader-message.json" 'a stock Leader response'
+
+if "${ALIASES}" unsafe-mode >/dev/null 2>&1; then
+  fail 'Matrix alias helper accepted an unsafe mode.'
+fi
+
+printf 'Worker peer mention smoke contract tests passed.\n'
