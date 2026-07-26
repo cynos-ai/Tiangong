@@ -54,6 +54,13 @@ done
 for script in "${RUNNER}" "${ROUNDTRIP}" "${ROOM_MEMBERS}" "${ALIASES}"; do
   bash -n "${script}"
 done
+for required_runner_contract in \
+  'coordinator_harness_before="$(harness_snapshot "${COORDINATOR_CONTAINER}")"' \
+  'engineer_harness_before="$(harness_snapshot "${ENGINEER_CONTAINER}")"' \
+  '[[ "${current}" != "${baseline}" ]]'; do
+  grep -Fq -- "${required_runner_contract}" "${RUNNER}" || \
+    fail "runner is missing the post-baseline Harness contract: ${required_runner_contract}"
+done
 
 assert_exact_line_count 1 'apiVersion: agentteams.io/v1beta1'
 assert_exact_line_count 1 'kind: Team'
