@@ -59,7 +59,8 @@ done
 for required_runner_contract in \
   'coordinator_harness_before="$(harness_snapshot "${COORDINATOR_CONTAINER}")"' \
   'engineer_harness_before="$(harness_snapshot "${ENGINEER_CONTAINER}")"' \
-  '[[ "${current}" != "${baseline}" ]]'; do
+  '[[ "${current}" != "${baseline}" ]]' \
+  '"${ENGINEER_ROOM_MEMBERS}" event-visible'; do
   grep -Fq -- "${required_runner_contract}" "${RUNNER}" || \
     fail "runner is missing the post-baseline Harness contract: ${required_runner_contract}"
 done
@@ -164,6 +165,9 @@ expect_validation_failure "${temporary_directory}/leader-message.json" 'a stock 
 
 if "${ALIASES}" unsafe-mode >/dev/null 2>&1; then
   fail 'Matrix alias helper accepted an unsafe mode.'
+fi
+if "${ROOM_MEMBERS}" unsafe-mode >/dev/null 2>&1; then
+  fail 'Matrix room observer accepted an unsafe mode.'
 fi
 
 printf 'Worker peer mention smoke contract tests passed.\n'

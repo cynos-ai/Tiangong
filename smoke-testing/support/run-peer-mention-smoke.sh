@@ -26,6 +26,7 @@ readonly MANAGER_MANIFEST="/tmp/tiangong-peer-smoke-team.yaml"
 readonly CONTROLLER_PEER_ROUNDTRIP="/tmp/tiangong-peer-roundtrip.sh"
 readonly CONTROLLER_ALIAS_HELPER="/tmp/tiangong-peer-aliases.sh"
 readonly COORDINATOR_ROOM_MEMBERS="/tmp/tiangong-peer-room-members.sh"
+readonly ENGINEER_ROOM_MEMBERS="/tmp/tiangong-peer-room-members.sh"
 readonly SMOKE_MODE="${TIANGONG_PEER_SMOKE_MODE:-full}"
 owned_resources=0
 
@@ -228,6 +229,10 @@ cleanup() {
     docker exec "${COORDINATOR_CONTAINER}" rm -f \
       "${COORDINATOR_ROOM_MEMBERS}" >/dev/null 2>&1 || cleanup_failed=1
   fi
+  if container_exists "${ENGINEER_CONTAINER}"; then
+    docker exec "${ENGINEER_CONTAINER}" rm -f \
+      "${ENGINEER_ROOM_MEMBERS}" >/dev/null 2>&1 || cleanup_failed=1
+  fi
 
   if ((owned_resources == 1)); then
     log "Deleting temporary Team ${TEAM_NAME}"
@@ -370,8 +375,10 @@ wait_for_worker_channel "${ENGINEER_CONTAINER}" "${ENGINEER_NAME}" "${team_room_
   die "Engineer Worker Team Room channel did not become ready."
 printf 'peer_worker_runtime_and_channel_readiness=pass\n'
 docker cp "${ROOM_MEMBERS}" "${COORDINATOR_CONTAINER}:${COORDINATOR_ROOM_MEMBERS}"
+docker cp "${ROOM_MEMBERS}" "${ENGINEER_CONTAINER}:${ENGINEER_ROOM_MEMBERS}"
 coordinator_config="/root/hiclaw-fs/agents/${COORDINATOR_NAME}/openclaw.json"
-docker exec "${COORDINATOR_CONTAINER}" "${COORDINATOR_ROOM_MEMBERS}" \
+engineer_config="/root/hiclaw-fs/agents/${ENGINEER_NAME}/openclaw.json"
+docker exec "${COORDINATOR_CONTAINER}" "${COORDINATOR_ROOM_MEMBERS}" members \
   "${coordinator_config}" "${team_room_id}" \
   "${admin_user_id},${leader_user_id},${coordinator_user_id},${engineer_user_id}" \
   "${manager_user_id}"
@@ -420,6 +427,11 @@ if ! peer_output="$(docker exec "${CONTROLLER_CONTAINER}" "${CONTROLLER_PEER_ROU
     printf '[Tiangong] Nonce-bearing session files for %s: %s\n' \
       "${diagnostic_member}" "${nonce_file_count}" >&2
   done
+  if ! docker exec "${ENGINEER_CONTAINER}" "${ENGINEER_ROOM_MEMBERS}" event-visible \
+      "${engineer_config}" "${team_room_id}" "${coordinator_user_id}" \
+      "${engineer_user_id}" "${nonce}"; then
+    printf '[Tiangong] Engineer account could not prove visibility of the expected peer ping.\n' >&2
+  fi
   die "Worker peer event chain failed."
 fi
 printf '%s\n' "${peer_output}"

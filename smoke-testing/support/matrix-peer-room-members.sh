@@ -1,15 +1,33 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
 
-if (($# != 4)); then
-  printf 'Usage: %s CONFIG_PATH ROOM_ID EXPECTED_USER_IDS ABSENT_USER_IDS\n' "$0" >&2
+usage() {
+  printf 'Usage:\n' >&2
+  printf '  %s members CONFIG_PATH ROOM_ID EXPECTED_USER_IDS ABSENT_USER_IDS\n' "$0" >&2
+  printf '  %s event-visible CONFIG_PATH ROOM_ID EXPECTED_SENDER EXPECTED_USER NONCE\n' "$0" >&2
   exit 2
-fi
+}
 
-readonly CONFIG_PATH="$1"
-readonly ROOM_ID="$2"
-readonly EXPECTED_USER_IDS="$3"
-readonly ABSENT_USER_IDS="$4"
+MODE="${1:-}"
+case "${MODE}" in
+  members)
+    (($# == 5)) || usage
+    readonly CONFIG_PATH="$2"
+    readonly ROOM_ID="$3"
+    readonly EXPECTED_USER_IDS="$4"
+    readonly ABSENT_USER_IDS="$5"
+    ;;
+  event-visible)
+    (($# == 6)) || usage
+    readonly CONFIG_PATH="$2"
+    readonly ROOM_ID="$3"
+    readonly EXPECTED_SENDER="$4"
+    readonly EXPECTED_USER="$5"
+    readonly NONCE="$6"
+    ;;
+  *) usage ;;
+esac
 
 [[ -f "${CONFIG_PATH}" && ! -L "${CONFIG_PATH}" ]] || {
   printf 'ERROR: Matrix configuration is missing or symlinked.\n' >&2
@@ -33,12 +51,14 @@ trap 'exit 143' TERM
 }
 homeserver="${homeserver%/}"
 room_path="$(printf '%s' "${ROOM_ID}" | jq -sRr @uri)"
-joined="$(printf 'header = "Authorization: Bearer %s"\n' "${access_token}" | \
-  curl --fail --silent --show-error --max-time 30 -K - \
-  "${homeserver}/_matrix/client/v3/rooms/${room_path}/joined_members")"
+
+authed_curl() {
+  printf 'header = "Authorization: Bearer %s"\n' "${access_token}" | \
+    curl --fail --silent --show-error --max-time 30 -K - "$@"
+}
 
 check_user_ids() {
-  local expectation="$1" values="$2" user_id
+  local joined="$1" expectation="$2" values="$3" user_id
   [[ -n "${values}" ]] || return 0
   IFS=',' read -r -a user_ids <<<"${values}"
   for user_id in "${user_ids[@]}"; do
@@ -60,6 +80,39 @@ check_user_ids() {
   done
 }
 
-check_user_ids expected "${EXPECTED_USER_IDS}"
-check_user_ids absent "${ABSENT_USER_IDS}"
-printf 'matrix_peer_team_room_topology=pass\n'
+if [[ "${MODE}" == members ]]; then
+  joined="$(authed_curl "${homeserver}/_matrix/client/v3/rooms/${room_path}/joined_members")"
+  check_user_ids "${joined}" expected "${EXPECTED_USER_IDS}"
+  check_user_ids "${joined}" absent "${ABSENT_USER_IDS}"
+  printf 'matrix_peer_team_room_topology=pass\n'
+  exit 0
+fi
+
+for user_id in "${EXPECTED_SENDER}" "${EXPECTED_USER}"; do
+  [[ "${user_id}" =~ ^@[^:[:space:]]+:[^[:space:]]+$ ]] || {
+    printf 'ERROR: invalid Matrix event visibility user ID.\n' >&2
+    exit 1
+  }
+done
+[[ "${NONCE}" =~ ^[0-9a-f-]{36}$ ]] || {
+  printf 'ERROR: invalid Matrix event visibility nonce.\n' >&2
+  exit 1
+}
+messages="$(authed_curl \
+  "${homeserver}/_matrix/client/v3/rooms/${room_path}/messages?dir=b&limit=64")"
+jq -e \
+  --arg sender "${EXPECTED_SENDER}" \
+  --arg user "${EXPECTED_USER}" \
+  --arg nonce "${NONCE}" '
+    [.chunk[] | select(
+      .type == "m.room.message" and
+      .sender == $sender and
+      ((.content.body // "") | contains("TG_PEER_PING nonce=" + $nonce)) and
+      ((.content.body // "") | contains($user)) and
+      (((.content["m.mentions"].user_ids // []) | index($user)) != null)
+    )] | length == 1
+  ' <<<"${messages}" >/dev/null || {
+    printf 'ERROR: expected peer ping is not visible to the target Worker account.\n' >&2
+    exit 1
+  }
+printf 'matrix_peer_ping_visible_to_target_account=pass\n'
