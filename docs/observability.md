@@ -56,9 +56,22 @@ tiangong.harness.attempt
 └── execute_tool
 ```
 
-Short checkpoint spans make phase entry observable even while a later operation remains in flight. Model spans are derived from the pinned pi session's `turn_start`, assistant `message_end`, and retry events. Tool spans wrap the Tiangong-authorized backend execution, not model claims.
+Short checkpoint spans make phase entry observable even while a later operation remains in flight. Model activity uses these sanitized phases:
 
-Terminal outcomes are `complete`, `pending`, `error`, `timeout`, or `upstream_abort`.
+```text
+pi.turn.start
+model.request.ready
+model.response.received
+model.response.start
+model.response.progress
+model.retry
+```
+
+`pi.turn.start` is deliberately separate from provider activity: pi emits it before context conversion, credential resolution, and the provider stream call. A trusted built-in inline hook emits `model.request.ready` immediately before pi sends a provider request and `model.response.received` after response headers arrive; discovered external extensions remain disabled. Assistant stream start and update events emit the response phases without reading their content. Progress is coalesced to at most one checkpoint per minute and 32 checkpoints per model operation rather than producing a span per token. `model.retry` represents pi session auto-retry; the pinned public API does not expose lower-level provider-internal retry attempts, so Tiangong does not invent that evidence.
+
+A progress checkpoint proves real response-stream activity. A local timer heartbeat would prove only that the Worker event loop can schedule a timer, not that the provider is progressing, so it is not labeled as model activity. `request.ready` without a later response identifies the waiting-provider boundary, but telemetry alone cannot prove a deadlock: missing export remains `unknown`, and a prolonged silent interval can only be classified as suspected stall until an explicit timeout or abort occurs.
+
+Tool spans wrap the Tiangong-authorized backend execution, not model claims. Terminal outcomes are `complete`, `pending`, `error`, `timeout`, or `upstream_abort`.
 
 ## Data policy
 

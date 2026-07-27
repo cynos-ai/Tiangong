@@ -28,6 +28,7 @@ import { createCoreToolRegistry } from "./tools/registry.mjs";
 import { createTurnResult } from "./turn-contract.mjs";
 import { TurnContextController } from "./turn-context.mjs";
 import { createPiSessionTraceObserver } from "../observability/pi-session-tracing.mjs";
+import { createProviderTraceBridge } from "../observability/provider-tracing.mjs";
 import { observabilityOutcome } from "../observability/tracing.mjs";
 
 const SYSTEM_PROMPT = `You are the Tiangong agent runtime. Use only the tools exposed by the runtime. Tool authorization is enforced in code. A pending tool result means the operation did not execute; do not claim otherwise. Never invent an approval or alter an approval identifier.`;
@@ -130,6 +131,7 @@ export class TiangongAgentRuntime {
       compaction: { enabled: false },
       retry: { enabled: true, maxRetries: 2 },
     });
+    const providerTrace = createProviderTraceBridge();
     const resourceLoader = new DefaultResourceLoader({
       agentDir: persisted.directory,
       cwd: request.workspaceDir,
@@ -138,6 +140,7 @@ export class TiangongAgentRuntime {
       noPromptTemplates: true,
       noSkills: true,
       noThemes: true,
+      extensionFactories: [providerTrace.extension],
       settingsManager,
       systemPrompt: SYSTEM_PROMPT,
     });
@@ -165,6 +168,7 @@ export class TiangongAgentRuntime {
       turns,
       registry,
       peerReplies: new PeerReplyRouter(),
+      providerTrace,
       provider: request.provider,
       modelId: request.modelId,
       workspaceDir: request.workspaceDir,
@@ -365,6 +369,7 @@ export class TiangongAgentRuntime {
     let promptError;
     const agentTurn = observability?.startOperation("tiangong.pi.agent_turn");
     observability?.checkpoint("pi.agent_turn.start");
+    const releaseProviderTrace = state.providerTrace.bind(modelTrace);
     try {
       await state.session.prompt(request.prompt);
       agentTurn?.end("complete");
@@ -373,6 +378,7 @@ export class TiangongAgentRuntime {
       agentTurn?.end(observabilityOutcome(request.abortSignal), error);
       throw error;
     } finally {
+      releaseProviderTrace();
       modelTrace.finish(promptError);
       completedTurn = state.turns.end();
       unsubscribe();

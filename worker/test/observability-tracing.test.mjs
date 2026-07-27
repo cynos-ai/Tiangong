@@ -106,13 +106,17 @@ test("exports a sanitized Harness hierarchy without content-bearing attributes",
     "gen_ai.provider.name": "agentteams-gateway",
     "gen_ai.request.model": "qwen3.5-plus",
   });
-  attempt.checkpoint("model.start");
+  attempt.checkpoint("pi.turn.start");
+  attempt.checkpoint("model.request.ready");
+  attempt.checkpoint("model.response.received");
+  attempt.checkpoint("model.response.start");
+  attempt.checkpoint("model.response.progress");
   model.end("complete");
   attempt.finish("complete");
   await observability.forceFlush();
 
   const spans = exporter.getFinishedSpans();
-  assert.equal(spans.length, 6);
+  assert.equal(spans.length, 10);
   const root = spanByName(spans, "tiangong.harness.attempt");
   const setupSpan = spanByName(spans, "tiangong.runtime.setup");
   const modelSpan = spanByName(spans, "gen_ai.chat");
@@ -140,8 +144,9 @@ test("exports a sanitized Harness hierarchy without content-bearing attributes",
     "attempt-secret-value",
     "event-secret-value",
     "session-secret-value",
-    "prompt",
-    "response",
+    "gen_ai.prompt",
+    "gen_ai.completion",
+    "message.content",
     "credential",
     "authorization",
   ]) {
