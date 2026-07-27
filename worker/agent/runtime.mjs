@@ -17,6 +17,7 @@ import { PolicyGate } from "./gates/policy-gate.mjs";
 import { IdempotencyStore } from "./idempotency/store.mjs";
 import { ModelGateway } from "./model-gateway.mjs";
 import { PeerReplyRouter } from "./peer-reply-router.mjs";
+import { parsePeerTransportCommand, PeerTransportProbe } from "./peer-transport-probe.mjs";
 import { createAgentTeamsPendingStorage } from "./pending-operation/agentteams-storage.mjs";
 import { PendingOperationStore } from "./pending-operation/store.mjs";
 import {
@@ -168,6 +169,7 @@ export class TiangongAgentRuntime {
       turns,
       registry,
       peerReplies: new PeerReplyRouter(),
+      peerTransport: new PeerTransportProbe(),
       providerTrace,
       provider: request.provider,
       modelId: request.modelId,
@@ -191,6 +193,22 @@ export class TiangongAgentRuntime {
       }
     }
     return state;
+  }
+
+  #handlePeerTransport(request, state, route, command) {
+    const plan = state.peerTransport.plan(command, request, route);
+    const result = createTurnResult(request, {
+      text: plan.text,
+      replyTarget: plan.replyTarget,
+    });
+    appendControlMessage(state, result.text, {
+      protocol: "tiangong-peer-transport-v1",
+      phase: command.kind,
+      nonce: command.nonce,
+    });
+    state.peerReplies.commit(route, { text: result.text, replyTarget: result.replyTarget });
+    state.peerTransport.commit(plan);
+    return result;
   }
 
   async #handleApproval(request, state, route, command, observability) {
@@ -346,6 +364,8 @@ export class TiangongAgentRuntime {
     if (state.session.isStreaming) throw new Error("pi session is already processing a request");
 
     const route = state.peerReplies.plan(request.replyTarget);
+    const transportCommand = parsePeerTransportCommand(request.prompt);
+    if (transportCommand) return this.#handlePeerTransport(request, state, route, transportCommand);
     const command = parseApprovalCommand(request.prompt);
     if (command) return this.#handleApproval(request, state, route, command, observability);
 

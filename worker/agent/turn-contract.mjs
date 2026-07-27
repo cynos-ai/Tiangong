@@ -1,6 +1,7 @@
 const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 const MATRIX_REPLY_SOURCE = "openclaw.matrix.group-only-sender";
 const MATRIX_USER_ID = /^@[^:\s]+:[^\s]+$/u;
+const MAX_AUTHORIZED_PEERS = 32;
 
 function requiredString(value, name) {
   if (typeof value !== "string" || value === "") throw new TypeError(`${name} must be a non-empty string`);
@@ -21,6 +22,20 @@ export function normalizeReplyTarget(value) {
     throw new TypeError("reply target is malformed or unsupported");
   }
   return Object.freeze({ channel: value.channel, id: value.id, source: value.source });
+}
+
+export function normalizeAuthorizedPeerTargets(value) {
+  if (value === undefined || value === null) return Object.freeze([]);
+  if (!Array.isArray(value) || value.length > MAX_AUTHORIZED_PEERS) {
+    throw new TypeError("authorized peer targets must be a bounded array");
+  }
+  const targets = value.map(normalizeReplyTarget);
+  if (targets.some((target) => target === null)) {
+    throw new TypeError("authorized peer targets cannot contain null");
+  }
+  const ids = new Set(targets.map((target) => target.id));
+  if (ids.size !== targets.length) throw new TypeError("authorized peer targets must be unique");
+  return Object.freeze(targets);
 }
 
 export function normalizeThinkingLevel(level) {
@@ -45,6 +60,7 @@ export function createTurnRequest(input) {
       messageId: input.actor?.messageId ?? null,
     }),
     replyTarget: normalizeReplyTarget(input.replyTarget),
+    authorizedPeerTargets: normalizeAuthorizedPeerTargets(input.authorizedPeerTargets),
     images: Array.isArray(input.images) ? input.images : [],
     abortSignal: input.abortSignal,
   };
@@ -60,11 +76,14 @@ export function createTurnRequest(input) {
 export function createTurnResult(request, input) {
   if (!input || typeof input !== "object") throw new TypeError("Turn result input must be an object");
   const requestedTarget = normalizeReplyTarget(request?.replyTarget);
+  const authorizedPeers = normalizeAuthorizedPeerTargets(request?.authorizedPeerTargets);
+  const authorizedIds = new Set(authorizedPeers.map((target) => target.id));
+  if (requestedTarget) authorizedIds.add(requestedTarget.id);
   let replyTarget = requestedTarget;
   if (Object.hasOwn(input, "replyTarget")) {
     replyTarget = normalizeReplyTarget(input.replyTarget);
-    if (replyTarget && (!requestedTarget || replyTarget.id !== requestedTarget.id)) {
-      throw new TypeError("Turn result cannot redirect the authenticated replyTarget");
+    if (replyTarget && !authorizedIds.has(replyTarget.id)) {
+      throw new TypeError("Turn result replyTarget is not authorized for this ingress");
     }
   }
   const { text, usage, pendingApproval = null, hadPotentialSideEffects = false } = input;
