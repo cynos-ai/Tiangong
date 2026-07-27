@@ -94,14 +94,16 @@ for required_runner_contract in \
   grep -Fq -- "${required_runner_contract}" "${RUNNER}" || \
     fail "runner is missing a deterministic readiness or Harness contract: ${required_runner_contract}"
 done
-grep -Fq 'Your first reply must contain exactly these two sentences:' "${ROUNDTRIP}" || \
-  fail 'peer prompt does not require relaying Engineer response instructions in the ping.'
-grep -Fq 'Do not add anything else to that reply.' "${ROUNDTRIP}" || \
-  fail 'peer prompt does not bound the relayed response instruction.'
-grep -Fq 'for _ in $(seq 1 36); do' "${ROUNDTRIP}" || \
-  fail 'peer observer does not retain its fixed sync-window count.'
-grep -Fq 'sync?since=${since_query}&timeout=10000' "${ROUNDTRIP}" || \
-  fail 'peer observer does not retain its fixed Matrix sync timeout.'
+# These are literal source fragments; expansion would invalidate the contract check.
+# shellcheck disable=SC2016
+for required_roundtrip_contract in \
+  'Your first reply must contain exactly these two sentences:' \
+  'Do not add anything else to that reply.' \
+  'for _ in $(seq 1 36); do' \
+  'sync?since=${since_query}&timeout=10000'; do
+  grep -Fq -- "${required_roundtrip_contract}" "${ROUNDTRIP}" || \
+    fail "round-trip probe is missing a deterministic prompt or observer contract: ${required_roundtrip_contract}"
+done
 
 assert_exact_line_count 1 'apiVersion: agentteams.io/v1beta1'
 assert_exact_line_count 1 'kind: Team'
