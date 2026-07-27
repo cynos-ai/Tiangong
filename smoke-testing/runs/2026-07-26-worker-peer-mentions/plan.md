@@ -324,7 +324,9 @@ No Matrix trace flag, temporary image, or prompt change was used to manufacture 
 - Draft PR #14 commit `b685111` renames that checkpoint to `pi.turn.start` and adds content-free provider/stream checkpoints: `model.request.ready` immediately before the provider request, `model.response.received` after response headers, `model.response.start` when the assistant stream starts, and bounded `model.response.progress` from real stream updates.
 - Progress is coalesced to at most one checkpoint per minute and 32 per model operation. No token, thinking text, tool-call data, payload, headers, response body, or raw error is read or exported. A local timer heartbeat is intentionally not called model progress.
 - Existing `model.retry` covers pi session auto-retry only. The pinned public API does not expose lower-level provider-internal retries, so the trace does not invent them.
-- Deterministic tests cover provider-hook binding, phase ordering, content exclusion, progress coalescing/cap, retry sanitization, abort/error closure, OTLP allowlisting, and exporter isolation. Default and endpoint-configured image builds pass. No real model or Matrix turn was used for this state-machine change.
+- Deterministic tests cover provider-hook binding, phase ordering, content exclusion, progress coalescing/cap, retry sanitization, abort/error closure, OTLP allowlisting, and exporter isolation. Default and endpoint-configured image builds pass.
+- A no-model official long-lived OpenClaw Gateway probe used a local deterministic SSE fixture and the exact hardened receiver. It completed with one accepted request, 16 spans, zero rejections, and exactly one each of `pi.turn.start`, `model.request.ready`, `model.response.received`, `model.response.start`, and `model.response.progress`. This proves the trusted inline provider hooks and pi stream events survive the real image/plugin/Gateway path without weakening receiver validation.
+- No external model or Matrix turn was used for this state-machine change.
 
 ### Current result
 
