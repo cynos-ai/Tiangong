@@ -16,8 +16,10 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
     && ./node_modules/.bin/pi --version
 
 COPY agent/ ./agent/
+COPY observability/ ./observability/
 COPY plugin/ ./plugin/
-RUN node -e 'import("./plugin/index.mjs").then((module) => { if (module.default?.id !== "tiangong-pi") process.exit(1); })'
+RUN npm run check-observability \
+    && node -e 'import("./plugin/index.mjs").then((module) => { if (module.default?.id !== "tiangong-pi") process.exit(1); })'
 
 COPY --chmod=755 bin/openclaw bin/tiangong-reconcile bin/tiangong-retain /opt/tiangong-worker/bin/
 

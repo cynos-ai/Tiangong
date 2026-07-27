@@ -51,11 +51,19 @@ function tool(kernel, name) {
   return definition;
 }
 
-async function execute(kernel, { sessionId = "session-1", turnId, toolCallId, name, params }) {
+async function execute(kernel, {
+  sessionId = "session-1",
+  turnId,
+  toolCallId,
+  name,
+  params,
+  observability,
+}) {
   kernel.turns.begin({
     sessionId,
     turnId,
     actor: { id: "@requester:example.test" },
+    observability,
   });
   try {
     return await tool(kernel, name).execute(toolCallId, params);
@@ -68,12 +76,22 @@ test("read is gated and records proposal, decision, start, and completion", asyn
   const paths = await fixture(t);
   await writeFile(join(paths.workspaceDir, "fixture.txt"), "hello\n");
   const kernel = createKernel(paths);
+  const trace = { checkpoints: [], operations: [] };
+  const observability = {
+    checkpoint(phase, attributes) { trace.checkpoints.push({ phase, attributes }); },
+    startOperation(name, attributes) {
+      const operation = { name, attributes, outcomes: [] };
+      trace.operations.push(operation);
+      return { end(outcome) { operation.outcomes.push(outcome); } };
+    },
+  };
 
   const result = await execute(kernel, {
     turnId: "turn-read",
     toolCallId: "call-read",
     name: "read",
     params: { path: "fixture.txt" },
+    observability,
   });
 
   assert.match(result.content[0].text, /hello/u);
@@ -86,6 +104,26 @@ test("read is gated and records proposal, decision, start, and completion", asyn
   ]);
   assert(records.every((record) => record.toolCallId === "call-read"));
   assert.equal(records[1].decision, "allow");
+  assert.deepEqual(trace.checkpoints, [
+    { phase: "tool.proposed", attributes: { "tiangong.tool.name": "read" } },
+    {
+      phase: "gate.decided",
+      attributes: {
+        "tiangong.tool.name": "read",
+        "tiangong.gate.outcome": "allow",
+        "tiangong.approval.pending": false,
+      },
+    },
+  ]);
+  assert.deepEqual(trace.operations, [{
+    name: "execute_tool",
+    attributes: {
+      "gen_ai.operation.name": "execute_tool",
+      "tiangong.tool.name": "read",
+    },
+    outcomes: ["complete"],
+  }]);
+  assert.equal(JSON.stringify(trace).includes("fixture.txt"), false);
 });
 
 test("pending write survives restart, executes once after approval, and replays safely", async (t) => {

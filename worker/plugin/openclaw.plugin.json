@@ -5,6 +5,16 @@
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
-    "properties": {}
+    "properties": {
+      "observability": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["enabled"],
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "endpoint": { "type": "string", "maxLength": 2048 }
+        }
+      }
+    }
   }
 }
