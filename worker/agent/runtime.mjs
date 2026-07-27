@@ -195,7 +195,7 @@ export class TiangongAgentRuntime {
     return state;
   }
 
-  #handlePeerTransport(request, state, route, command) {
+  #handlePeerTransport(request, state, route, command, observability) {
     const plan = state.peerTransport.plan(command, request, route);
     const result = createTurnResult(request, {
       text: plan.text,
@@ -208,6 +208,7 @@ export class TiangongAgentRuntime {
     });
     state.peerReplies.commit(route, { text: result.text, replyTarget: result.replyTarget });
     state.peerTransport.commit(plan);
+    observability?.checkpoint(`peer.transport.${command.kind}`);
     return result;
   }
 
@@ -365,7 +366,9 @@ export class TiangongAgentRuntime {
 
     const route = state.peerReplies.plan(request.replyTarget);
     const transportCommand = parsePeerTransportCommand(request.prompt);
-    if (transportCommand) return this.#handlePeerTransport(request, state, route, transportCommand);
+    if (transportCommand) {
+      return this.#handlePeerTransport(request, state, route, transportCommand, observability);
+    }
     const command = parseApprovalCommand(request.prompt);
     if (command) return this.#handleApproval(request, state, route, command, observability);
 

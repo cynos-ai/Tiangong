@@ -140,13 +140,19 @@ test("runtime handles the transport control without dispatching a model request"
     await runtime.dispose();
     await rm(directory, { recursive: true, force: true });
   });
+  const phases = [];
+  const observability = {
+    checkpoint(phase) { phases.push(phase); },
+    startOperation() { return { end() {} }; },
+  };
   const result = await runtime.runTurn(request({
     turnId: "matrix:$runtime-start",
     actorId: "@admin:example.test",
     prompt: `TG_PEER_START nonce=${NONCE}`,
     authorizedPeerTargets: [ENGINEER],
     workspaceDir,
-  }));
+  }), observability);
+  assert.deepEqual(phases, ["runtime.start", "gateway.resolved", "session.ready", "peer.transport.start"]);
   assert.equal(result.text, `TG_PEER_PING nonce=${NONCE}`);
   assert.deepEqual(result.replyTarget, ENGINEER);
   assert.equal(result.usage.totalTokens, 0);
