@@ -323,6 +323,30 @@ trace_summary() {
   }]' "${OTLP_SPANS_FILE}" 2>/dev/null || printf '[]\n'
 }
 
+trace_inventory() {
+  [[ -f "${OTLP_SPANS_FILE}" ]] || {
+    printf '[]\n'
+    return
+  }
+  jq -cs '[.[] | {
+    turn:(.attributes["tiangong.turn.id"] // null),
+    name,
+    phase:(.attributes["tiangong.phase"] // null),
+    outcome:(.attributes["tiangong.operation.outcome"] // null),
+    errorType:(.attributes["error.type"] // null),
+    statusCode
+  }]' "${OTLP_SPANS_FILE}" 2>/dev/null || printf '[]\n'
+}
+
+receiver_status() {
+  docker exec "${OTLP_CONTAINER}" node -e '
+    fetch("http://127.0.0.1:4318/health")
+      .then((response) => response.json())
+      .then((value) => process.stdout.write(JSON.stringify(value)))
+      .catch(() => process.exit(1));
+  ' 2>/dev/null || printf '{"status":"unavailable"}'
+}
+
 assert_trace_complete() {
   local event_id="$1" label="$2" digest
   digest="$(observability_turn_digest "${event_id}")"
@@ -615,6 +639,10 @@ if ! peer_output="$(docker exec "${CONTROLLER_CONTAINER}" "${CONTROLLER_PEER_ROU
       sleep 1
     done
     printf '[Tiangong] Sanitized Coordinator start-event trace: %s\n' "${trace}" >&2
+    printf '[Tiangong] Sanitized OTLP receiver status: %s\n' "$(receiver_status)" >&2
+    if [[ "${trace}" == '[]' ]]; then
+      printf '[Tiangong] Sanitized unmatched trace inventory: %s\n' "$(trace_inventory)" >&2
+    fi
   else
     printf '[Tiangong] Coordinator start-event trace correlation is unavailable.\n' >&2
   fi

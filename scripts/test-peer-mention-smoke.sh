@@ -272,6 +272,12 @@ invalid_status="$(curl --silent --output /dev/null --write-out '%{http_code}' --
   -H 'Content-Type: application/json' --data-binary @"${temporary_directory}/invalid-otlp.json" \
   http://127.0.0.1:14318/v1/traces)"
 [[ "${invalid_status}" == 400 ]] || fail 'OTLP smoke receiver accepted a non-allowlisted attribute.'
+curl --fail --silent --max-time 1 http://127.0.0.1:14318/health | jq -e '
+  .status == "ready" and
+  .acceptedRequests == 1 and
+  .acceptedSpans == 1 and
+  .rejectedRequests == 1
+' >/dev/null || fail 'OTLP smoke receiver counters do not match accepted and rejected requests.'
 kill "${receiver_pid}"
 wait "${receiver_pid}" 2>/dev/null || true
 receiver_pid=''

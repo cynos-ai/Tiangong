@@ -132,6 +132,7 @@ async function requestBody(request) {
 
 await mkdir(dirname(outputPath), { recursive: true, mode: 0o700 });
 let writeQueue = Promise.resolve();
+const counters = { acceptedRequests: 0, rejectedRequests: 0, acceptedSpans: 0 };
 const appendSpans = (spans) => {
   const write = writeQueue.then(() => appendFile(
     outputPath,
@@ -144,7 +145,7 @@ const appendSpans = (spans) => {
 const server = createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/health") {
     response.writeHead(200, { "content-type": "application/json" });
-    response.end('{"status":"ready"}\n');
+    response.end(`${JSON.stringify({ status: "ready", ...counters })}\n`);
     return;
   }
   if (request.method !== "POST" || request.url !== "/v1/traces" ||
@@ -156,9 +157,12 @@ const server = createServer(async (request, response) => {
   try {
     const spans = sanitizedSpans(JSON.parse(await requestBody(request)));
     await appendSpans(spans);
+    counters.acceptedRequests += 1;
+    counters.acceptedSpans += spans.length;
     response.writeHead(200, { "content-type": "application/json" });
     response.end("{}\n");
   } catch {
+    counters.rejectedRequests += 1;
     response.writeHead(400, { "content-type": "application/json" });
     response.end('{"error":"invalid_otlp"}\n');
   }
