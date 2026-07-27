@@ -10,7 +10,7 @@ readonly ROUNDTRIP="${REPO_ROOT}/smoke-testing/support/matrix-peer-roundtrip.sh"
 readonly ROOM_MEMBERS="${REPO_ROOT}/smoke-testing/support/matrix-peer-room-members.sh"
 readonly ALIASES="${REPO_ROOT}/smoke-testing/support/matrix-peer-aliases.sh"
 readonly OTLP_RECEIVER="${REPO_ROOT}/smoke-testing/support/otlp-smoke-receiver.mjs"
-readonly OTLP_ACTIVITY_QUERY="${REPO_ROOT}/smoke-testing/support/otlp-model-activity.jq"
+readonly OTLP_ACTIVITY_QUERY="${REPO_ROOT}/smoke-testing/support/otlp-turn-activity.jq"
 readonly ROOM_ID='!peer-room:matrix.test'
 readonly ADMIN_ID='@admin:matrix.test'
 readonly LEADER_ID='@tiangong-peer-smoke-leader:matrix.test'
@@ -88,11 +88,14 @@ for required_runner_contract in \
   'TIANGONG_OTEL_EXPORTER_ENDPOINT="${OTLP_ENDPOINT}" "${BUILD_WORKER_IMAGE}"' \
   '--user "$(id -u):$(id -g)"' \
   'Sanitized Coordinator start-event trace' \
-  'Sanitized Coordinator model activity facts' \
-  'Sanitized model activity facts for %s' \
+  'Sanitized Coordinator turn activity facts' \
+  'Sanitized turn activity facts for %s' \
   'Sanitized OTLP receiver status' \
   'Sanitized unmatched trace inventory' \
-  'assert_trace_complete "${start_event_id}" coordinator_start' \
+  'assert_trace_complete "${start_event_id}" coordinator_start peer.transport.start' \
+  'assert_trace_complete "${ping_event_id}" engineer_ping peer.transport.ping' \
+  'assert_trace_complete "${pong_event_id}" coordinator_pong peer.transport.pong' \
+  '.name != "tiangong.pi.agent_turn" and .name != "gen_ai.chat"' \
   'rm -rf -- "${OTLP_DATA_DIRECTORY}"'; do
   grep -Fq -- "${required_runner_contract}" "${RUNNER}" || \
     fail "runner is missing a deterministic readiness or Harness contract: ${required_runner_contract}"
@@ -100,13 +103,16 @@ done
 # These are literal source fragments; expansion would invalidate the contract check.
 # shellcheck disable=SC2016
 for required_roundtrip_contract in \
-  'Your first reply must contain exactly these two sentences:' \
-  'Do not add anything else to that reply.' \
+  '("TG_PEER_START nonce=" + $nonce) as $control' \
+  'body:($coordinator + " " + $control)' \
   'for _ in $(seq 1 36); do' \
   'sync?since=${since_query}&timeout=10000'; do
   grep -Fq -- "${required_roundtrip_contract}" "${ROUNDTRIP}" || \
     fail "round-trip probe is missing a deterministic prompt or observer contract: ${required_roundtrip_contract}"
 done
+if grep -Eq 'Your first reply|Reply exactly|Do not add anything else' "${ROUNDTRIP}"; then
+  fail 'round-trip probe must not depend on stochastic model wording.'
+fi
 
 progress_activity="$(jq -c -f "${OTLP_ACTIVITY_QUERY}" <<'JSON'
 [
@@ -119,9 +125,9 @@ progress_activity="$(jq -c -f "${OTLP_ACTIVITY_QUERY}" <<'JSON'
 ]
 JSON
 )"
-[[ "${progress_activity}" == '{"piTurnStarted":true,"requestReady":true,"responseReceived":true,"responseStarted":true,"responseProgress":true,"retryObserved":false,"modelComplete":true,"modelTimedOut":false,"modelAborted":false}' ]] || \
-  fail 'model activity query did not classify real stream progress.'
-[[ "${progress_activity}" != *secret* ]] || fail 'model activity query leaked an unallowlisted input field.'
+[[ "${progress_activity}" == '{"peerTransportStart":false,"peerTransportPing":false,"peerTransportPong":false,"piTurnStarted":true,"requestReady":true,"responseReceived":true,"responseStarted":true,"responseProgress":true,"retryObserved":false,"modelComplete":true,"modelTimedOut":false,"modelAborted":false}' ]] || \
+  fail 'turn activity query did not classify real stream progress.'
+[[ "${progress_activity}" != *secret* ]] || fail 'turn activity query leaked an unallowlisted input field.'
 silent_activity="$(jq -c -f "${OTLP_ACTIVITY_QUERY}" <<'JSON'
 [
   {"name":"tiangong.lifecycle.checkpoint","phase":"pi.turn.start","outcome":null},
@@ -130,8 +136,17 @@ silent_activity="$(jq -c -f "${OTLP_ACTIVITY_QUERY}" <<'JSON'
 ]
 JSON
 )"
-[[ "${silent_activity}" == '{"piTurnStarted":true,"requestReady":true,"responseReceived":false,"responseStarted":false,"responseProgress":false,"retryObserved":false,"modelComplete":false,"modelTimedOut":true,"modelAborted":false}' ]] || \
-  fail 'model activity query did not classify a silent provider timeout.'
+[[ "${silent_activity}" == '{"peerTransportStart":false,"peerTransportPing":false,"peerTransportPong":false,"piTurnStarted":true,"requestReady":true,"responseReceived":false,"responseStarted":false,"responseProgress":false,"retryObserved":false,"modelComplete":false,"modelTimedOut":true,"modelAborted":false}' ]] || \
+  fail 'turn activity query did not classify a silent provider timeout.'
+transport_activity="$(jq -c -f "${OTLP_ACTIVITY_QUERY}" <<'JSON'
+[
+  {"name":"tiangong.lifecycle.checkpoint","phase":"peer.transport.start","outcome":null},
+  {"name":"tiangong.harness.attempt","phase":null,"outcome":"complete"}
+]
+JSON
+)"
+[[ "${transport_activity}" == '{"peerTransportStart":true,"peerTransportPing":false,"peerTransportPong":false,"piTurnStarted":false,"requestReady":false,"responseReceived":false,"responseStarted":false,"responseProgress":false,"retryObserved":false,"modelComplete":false,"modelTimedOut":false,"modelAborted":false}' ]] || \
+  fail 'turn activity query did not classify a deterministic peer transport control.'
 
 assert_exact_line_count 1 'apiVersion: agentteams.io/v1beta1'
 assert_exact_line_count 1 'kind: Team'
@@ -185,10 +200,10 @@ jq -cn \
       content:{body:($coordinator + " TG_PEER_START nonce=" + $nonce),
         "m.mentions":{user_ids:[$coordinator]}}},
     {room_id:$room,type:"m.room.message",sender:$coordinator,event_id:"$ping",
-      content:{body:($engineer + " TG_PEER_PING nonce=" + $nonce + " ask " + $coordinator),
-        "m.mentions":{user_ids:[$engineer,$coordinator]}}},
+      content:{body:($engineer + " TG_PEER_PING nonce=" + $nonce),
+        "m.mentions":{user_ids:[$engineer]}}},
     {room_id:$room,type:"m.room.message",sender:$engineer,event_id:"$pong",
-      content:{body:($coordinator + " TG_PEER_PONG nonce=" + $nonce + " reply TG_PEER_DONE"),
+      content:{body:($coordinator + " TG_PEER_PONG nonce=" + $nonce),
         "m.mentions":{user_ids:[$coordinator]}}},
     {room_id:$room,type:"m.room.message",sender:$coordinator,event_id:"$done",
       content:{body:("TG_PEER_DONE nonce=" + $nonce),"m.mentions":{user_ids:[]}}}
@@ -204,6 +219,10 @@ grep -Fqx 'stock_leader_message_count=0' <<<"${validation_output}" || \
 jq '(.events[] | select(.event_id == "$ping").content["m.mentions"].user_ids) = []' \
   "${positive}" >"${temporary_directory}/missing-mention.json"
 expect_validation_failure "${temporary_directory}/missing-mention.json" 'a ping without the Engineer mention'
+
+jq '(.events[] | select(.event_id == "$ping").content.body) += " extra model prose"' \
+  "${positive}" >"${temporary_directory}/extra-ping-prose.json"
+expect_validation_failure "${temporary_directory}/extra-ping-prose.json" 'a ping containing non-protocol prose'
 
 jq '(.events[] | select(.event_id == "$pong").sender) = "@unexpected:matrix.test"' \
   "${positive}" >"${temporary_directory}/wrong-sender.json"

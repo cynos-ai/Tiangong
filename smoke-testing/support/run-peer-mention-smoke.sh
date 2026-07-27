@@ -23,7 +23,7 @@ readonly PEER_ROUNDTRIP="${SCRIPT_DIR}/matrix-peer-roundtrip.sh"
 readonly ROOM_MEMBERS="${SCRIPT_DIR}/matrix-peer-room-members.sh"
 readonly ALIAS_HELPER="${SCRIPT_DIR}/matrix-peer-aliases.sh"
 readonly OTLP_RECEIVER="${SCRIPT_DIR}/otlp-smoke-receiver.mjs"
-readonly OTLP_ACTIVITY_QUERY="${SCRIPT_DIR}/otlp-model-activity.jq"
+readonly OTLP_ACTIVITY_QUERY="${SCRIPT_DIR}/otlp-turn-activity.jq"
 readonly OTLP_CONTAINER="tiangong-peer-smoke-otel"
 readonly OTLP_NETWORK_ALIAS="tiangong-otel-collector"
 readonly OTLP_ENDPOINT="http://${OTLP_NETWORK_ALIAS}:4318/v1/traces"
@@ -354,15 +354,27 @@ receiver_status() {
 }
 
 assert_trace_complete() {
-  local event_id="$1" label="$2" digest
+  local event_id="$1" label="$2" expected_phase="$3" digest
   digest="$(observability_turn_digest "${event_id}")"
   for _ in $(seq 1 30); do
-    if [[ -f "${OTLP_SPANS_FILE}" ]] && jq -se --arg digest "${digest}" 'any(.[];
-      .name == "tiangong.harness.attempt" and
-      .attributes["tiangong.turn.id"] == $digest and
-      .attributes["tiangong.operation.outcome"] == "complete" and
-      .statusCode == 1
-    )' "${OTLP_SPANS_FILE}" >/dev/null; then
+    if [[ -f "${OTLP_SPANS_FILE}" ]] && jq -se \
+      --arg digest "${digest}" --arg phase "${expected_phase}" '
+      any(.[];
+        .name == "tiangong.harness.attempt" and
+        .attributes["tiangong.turn.id"] == $digest and
+        .attributes["tiangong.operation.outcome"] == "complete" and
+        .statusCode == 1
+      ) and
+      any(.[];
+        .name == "tiangong.lifecycle.checkpoint" and
+        .attributes["tiangong.turn.id"] == $digest and
+        .attributes["tiangong.phase"] == $phase and
+        .statusCode == 1
+      ) and
+      all(.[] | select(.attributes["tiangong.turn.id"] == $digest);
+        .name != "tiangong.pi.agent_turn" and .name != "gen_ai.chat"
+      )
+    ' "${OTLP_SPANS_FILE}" >/dev/null; then
       printf 'peer_%s_observability=pass\n' "${label}"
       return 0
     fi
@@ -370,7 +382,7 @@ assert_trace_complete() {
   done
   printf '[Tiangong] Sanitized trace summary for %s: %s\n' \
     "${label}" "$(trace_summary "${event_id}")" >&2
-  printf '[Tiangong] Sanitized model activity facts for %s: %s\n' \
+  printf '[Tiangong] Sanitized turn activity facts for %s: %s\n' \
     "${label}" "$(trace_activity_facts "${event_id}")" >&2
   printf '[Tiangong] Sanitized OTLP receiver status: %s\n' "$(receiver_status)" >&2
   printf '[Tiangong] Sanitized unmatched trace inventory: %s\n' "$(trace_inventory)" >&2
@@ -650,7 +662,7 @@ if ! peer_output="$(docker exec "${CONTROLLER_CONTAINER}" "${CONTROLLER_PEER_ROU
       sleep 1
     done
     printf '[Tiangong] Sanitized Coordinator start-event trace: %s\n' "${trace}" >&2
-    printf '[Tiangong] Sanitized Coordinator model activity facts: %s\n' \
+    printf '[Tiangong] Sanitized Coordinator turn activity facts: %s\n' \
       "$(trace_activity_facts "${start_event_id}")" >&2
     printf '[Tiangong] Sanitized OTLP receiver status: %s\n' "$(receiver_status)" >&2
     if [[ "${trace}" == '[]' ]]; then
@@ -689,11 +701,11 @@ ping_event_id="$(probe_output_value "${peer_output}" peer_ping_event)" || \
   die "Peer output omitted the ping event correlation."
 pong_event_id="$(probe_output_value "${peer_output}" peer_pong_event)" || \
   die "Peer output omitted the pong event correlation."
-assert_trace_complete "${start_event_id}" coordinator_start || \
+assert_trace_complete "${start_event_id}" coordinator_start peer.transport.start || \
   die "Coordinator start-event trace did not complete."
-assert_trace_complete "${ping_event_id}" engineer_ping || \
+assert_trace_complete "${ping_event_id}" engineer_ping peer.transport.ping || \
   die "Engineer ping-event trace did not complete."
-assert_trace_complete "${pong_event_id}" coordinator_pong || \
+assert_trace_complete "${pong_event_id}" coordinator_pong peer.transport.pong || \
   die "Coordinator pong-event trace did not complete."
 assert_nonce_persisted "${COORDINATOR_CONTAINER}" "${COORDINATOR_NAME}" "${nonce}"
 assert_nonce_persisted "${ENGINEER_CONTAINER}" "${ENGINEER_NAME}" "${nonce}"

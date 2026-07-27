@@ -1,6 +1,9 @@
 def observed_phase($phase): any(.[]; .phase == $phase);
 def observed_outcome($name; $outcome): any(.[]; .name == $name and .outcome == $outcome);
 {
+  peerTransportStart: observed_phase("peer.transport.start"),
+  peerTransportPing: observed_phase("peer.transport.ping"),
+  peerTransportPong: observed_phase("peer.transport.pong"),
   piTurnStarted: observed_phase("pi.turn.start"),
   requestReady: observed_phase("model.request.ready"),
   responseReceived: observed_phase("model.response.received"),

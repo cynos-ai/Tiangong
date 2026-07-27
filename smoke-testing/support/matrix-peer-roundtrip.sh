@@ -43,7 +43,8 @@ validate_events_json() {
           .sender == $admin and
           has("TG_PEER_START nonce=" + $nonce)
         )]; "start") as $start
-      | if (($start.content["m.mentions"].user_ids // []) == [$coordinator]) and
+      | if (($start | body) == ($coordinator + " TG_PEER_START nonce=" + $nonce)) and
+           (($start.content["m.mentions"].user_ids // []) == [$coordinator]) and
            (($start | body | contains($engineer)) | not) and
            (($start | body | contains($leader)) | not)
         then . else error("start mention boundary is invalid") end
@@ -51,7 +52,8 @@ validate_events_json() {
           .sender == $coordinator and
           has("TG_PEER_PING nonce=" + $nonce)
         )]; "ping") as $ping
-      | if (($ping | mentions | index($engineer)) != null) and
+      | if (($ping | body) == ($engineer + " TG_PEER_PING nonce=" + $nonce)) and
+           (($ping | mentions) == [$engineer]) and
            (($ping | mentions | index($leader)) == null) and
            (($ping | body | contains($leader)) | not)
         then . else error("ping mention boundary is invalid") end
@@ -59,7 +61,8 @@ validate_events_json() {
           .sender == $engineer and
           has("TG_PEER_PONG nonce=" + $nonce)
         )]; "pong") as $pong
-      | if (($pong | mentions | index($coordinator)) != null) and
+      | if (($pong | body) == ($coordinator + " TG_PEER_PONG nonce=" + $nonce)) and
+           (($pong | mentions) == [$coordinator]) and
            (($pong | mentions | index($leader)) == null) and
            (($pong | body | contains($leader)) | not)
         then . else error("pong mention boundary is invalid") end
@@ -68,7 +71,9 @@ validate_events_json() {
           has("TG_PEER_DONE nonce=" + $nonce) and
           ((has("TG_PEER_PING") or has("TG_PEER_PONG")) | not)
         )]; "done") as $done
-      | if (($done | mentions | index($engineer)) == null) and
+      | if (($done | body) == ("TG_PEER_DONE nonce=" + $nonce)) and
+           (($done | mentions) == []) and
+           (($done | mentions | index($engineer)) == null) and
            (($done | mentions | index($leader)) == null) and
            (($done | body | contains($engineer)) | not) and
            (($done | body | contains($leader)) | not)
@@ -161,7 +166,7 @@ append_sync_events() {
 
 run_probe() {
   local room_id="$1" leader_id="$2" coordinator_id="$3" engineer_id="$4" nonce="$5"
-  local admin_id engineer_localpart engineer_domain room_path initial_sync since
+  local admin_id room_path initial_sync since
   local request_body send_response start_event_id events sync_response since_query
   local event_count leader_count done_count grace_remaining=0 validation
 
@@ -186,14 +191,6 @@ run_probe() {
 
   admin_id="@${ADMIN_USER}:${MATRIX_DOMAIN}"
   validate_id "${admin_id}" admin
-  engineer_localpart="${engineer_id#@}"
-  engineer_localpart="${engineer_localpart%%:*}"
-  engineer_domain="${engineer_id#*:}"
-  [[ -n "${engineer_localpart}" && -n "${engineer_domain}" ]] || {
-    printf 'ERROR: Engineer Matrix identity is incomplete.\n' >&2
-    return 1
-  }
-
   login_admin
   room_path="$(printf '%s' "${room_id}" | jq -sRr @uri)"
   authed_curl "${HOMESERVER}/_matrix/client/v3/rooms/${room_path}/joined_members" \
@@ -211,26 +208,15 @@ run_probe() {
 
   request_body="$(jq -cn \
     --arg coordinator "${coordinator_id}" \
-    --arg localpart "${engineer_localpart}" \
-    --arg domain "${engineer_domain}" \
     --arg nonce "${nonce}" '
-      (
-        "TG_PEER_START nonce=" + $nonce + ". Do not use tools. " +
-        "Construct TARGET by concatenating @, localpart " + $localpart +
-        ", :, and domain " + $domain + ". " +
-        "Replace TARGET with that full MXID. Your first reply must contain exactly these two sentences: " +
-        "TARGET TG_PEER_PING nonce=" + $nonce + ". Reply exactly " + $coordinator +
-        " TG_PEER_PONG nonce=" + $nonce + ". Do not add anything else to that reply. " +
-        "After you later receive that PONG, reply exactly TG_PEER_DONE nonce=" + $nonce + ". " +
-        "Never mention the platform Leader."
-      ) as $instruction
+      ("TG_PEER_START nonce=" + $nonce) as $control
       | {
           msgtype:"m.text",
-          body:($coordinator + " " + $instruction),
+          body:($coordinator + " " + $control),
           format:"org.matrix.custom.html",
           formatted_body:(
             "<a href=\"https://matrix.to/#/" + $coordinator + "\">" +
-            $coordinator + "</a> " + $instruction
+            $coordinator + "</a> " + $control
           ),
           "m.mentions":{user_ids:[$coordinator]}
         }
