@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { sha256 } from "../agent/canonical-json.mjs";
 import { PeerReplyRouter } from "../agent/peer-reply-router.mjs";
 import {
   parsePeerTransportCommand,
@@ -156,6 +157,17 @@ test("runtime handles the transport control without dispatching a model request"
   assert.equal(result.text, `TG_PEER_PING nonce=${NONCE}`);
   assert.deepEqual(result.replyTarget, ENGINEER);
   assert.equal(result.usage.totalTokens, 0);
+  const piDirectory = join(
+    workspaceDir,
+    ".tiangong",
+    "runtime",
+    "sessions",
+    sha256("session-one"),
+    "pi",
+  );
+  const sessionFiles = (await readdir(piDirectory)).filter((name) => name.endsWith(".jsonl"));
+  assert.equal(sessionFiles.length, 1);
+  assert.match(await readFile(join(piDirectory, sessionFiles[0]), "utf8"), new RegExp(NONCE, "u"));
 });
 
 test("fails closed on ambiguous targets, unauthenticated peers, nonce mismatch, and replay", () => {

@@ -90,6 +90,21 @@ function appendControlMessage(state, content, details) {
   ];
 }
 
+function appendDeterministicAssistantMessage(state, content) {
+  const message = {
+    role: "assistant",
+    content: [{ type: "text", text: content }],
+    api: "tiangong-control",
+    provider: "tiangong",
+    model: "peer-transport-v1",
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: {} },
+    stopReason: "stop",
+    timestamp: Date.now(),
+  };
+  state.sessionManager.appendMessage(message);
+  state.session.agent.state.messages = [...state.session.agent.state.messages, message];
+}
+
 export class TiangongAgentRuntime {
   #gateway;
   #sessions = new Map();
@@ -201,11 +216,7 @@ export class TiangongAgentRuntime {
       text: plan.text,
       replyTarget: plan.replyTarget,
     });
-    appendControlMessage(state, result.text, {
-      protocol: "tiangong-peer-transport-v1",
-      phase: command.kind,
-      nonce: command.nonce,
-    });
+    appendDeterministicAssistantMessage(state, result.text);
     state.peerReplies.commit(route, { text: result.text, replyTarget: result.replyTarget });
     state.peerTransport.commit(plan);
     observability?.checkpoint(`peer.transport.${command.kind}`);
