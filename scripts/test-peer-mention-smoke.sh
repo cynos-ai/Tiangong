@@ -289,7 +289,8 @@ curl --fail --silent --max-time 1 http://127.0.0.1:14318/health | jq -e '
   .status == "ready" and
   .acceptedRequests == 2 and
   .acceptedSpans == 2 and
-  .rejectedRequests == 1
+  .rejectedRequests == 1 and
+  .rejectionReasons == {attribute_not_allowlisted:1}
 ' >/dev/null || fail 'OTLP smoke receiver counters do not match accepted and rejected requests.'
 kill "${receiver_pid}"
 wait "${receiver_pid}" 2>/dev/null || true

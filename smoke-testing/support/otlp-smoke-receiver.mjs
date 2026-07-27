@@ -38,6 +38,23 @@ const ALLOWED_ATTRIBUTE_KEYS = new Set([
 ]);
 const HEX_ID = /^[a-f0-9]{16,32}$/u;
 const SAFE_STATUS_MESSAGE = /^(?:[A-Z][A-Z0-9_]{0,63}|internal_error|timeout|upstream_abort)$/u;
+const REJECTION_CODES = new Map([
+  ["OTLP attribute value is not primitive", "attribute_value_not_primitive"],
+  ["OTLP attribute value type is unsupported", "attribute_value_type_unsupported"],
+  ["OTLP attribute value is malformed", "attribute_value_malformed"],
+  ["OTLP attributes are unbounded", "attributes_unbounded"],
+  ["OTLP attribute is not allowlisted", "attribute_not_allowlisted"],
+  ["OTLP string attribute is unbounded", "string_attribute_unbounded"],
+  ["OTLP resource span count is invalid", "resource_span_count_invalid"],
+  ["OTLP resource attributes are invalid", "resource_attributes_invalid"],
+  ["OTLP resource identity is invalid", "resource_identity_invalid"],
+  ["OTLP instrumentation scope is invalid", "instrumentation_scope_invalid"],
+  ["OTLP span batch is unbounded", "span_batch_unbounded"],
+  ["OTLP span shape is invalid", "span_shape_invalid"],
+  ["OTLP status message is not a stable error type", "status_message_unstable"],
+  ["OTLP request has no bounded spans", "request_span_count_invalid"],
+  ["OTLP request body is too large", "request_body_too_large"],
+]);
 
 function primitiveValue(value) {
   const entries = Object.entries(value ?? {}).filter(([, entry]) => entry !== undefined);
@@ -133,6 +150,7 @@ async function requestBody(request) {
 await mkdir(dirname(outputPath), { recursive: true, mode: 0o700 });
 let writeQueue = Promise.resolve();
 const counters = { acceptedRequests: 0, rejectedRequests: 0, acceptedSpans: 0 };
+const rejectionReasons = Object.create(null);
 const appendSpans = (spans) => {
   const write = writeQueue.then(() => appendFile(
     outputPath,
@@ -145,7 +163,7 @@ const appendSpans = (spans) => {
 const server = createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/health") {
     response.writeHead(200, { "content-type": "application/json" });
-    response.end(`${JSON.stringify({ status: "ready", ...counters })}\n`);
+    response.end(`${JSON.stringify({ status: "ready", ...counters, rejectionReasons })}\n`);
     return;
   }
   if (request.method !== "POST" || request.url !== "/v1/traces" ||
@@ -161,10 +179,12 @@ const server = createServer(async (request, response) => {
     counters.acceptedSpans += spans.length;
     response.writeHead(200, { "content-type": "application/json" });
     response.end("{}\n");
-  } catch {
+  } catch (error) {
     counters.rejectedRequests += 1;
+    const rejectionCode = REJECTION_CODES.get(error?.message) ?? "invalid_otlp";
+    rejectionReasons[rejectionCode] = (rejectionReasons[rejectionCode] ?? 0) + 1;
     response.writeHead(400, { "content-type": "application/json" });
-    response.end('{"error":"invalid_otlp"}\n');
+    response.end(`${JSON.stringify({ error: rejectionCode })}\n`);
   }
 });
 
