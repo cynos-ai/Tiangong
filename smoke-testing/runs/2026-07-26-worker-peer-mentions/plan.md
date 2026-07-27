@@ -314,7 +314,8 @@ No Matrix trace flag, temporary image, or prompt change was used to manufacture 
 - The exact hardened receiver accepted the Coordinator export: `acceptedRequests=1`, `acceptedSpans=9`, `rejectedRequests=0`. This proves the UID/GID persistence fix and removes the receiver rejection ambiguity.
 - The event-correlated trace reached `harness.start`, runtime setup, Gateway resolution, session readiness, `pi.agent_turn.start`, and `model.start`. The active model operation and Harness root had not ended, so neither could appear as completed spans. The Harness marker independently remained `status=running`.
 - Only the Admin start event existed. No Coordinator ping, Engineer turn/pong, or terminal event occurred. Coordinator account visibility, both stable Matrix channels, and stock Leader silence still passed.
-- This run is a real in-flight model boundary, not a receiver, correlation, account-visibility, pre-Harness, or channel-health ambiguity. The released 1800-second timeout and bounded observer remain unchanged. Repeating model calls or extending observation is not authorized.
+- This run is a real in-flight model boundary, not a receiver, correlation, account-visibility, pre-Harness, or channel-health ambiguity. The transport observer has 36 incremental Matrix sync windows with a 10-second server timeout, while released AgentTeams supplies the independently enforced 1800-second Harness timeout. `status=running` at observer expiry therefore proves failure to complete within the smoke window, not a Harness-timeout defect or proof that the call would never terminate. Contract tests now pin both observer values against silent mutation.
+- The released timeout and bounded observer remain unchanged. Repeating model calls or extending observation is not authorized.
 - Exact Team/member/container/alias/storage/receiver/trace cleanup passed.
 
 ### Current result

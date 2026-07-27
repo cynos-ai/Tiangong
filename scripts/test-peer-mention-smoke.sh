@@ -98,6 +98,10 @@ grep -Fq 'Your first reply must contain exactly these two sentences:' "${ROUNDTR
   fail 'peer prompt does not require relaying Engineer response instructions in the ping.'
 grep -Fq 'Do not add anything else to that reply.' "${ROUNDTRIP}" || \
   fail 'peer prompt does not bound the relayed response instruction.'
+grep -Fq 'for _ in $(seq 1 36); do' "${ROUNDTRIP}" || \
+  fail 'peer observer does not retain its fixed sync-window count.'
+grep -Fq 'sync?since=${since_query}&timeout=10000' "${ROUNDTRIP}" || \
+  fail 'peer observer does not retain its fixed Matrix sync timeout.'
 
 assert_exact_line_count 1 'apiVersion: agentteams.io/v1beta1'
 assert_exact_line_count 1 'kind: Team'
