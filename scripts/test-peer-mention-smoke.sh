@@ -285,12 +285,16 @@ invalid_status="$(curl --silent --output /dev/null --write-out '%{http_code}' --
   -H 'Content-Type: application/json' --data-binary @"${temporary_directory}/invalid-otlp.json" \
   http://127.0.0.1:14318/v1/traces)"
 [[ "${invalid_status}" == 400 ]] || fail 'OTLP smoke receiver accepted a non-allowlisted attribute.'
+malformed_status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 2 \
+  -H 'Content-Type: application/json' --data-binary '{' \
+  http://127.0.0.1:14318/v1/traces)"
+[[ "${malformed_status}" == 400 ]] || fail 'OTLP smoke receiver accepted malformed JSON.'
 curl --fail --silent --max-time 1 http://127.0.0.1:14318/health | jq -e '
   .status == "ready" and
   .acceptedRequests == 2 and
   .acceptedSpans == 2 and
-  .rejectedRequests == 1 and
-  .rejectionReasons == {attribute_not_allowlisted:1}
+  .rejectedRequests == 2 and
+  .rejectionReasons == {attribute_not_allowlisted:1,json_failure:1}
 ' >/dev/null || fail 'OTLP smoke receiver counters do not match accepted and rejected requests.'
 kill "${receiver_pid}"
 wait "${receiver_pid}" 2>/dev/null || true

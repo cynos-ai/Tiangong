@@ -172,16 +172,23 @@ const server = createServer(async (request, response) => {
     response.end('{"error":"unsupported"}\n');
     return;
   }
+  let stage = "body";
   try {
-    const spans = sanitizedSpans(JSON.parse(await requestBody(request)));
+    const body = await requestBody(request);
+    stage = "json";
+    const payload = JSON.parse(body);
+    stage = "validation";
+    const spans = sanitizedSpans(payload);
+    stage = "persistence";
     await appendSpans(spans);
+    stage = "complete";
     counters.acceptedRequests += 1;
     counters.acceptedSpans += spans.length;
     response.writeHead(200, { "content-type": "application/json" });
     response.end("{}\n");
   } catch (error) {
     counters.rejectedRequests += 1;
-    const rejectionCode = REJECTION_CODES.get(error?.message) ?? "invalid_otlp";
+    const rejectionCode = REJECTION_CODES.get(error?.message) ?? `${stage}_failure`;
     rejectionReasons[rejectionCode] = (rejectionReasons[rejectionCode] ?? 0) + 1;
     response.writeHead(400, { "content-type": "application/json" });
     response.end(`${JSON.stringify({ error: rejectionCode })}\n`);
