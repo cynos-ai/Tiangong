@@ -104,6 +104,16 @@ export function parseObservabilityConfig(value) {
   return Object.freeze({ enabled: true, endpoint: parseEndpoint(value.endpoint) });
 }
 
+export function resolveObservabilityConfig(pluginConfig, environment = process.env) {
+  if (pluginConfig?.observability !== undefined) {
+    return parseObservabilityConfig(pluginConfig.observability);
+  }
+  const endpoint = environment?.TIANGONG_OTEL_EXPORTER_ENDPOINT;
+  return endpoint === undefined || endpoint === ""
+    ? Object.freeze({ enabled: false })
+    : parseObservabilityConfig({ enabled: true, endpoint });
+}
+
 function correlationDigest(domain, value) {
   if (typeof value !== "string" || value.length === 0) return undefined;
   return createHash("sha256").update(`tiangong-observability:${domain}\0${value}`).digest("hex").slice(0, 24);

@@ -19,8 +19,13 @@ docker info >/dev/null 2>&1 || {
   exit 1
 }
 
+build_args=(--pull --tag "${IMAGE}")
+if [[ -n "${TIANGONG_OTEL_EXPORTER_ENDPOINT:-}" ]]; then
+  build_args+=(--build-arg "TIANGONG_OTEL_EXPORTER_ENDPOINT=${TIANGONG_OTEL_EXPORTER_ENDPOINT}")
+fi
+
 printf '[Tiangong] Building %s\n' "${IMAGE}"
-docker build --pull --tag "${IMAGE}" "${REPO_ROOT}/worker"
+docker build "${build_args[@]}" "${REPO_ROOT}/worker"
 
 actual_node_version="$(docker run --rm --entrypoint node "${IMAGE}" --version)"
 [[ "${actual_node_version}" == "${EXPECTED_NODE_VERSION}" ]] || {
@@ -33,6 +38,14 @@ actual_pi_version="$(docker run --rm --entrypoint pi "${IMAGE}" --version)"
   printf 'ERROR: expected pi %s, got %s.\n' "${EXPECTED_PI_VERSION}" "${actual_pi_version}" >&2
   exit 1
 }
+
+docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${IMAGE}" \
+  --input-type=module -e '
+    import { resolveObservabilityConfig } from "./observability/tracing.mjs";
+    const config = resolveObservabilityConfig(undefined, process.env);
+    const expected = Boolean(process.env.TIANGONG_OTEL_EXPORTER_ENDPOINT);
+    if (config.enabled !== expected) process.exit(1);
+  '
 
 reconciliation_help="$(docker run --rm --entrypoint tiangong-reconcile "${IMAGE}" --help)"
 grep -Fq 'tiangong-reconcile inspect' <<<"${reconciliation_help}" || {

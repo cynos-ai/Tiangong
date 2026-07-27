@@ -9,6 +9,7 @@ import {
   createWorkerObservability,
   DISABLED_OBSERVABILITY,
   parseObservabilityConfig,
+  resolveObservabilityConfig,
 } from "../observability/tracing.mjs";
 
 const ENABLED_CONFIG = {
@@ -40,6 +41,22 @@ test("observability is disabled unless an exact configuration enables it", () =>
   assert.deepEqual(parseObservabilityConfig({ enabled: false }), { enabled: false });
   assert.equal(createWorkerObservability().enabled, false);
   assert.equal(createWorkerObservability({ config: { enabled: false } }), DISABLED_OBSERVABILITY);
+});
+
+test("resolves explicit plugin configuration before the diagnostic image endpoint", () => {
+  assert.deepEqual(resolveObservabilityConfig(undefined, {}), { enabled: false });
+  assert.deepEqual(resolveObservabilityConfig(undefined, {
+    TIANGONG_OTEL_EXPORTER_ENDPOINT: ENABLED_CONFIG.endpoint,
+  }), ENABLED_CONFIG);
+  assert.deepEqual(resolveObservabilityConfig({ observability: { enabled: false } }, {
+    TIANGONG_OTEL_EXPORTER_ENDPOINT: ENABLED_CONFIG.endpoint,
+  }), { enabled: false });
+  assert.throws(
+    () => resolveObservabilityConfig(undefined, {
+      TIANGONG_OTEL_EXPORTER_ENDPOINT: "http://user:secret@localhost/v1/traces",
+    }),
+    /without credentials/u,
+  );
 });
 
 test("observability configuration rejects ambiguous or credential-bearing endpoints", () => {

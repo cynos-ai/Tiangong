@@ -32,6 +32,15 @@ Configure the `tiangong-pi` OpenClaw plugin with an OTLP HTTP trace endpoint:
 
 The endpoint must be an absolute HTTP or HTTPS `/v1/traces` URL without embedded credentials, query parameters, or fragments. Headers and arbitrary exporter options are intentionally unsupported. Missing configuration, or `{ "enabled": false }`, selects a no-op implementation.
 
+A focused diagnostic image can embed the same non-secret endpoint without changing the default image behavior:
+
+```bash
+TIANGONG_OTEL_EXPORTER_ENDPOINT=http://tiangong-otel-collector:4318/v1/traces \
+  make build-worker-image
+```
+
+The build validates the embedded endpoint inside the finished image. Explicit plugin configuration takes precedence, including an explicit disable. Do not put credentials or tokens in this build argument; authenticated exporter headers are intentionally outside the current contract.
+
 ## Trace model
 
 A completed attempt can contain:
