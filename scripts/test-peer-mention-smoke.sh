@@ -19,13 +19,16 @@ readonly NONCE='11111111-2222-4333-8444-555555555555'
 
 temporary_directory="$(mktemp -d)"
 receiver_pid=''
+persistence_receiver_pid=''
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
-  if [[ -n "${receiver_pid}" ]]; then
-    kill "${receiver_pid}" >/dev/null 2>&1 || true
-    wait "${receiver_pid}" 2>/dev/null || true
-  fi
+  for pid in "${receiver_pid}" "${persistence_receiver_pid}"; do
+    if [[ -n "${pid}" ]]; then
+      kill "${pid}" >/dev/null 2>&1 || true
+      wait "${pid}" 2>/dev/null || true
+    fi
+  done
   rm -rf -- "${temporary_directory}"
   exit "${status}"
 }
@@ -289,15 +292,70 @@ malformed_status="$(curl --silent --output /dev/null --write-out '%{http_code}' 
   -H 'Content-Type: application/json' --data-binary '{' \
   http://127.0.0.1:14318/v1/traces)"
 [[ "${malformed_status}" == 400 ]] || fail 'OTLP smoke receiver accepted malformed JSON.'
+node --input-type=module - <<'NODE'
+import { request } from "node:http";
+await new Promise((resolve) => {
+  const outgoing = request({
+    host: "127.0.0.1",
+    port: 14318,
+    path: "/v1/traces",
+    method: "POST",
+    headers: { "content-type": "application/json", "content-length": "1024" },
+  });
+  outgoing.on("error", () => resolve());
+  outgoing.write("{");
+  setTimeout(() => {
+    outgoing.destroy();
+    resolve();
+  }, 25);
+});
+NODE
+body_failure_observed='false'
+for _ in $(seq 1 30); do
+  if curl --fail --silent --max-time 1 http://127.0.0.1:14318/health | jq -e '
+      .rejectionReasons.body_failure == 1
+    ' >/dev/null; then
+    body_failure_observed='true'
+    break
+  fi
+  sleep 0.1
+done
+[[ "${body_failure_observed}" == true ]] || fail 'OTLP smoke receiver did not classify an aborted body.'
 curl --fail --silent --max-time 1 http://127.0.0.1:14318/health | jq -e '
   .status == "ready" and
   .acceptedRequests == 2 and
   .acceptedSpans == 2 and
-  .rejectedRequests == 2 and
-  .rejectionReasons == {attribute_not_allowlisted:1,json_failure:1}
+  .rejectedRequests == 3 and
+  .rejectionReasons == {attribute_not_allowlisted:1,body_failure:1,json_failure:1}
 ' >/dev/null || fail 'OTLP smoke receiver counters do not match accepted and rejected requests.'
 kill "${receiver_pid}"
 wait "${receiver_pid}" 2>/dev/null || true
 receiver_pid=''
+
+persistence_output="${temporary_directory}/persistence-output"
+mkdir "${persistence_output}"
+TIANGONG_OTLP_RECEIVER_PORT=14319 node "${OTLP_RECEIVER}" "${persistence_output}" \
+  >"${temporary_directory}/persistence-receiver.log" 2>&1 &
+persistence_receiver_pid=$!
+for _ in $(seq 1 30); do
+  curl --fail --silent --max-time 1 http://127.0.0.1:14319/health >/dev/null 2>&1 && break
+  sleep 0.1
+done
+curl --fail --silent --max-time 1 http://127.0.0.1:14319/health >/dev/null || \
+  fail 'OTLP persistence-failure receiver did not become ready.'
+persistence_status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 2 \
+  -H 'Content-Type: application/json' --data-binary @"${valid_otlp}" \
+  http://127.0.0.1:14319/v1/traces)"
+[[ "${persistence_status}" == 400 ]] || fail 'OTLP smoke receiver accepted a persistence failure.'
+curl --fail --silent --max-time 1 http://127.0.0.1:14319/health | jq -e '
+  .status == "ready" and
+  .acceptedRequests == 0 and
+  .acceptedSpans == 0 and
+  .rejectedRequests == 1 and
+  .rejectionReasons == {persistence_failure:1}
+' >/dev/null || fail 'OTLP smoke receiver did not classify a persistence failure.'
+kill "${persistence_receiver_pid}"
+wait "${persistence_receiver_pid}" 2>/dev/null || true
+persistence_receiver_pid=''
 
 printf 'Worker peer mention smoke contract tests passed.\n'
