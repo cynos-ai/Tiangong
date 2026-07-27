@@ -265,6 +265,17 @@ jq -e 'select(
   .attributes["tiangong.phase"] == "model.start" and
   .attributes["tiangong.turn.id"] == "444444444444444444444444"
 )' "${receiver_output}" >/dev/null || fail 'OTLP smoke receiver did not persist the sanitized span.'
+jq '
+  .resourceSpans[0].scopeSpans[0].spans[0].status = {code:2,message:"internal_error"} |
+  (.resourceSpans[0].scopeSpans[0].spans[0].attributes) += [
+    {key:"error.type",value:{stringValue:"internal_error"}},
+    {key:"tiangong.operation.outcome",value:{stringValue:"error"}}
+  ]
+' "${valid_otlp}" >"${temporary_directory}/error-otlp.json"
+curl --fail --silent --max-time 2 -H 'Content-Type: application/json' \
+  --data-binary @"${temporary_directory}/error-otlp.json" \
+  http://127.0.0.1:14318/v1/traces >/dev/null || \
+  fail 'OTLP smoke receiver rejected a stable internal error span.'
 jq '(.resourceSpans[0].scopeSpans[0].spans[0].attributes) += [
   {key:"untrusted.prompt",value:{stringValue:"sensitive"}}
 ]' "${valid_otlp}" >"${temporary_directory}/invalid-otlp.json"
@@ -274,8 +285,8 @@ invalid_status="$(curl --silent --output /dev/null --write-out '%{http_code}' --
 [[ "${invalid_status}" == 400 ]] || fail 'OTLP smoke receiver accepted a non-allowlisted attribute.'
 curl --fail --silent --max-time 1 http://127.0.0.1:14318/health | jq -e '
   .status == "ready" and
-  .acceptedRequests == 1 and
-  .acceptedSpans == 1 and
+  .acceptedRequests == 2 and
+  .acceptedSpans == 2 and
   .rejectedRequests == 1
 ' >/dev/null || fail 'OTLP smoke receiver counters do not match accepted and rejected requests.'
 kill "${receiver_pid}"

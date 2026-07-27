@@ -37,7 +37,7 @@ const ALLOWED_ATTRIBUTE_KEYS = new Set([
   "tiangong.turn.id",
 ]);
 const HEX_ID = /^[a-f0-9]{16,32}$/u;
-const SAFE_STATUS_MESSAGE = /^(?:[A-Z][A-Z0-9_]{0,63}|timeout|upstream_abort)$/u;
+const SAFE_STATUS_MESSAGE = /^(?:[A-Z][A-Z0-9_]{0,63}|internal_error|timeout|upstream_abort)$/u;
 
 function primitiveValue(value) {
   const entries = Object.entries(value ?? {}).filter(([, entry]) => entry !== undefined);
