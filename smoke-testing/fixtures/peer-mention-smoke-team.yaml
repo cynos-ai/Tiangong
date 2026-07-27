@@ -1,0 +1,39 @@
+apiVersion: agentteams.io/v1beta1
+kind: Team
+metadata:
+  name: tiangong-peer-smoke
+spec:
+  description: Disposable Worker peer-mention transport verification.
+  peerMentions: true
+  leader:
+    name: tiangong-peer-smoke-leader
+    model: qwen3.5-plus
+    state: Running
+    heartbeat:
+      enabled: false
+    identity: |
+      Name: AgentTeams Stock Leader
+      Purpose: Platform topology only; remain idle unless directly mentioned.
+  workers:
+    - name: tiangong-peer-smoke-coordinator
+      model: qwen3.5-plus
+      runtime: openclaw
+      image: tiangong-worker:dev
+      state: Running
+      channelPolicy:
+        groupAllowExtra:
+          - tiangong-peer-smoke-engineer
+      identity: |
+        Name: Tiangong Peer Smoke Coordinator
+        Purpose: Transport-only test identity; not a trusted professional role.
+    - name: tiangong-peer-smoke-engineer
+      model: qwen3.5-plus
+      runtime: openclaw
+      image: tiangong-worker:dev
+      state: Running
+      channelPolicy:
+        groupAllowExtra:
+          - tiangong-peer-smoke-coordinator
+      identity: |
+        Name: Tiangong Peer Smoke Engineer
+        Purpose: Transport-only test identity; not a trusted professional role.

@@ -4,9 +4,11 @@ SHELL := /usr/bin/env bash
 AGENTTEAMS := ./scripts/agentteams.sh
 WORKER_IMAGE_BUILD := ./scripts/build-worker-image.sh
 WORKER_IMAGE_TEST := ./smoke-testing/support/run-worker-smoke.sh
+PEER_MENTION_SMOKE := ./smoke-testing/support/run-peer-mention-smoke.sh
+PEER_MENTION_SMOKE_TEST := ./scripts/test-peer-mention-smoke.sh
 SKILL_CHECK := node ./scripts/check-skills.mjs
 
-.PHONY: help init up start stop down status verify config logs login uninstall check-skills build-worker-image test-worker-image-basic test-worker-image
+.PHONY: help init up start stop down status verify config logs login uninstall check-skills build-worker-image test-worker-image-basic test-worker-image test-peer-mention-smoke-contract test-peer-mention-smoke
 
 help: ## Show available commands
 	@printf '%s\n' 'Tiangong local development commands:'
@@ -52,6 +54,12 @@ test-worker-image-basic: ## Run the fast Matrix-to-pi Worker smoke and clean up
 
 test-worker-image: ## Run the full Gate/approval/recovery Worker smoke and clean up
 	@TIANGONG_WORKER_SMOKE_LEVEL=full $(WORKER_IMAGE_TEST)
+
+test-peer-mention-smoke-contract: ## Validate the Worker peer mention fixture and event oracle
+	@$(PEER_MENTION_SMOKE_TEST)
+
+test-peer-mention-smoke: ## Run the focused Worker peer mention smoke and clean up
+	@$(PEER_MENTION_SMOKE)
 
 uninstall: ## Delete local AgentTeams data; requires CONFIRM=delete-tiangong-agentteams-data
 	@CONFIRM="$(CONFIRM)" $(AGENTTEAMS) uninstall
