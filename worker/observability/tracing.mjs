@@ -194,7 +194,7 @@ function operationHandle(span) {
   };
 }
 
-function attemptHandle(tracer, rootSpan) {
+function attemptHandle(tracer, rootSpan, correlationAttributes) {
   const parentContext = trace.setSpan(context.active(), rootSpan);
   const root = operationHandle(rootSpan);
   return {
@@ -204,7 +204,11 @@ function attemptHandle(tracer, rootSpan) {
         "tiangong.lifecycle.checkpoint",
         {
           kind: SpanKind.INTERNAL,
-          attributes: safeAttributes({ ...attributes, "tiangong.phase": phase }),
+          attributes: safeAttributes({
+            ...correlationAttributes,
+            ...attributes,
+            "tiangong.phase": phase,
+          }),
         },
         parentContext,
       );
@@ -214,7 +218,11 @@ function attemptHandle(tracer, rootSpan) {
     startOperation(name, attributes = {}) {
       if (!OPERATIONS.has(name)) throw new TypeError(`Unsupported observability operation: ${name}`);
       const kind = name === "gen_ai.chat" ? SpanKind.CLIENT : SpanKind.INTERNAL;
-      const span = tracer.startSpan(name, { kind, attributes: safeAttributes(attributes) }, parentContext);
+      const span = tracer.startSpan(
+        name,
+        { kind, attributes: safeAttributes({ ...correlationAttributes, ...attributes }) },
+        parentContext,
+      );
       return operationHandle(span);
     },
     finish(outcome = "complete", error) {
@@ -261,19 +269,22 @@ export function createWorkerObservability(options = {}) {
       }
       const timeoutMs = safeInteger(Math.floor(metadata.timeoutMs), "Harness timeout", MAX_TIMEOUT_MS);
       if (timeoutMs === 0) throw new TypeError("Harness timeout must be positive");
+      const correlationAttributes = {
+        "tiangong.attempt.id": correlationDigest("attempt", metadata.attemptId),
+        "tiangong.turn.id": correlationDigest("turn", metadata.turnId),
+        "tiangong.session.id": correlationDigest("session", metadata.sessionId),
+      };
       const rootSpan = tracer.startSpan("tiangong.harness.attempt", {
         kind: SpanKind.INTERNAL,
         attributes: safeAttributes({
           "tiangong.harness.id": safeToken(metadata.harnessId, "Harness id"),
-          "tiangong.attempt.id": correlationDigest("attempt", metadata.attemptId),
-          "tiangong.turn.id": correlationDigest("turn", metadata.turnId),
-          "tiangong.session.id": correlationDigest("session", metadata.sessionId),
+          ...correlationAttributes,
           "gen_ai.provider.name": safeToken(metadata.provider, "Provider"),
           "gen_ai.request.model": safeToken(metadata.modelId, "Model id"),
           "tiangong.timeout_ms": timeoutMs,
         }),
       });
-      const attempt = attemptHandle(tracer, rootSpan);
+      const attempt = attemptHandle(tracer, rootSpan, correlationAttributes);
       attempt.checkpoint("harness.start");
       return attempt;
     },

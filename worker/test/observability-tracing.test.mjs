@@ -88,6 +88,12 @@ test("exports a sanitized Harness hierarchy without content-bearing attributes",
   assert.equal(root.status.code, SpanStatusCode.OK);
   assert.equal(setupSpan.parentSpanContext?.spanId, root.spanContext().spanId);
   assert.equal(modelSpan.parentSpanContext?.spanId, root.spanContext().spanId);
+  assert.ok(spans.filter((span) => span !== root).every(
+    (span) => span.attributes["tiangong.attempt.id"] === root.attributes["tiangong.attempt.id"],
+  ));
+  assert.ok(spans.filter((span) => span !== root).every(
+    (span) => span.attributes["tiangong.turn.id"] === root.attributes["tiangong.turn.id"],
+  ));
   assert.match(root.attributes["tiangong.attempt.id"], /^[a-f0-9]{24}$/u);
   assert.match(root.attributes["tiangong.turn.id"], /^[a-f0-9]{24}$/u);
   assert.match(root.attributes["tiangong.session.id"], /^[a-f0-9]{24}$/u);
@@ -181,6 +187,11 @@ test("exports sanitized spans through the standard OTLP HTTP boundary", async (t
   assert.equal(checkpoints.length, 2);
   assert.ok(checkpoints.every((span) => span.traceId === root.traceId));
   assert.ok(checkpoints.every((span) => span.parentSpanId === root.spanId));
+  const rootAttempt = root.attributes.find((attribute) => attribute.key === "tiangong.attempt.id");
+  assert.ok(checkpoints.every((span) => span.attributes.some(
+    (attribute) => attribute.key === "tiangong.attempt.id" &&
+      attribute.value.stringValue === rootAttempt.value.stringValue,
+  )));
   for (const forbidden of ["attempt-secret-value", "event-secret-value", "session-secret-value"]) {
     assert.equal(request.body.includes(Buffer.from(forbidden)), false, `OTLP body leaked ${forbidden}`);
   }
