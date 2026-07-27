@@ -299,6 +299,7 @@ No Matrix trace flag, temporary image, or prompt change was used to manufacture 
 - The observability payload can vary only through digested attempt/turn/session IDs, provider/model tokens, timeout, lifecycle phase/outcome, retry counters, and tool/Gate attributes. Direct plugin and long-lived host probes cover the same identifier shape, provider/model, 1800-second-compatible integer bounds, success, errors, and retries.
 - A no-model config run observed Node.js `v22.23.1`, no `NODE_OPTIONS`, no ambient `OTEL_*` exporter channel, and only empty `HTTP_PROXY`/`HTTPS_PROXY` entries alongside the explicit Tiangong endpoint. An active proxy override is therefore not the deterministic difference.
 - The remaining evidence is most consistent with request body/JSON/persistence timing or another Matrix-host concurrent lifecycle interaction. Commit `4c075b6` will distinguish that fixed stage on a future justified run; current evidence does not justify changing the receiver allowlist or product runtime.
+- Commit `244b58d` deterministically exercises the previously untested processing branches: a deliberately aborted HTTP body is counted only as `body_failure`, and an unwritable output target is counted only as `persistence_failure`, while accepted span totals remain unchanged. Together with the existing malformed-JSON and validation fixtures, every fixed receiver stage now has direct regression coverage before it is used as a future machine discriminator.
 
 ### Current result
 
