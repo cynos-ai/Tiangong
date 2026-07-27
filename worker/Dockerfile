@@ -1,6 +1,8 @@
 ARG AGENTTEAMS_WORKER_IMAGE=higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-worker@sha256:0e91141495af352660b956de49e0581886ac11b38de7381e46e43424b030fdff
 FROM ${AGENTTEAMS_WORKER_IMAGE}
 
+ARG TIANGONG_OTEL_EXPORTER_ENDPOINT=""
+
 LABEL org.opencontainers.image.title="Tiangong Worker"
 LABEL org.opencontainers.image.description="AgentTeams Worker image with the public pi coding agent"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
@@ -16,8 +18,10 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
     && ./node_modules/.bin/pi --version
 
 COPY agent/ ./agent/
+COPY observability/ ./observability/
 COPY plugin/ ./plugin/
-RUN node -e 'import("./plugin/index.mjs").then((module) => { if (module.default?.id !== "tiangong-pi") process.exit(1); })'
+RUN npm run check-observability \
+    && node -e 'import("./plugin/index.mjs").then((module) => { if (module.default?.id !== "tiangong-pi") process.exit(1); })'
 
 COPY --chmod=755 bin/openclaw bin/tiangong-reconcile bin/tiangong-retain /opt/tiangong-worker/bin/
 
@@ -25,6 +29,7 @@ ENV PATH="/opt/tiangong-worker/bin:/opt/tiangong-worker/node_modules/.bin:${PATH
     OPENCLAW_AGENT_HARNESS_FALLBACK=none \
     OPENCLAW_AGENT_RUNTIME=tiangong-pi \
     PI_SKIP_VERSION_CHECK=1 \
-    PI_TELEMETRY=0
+    PI_TELEMETRY=0 \
+    TIANGONG_OTEL_EXPORTER_ENDPOINT="${TIANGONG_OTEL_EXPORTER_ENDPOINT}"
 
 WORKDIR /root/hiclaw-fs

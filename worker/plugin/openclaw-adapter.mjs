@@ -3,6 +3,10 @@ import { join } from "node:path";
 
 import { TiangongAgentRuntime } from "../agent/runtime.mjs";
 import { createTurnRequest, normalizeReplyTarget } from "../agent/turn-contract.mjs";
+import {
+  DISABLED_OBSERVABILITY,
+  observabilityOutcome,
+} from "../observability/tracing.mjs";
 
 const HARNESS_ID = "tiangong-pi";
 const HARNESS_EVIDENCE_FILE = "/tmp/tiangong-pi-harness.last-run";
@@ -187,6 +191,7 @@ export function createTiangongPiHarness(options = {}) {
     provider: SUPPORTED_PROVIDER,
   });
   const harnessEvidenceFile = options.evidencePath ?? HARNESS_EVIDENCE_FILE;
+  const observability = options.observability ?? DISABLED_OBSERVABILITY;
 
   return {
     id: HARNESS_ID,
@@ -202,17 +207,27 @@ export function createTiangongPiHarness(options = {}) {
         data: { harness: HARNESS_ID, phase: "start", runId: params.runId },
       });
       let abortBoundary;
+      let attemptTrace;
       let effectiveParams = params;
       try {
         abortBoundary = createAttemptAbortBoundary(params);
         effectiveParams = { ...params, abortSignal: abortBoundary.signal };
+        attemptTrace = observability.startAttempt({
+          harnessId: HARNESS_ID,
+          attemptId: params.runId,
+          turnId: turnId(params),
+          sessionId: params.sessionId,
+          provider: params.provider,
+          modelId: params.modelId,
+          timeoutMs: Math.min(Math.floor(params.timeoutMs), 2_147_483_647),
+        });
         await writeFile(
           harnessEvidenceFile,
           `harness=${HARNESS_ID}\nprovider=${params.provider}\nmodel=${params.modelId}\nstatus=running\n`,
           { mode: 0o600 },
         );
         if (effectiveParams.abortSignal.aborted) throw abortError(effectiveParams.abortSignal);
-        const result = await runtime.runTurn(toTurnRequest(effectiveParams));
+        const result = await runtime.runTurn(toTurnRequest(effectiveParams), attemptTrace);
         await writeFile(
           harnessEvidenceFile,
           `harness=${HARNESS_ID}\nprovider=${params.provider}\nmodel=${params.modelId}\nstatus=pass\n`,
@@ -223,8 +238,10 @@ export function createTiangongPiHarness(options = {}) {
           stream: "tiangong_pi.lifecycle",
           data: { harness: HARNESS_ID, phase: "complete", runId: params.runId },
         });
+        attemptTrace?.finish("complete");
         return buildAttemptResult(effectiveParams, { result });
       } catch (error) {
+        attemptTrace?.finish(observabilityOutcome(effectiveParams.abortSignal), error);
         const message = errorMessage(error);
         await writeFile(
           harnessEvidenceFile,
@@ -244,7 +261,11 @@ export function createTiangongPiHarness(options = {}) {
       if (params.sessionId) await runtime.reset(params.sessionId);
     },
     async dispose() {
-      await runtime.dispose();
+      try {
+        await runtime.dispose();
+      } finally {
+        await observability.shutdown();
+      }
     },
   };
 }

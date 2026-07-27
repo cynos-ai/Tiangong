@@ -4,6 +4,7 @@ import {
   operationRequestDigest,
 } from "../canonical-json.mjs";
 import { assertGateDecision } from "../gates/turn-state.mjs";
+import { observabilityOutcome } from "../../observability/tracing.mjs";
 
 export class GateDeniedError extends Error {
   constructor(reason) {
@@ -79,6 +80,9 @@ export function createGatedTool({
       if (!invocation?.sessionId || !invocation?.turnId || !invocation?.turnState) {
         throw new Error("Tool invocation context is unavailable");
       }
+      invocation.observability?.checkpoint("tool.proposed", {
+        "tiangong.tool.name": definition.name,
+      });
 
       await evidence.append({
         type: invocation.resumed ? "tool.resumed" : "tool.proposed",
@@ -134,6 +138,11 @@ export function createGatedTool({
         approvalId: decision.approvalId ?? null,
         blockedByToolCallId: decision.blockedByToolCallId ?? null,
       });
+      invocation.observability?.checkpoint("gate.decided", {
+        "tiangong.tool.name": definition.name,
+        "tiangong.gate.outcome": decision.kind,
+        "tiangong.approval.pending": decision.kind === "pending",
+      });
 
       if (decision.kind === "deny") throw new GateDeniedError(decision.reason);
       if (decision.kind === "pending") {
@@ -162,6 +171,9 @@ export function createGatedTool({
         if (!begin.execute) {
           if (begin.entry.status === "completed") {
             await evidence.append({ type: "tool.execution.replayed", ...common });
+            invocation.observability?.checkpoint("tool.replayed", {
+              "tiangong.tool.name": definition.name,
+            });
             return structuredClone(begin.entry.replayResult);
           }
           throw new ExecutionStateUncertainError();
@@ -171,7 +183,18 @@ export function createGatedTool({
       try {
         if (sideEffect) prepared = await lifecycle?.prepare?.({ ...common, operation, params });
         await evidence.append({ type: "tool.execution.started", ...common });
-        const result = await definition.execute(toolCallId, params, signal, onUpdate, ctx);
+        const execution = invocation.observability?.startOperation("execute_tool", {
+          "gen_ai.operation.name": "execute_tool",
+          "tiangong.tool.name": definition.name,
+        });
+        let result;
+        try {
+          result = await definition.execute(toolCallId, params, signal, onUpdate, ctx);
+          execution?.end("complete");
+        } catch (error) {
+          execution?.end(observabilityOutcome(signal), error);
+          throw error;
+        }
         if (sideEffect) {
           await idempotencyStore.complete(key, {
             operationDigest: digest,

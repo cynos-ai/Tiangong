@@ -58,6 +58,24 @@ function turnResult(overrides = {}) {
   };
 }
 
+function observabilityRecorder() {
+  const attempts = [];
+  let shutdowns = 0;
+  const observability = {
+    startAttempt(metadata) {
+      const attempt = { metadata, finishes: [] };
+      attempts.push(attempt);
+      return {
+        checkpoint() {},
+        startOperation() { return { end() {} }; },
+        finish(outcome, error) { attempt.finishes.push({ outcome, error }); },
+      };
+    },
+    async shutdown() { shutdowns += 1; },
+  };
+  return { attempts, observability, shutdowns: () => shutdowns };
+}
+
 test("claims only the AgentTeams gateway provider", async (t) => {
   const harness = createTiangongPiHarness({
     runtime: { dispose() {}, reset() {}, runTurn() {} },
@@ -151,21 +169,35 @@ test("reports prompt failures without inventing assistant text", () => {
   assert.equal(result.lastAssistant.stopReason, "error");
 });
 
-test("delegates the attempt to the Tiangong runtime through the DTO boundary", async (t) => {
+test("delegates the attempt and its trace through the Tiangong runtime boundary", async (t) => {
   let received;
+  let receivedTrace;
+  const recorded = observabilityRecorder();
   const runtime = {
-    async runTurn(request) {
+    async runTurn(request, attemptTrace) {
       received = request;
+      receivedTrace = attemptTrace;
       return turnResult();
     },
     async reset() {},
     async dispose() {},
   };
-  const harness = createTiangongPiHarness({ runtime });
+  const harness = createTiangongPiHarness({ observability: recorded.observability, runtime });
   t.after(() => harness.dispose());
   const result = await harness.runAttempt(attemptParams({ senderId: "@peer:example.test" }));
   assert.equal(received.sessionId, "session-one");
   assert.equal(received.replyTarget.id, "@peer:example.test");
+  assert.ok(receivedTrace);
+  assert.deepEqual(recorded.attempts[0].metadata, {
+    harnessId: "tiangong-pi",
+    attemptId: "attempt-one",
+    turnId: "matrix:$event-one",
+    sessionId: "session-one",
+    provider: "agentteams-gateway",
+    modelId: "model-one",
+    timeoutMs: 1_000,
+  });
+  assert.deepEqual(recorded.attempts[0].finishes, [{ outcome: "complete", error: undefined }]);
   assert.equal(result.lastAssistant.content[0].text, "answer");
 });
 
@@ -221,13 +253,19 @@ test("enforces the OpenClaw Harness attempt timeout", async (t) => {
     async reset() {},
     async dispose() {},
   };
-  const harness = createTiangongPiHarness({ evidencePath, runtime });
+  const recorded = observabilityRecorder();
+  const harness = createTiangongPiHarness({
+    evidencePath,
+    observability: recorded.observability,
+    runtime,
+  });
   t.after(() => harness.dispose());
 
   const result = await harness.runAttempt(attemptParams({ timeoutMs: 10 }));
   assert.equal(result.aborted, true);
   assert.equal(result.timedOut, true);
   assert.match(result.promptError.message, /timeout after 10ms/u);
+  assert.equal(recorded.attempts[0].finishes[0].outcome, "timeout");
   const marker = await readFile(evidencePath, "utf8");
   assert.match(marker, /^status=error$/mu);
   assert.doesNotMatch(marker, /worker-token|matrix-secret/u);
@@ -273,7 +311,12 @@ test("preserves an upstream abort without calling the runtime", async (t) => {
   };
   const controller = new AbortController();
   controller.abort(new Error("operator cancelled"));
-  const harness = createTiangongPiHarness({ evidencePath, runtime });
+  const recorded = observabilityRecorder();
+  const harness = createTiangongPiHarness({
+    evidencePath,
+    observability: recorded.observability,
+    runtime,
+  });
   t.after(() => harness.dispose());
 
   const result = await harness.runAttempt(attemptParams({ abortSignal: controller.signal }));
@@ -281,6 +324,7 @@ test("preserves an upstream abort without calling the runtime", async (t) => {
   assert.equal(result.aborted, true);
   assert.equal(result.timedOut, false);
   assert.equal(result.promptError.message, "operator cancelled");
+  assert.equal(recorded.attempts[0].finishes[0].outcome, "upstream_abort");
   const marker = await readFile(evidencePath, "utf8");
   assert.match(marker, /^status=error$/mu);
 });

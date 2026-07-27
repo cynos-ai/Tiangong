@@ -1,5 +1,9 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
+import {
+  createWorkerObservability,
+  resolveObservabilityConfig,
+} from "../observability/tracing.mjs";
 import { createTiangongPiHarness } from "./openclaw-adapter.mjs";
 
 export default definePluginEntry({
@@ -7,6 +11,9 @@ export default definePluginEntry({
   name: "Tiangong pi Harness",
   description: "Runs AgentTeams Worker turns through Tiangong's controlled pi SDK runtime.",
   register(api) {
-    api.registerAgentHarness(createTiangongPiHarness());
+    const observability = createWorkerObservability({
+      config: resolveObservabilityConfig(api.pluginConfig),
+    });
+    api.registerAgentHarness(createTiangongPiHarness({ observability }));
   },
 });

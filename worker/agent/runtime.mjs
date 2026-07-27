@@ -27,6 +27,9 @@ import {
 import { createCoreToolRegistry } from "./tools/registry.mjs";
 import { createTurnResult } from "./turn-contract.mjs";
 import { TurnContextController } from "./turn-context.mjs";
+import { createPiSessionTraceObserver } from "../observability/pi-session-tracing.mjs";
+import { createProviderTraceBridge } from "../observability/provider-tracing.mjs";
+import { observabilityOutcome } from "../observability/tracing.mjs";
 
 const SYSTEM_PROMPT = `You are the Tiangong agent runtime. Use only the tools exposed by the runtime. Tool authorization is enforced in code. A pending tool result means the operation did not execute; do not claim otherwise. Never invent an approval or alter an approval identifier.`;
 
@@ -57,6 +60,18 @@ function routedTurnResult(request, state, route, input) {
   const result = createTurnResult(request, { ...input, replyTarget: route.replyTarget });
   state.peerReplies.commit(route, { text: result.text, replyTarget: result.replyTarget });
   return result;
+}
+
+async function tracedOperation(observability, name, attributes, signal, task) {
+  const operation = observability?.startOperation(name, attributes);
+  try {
+    const result = await task();
+    operation?.end("complete");
+    return result;
+  } catch (error) {
+    operation?.end(observabilityOutcome(signal), error);
+    throw error;
+  }
 }
 
 function appendControlMessage(state, content, details) {
@@ -116,6 +131,7 @@ export class TiangongAgentRuntime {
       compaction: { enabled: false },
       retry: { enabled: true, maxRetries: 2 },
     });
+    const providerTrace = createProviderTraceBridge();
     const resourceLoader = new DefaultResourceLoader({
       agentDir: persisted.directory,
       cwd: request.workspaceDir,
@@ -124,6 +140,7 @@ export class TiangongAgentRuntime {
       noPromptTemplates: true,
       noSkills: true,
       noThemes: true,
+      extensionFactories: [providerTrace.extension],
       settingsManager,
       systemPrompt: SYSTEM_PROMPT,
     });
@@ -151,6 +168,7 @@ export class TiangongAgentRuntime {
       turns,
       registry,
       peerReplies: new PeerReplyRouter(),
+      providerTrace,
       provider: request.provider,
       modelId: request.modelId,
       workspaceDir: request.workspaceDir,
@@ -175,7 +193,7 @@ export class TiangongAgentRuntime {
     return state;
   }
 
-  async #handleApproval(request, state, route, command) {
+  async #handleApproval(request, state, route, command, observability) {
     const match = await state.idempotencyStore.findApproval(command.approvalId);
     if (!match) throw new Error("Approval request not found");
     const checkpoint = match.entry;
@@ -276,6 +294,7 @@ export class TiangongAgentRuntime {
       turnId: checkpoint.turnId,
       actor: request.actor,
       resumed: true,
+      observability,
     });
     try {
       await definition.execute(checkpoint.toolCallId, params, request.abortSignal);
@@ -291,25 +310,51 @@ export class TiangongAgentRuntime {
     return routedTurnResult(request, state, route, { text, hadPotentialSideEffects: true });
   }
 
-  async runTurn(request) {
+  async runTurn(request, observability) {
     if (request.images.length > 0) throw new Error("The Tiangong agent runtime does not support image input yet");
-    const resolved = await this.#gateway.resolve({
-      provider: request.provider,
-      modelId: request.modelId,
-      credential: request.credential,
-    });
-    const state = await this.#stateFor(request, resolved.model, resolved.modelRuntime);
+    observability?.checkpoint("runtime.start");
+    const setup = observability?.startOperation("tiangong.runtime.setup");
+    let resolved;
+    let state;
+    try {
+      resolved = await tracedOperation(
+        observability,
+        "tiangong.gateway.resolve",
+        {},
+        request.abortSignal,
+        () => this.#gateway.resolve({
+          provider: request.provider,
+          modelId: request.modelId,
+          credential: request.credential,
+        }),
+      );
+      observability?.checkpoint("gateway.resolved");
+      state = await tracedOperation(
+        observability,
+        "tiangong.session.open_or_reuse",
+        {},
+        request.abortSignal,
+        () => this.#stateFor(request, resolved.model, resolved.modelRuntime),
+      );
+      observability?.checkpoint("session.ready");
+      setup?.end("complete");
+    } catch (error) {
+      setup?.end(observabilityOutcome(request.abortSignal), error);
+      throw error;
+    }
     state.session.setThinkingLevel(request.thinkingLevel);
     if (state.session.isStreaming) throw new Error("pi session is already processing a request");
 
     const route = state.peerReplies.plan(request.replyTarget);
     const command = parseApprovalCommand(request.prompt);
-    if (command) return this.#handleApproval(request, state, route, command);
+    if (command) return this.#handleApproval(request, state, route, command, observability);
 
     assertSessionCapacity(state.sessionManager.getEntries(), request.prompt);
     state.session.setActiveToolsByName(request.toolsEnabled ? state.registry.names() : []);
     let finalMessage;
+    const modelTrace = createPiSessionTraceObserver(observability, request);
     const unsubscribe = state.session.subscribe((event) => {
+      modelTrace.handle(event);
       if (event.type === "message_end" && event.message?.role === "assistant") finalMessage = event.message;
     });
     const abort = () => void state.session.abort().catch(() => {});
@@ -318,11 +363,23 @@ export class TiangongAgentRuntime {
       sessionId: request.sessionId,
       turnId: request.turnId,
       actor: request.actor,
+      observability,
     });
     let completedTurn;
+    let promptError;
+    const agentTurn = observability?.startOperation("tiangong.pi.agent_turn");
+    observability?.checkpoint("pi.agent_turn.start");
+    const releaseProviderTrace = state.providerTrace.bind(modelTrace);
     try {
       await state.session.prompt(request.prompt);
+      agentTurn?.end("complete");
+    } catch (error) {
+      promptError = error;
+      agentTurn?.end(observabilityOutcome(request.abortSignal), error);
+      throw error;
     } finally {
+      releaseProviderTrace();
+      modelTrace.finish(promptError);
       completedTurn = state.turns.end();
       unsubscribe();
       request.abortSignal?.removeEventListener("abort", abort);
