@@ -76,6 +76,20 @@ test("observability configuration rejects ambiguous or credential-bearing endpoi
     assert.throws(() => parseObservabilityConfig(value), /observability|endpoint|enabled/iu);
   }
   assert.deepEqual(parseObservabilityConfig(ENABLED_CONFIG), ENABLED_CONFIG);
+  assert.throws(
+    () => createWorkerObservability({
+      config: ENABLED_CONFIG,
+      environment: { OTEL_EXPORTER_OTLP_HEADERS: "authorization=secret" },
+    }),
+    /Ambient OTLP exporter configuration is unsupported/u,
+  );
+  assert.throws(
+    () => createWorkerObservability({
+      config: ENABLED_CONFIG,
+      environment: { OTEL_EXPORTER_OTLP_TRACES_CLIENT_KEY: "/private/key" },
+    }),
+    /Ambient OTLP exporter configuration is unsupported/u,
+  );
 });
 
 test("exports a sanitized Harness hierarchy without content-bearing attributes", async (t) => {
@@ -184,6 +198,7 @@ test("exports sanitized spans through the standard OTLP HTTP boundary", async (t
   const address = server.address();
   const observability = createWorkerObservability({
     config: { enabled: true, endpoint: `http://127.0.0.1:${address.port}/v1/traces` },
+    environment: {},
   });
   t.after(() => observability.shutdown());
 

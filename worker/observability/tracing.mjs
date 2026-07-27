@@ -4,6 +4,7 @@ import { context, SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import {
+  AlwaysOnSampler,
   BasicTracerProvider,
   BatchSpanProcessor,
   SimpleSpanProcessor,
@@ -112,6 +113,15 @@ export function resolveObservabilityConfig(pluginConfig, environment = process.e
   return endpoint === undefined || endpoint === ""
     ? Object.freeze({ enabled: false })
     : parseObservabilityConfig({ enabled: true, endpoint });
+}
+
+function assertNoAmbientOtlpConfiguration(environment) {
+  const key = Object.keys(environment ?? {}).find(
+    (name) => name.startsWith("OTEL_EXPORTER_OTLP_") && environment[name] !== "",
+  );
+  if (key) {
+    throw new TypeError("Ambient OTLP exporter configuration is unsupported; use the Tiangong endpoint contract");
+  }
 }
 
 function correlationDigest(domain, value) {
@@ -245,6 +255,7 @@ export function createWorkerObservability(options = {}) {
   const config = parseObservabilityConfig(options.config);
   if (!config.enabled) return DISABLED_OBSERVABILITY;
 
+  if (!options.exporter) assertNoAmbientOtlpConfiguration(options.environment ?? process.env);
   const exporter = options.exporter ?? new OTLPTraceExporter({
     url: config.endpoint,
     timeoutMillis: 3_000,
@@ -258,6 +269,7 @@ export function createWorkerObservability(options = {}) {
       exportTimeoutMillis: 3_000,
     });
   const provider = new BasicTracerProvider({
+    sampler: new AlwaysOnSampler(),
     resource: resourceFromAttributes({
       "service.name": SERVICE_NAME,
       "service.namespace": "tiangong",

@@ -41,10 +41,15 @@ actual_pi_version="$(docker run --rm --entrypoint pi "${IMAGE}" --version)"
 
 docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${IMAGE}" \
   --input-type=module -e '
-    import { resolveObservabilityConfig } from "./observability/tracing.mjs";
+    import {
+      createWorkerObservability,
+      resolveObservabilityConfig,
+    } from "./observability/tracing.mjs";
     const config = resolveObservabilityConfig(undefined, process.env);
     const expected = Boolean(process.env.TIANGONG_OTEL_EXPORTER_ENDPOINT);
     if (config.enabled !== expected) process.exit(1);
+    const observability = createWorkerObservability({ config });
+    await observability.shutdown();
   '
 
 reconciliation_help="$(docker run --rm --entrypoint tiangong-reconcile "${IMAGE}" --help)"

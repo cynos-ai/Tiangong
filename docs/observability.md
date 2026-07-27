@@ -39,7 +39,7 @@ TIANGONG_OTEL_EXPORTER_ENDPOINT=http://tiangong-otel-collector:4318/v1/traces \
   make build-worker-image
 ```
 
-The build validates the embedded endpoint inside the finished image. Explicit plugin configuration takes precedence, including an explicit disable. Do not put credentials or tokens in this build argument; authenticated exporter headers are intentionally outside the current contract.
+The build validates the embedded endpoint inside the finished image. Explicit plugin configuration takes precedence, including an explicit disable. Do not put credentials or tokens in this build argument; authenticated exporter headers are intentionally outside the current contract. Ambient `OTEL_EXPORTER_OTLP_*` variables are rejected when the exporter is enabled so they cannot inject headers, certificates, private-key paths, or alternate exporter behavior behind this allowlist.
 
 ## Trace model
 
