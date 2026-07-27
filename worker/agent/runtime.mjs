@@ -16,6 +16,7 @@ import { assertApprovalSubject } from "./gates/approval-subject.mjs";
 import { PolicyGate } from "./gates/policy-gate.mjs";
 import { IdempotencyStore } from "./idempotency/store.mjs";
 import { ModelGateway } from "./model-gateway.mjs";
+import { PeerReplyRouter } from "./peer-reply-router.mjs";
 import { createAgentTeamsPendingStorage } from "./pending-operation/agentteams-storage.mjs";
 import { PendingOperationStore } from "./pending-operation/store.mjs";
 import {
@@ -50,6 +51,12 @@ function usageFromMessage(message) {
     cacheWrite,
     totalTokens: usage?.totalTokens ?? input + output + cacheRead + cacheWrite,
   };
+}
+
+function routedTurnResult(request, state, route, input) {
+  const result = createTurnResult(request, { ...input, replyTarget: route.replyTarget });
+  state.peerReplies.commit(route, { text: result.text, replyTarget: result.replyTarget });
+  return result;
 }
 
 function appendControlMessage(state, content, details) {
@@ -143,6 +150,7 @@ export class TiangongAgentRuntime {
       pendingOperationStore,
       turns,
       registry,
+      peerReplies: new PeerReplyRouter(),
       provider: request.provider,
       modelId: request.modelId,
       workspaceDir: request.workspaceDir,
@@ -167,7 +175,7 @@ export class TiangongAgentRuntime {
     return state;
   }
 
-  async #handleApproval(request, state, command) {
+  async #handleApproval(request, state, route, command) {
     const match = await state.idempotencyStore.findApproval(command.approvalId);
     if (!match) throw new Error("Approval request not found");
     const checkpoint = match.entry;
@@ -207,7 +215,7 @@ export class TiangongAgentRuntime {
         operationDigest: checkpoint.operationDigest,
         outcome: "rejected",
       });
-      return createTurnResult({ text });
+      return routedTurnResult(request, state, route, { text });
     }
 
     const wasCompleted = checkpoint.status === "completed";
@@ -257,7 +265,7 @@ export class TiangongAgentRuntime {
         operationDigest: checkpoint.operationDigest,
         outcome: "replayed",
       });
-      return createTurnResult({ text, hadPotentialSideEffects: true });
+      return routedTurnResult(request, state, route, { text, hadPotentialSideEffects: true });
     }
 
     const definition = state.registry.definitions().find((tool) => tool.name === checkpoint.toolName);
@@ -280,7 +288,7 @@ export class TiangongAgentRuntime {
       operationDigest: checkpoint.operationDigest,
       outcome: wasCompleted ? "replayed" : "executed",
     });
-    return createTurnResult({ text, hadPotentialSideEffects: true });
+    return routedTurnResult(request, state, route, { text, hadPotentialSideEffects: true });
   }
 
   async runTurn(request) {
@@ -294,8 +302,9 @@ export class TiangongAgentRuntime {
     state.session.setThinkingLevel(request.thinkingLevel);
     if (state.session.isStreaming) throw new Error("pi session is already processing a request");
 
+    const route = state.peerReplies.plan(request.replyTarget);
     const command = parseApprovalCommand(request.prompt);
-    if (command) return this.#handleApproval(request, state, command);
+    if (command) return this.#handleApproval(request, state, route, command);
 
     assertSessionCapacity(state.sessionManager.getEntries(), request.prompt);
     state.session.setActiveToolsByName(request.toolsEnabled ? state.registry.names() : []);
@@ -321,7 +330,7 @@ export class TiangongAgentRuntime {
 
     if (completedTurn?.turnState.pending) {
       const pending = completedTurn.turnState.pending;
-      return createTurnResult({
+      return routedTurnResult(request, state, route, {
         text: approvalPrompt(pending),
         usage: usageFromMessage(finalMessage),
         pendingApproval: {
@@ -334,7 +343,7 @@ export class TiangongAgentRuntime {
 
     const text = assistantText(finalMessage);
     if (text === "") throw new Error(state.session.agent.state.errorMessage || "pi returned no assistant text");
-    return createTurnResult({ text, usage: usageFromMessage(finalMessage) });
+    return routedTurnResult(request, state, route, { text, usage: usageFromMessage(finalMessage) });
   }
 
   async reset(sessionId) {

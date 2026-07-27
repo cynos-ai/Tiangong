@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -10,6 +13,20 @@ import {
 function attemptParams(overrides = {}) {
   return {
     abortSignal: new AbortController().signal,
+    config: {
+      channels: {
+        matrix: {
+          dm: { policy: "allowlist", allowFrom: ["@leader:example.test", "@admin:example.test"] },
+          groupAllowFrom: [
+            "@leader:example.test",
+            "@admin:example.test",
+            "@peer:example.test",
+          ],
+          groupPolicy: "allowlist",
+        },
+      },
+      secrets: { matrixAccessToken: "matrix-secret" },
+    },
     bootstrapPromptWarningSignature: undefined,
     bootstrapPromptWarningSignaturesSeen: [],
     currentMessageId: "$event-one",
@@ -24,6 +41,7 @@ function attemptParams(overrides = {}) {
     senderIsOwner: true,
     sessionId: "session-one",
     thinkLevel: "off",
+    timeoutMs: 1_000,
     workspaceDir: "/workspace",
     ...overrides,
   };
@@ -32,6 +50,7 @@ function attemptParams(overrides = {}) {
 function turnResult(overrides = {}) {
   return {
     text: "answer",
+    replyTarget: null,
     usage: { input: 10, output: 3, cacheRead: 2, cacheWrite: 0, totalTokens: 15 },
     pendingApproval: null,
     hadPotentialSideEffects: false,
@@ -53,10 +72,39 @@ test("maps OpenClaw parameters to a stable non-secret TurnRequest", () => {
   const request = toTurnRequest(attemptParams());
   assert.equal(request.turnId, "matrix:$event-one");
   assert.equal(request.actor.id, "@user:example.test");
+  assert.equal(request.replyTarget, null);
   assert.equal(Object.hasOwn(request.actor, "isOwner"), false);
   assert.equal(request.credential, "worker-token");
   assert.equal(JSON.stringify(request).includes("worker-token"), false);
+  assert.equal(JSON.stringify(request).includes("matrix-secret"), false);
   assert.equal(Object.keys(request).includes("credential"), false);
+});
+
+test("derives a Matrix reply target only for a group-only allowed sender", () => {
+  const request = toTurnRequest(attemptParams({ senderId: "@peer:example.test" }));
+  assert.deepEqual(request.replyTarget, {
+    channel: "matrix",
+    id: "@peer:example.test",
+    source: "openclaw.matrix.group-only-sender",
+  });
+
+  for (const senderId of ["@admin:example.test", "@leader:example.test", "@unknown:example.test"]) {
+    assert.equal(toTurnRequest(attemptParams({ senderId })).replyTarget, null);
+  }
+});
+
+test("fails closed when Matrix peer policy facts are incomplete or malformed", () => {
+  const cases = [
+    { messageChannel: "webchat", senderId: "@peer:example.test" },
+    { senderId: "not-an-mxid" },
+    { config: {} },
+    { config: { channels: { matrix: { groupPolicy: "allowlist", groupAllowFrom: ["@peer:example.test"], dm: { policy: "allowlist" } } } } },
+    { config: { channels: { matrix: { groupPolicy: "open", groupAllowFrom: ["@peer:example.test"], dm: { policy: "allowlist", allowFrom: [] } } } } },
+    { config: { channels: { matrix: { groupPolicy: "allowlist", groupAllowFrom: ["@peer:example.test"], dm: { policy: "open", allowFrom: [] } } } } },
+  ];
+  for (const overrides of cases) {
+    assert.equal(toTurnRequest(attemptParams(overrides)).replyTarget, null);
+  }
 });
 
 test("projects a Tiangong result into the OpenClaw attempt contract", () => {
@@ -68,6 +116,31 @@ test("projects a Tiangong result into the OpenClaw attempt contract", () => {
   assert.equal(result.lastAssistant.provider, "agentteams-gateway");
   assert.equal(result.attemptUsage.total, 15);
   assert.deepEqual(result.replayMetadata, { hadPotentialSideEffects: false, replaySafe: true });
+});
+
+test("projects a validated reply target as a visible full-MXID prefix", () => {
+  const targeted = turnResult({
+    replyTarget: {
+      channel: "matrix",
+      id: "@peer:example.test",
+      source: "openclaw.matrix.group-only-sender",
+    },
+  });
+  const prefixed = buildAttemptResult(attemptParams(), { result: targeted });
+  assert.deepEqual(prefixed.assistantTexts, ["@peer:example.test answer"]);
+  assert.equal(prefixed.lastAssistant.content[0].text, "@peer:example.test answer");
+
+  const existing = buildAttemptResult(attemptParams(), {
+    result: { ...targeted, text: "answer for @peer:example.test" },
+  });
+  assert.deepEqual(existing.assistantTexts, ["answer for @peer:example.test"]);
+
+  assert.throws(
+    () => buildAttemptResult(attemptParams(), {
+      result: { ...targeted, replyTarget: { ...targeted.replyTarget, id: "not-an-mxid" } },
+    }),
+    /reply target/,
+  );
 });
 
 test("reports prompt failures without inventing assistant text", () => {
@@ -90,7 +163,124 @@ test("delegates the attempt to the Tiangong runtime through the DTO boundary", a
   };
   const harness = createTiangongPiHarness({ runtime });
   t.after(() => harness.dispose());
-  const result = await harness.runAttempt(attemptParams());
+  const result = await harness.runAttempt(attemptParams({ senderId: "@peer:example.test" }));
   assert.equal(received.sessionId, "session-one");
+  assert.equal(received.replyTarget.id, "@peer:example.test");
   assert.equal(result.lastAssistant.content[0].text, "answer");
+});
+
+test("marks Harness ingress before waiting for the Tiangong turn", async (t) => {
+  const evidenceDir = await mkdtemp(join(tmpdir(), "tiangong-harness-"));
+  const evidencePath = join(evidenceDir, "last-run");
+  t.after(() => rm(evidenceDir, { recursive: true, force: true }));
+
+  let finishTurn;
+  let noteTurnStarted;
+  const turnStarted = new Promise((resolve) => {
+    noteTurnStarted = resolve;
+  });
+  const turnFinished = new Promise((resolve) => {
+    finishTurn = resolve;
+  });
+  const runtime = {
+    async runTurn() {
+      noteTurnStarted();
+      return await turnFinished;
+    },
+    async reset() {},
+    async dispose() {},
+  };
+  const harness = createTiangongPiHarness({ evidencePath, runtime });
+  t.after(() => harness.dispose());
+
+  const attempt = harness.runAttempt(attemptParams());
+  await turnStarted;
+  const runningMarker = await readFile(evidencePath, "utf8");
+  assert.match(runningMarker, /^harness=tiangong-pi$/mu);
+  assert.match(runningMarker, /^status=running$/mu);
+  assert.doesNotMatch(runningMarker, /worker-token|matrix-secret/u);
+
+  finishTurn(turnResult());
+  await attempt;
+  const completedMarker = await readFile(evidencePath, "utf8");
+  assert.match(completedMarker, /^status=pass$/mu);
+  assert.doesNotMatch(completedMarker, /^status=running$/mu);
+});
+
+test("enforces the OpenClaw Harness attempt timeout", async (t) => {
+  const evidenceDir = await mkdtemp(join(tmpdir(), "tiangong-harness-timeout-"));
+  const evidencePath = join(evidenceDir, "last-run");
+  t.after(() => rm(evidenceDir, { recursive: true, force: true }));
+
+  const runtime = {
+    async runTurn(request) {
+      return await new Promise((resolve, reject) => {
+        request.abortSignal.addEventListener("abort", () => reject(request.abortSignal.reason), { once: true });
+      });
+    },
+    async reset() {},
+    async dispose() {},
+  };
+  const harness = createTiangongPiHarness({ evidencePath, runtime });
+  t.after(() => harness.dispose());
+
+  const result = await harness.runAttempt(attemptParams({ timeoutMs: 10 }));
+  assert.equal(result.aborted, true);
+  assert.equal(result.timedOut, true);
+  assert.match(result.promptError.message, /timeout after 10ms/u);
+  const marker = await readFile(evidencePath, "utf8");
+  assert.match(marker, /^status=error$/mu);
+  assert.doesNotMatch(marker, /worker-token|matrix-secret/u);
+});
+
+test("rejects a missing OpenClaw Harness attempt timeout", async (t) => {
+  const evidenceDir = await mkdtemp(join(tmpdir(), "tiangong-harness-timeout-invalid-"));
+  const evidencePath = join(evidenceDir, "last-run");
+  t.after(() => rm(evidenceDir, { recursive: true, force: true }));
+
+  let calls = 0;
+  const runtime = {
+    async runTurn() {
+      calls += 1;
+      return turnResult();
+    },
+    async reset() {},
+    async dispose() {},
+  };
+  const harness = createTiangongPiHarness({ evidencePath, runtime });
+  t.after(() => harness.dispose());
+
+  const result = await harness.runAttempt(attemptParams({ timeoutMs: 0 }));
+  assert.equal(calls, 0);
+  assert.match(result.promptError.message, /positive OpenClaw Harness attempt timeout/u);
+  const marker = await readFile(evidencePath, "utf8");
+  assert.match(marker, /^status=error$/mu);
+});
+
+test("preserves an upstream abort without calling the runtime", async (t) => {
+  const evidenceDir = await mkdtemp(join(tmpdir(), "tiangong-harness-abort-"));
+  const evidencePath = join(evidenceDir, "last-run");
+  t.after(() => rm(evidenceDir, { recursive: true, force: true }));
+
+  let calls = 0;
+  const runtime = {
+    async runTurn() {
+      calls += 1;
+      return turnResult();
+    },
+    async reset() {},
+    async dispose() {},
+  };
+  const controller = new AbortController();
+  controller.abort(new Error("operator cancelled"));
+  const harness = createTiangongPiHarness({ evidencePath, runtime });
+  t.after(() => harness.dispose());
+
+  const result = await harness.runAttempt(attemptParams({ abortSignal: controller.signal }));
+  assert.equal(calls, 0);
+  assert.equal(result.aborted, true);
+  assert.equal(result.timedOut, false);
+  assert.equal(result.promptError.message, "operator cancelled");
+  const marker = await readFile(evidencePath, "utf8");
+  assert.match(marker, /^status=error$/mu);
 });

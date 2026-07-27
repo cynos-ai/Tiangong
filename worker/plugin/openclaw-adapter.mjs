@@ -2,16 +2,75 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { TiangongAgentRuntime } from "../agent/runtime.mjs";
-import { createTurnRequest } from "../agent/turn-contract.mjs";
+import { createTurnRequest, normalizeReplyTarget } from "../agent/turn-contract.mjs";
 
 const HARNESS_ID = "tiangong-pi";
 const HARNESS_EVIDENCE_FILE = "/tmp/tiangong-pi-harness.last-run";
 const SUPPORTED_PROVIDER = "agentteams-gateway";
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+const MATRIX_USER_ID = /^@[^:\s]+:[^\s]+$/u;
+
+function stringSet(value) {
+  return new Set(Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : []);
+}
+
+function matrixPeerReplyTarget(params) {
+  const channel = params.messageChannel ?? params.messageProvider;
+  const senderId = params.senderId;
+  const matrix = params.config?.channels?.matrix;
+  if (channel !== "matrix" || typeof senderId !== "string" || !MATRIX_USER_ID.test(senderId) ||
+      matrix?.groupPolicy !== "allowlist" || matrix?.dm?.policy !== "allowlist" ||
+      !Array.isArray(matrix.groupAllowFrom) || !Array.isArray(matrix.dm.allowFrom)) {
+    return null;
+  }
+  const groupAllowFrom = stringSet(matrix.groupAllowFrom);
+  const dmAllowFrom = stringSet(matrix.dm.allowFrom);
+  if (!groupAllowFrom.has(senderId) || dmAllowFrom.has(senderId)) return null;
+  return {
+    channel: "matrix",
+    id: senderId,
+    source: "openclaw.matrix.group-only-sender",
+  };
+}
+
+function projectedText(result) {
+  const text = result?.text ?? "";
+  if (text === "") return text;
+  const target = normalizeReplyTarget(result?.replyTarget);
+  if (!target || text.includes(target.id)) return text;
+  return `${target.id} ${text}`;
+}
 
 function errorMessage(error) {
   const message = error instanceof Error ? error.message : String(error);
   return message.replace(/[\r\n]+/gu, " ").slice(0, 500);
+}
+
+function abortError(signal) {
+  if (signal.reason instanceof Error) return signal.reason;
+  return new Error(signal.reason === undefined ? "Harness attempt aborted" : String(signal.reason));
+}
+
+function createAttemptAbortBoundary(params) {
+  if (!Number.isFinite(params.timeoutMs) || params.timeoutMs <= 0) {
+    throw new Error("A positive OpenClaw Harness attempt timeout is required");
+  }
+  const controller = new AbortController();
+  const upstream = params.abortSignal;
+  const abortFromUpstream = () => controller.abort(upstream.reason);
+  if (upstream?.aborted) abortFromUpstream();
+  else upstream?.addEventListener("abort", abortFromUpstream, { once: true });
+  const timeoutMs = Math.min(Math.floor(params.timeoutMs), 2_147_483_647);
+  const timer = setTimeout(() => {
+    controller.abort(new Error(`Tiangong Harness attempt timeout after ${timeoutMs}ms`));
+  }, timeoutMs);
+  return {
+    signal: controller.signal,
+    dispose() {
+      clearTimeout(timer);
+      upstream?.removeEventListener("abort", abortFromUpstream);
+    },
+  };
 }
 
 function openClawUsage(usage) {
@@ -25,8 +84,7 @@ function openClawUsage(usage) {
   };
 }
 
-function createAssistantMessage(params, result, promptError) {
-  const text = result?.text ?? "";
+function createAssistantMessage(params, result, promptError, text) {
   return {
     role: "assistant",
     content: text === "" ? [] : [{ type: "text", text }],
@@ -41,9 +99,9 @@ function createAssistantMessage(params, result, promptError) {
 }
 
 export function buildAttemptResult(params, { result, promptError = null }) {
-  const text = result?.text ?? "";
+  const text = projectedText(result);
   const hasAssistant = text !== "" || promptError !== null;
-  const assistant = hasAssistant ? createAssistantMessage(params, result, promptError) : undefined;
+  const assistant = hasAssistant ? createAssistantMessage(params, result, promptError, text) : undefined;
   const messagesSnapshot = [{ role: "user", content: params.prompt, timestamp: Date.now() }];
   if (assistant) messagesSnapshot.push(assistant);
   const abortReason = params.abortSignal?.reason;
@@ -117,6 +175,7 @@ export function toTurnRequest(params) {
       channel: params.messageChannel ?? params.messageProvider,
       messageId: params.currentMessageId,
     },
+    replyTarget: matrixPeerReplyTarget(params),
   });
 }
 
@@ -127,6 +186,7 @@ export function createTiangongPiHarness(options = {}) {
     configPath,
     provider: SUPPORTED_PROVIDER,
   });
+  const harnessEvidenceFile = options.evidencePath ?? HARNESS_EVIDENCE_FILE;
 
   return {
     id: HARNESS_ID,
@@ -141,10 +201,20 @@ export function createTiangongPiHarness(options = {}) {
         stream: "tiangong_pi.lifecycle",
         data: { harness: HARNESS_ID, phase: "start", runId: params.runId },
       });
+      let abortBoundary;
+      let effectiveParams = params;
       try {
-        const result = await runtime.runTurn(toTurnRequest(params));
+        abortBoundary = createAttemptAbortBoundary(params);
+        effectiveParams = { ...params, abortSignal: abortBoundary.signal };
         await writeFile(
-          HARNESS_EVIDENCE_FILE,
+          harnessEvidenceFile,
+          `harness=${HARNESS_ID}\nprovider=${params.provider}\nmodel=${params.modelId}\nstatus=running\n`,
+          { mode: 0o600 },
+        );
+        if (effectiveParams.abortSignal.aborted) throw abortError(effectiveParams.abortSignal);
+        const result = await runtime.runTurn(toTurnRequest(effectiveParams));
+        await writeFile(
+          harnessEvidenceFile,
           `harness=${HARNESS_ID}\nprovider=${params.provider}\nmodel=${params.modelId}\nstatus=pass\n`,
           { mode: 0o600 },
         );
@@ -153,11 +223,11 @@ export function createTiangongPiHarness(options = {}) {
           stream: "tiangong_pi.lifecycle",
           data: { harness: HARNESS_ID, phase: "complete", runId: params.runId },
         });
-        return buildAttemptResult(params, { result });
+        return buildAttemptResult(effectiveParams, { result });
       } catch (error) {
         const message = errorMessage(error);
         await writeFile(
-          HARNESS_EVIDENCE_FILE,
+          harnessEvidenceFile,
           `harness=${HARNESS_ID}\nprovider=${params.provider}\nmodel=${params.modelId}\nstatus=error\nerror=${message}\n`,
           { mode: 0o600 },
         ).catch(() => {});
@@ -165,7 +235,9 @@ export function createTiangongPiHarness(options = {}) {
           stream: "tiangong_pi.lifecycle",
           data: { harness: HARNESS_ID, phase: "error", runId: params.runId, error: message },
         });
-        return buildAttemptResult(params, { promptError: error });
+        return buildAttemptResult(effectiveParams, { promptError: error });
+      } finally {
+        abortBoundary?.dispose();
       }
     },
     async reset(params) {
