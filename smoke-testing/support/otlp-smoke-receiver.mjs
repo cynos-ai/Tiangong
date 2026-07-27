@@ -95,7 +95,7 @@ function sanitizedSpans(payload) {
       }
       for (const span of scopeSpan.spans) {
         if (!ALLOWED_SPAN_NAMES.has(span?.name) || !HEX_ID.test(span.traceId) || !HEX_ID.test(span.spanId) ||
-            (span.parentSpanId !== undefined && !HEX_ID.test(span.parentSpanId)) ||
+            (span.parentSpanId != null && !HEX_ID.test(span.parentSpanId)) ||
             !Array.isArray(span.events) || span.events.length !== 0 ||
             !Array.isArray(span.links) || span.links.length !== 0) {
           throw new TypeError("OTLP span shape is invalid");

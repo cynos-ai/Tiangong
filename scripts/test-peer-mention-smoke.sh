@@ -248,6 +248,7 @@ jq -n '{resourceSpans:[{resource:{attributes:[
 ]},scopeSpans:[{scope:{name:"io.cynos-ai.tiangong.worker",version:"0.0.0"},spans:[{
   traceId:"11111111111111111111111111111111",
   spanId:"2222222222222222",
+  parentSpanId:null,
   name:"tiangong.lifecycle.checkpoint",
   events:[],links:[],status:{code:1},attributes:[
     {key:"tiangong.attempt.id",value:{stringValue:"333333333333333333333333"}},
