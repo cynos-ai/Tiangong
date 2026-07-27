@@ -23,6 +23,7 @@ readonly PEER_ROUNDTRIP="${SCRIPT_DIR}/matrix-peer-roundtrip.sh"
 readonly ROOM_MEMBERS="${SCRIPT_DIR}/matrix-peer-room-members.sh"
 readonly ALIAS_HELPER="${SCRIPT_DIR}/matrix-peer-aliases.sh"
 readonly OTLP_RECEIVER="${SCRIPT_DIR}/otlp-smoke-receiver.mjs"
+readonly OTLP_ACTIVITY_QUERY="${SCRIPT_DIR}/otlp-model-activity.jq"
 readonly OTLP_CONTAINER="tiangong-peer-smoke-otel"
 readonly OTLP_NETWORK_ALIAS="tiangong-otel-collector"
 readonly OTLP_ENDPOINT="http://${OTLP_NETWORK_ALIAS}:4318/v1/traces"
@@ -323,6 +324,11 @@ trace_summary() {
   }]' "${OTLP_SPANS_FILE}" 2>/dev/null || printf '[]\n'
 }
 
+trace_activity_facts() {
+  trace_summary "$1" | jq -c -f "${OTLP_ACTIVITY_QUERY}" 2>/dev/null || \
+    printf '{"observable":false}\n'
+}
+
 trace_inventory() {
   [[ -f "${OTLP_SPANS_FILE}" ]] || {
     printf '[]\n'
@@ -364,6 +370,8 @@ assert_trace_complete() {
   done
   printf '[Tiangong] Sanitized trace summary for %s: %s\n' \
     "${label}" "$(trace_summary "${event_id}")" >&2
+  printf '[Tiangong] Sanitized model activity facts for %s: %s\n' \
+    "${label}" "$(trace_activity_facts "${event_id}")" >&2
   printf '[Tiangong] Sanitized OTLP receiver status: %s\n' "$(receiver_status)" >&2
   printf '[Tiangong] Sanitized unmatched trace inventory: %s\n' "$(trace_inventory)" >&2
   return 1
@@ -456,7 +464,7 @@ for command in docker jq grep awk sha256sum node curl id; do
   command -v "${command}" >/dev/null 2>&1 || die "Missing required command: ${command}"
 done
 for path in "${MANIFEST}" "${BUILD_WORKER_IMAGE}" "${PEER_ROUNDTRIP}" \
-  "${ROOM_MEMBERS}" "${ALIAS_HELPER}" "${OTLP_RECEIVER}"; do
+  "${ROOM_MEMBERS}" "${ALIAS_HELPER}" "${OTLP_RECEIVER}" "${OTLP_ACTIVITY_QUERY}"; do
   [[ -f "${path}" && ! -L "${path}" ]] || die "Required smoke asset is missing or symlinked: ${path}"
 done
 [[ -x "${BUILD_WORKER_IMAGE}" && -x "${PEER_ROUNDTRIP}" && \
@@ -642,6 +650,8 @@ if ! peer_output="$(docker exec "${CONTROLLER_CONTAINER}" "${CONTROLLER_PEER_ROU
       sleep 1
     done
     printf '[Tiangong] Sanitized Coordinator start-event trace: %s\n' "${trace}" >&2
+    printf '[Tiangong] Sanitized Coordinator model activity facts: %s\n' \
+      "$(trace_activity_facts "${start_event_id}")" >&2
     printf '[Tiangong] Sanitized OTLP receiver status: %s\n' "$(receiver_status)" >&2
     if [[ "${trace}" == '[]' ]]; then
       printf '[Tiangong] Sanitized unmatched trace inventory: %s\n' "$(trace_inventory)" >&2

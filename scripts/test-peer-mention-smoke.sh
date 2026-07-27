@@ -10,6 +10,7 @@ readonly ROUNDTRIP="${REPO_ROOT}/smoke-testing/support/matrix-peer-roundtrip.sh"
 readonly ROOM_MEMBERS="${REPO_ROOT}/smoke-testing/support/matrix-peer-room-members.sh"
 readonly ALIASES="${REPO_ROOT}/smoke-testing/support/matrix-peer-aliases.sh"
 readonly OTLP_RECEIVER="${REPO_ROOT}/smoke-testing/support/otlp-smoke-receiver.mjs"
+readonly OTLP_ACTIVITY_QUERY="${REPO_ROOT}/smoke-testing/support/otlp-model-activity.jq"
 readonly ROOM_ID='!peer-room:matrix.test'
 readonly ADMIN_ID='@admin:matrix.test'
 readonly LEADER_ID='@tiangong-peer-smoke-leader:matrix.test'
@@ -62,7 +63,7 @@ expect_validation_failure() {
 }
 
 for path in "${MANIFEST}" "${RUNNER}" "${ROUNDTRIP}" "${ROOM_MEMBERS}" "${ALIASES}" \
-  "${OTLP_RECEIVER}"; do
+  "${OTLP_RECEIVER}" "${OTLP_ACTIVITY_QUERY}"; do
   [[ -f "${path}" && ! -L "${path}" ]] || fail "required peer smoke asset is missing or symlinked: ${path}"
 done
 [[ -x "${RUNNER}" && -x "${ROUNDTRIP}" && -x "${ROOM_MEMBERS}" && -x "${ALIASES}" ]] || \
@@ -87,6 +88,8 @@ for required_runner_contract in \
   'TIANGONG_OTEL_EXPORTER_ENDPOINT="${OTLP_ENDPOINT}" "${BUILD_WORKER_IMAGE}"' \
   '--user "$(id -u):$(id -g)"' \
   'Sanitized Coordinator start-event trace' \
+  'Sanitized Coordinator model activity facts' \
+  'Sanitized model activity facts for %s' \
   'Sanitized OTLP receiver status' \
   'Sanitized unmatched trace inventory' \
   'assert_trace_complete "${start_event_id}" coordinator_start' \
@@ -104,6 +107,31 @@ for required_roundtrip_contract in \
   grep -Fq -- "${required_roundtrip_contract}" "${ROUNDTRIP}" || \
     fail "round-trip probe is missing a deterministic prompt or observer contract: ${required_roundtrip_contract}"
 done
+
+progress_activity="$(jq -c -f "${OTLP_ACTIVITY_QUERY}" <<'JSON'
+[
+  {"name":"tiangong.lifecycle.checkpoint","phase":"pi.turn.start","outcome":null,"private":"secret"},
+  {"name":"tiangong.lifecycle.checkpoint","phase":"model.request.ready","outcome":null},
+  {"name":"tiangong.lifecycle.checkpoint","phase":"model.response.received","outcome":null},
+  {"name":"tiangong.lifecycle.checkpoint","phase":"model.response.start","outcome":null},
+  {"name":"tiangong.lifecycle.checkpoint","phase":"model.response.progress","outcome":null},
+  {"name":"gen_ai.chat","phase":null,"outcome":"complete"}
+]
+JSON
+)"
+[[ "${progress_activity}" == '{"piTurnStarted":true,"requestReady":true,"responseReceived":true,"responseStarted":true,"responseProgress":true,"retryObserved":false,"modelComplete":true,"modelTimedOut":false,"modelAborted":false}' ]] || \
+  fail 'model activity query did not classify real stream progress.'
+[[ "${progress_activity}" != *secret* ]] || fail 'model activity query leaked an unallowlisted input field.'
+silent_activity="$(jq -c -f "${OTLP_ACTIVITY_QUERY}" <<'JSON'
+[
+  {"name":"tiangong.lifecycle.checkpoint","phase":"pi.turn.start","outcome":null},
+  {"name":"tiangong.lifecycle.checkpoint","phase":"model.request.ready","outcome":null},
+  {"name":"gen_ai.chat","phase":null,"outcome":"timeout"}
+]
+JSON
+)"
+[[ "${silent_activity}" == '{"piTurnStarted":true,"requestReady":true,"responseReceived":false,"responseStarted":false,"responseProgress":false,"retryObserved":false,"modelComplete":false,"modelTimedOut":true,"modelAborted":false}' ]] || \
+  fail 'model activity query did not classify a silent provider timeout.'
 
 assert_exact_line_count 1 'apiVersion: agentteams.io/v1beta1'
 assert_exact_line_count 1 'kind: Team'
