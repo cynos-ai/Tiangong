@@ -83,6 +83,8 @@ for required_runner_contract in \
   '[[ "$(jq -r '\''.lastStartAt'\'' <<<"${status_after}")" ==' \
   'TIANGONG_OTEL_EXPORTER_ENDPOINT="${OTLP_ENDPOINT}" "${BUILD_WORKER_IMAGE}"' \
   'Sanitized Coordinator start-event trace' \
+  'Sanitized OTLP receiver status' \
+  'Sanitized unmatched trace inventory' \
   'assert_trace_complete "${start_event_id}" coordinator_start' \
   'rm -rf -- "${OTLP_DATA_DIRECTORY}"'; do
   grep -Fq -- "${required_runner_contract}" "${RUNNER}" || \

@@ -364,6 +364,8 @@ assert_trace_complete() {
   done
   printf '[Tiangong] Sanitized trace summary for %s: %s\n' \
     "${label}" "$(trace_summary "${event_id}")" >&2
+  printf '[Tiangong] Sanitized OTLP receiver status: %s\n' "$(receiver_status)" >&2
+  printf '[Tiangong] Sanitized unmatched trace inventory: %s\n' "$(trace_inventory)" >&2
   return 1
 }
 
