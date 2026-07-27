@@ -82,7 +82,7 @@ Cleanup removes the temporary Worker and the exact MinIO prefix owned by the res
 
 The Worker resource retains AgentTeams' supported `openclaw` runtime, Node.js version, entrypoint, and gateway. A narrow `openclaw` command wrapper injects the Tiangong plugin path into the generated configuration and then delegates to the upstream executable. OpenClaw continues to own Matrix, configuration retrieval, storage sync, re-login, readiness, channel policy, and reply delivery. Tiangong owns the pi harness and its future evidence, approval, Concern, and Gate behavior.
 
-Optional, backend-neutral Worker tracing is documented in [`docs/observability.md`](./docs/observability.md). It is disabled by default, exports only allowlisted sanitized OpenTelemetry spans, and remains diagnostic telemetry rather than authorization or hash-chained Evidence.
+Optional, backend-neutral Worker tracing is documented in [`docs/observability.md`](./docs/observability.md). It is disabled by default, exports only allowlisted sanitized OpenTelemetry spans, and remains diagnostic telemetry rather than authorization or hash-chained Evidence. The bounded [`peer transport diagnostic`](./docs/peer-transport-diagnostic.md) keeps exact ping/pong markers in deterministic Worker code while deriving targets only from authenticated effective Matrix allowlists; it is transport-only and is not Team Work or Evidence.
 
 The current runtime is intentionally constrained:
 

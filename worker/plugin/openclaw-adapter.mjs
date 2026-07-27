@@ -18,22 +18,30 @@ function stringSet(value) {
   return new Set(Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : []);
 }
 
-function matrixPeerReplyTarget(params) {
+function matrixPeerContext(params) {
   const channel = params.messageChannel ?? params.messageProvider;
   const senderId = params.senderId;
   const matrix = params.config?.channels?.matrix;
   if (channel !== "matrix" || typeof senderId !== "string" || !MATRIX_USER_ID.test(senderId) ||
       matrix?.groupPolicy !== "allowlist" || matrix?.dm?.policy !== "allowlist" ||
       !Array.isArray(matrix.groupAllowFrom) || !Array.isArray(matrix.dm.allowFrom)) {
-    return null;
+    return { replyTarget: null, authorizedPeerTargets: [] };
   }
   const groupAllowFrom = stringSet(matrix.groupAllowFrom);
   const dmAllowFrom = stringSet(matrix.dm.allowFrom);
-  if (!groupAllowFrom.has(senderId) || dmAllowFrom.has(senderId)) return null;
+  if (!groupAllowFrom.has(senderId) && !dmAllowFrom.has(senderId)) {
+    return { replyTarget: null, authorizedPeerTargets: [] };
+  }
+  const groupOnly = [...groupAllowFrom]
+    .filter((id) => MATRIX_USER_ID.test(id) && !dmAllowFrom.has(id))
+    .map((id) => ({
+      channel: "matrix",
+      id,
+      source: "openclaw.matrix.group-only-sender",
+    }));
   return {
-    channel: "matrix",
-    id: senderId,
-    source: "openclaw.matrix.group-only-sender",
+    replyTarget: groupOnly.find((target) => target.id === senderId) ?? null,
+    authorizedPeerTargets: groupOnly.filter((target) => target.id !== senderId),
   };
 }
 
@@ -160,6 +168,7 @@ function turnId(params) {
 }
 
 export function toTurnRequest(params) {
+  const peerContext = matrixPeerContext(params);
   return createTurnRequest({
     attemptId: params.runId,
     turnId: turnId(params),
@@ -179,7 +188,8 @@ export function toTurnRequest(params) {
       channel: params.messageChannel ?? params.messageProvider,
       messageId: params.currentMessageId,
     },
-    replyTarget: matrixPeerReplyTarget(params),
+    replyTarget: peerContext.replyTarget,
+    authorizedPeerTargets: peerContext.authorizedPeerTargets,
   });
 }
 

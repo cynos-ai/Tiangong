@@ -17,6 +17,7 @@ import { PolicyGate } from "./gates/policy-gate.mjs";
 import { IdempotencyStore } from "./idempotency/store.mjs";
 import { ModelGateway } from "./model-gateway.mjs";
 import { PeerReplyRouter } from "./peer-reply-router.mjs";
+import { parsePeerTransportCommand, PeerTransportProbe } from "./peer-transport-probe.mjs";
 import { createAgentTeamsPendingStorage } from "./pending-operation/agentteams-storage.mjs";
 import { PendingOperationStore } from "./pending-operation/store.mjs";
 import {
@@ -87,6 +88,21 @@ function appendControlMessage(state, content, details) {
       timestamp: Date.now(),
     },
   ];
+}
+
+function appendDeterministicAssistantMessage(state, content) {
+  const message = {
+    role: "assistant",
+    content: [{ type: "text", text: content }],
+    api: "tiangong-control",
+    provider: "tiangong",
+    model: "peer-transport-v1",
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: {} },
+    stopReason: "stop",
+    timestamp: Date.now(),
+  };
+  state.sessionManager.appendMessage(message);
+  state.session.agent.state.messages = [...state.session.agent.state.messages, message];
 }
 
 export class TiangongAgentRuntime {
@@ -168,6 +184,7 @@ export class TiangongAgentRuntime {
       turns,
       registry,
       peerReplies: new PeerReplyRouter(),
+      peerTransport: new PeerTransportProbe(),
       providerTrace,
       provider: request.provider,
       modelId: request.modelId,
@@ -191,6 +208,19 @@ export class TiangongAgentRuntime {
       }
     }
     return state;
+  }
+
+  #handlePeerTransport(request, state, route, command, observability) {
+    const plan = state.peerTransport.plan(command, request, route);
+    const result = createTurnResult(request, {
+      text: plan.text,
+      replyTarget: plan.replyTarget,
+    });
+    appendDeterministicAssistantMessage(state, result.text);
+    state.peerReplies.commit(route, { text: result.text, replyTarget: result.replyTarget });
+    state.peerTransport.commit(plan);
+    observability?.checkpoint(`peer.transport.${command.kind}`);
+    return result;
   }
 
   async #handleApproval(request, state, route, command, observability) {
@@ -346,6 +376,10 @@ export class TiangongAgentRuntime {
     if (state.session.isStreaming) throw new Error("pi session is already processing a request");
 
     const route = state.peerReplies.plan(request.replyTarget);
+    const transportCommand = parsePeerTransportCommand(request.prompt);
+    if (transportCommand) {
+      return this.#handlePeerTransport(request, state, route, transportCommand, observability);
+    }
     const command = parseApprovalCommand(request.prompt);
     if (command) return this.#handleApproval(request, state, route, command, observability);
 

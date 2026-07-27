@@ -91,6 +91,7 @@ test("maps OpenClaw parameters to a stable non-secret TurnRequest", () => {
   assert.equal(request.turnId, "matrix:$event-one");
   assert.equal(request.actor.id, "@user:example.test");
   assert.equal(request.replyTarget, null);
+  assert.deepEqual(request.authorizedPeerTargets, []);
   assert.equal(Object.hasOwn(request.actor, "isOwner"), false);
   assert.equal(request.credential, "worker-token");
   assert.equal(JSON.stringify(request).includes("worker-token"), false);
@@ -98,17 +99,24 @@ test("maps OpenClaw parameters to a stable non-secret TurnRequest", () => {
   assert.equal(Object.keys(request).includes("credential"), false);
 });
 
-test("derives a Matrix reply target only for a group-only allowed sender", () => {
-  const request = toTurnRequest(attemptParams({ senderId: "@peer:example.test" }));
-  assert.deepEqual(request.replyTarget, {
+test("derives Matrix peer authority only from authenticated effective allowlists", () => {
+  const peer = {
     channel: "matrix",
     id: "@peer:example.test",
     source: "openclaw.matrix.group-only-sender",
-  });
+  };
+  const request = toTurnRequest(attemptParams({ senderId: "@peer:example.test" }));
+  assert.deepEqual(request.replyTarget, peer);
+  assert.deepEqual(request.authorizedPeerTargets, []);
 
-  for (const senderId of ["@admin:example.test", "@leader:example.test", "@unknown:example.test"]) {
-    assert.equal(toTurnRequest(attemptParams({ senderId })).replyTarget, null);
+  for (const senderId of ["@admin:example.test", "@leader:example.test"]) {
+    const trustedIngress = toTurnRequest(attemptParams({ senderId }));
+    assert.equal(trustedIngress.replyTarget, null);
+    assert.deepEqual(trustedIngress.authorizedPeerTargets, [peer]);
   }
+  const unknown = toTurnRequest(attemptParams({ senderId: "@unknown:example.test" }));
+  assert.equal(unknown.replyTarget, null);
+  assert.deepEqual(unknown.authorizedPeerTargets, []);
 });
 
 test("fails closed when Matrix peer policy facts are incomplete or malformed", () => {
@@ -121,7 +129,9 @@ test("fails closed when Matrix peer policy facts are incomplete or malformed", (
     { config: { channels: { matrix: { groupPolicy: "allowlist", groupAllowFrom: ["@peer:example.test"], dm: { policy: "open", allowFrom: [] } } } } },
   ];
   for (const overrides of cases) {
-    assert.equal(toTurnRequest(attemptParams(overrides)).replyTarget, null);
+    const request = toTurnRequest(attemptParams(overrides));
+    assert.equal(request.replyTarget, null);
+    assert.deepEqual(request.authorizedPeerTargets, []);
   }
 });
 

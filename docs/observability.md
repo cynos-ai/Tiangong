@@ -56,7 +56,9 @@ tiangong.harness.attempt
 └── execute_tool
 ```
 
-Short checkpoint spans make phase entry observable even while a later operation remains in flight. Model activity uses these sanitized phases:
+Short checkpoint spans make phase entry observable even while a later operation remains in flight. Deterministic peer transport controls emit one of `peer.transport.start`, `peer.transport.ping`, or `peer.transport.pong`; they intentionally complete without a pi/model operation, so absence of model phases on such a completed Harness root is expected rather than `unknown`.
+
+Model activity uses these sanitized phases:
 
 ```text
 pi.turn.start
