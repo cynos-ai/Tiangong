@@ -278,6 +278,13 @@ No Matrix trace flag, temporary image, or prompt change was used to manufacture 
 - Commit `4c075b6` classifies unknown failures by the fixed receiver stage `body`, `json`, `validation`, or `persistence`, while preserving the existing exact validator codes. Its contract covers malformed JSON as `json_failure` and the forbidden prompt attribute as `attribute_not_allowlisted`.
 - Exact cleanup passed. Failure discipline now prohibits another real-model run until a lower-layer deterministic reproduction or a reviewed diagnostic need identifies why the actual exporter request reaches the receiver's unclassified path.
 
+### No-model exporter/receiver protocol probe after Attempt 18
+
+- A same-network local HTTP model fixture returned deterministic `500/FIXTURE_FAILURE` responses without contacting an external model. The actual image plugin, Tiangong runtime, ModelGateway, pi session, model retry observer, batch OTLP exporter, and strict receiver were exercised together.
+- The receiver accepted three requests and 18 spans with zero rejections, including runtime/Gateway/session/pi/model/retry checkpoints, three `gen_ai.chat` operations, and stable `internal_error` outcomes.
+- This rules out the ordinary pi model/retry/error span shape and batch exporter as a deterministic cause. The remaining difference is specific to the long-lived official OpenClaw host process or actual-request delivery timing/context. The new stage classifier is necessary for a future justified diagnostic but does not authorize another real-model run by itself.
+- The fixture containers and trace/config paths were removed exactly; no credential or external model was used.
+
 ### Current result
 
 **BLOCKED.** Attempts 12–18 prove Admin → Coordinator account visibility and official OpenClaw-to-Tiangong Harness dispatch. Attempt 16 passed the complete bounded four-event transport, Harness, terminal-quiescence, and Leader-silence oracle, but its required event-correlated trace was empty. Attempts 17–18 prove real exporter requests reached the receiver and were rejected; Attempt 18 narrowed the remaining test-oracle defect to an exception outside the intentional validator categories. No run has yet passed transport and observability in the same attempt.
