@@ -452,7 +452,7 @@ trap 'exit 143' TERM
 
 [[ "${SMOKE_MODE}" == full || "${SMOKE_MODE}" == config ]] || \
   die "TIANGONG_PEER_SMOKE_MODE must be full or config."
-for command in docker jq grep awk sha256sum node curl; do
+for command in docker jq grep awk sha256sum node curl id; do
   command -v "${command}" >/dev/null 2>&1 || die "Missing required command: ${command}"
 done
 for path in "${MANIFEST}" "${BUILD_WORKER_IMAGE}" "${PEER_ROUNDTRIP}" \
@@ -501,6 +501,7 @@ docker run --detach \
   --read-only \
   --cap-drop ALL \
   --security-opt no-new-privileges=true \
+  --user "$(id -u):$(id -g)" \
   --mount "type=bind,src=${OTLP_RECEIVER},dst=/opt/tiangong-otlp-receiver.mjs,readonly" \
   --mount "type=bind,src=${OTLP_DATA_DIRECTORY},dst=/data" \
   --entrypoint node \

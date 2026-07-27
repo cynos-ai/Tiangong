@@ -85,6 +85,7 @@ for required_runner_contract in \
   '[[ "${policy_after}" == "${policy_before}" ]]' \
   '[[ "$(jq -r '\''.lastStartAt'\'' <<<"${status_after}")" ==' \
   'TIANGONG_OTEL_EXPORTER_ENDPOINT="${OTLP_ENDPOINT}" "${BUILD_WORKER_IMAGE}"' \
+  '--user "$(id -u):$(id -g)"' \
   'Sanitized Coordinator start-event trace' \
   'Sanitized OTLP receiver status' \
   'Sanitized unmatched trace inventory' \
