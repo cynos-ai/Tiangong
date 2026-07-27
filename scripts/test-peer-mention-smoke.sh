@@ -266,7 +266,7 @@ jq -n '{resourceSpans:[{resource:{attributes:[
     {key:"tiangong.attempt.id",value:{stringValue:"333333333333333333333333"}},
     {key:"tiangong.turn.id",value:{stringValue:"444444444444444444444444"}},
     {key:"tiangong.session.id",value:{stringValue:"555555555555555555555555"}},
-    {key:"tiangong.phase",value:{stringValue:"model.start"}}
+    {key:"tiangong.phase",value:{stringValue:"model.response.progress"}}
   ]
 }]}]}]}' >"${valid_otlp}"
 curl --fail --silent --max-time 2 -H 'Content-Type: application/json' \
@@ -274,7 +274,7 @@ curl --fail --silent --max-time 2 -H 'Content-Type: application/json' \
   fail 'OTLP smoke receiver rejected an allowlisted span.'
 jq -e 'select(
   .name == "tiangong.lifecycle.checkpoint" and
-  .attributes["tiangong.phase"] == "model.start" and
+  .attributes["tiangong.phase"] == "model.response.progress" and
   .attributes["tiangong.turn.id"] == "444444444444444444444444"
 )' "${receiver_output}" >/dev/null || fail 'OTLP smoke receiver did not persist the sanitized span.'
 jq '
