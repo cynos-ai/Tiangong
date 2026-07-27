@@ -9,6 +9,7 @@ readonly RUNNER="${REPO_ROOT}/smoke-testing/support/run-peer-mention-smoke.sh"
 readonly ROUNDTRIP="${REPO_ROOT}/smoke-testing/support/matrix-peer-roundtrip.sh"
 readonly ROOM_MEMBERS="${REPO_ROOT}/smoke-testing/support/matrix-peer-room-members.sh"
 readonly ALIASES="${REPO_ROOT}/smoke-testing/support/matrix-peer-aliases.sh"
+readonly OTLP_RECEIVER="${REPO_ROOT}/smoke-testing/support/otlp-smoke-receiver.mjs"
 readonly ROOM_ID='!peer-room:matrix.test'
 readonly ADMIN_ID='@admin:matrix.test'
 readonly LEADER_ID='@tiangong-peer-smoke-leader:matrix.test'
@@ -17,7 +18,18 @@ readonly ENGINEER_ID='@tiangong-peer-smoke-engineer:matrix.test'
 readonly NONCE='11111111-2222-4333-8444-555555555555'
 
 temporary_directory="$(mktemp -d)"
-trap 'rm -rf -- "${temporary_directory}"' EXIT INT TERM
+receiver_pid=''
+cleanup() {
+  local status=$?
+  trap - EXIT INT TERM
+  if [[ -n "${receiver_pid}" ]]; then
+    kill "${receiver_pid}" >/dev/null 2>&1 || true
+    wait "${receiver_pid}" 2>/dev/null || true
+  fi
+  rm -rf -- "${temporary_directory}"
+  exit "${status}"
+}
+trap cleanup EXIT INT TERM
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -46,7 +58,8 @@ expect_validation_failure() {
   fi
 }
 
-for path in "${MANIFEST}" "${RUNNER}" "${ROUNDTRIP}" "${ROOM_MEMBERS}" "${ALIASES}"; do
+for path in "${MANIFEST}" "${RUNNER}" "${ROUNDTRIP}" "${ROOM_MEMBERS}" "${ALIASES}" \
+  "${OTLP_RECEIVER}"; do
   [[ -f "${path}" && ! -L "${path}" ]] || fail "required peer smoke asset is missing or symlinked: ${path}"
 done
 [[ -x "${RUNNER}" && -x "${ROUNDTRIP}" && -x "${ROOM_MEMBERS}" && -x "${ALIASES}" ]] || \
@@ -54,6 +67,7 @@ done
 for script in "${RUNNER}" "${ROUNDTRIP}" "${ROOM_MEMBERS}" "${ALIASES}"; do
   bash -n "${script}"
 done
+node --check "${OTLP_RECEIVER}"
 # These are literal source fragments; expansion would invalidate the contract check.
 # shellcheck disable=SC2016
 for required_runner_contract in \
@@ -66,7 +80,11 @@ for required_runner_contract in \
   'openclaw channels status --json' \
   '.lastConnectedAt >= .lastStartAt' \
   '[[ "${policy_after}" == "${policy_before}" ]]' \
-  '[[ "$(jq -r '\''.lastStartAt'\'' <<<"${status_after}")" =='; do
+  '[[ "$(jq -r '\''.lastStartAt'\'' <<<"${status_after}")" ==' \
+  'TIANGONG_OTEL_EXPORTER_ENDPOINT="${OTLP_ENDPOINT}" "${BUILD_WORKER_IMAGE}"' \
+  'Sanitized Coordinator start-event trace' \
+  'assert_trace_complete "${start_event_id}" coordinator_start' \
+  'rm -rf -- "${OTLP_DATA_DIRECTORY}"'; do
   grep -Fq -- "${required_runner_contract}" "${RUNNER}" || \
     fail "runner is missing a deterministic readiness or Harness contract: ${required_runner_contract}"
 done
@@ -212,5 +230,49 @@ fi
 if "${ROOM_MEMBERS}" unsafe-mode >/dev/null 2>&1; then
   fail 'Matrix room observer accepted an unsafe mode.'
 fi
+
+receiver_output="${temporary_directory}/spans.jsonl"
+TIANGONG_OTLP_RECEIVER_PORT=14318 node "${OTLP_RECEIVER}" "${receiver_output}" \
+  >"${temporary_directory}/receiver.log" 2>&1 &
+receiver_pid=$!
+for _ in $(seq 1 30); do
+  curl --fail --silent --max-time 1 http://127.0.0.1:14318/health >/dev/null 2>&1 && break
+  sleep 0.1
+done
+curl --fail --silent --max-time 1 http://127.0.0.1:14318/health >/dev/null || \
+  fail 'OTLP smoke receiver did not become ready.'
+valid_otlp="${temporary_directory}/valid-otlp.json"
+jq -n '{resourceSpans:[{resource:{attributes:[
+  {key:"service.name",value:{stringValue:"tiangong-worker"}},
+  {key:"service.namespace",value:{stringValue:"tiangong"}}
+]},scopeSpans:[{scope:{name:"io.cynos-ai.tiangong.worker",version:"0.0.0"},spans:[{
+  traceId:"11111111111111111111111111111111",
+  spanId:"2222222222222222",
+  name:"tiangong.lifecycle.checkpoint",
+  events:[],links:[],status:{code:1},attributes:[
+    {key:"tiangong.attempt.id",value:{stringValue:"333333333333333333333333"}},
+    {key:"tiangong.turn.id",value:{stringValue:"444444444444444444444444"}},
+    {key:"tiangong.session.id",value:{stringValue:"555555555555555555555555"}},
+    {key:"tiangong.phase",value:{stringValue:"model.start"}}
+  ]
+}]}]}]}' >"${valid_otlp}"
+curl --fail --silent --max-time 2 -H 'Content-Type: application/json' \
+  --data-binary @"${valid_otlp}" http://127.0.0.1:14318/v1/traces >/dev/null || \
+  fail 'OTLP smoke receiver rejected an allowlisted span.'
+jq -e 'select(
+  .name == "tiangong.lifecycle.checkpoint" and
+  .attributes["tiangong.phase"] == "model.start" and
+  .attributes["tiangong.turn.id"] == "444444444444444444444444"
+)' "${receiver_output}" >/dev/null || fail 'OTLP smoke receiver did not persist the sanitized span.'
+jq '(.resourceSpans[0].scopeSpans[0].spans[0].attributes) += [
+  {key:"untrusted.prompt",value:{stringValue:"sensitive"}}
+]' "${valid_otlp}" >"${temporary_directory}/invalid-otlp.json"
+invalid_status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 2 \
+  -H 'Content-Type: application/json' --data-binary @"${temporary_directory}/invalid-otlp.json" \
+  http://127.0.0.1:14318/v1/traces)"
+[[ "${invalid_status}" == 400 ]] || fail 'OTLP smoke receiver accepted a non-allowlisted attribute.'
+kill "${receiver_pid}"
+wait "${receiver_pid}" 2>/dev/null || true
+receiver_pid=''
 
 printf 'Worker peer mention smoke contract tests passed.\n'

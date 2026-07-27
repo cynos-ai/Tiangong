@@ -18,7 +18,8 @@
 | Terminal receipt | Coordinator emits a later terminal marker with the same nonce, does not mention a peer/Leader, and no peer message follows during the bounded grace window | observing only Coordinator's first turn or cleaning up before detecting a reply loop |
 | Leader silence | zero post-baseline Leader messages and unchanged stock Leader session snapshot | absence of a specific expected phrase |
 | Harness | both peer senders have a post-baseline changed, passing Tiangong Harness marker and persistent nonce-bearing session; on failure, a changed `status=running` marker distinguishes Harness entry from completion | a pre-existing marker, container health, or model self-identification alone |
-| Cleanup | exact Team, three members/containers, two aliases, helper copies, and four storage prefixes are absent | successful delete command alone or broad cleanup paths |
+| Observability | sanitized completed Harness root traces correlate to the three inbound event IDs; a failed run reports only bounded phase/outcome/error-type facts for the Admin start turn | treating a UI screenshot, open span absence, model prose, or lossy trace as Evidence |
+| Cleanup | exact Team, three members/containers, two aliases, helper copies, four storage prefixes, OTLP receiver container, and diagnostic trace path are absent | successful delete command alone or broad cleanup paths |
 
 ## Basic smoke
 
@@ -29,13 +30,15 @@
   - Team `tiangong-peer-smoke`;
   - stock Leader `tiangong-peer-smoke-leader`;
   - ordinary Workers `tiangong-peer-smoke-coordinator` and `tiangong-peer-smoke-engineer`;
-  - their exact member/Team storage prefixes and the Team/Leader-DM aliases.
+  - their exact member/Team storage prefixes and the Team/Leader-DM aliases;
+  - run-owned `tiangong-peer-smoke-otel` receiver and `.runtime/peer-smoke-observability/` trace path.
 - Setup:
   1. deterministic peer smoke contract tests pass;
   2. `make verify` passes;
   3. every reserved resource, alias, and storage prefix is absent;
-  4. build `tiangong-worker:dev`;
-  5. apply `smoke-testing/fixtures/peer-mention-smoke-team.yaml` through the supported public CLI path.
+  4. build `tiangong-worker:dev` with the non-secret owned OTLP receiver endpoint and pass its embedded observability contract;
+  5. start the bounded receiver on the existing AgentTeams network and prove readiness;
+  6. apply `smoke-testing/fixtures/peer-mention-smoke-team.yaml` through the supported public CLI path.
 - Prompt:
   - global Admin sends one Team Room event whose structured mention targets only Coordinator;
   - the body supplies Engineer's localpart and domain separately so Coordinator must construct the full MXID without the initial event waking Engineer;
@@ -51,6 +54,7 @@
   - terminal contains no Engineer/Leader MXID or mention, and no Worker/Leader message follows during the bounded grace window;
   - stock Leader emits no Team Room message and its session-file count/digest does not change;
   - Coordinator and Engineer each have a post-baseline changed, passing Tiangong Harness marker and a persistent session containing the nonce;
+  - completed sanitized Harness roots correlate to the Admin start, Coordinator ping, and Engineer pong event IDs;
   - cleanup removes only the fixed owned resources and verifies their absence.
 - Required evidence:
   - four non-secret Matrix event IDs and `worker_peer_event_chain=pass`;
@@ -59,10 +63,11 @@
   - `matrix_peer_team_room_topology=pass`, `matrix_peer_channel_policy=pass`, and `matrix_peer_active_channel_stability=pass`;
   - on failure, sanitized target-account visibility facts for the exact Admin start and peer ping sender/nonce/visible MXID/`m.mentions`, without raw bodies or credentials;
   - on failure, whether each Harness marker changed after the nonce baseline and its sanitized lifecycle status (`running`, `pass`, or `error`), without prompt, response, or credential data;
-  - alias cleanup observations plus Team/member/container/storage absence.
+  - `peer_coordinator_start_observability=pass`, `peer_engineer_ping_observability=pass`, and `peer_coordinator_pong_observability=pass` on success; otherwise one bounded sanitized start-event trace summary;
+  - alias cleanup observations plus Team/member/container/storage/receiver/trace-path absence.
 - Skip/block rules:
   - block if Docker, pinned AgentTeams, Matrix, Gateway model, reserved identity ownership, or public Worker image is unavailable;
-  - refuse to replace any existing reserved Team/member/container/alias/storage prefix;
+  - refuse to replace any existing reserved Team/member/container/alias/storage prefix, receiver container, or diagnostic trace path;
   - fail if the stock Leader sends any post-baseline Team Room message or its session snapshot changes;
   - do not use direct CRs, config watcher publication, modified AgentTeams, unreleased images, or test-driver Worker impersonation;
   - do not call the transport messages formal Assignment/Result envelopes or call the test names trusted Role Profiles;
@@ -83,3 +88,4 @@ No Full scenario is defined. Role authorization, Work Ledger, formal Assignment/
 - Model wording beyond stable markers is not asserted. Event sender, event ID, nonce, structured mentions, Harness markers, session state, and cleanup are separate machine observations.
 - Draft PR #12 writes `status=running` before invoking the Tiangong runtime and replaces it with `pass` or `error` at completion. Combined with target-account visibility, this separates Matrix readability, OpenClaw-to-Harness dispatch, and completed Tiangong turns without logging message bodies.
 - Custom Harnesses receive OpenClaw's required `timeoutMs`. Tiangong enforces that exact supplied bound and upstream cancellation, but does not override the released AgentTeams `agents.defaults.timeoutSeconds=1800`; smoke reliability must not be manufactured by silently changing either the platform timeout or the observer window.
+- Issue #13 / Draft PR #14 adds disabled-by-default, backend-neutral OTLP tracing. The focused smoke uses an explicitly owned non-secret endpoint and a strict test-only receiver as the machine oracle; AgentScope Studio, Jaeger, or another UI remains optional and is never a pass criterion. Trace data is diagnostic and cannot substitute for Tiangong Evidence.

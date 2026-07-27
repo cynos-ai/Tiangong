@@ -46,6 +46,8 @@ The required stock platform Leader must emit no response and must have no sessio
   - `agents/tiangong-peer-smoke-engineer/`
   - `teams/tiangong-peer-smoke/`
 - Fixed helper copies under `/tmp/tiangong-peer-*` in owned containers.
+- Diagnostic OTLP receiver container/network alias: `tiangong-peer-smoke-otel` / `tiangong-otel-collector` on the existing AgentTeams network.
+- Diagnostic trace path: `.runtime/peer-smoke-observability/spans.jsonl` (sanitized, run-owned, removed during exact cleanup).
 
 The runner must refuse to replace any existing resource in this set. No cleanup path is derived from model output or user input.
 
@@ -60,7 +62,8 @@ The runner must refuse to replace any existing resource in this set. No cleanup 
 - no Leader Team Room event after the baseline cursor;
 - stock Leader session count/digest unchanged across the probe;
 - passing Harness marker and nonce-bearing persistent session for each ordinary Worker;
-- exact cleanup proof for every owned resource.
+- a completed sanitized Harness root trace correlated by the Admin start, Coordinator ping, and Engineer pong event IDs; on failure, a bounded phase/outcome/error-type summary for the Admin start turn;
+- exact cleanup proof for every owned resource, including the receiver container and diagnostic trace path.
 
 ## Blocked and failure rules
 
@@ -70,6 +73,7 @@ The runner must refuse to replace any existing resource in this set. No cleanup 
 - A timeout is an environment/model or behavior failure, not proof that transport is unsupported.
 - On the first failure, classify the failing layer and add the smallest diagnostic.
 - On a second failure of the same class, stop before a third real run unless new lower-layer evidence exists.
+- OpenTelemetry remains lossy diagnostic telemetry, not authorization or hash-chained Evidence; a UI view is never the pass oracle.
 - Cleanup failure keeps the run failed.
 
 ## Execution order
@@ -223,8 +227,15 @@ No Matrix trace flag, temporary image, or prompt change was used to manufacture 
 - Follow-up source analysis found that OpenClaw's public custom Harness params require `timeoutMs`; its built-in Harness schedules that timeout internally, while the Tiangong adapter previously forwarded only the external `abortSignal`. Released AgentTeams generates `agents.defaults.timeoutSeconds=1800`, which is longer than this unchanged observer window. Draft PR #12 now enforces the exact supplied timeout through a linked abort signal, preserves an earlier upstream abort, and rejects invalid timeouts. It does not shorten the platform timeout or convert this run into success.
 - No retry followed. The failed run cleaned its exact Team/member/container/alias/storage resources. A subsequent no-model configuration run passed the reserved-resource precondition, channel-policy/stability boundary, and exact cleanup, after which the AgentTeams stack was stopped with data preserved.
 
+### Observability gate before another real run
+
+- Issue #13 / Draft PR #14 adds an optional sanitized OTLP boundary rooted at the Harness attempt, immediate correlated phase checkpoints, runtime/Gateway/session/pi/model/retry/tool spans, and stable complete/error/timeout/upstream-abort outcomes. It remains disabled by default and rejects ambient credential/header/certificate channels.
+- The focused runner builds the same `tiangong-worker:dev` code with one non-secret owned receiver endpoint, starts a bounded test-only OTLP JSON receiver on the existing AgentTeams network, and validates three completed inbound-turn roots on success.
+- The receiver persists only allowlisted span names, digested correlation identifiers, phases, outcomes, stable error types, and status codes. It rejects unknown attributes, content-bearing events/links, unbounded bodies, and wrong service/scope identities.
+- Contract tests prove positive OTLP receipt, rejection of an unallowlisted prompt attribute, exact receiver ownership, and trace cleanup. This deterministic lower layer justifies at most one unchanged real-model attempt after the stacked code is built; it does not itself promote Phase 0B.
+
 ### Current result
 
 **BLOCKED.** Attempt 12 proves Admin → Coordinator account visibility and official OpenClaw-to-Tiangong Harness dispatch on the instrumented revision, but the Coordinator turn did not complete within the unchanged bounded window. Earlier complete loops remain insufficient because they predate bounded terminal correlation or failed terminal quiescence.
 
-Issue #11 / Draft PR #12 provide the deterministic target, one-reply correlation, and pre-turn Harness ingress marker without modifying AgentTeams. Repeated model retries, longer observation windows, or prompt tuning must not be used to manufacture reliability. The next action must be a lower-layer deterministic analysis of the in-flight Tiangong turn and its timeout/abort boundary; Phase 0B remains red.
+Issue #11 / Draft PR #12 provide the deterministic target, one-reply correlation, and pre-turn Harness ingress marker without modifying AgentTeams. Issue #13 / Draft PR #14 and the owned receiver oracle now provide the lower-layer phase trace required before another attempt. Repeated model retries, longer observation windows, or prompt tuning must not be used to manufacture reliability. One unchanged real-model run may be considered only after all stacked deterministic, image, receiver, and cleanup contracts pass; Phase 0B remains red until the complete strengthened oracle passes.

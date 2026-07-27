@@ -22,6 +22,12 @@ readonly BUILD_WORKER_IMAGE="${REPO_ROOT}/scripts/build-worker-image.sh"
 readonly PEER_ROUNDTRIP="${SCRIPT_DIR}/matrix-peer-roundtrip.sh"
 readonly ROOM_MEMBERS="${SCRIPT_DIR}/matrix-peer-room-members.sh"
 readonly ALIAS_HELPER="${SCRIPT_DIR}/matrix-peer-aliases.sh"
+readonly OTLP_RECEIVER="${SCRIPT_DIR}/otlp-smoke-receiver.mjs"
+readonly OTLP_CONTAINER="tiangong-peer-smoke-otel"
+readonly OTLP_NETWORK_ALIAS="tiangong-otel-collector"
+readonly OTLP_ENDPOINT="http://${OTLP_NETWORK_ALIAS}:4318/v1/traces"
+readonly OTLP_DATA_DIRECTORY="${REPO_ROOT}/.runtime/peer-smoke-observability"
+readonly OTLP_SPANS_FILE="${OTLP_DATA_DIRECTORY}/spans.jsonl"
 readonly MANAGER_MANIFEST="/tmp/tiangong-peer-smoke-team.yaml"
 readonly CONTROLLER_PEER_ROUNDTRIP="/tmp/tiangong-peer-roundtrip.sh"
 readonly CONTROLLER_ALIAS_HELPER="/tmp/tiangong-peer-aliases.sh"
@@ -29,6 +35,7 @@ readonly COORDINATOR_ROOM_MEMBERS="/tmp/tiangong-peer-room-members.sh"
 readonly ENGINEER_ROOM_MEMBERS="/tmp/tiangong-peer-room-members.sh"
 readonly SMOKE_MODE="${TIANGONG_PEER_SMOKE_MODE:-full}"
 owned_resources=0
+otlp_owned=0
 
 log() {
   printf '[Tiangong] %s\n' "$*"
@@ -139,6 +146,8 @@ assert_worker_runtime() {
     die "Worker identity environment is wrong for ${member}."
   [[ "$(docker exec "${container}" printenv OPENCLAW_AGENT_RUNTIME)" == tiangong-pi ]] || \
     die "Tiangong Harness is not selected for ${member}."
+  [[ "$(docker exec "${container}" printenv TIANGONG_OTEL_EXPORTER_ENDPOINT)" == "${OTLP_ENDPOINT}" ]] || \
+    die "Worker observability endpoint is not the owned smoke receiver for ${member}."
 }
 
 assert_peer_policy() {
@@ -283,6 +292,57 @@ assert_nonce_persisted() {
   [[ -n "${matches}" ]] || die "Persistent session for ${member} does not contain the probe nonce."
 }
 
+probe_output_value() {
+  local output="$1" key="$2" line
+  line="$(grep -m1 -F "${key}=" <<<"${output}" || true)"
+  [[ -n "${line}" ]] || return 1
+  printf '%s\n' "${line#*=}"
+}
+
+observability_turn_digest() {
+  local event_id="$1"
+  printf 'tiangong-observability:turn\0matrix:%s' "${event_id}" | \
+    sha256sum | cut -c 1-24
+}
+
+trace_summary() {
+  local event_id="$1" digest
+  digest="$(observability_turn_digest "${event_id}")"
+  [[ -f "${OTLP_SPANS_FILE}" ]] || {
+    printf '[]\n'
+    return
+  }
+  jq -cs --arg digest "${digest}" '[.[] | select(
+    .attributes["tiangong.turn.id"] == $digest
+  ) | {
+    name,
+    phase:(.attributes["tiangong.phase"] // null),
+    outcome:(.attributes["tiangong.operation.outcome"] // null),
+    errorType:(.attributes["error.type"] // null),
+    statusCode
+  }]' "${OTLP_SPANS_FILE}" 2>/dev/null || printf '[]\n'
+}
+
+assert_trace_complete() {
+  local event_id="$1" label="$2" digest
+  digest="$(observability_turn_digest "${event_id}")"
+  for _ in $(seq 1 30); do
+    if [[ -f "${OTLP_SPANS_FILE}" ]] && jq -se --arg digest "${digest}" 'any(.[];
+      .name == "tiangong.harness.attempt" and
+      .attributes["tiangong.turn.id"] == $digest and
+      .attributes["tiangong.operation.outcome"] == "complete" and
+      .statusCode == 1
+    )' "${OTLP_SPANS_FILE}" >/dev/null; then
+      printf 'peer_%s_observability=pass\n' "${label}"
+      return 0
+    fi
+    sleep 1
+  done
+  printf '[Tiangong] Sanitized trace summary for %s: %s\n' \
+    "${label}" "$(trace_summary "${event_id}")" >&2
+  return 1
+}
+
 stock_session_snapshot() {
   docker exec "${LEADER_CONTAINER}" bash -lc '
     set -euo pipefail
@@ -302,6 +362,15 @@ cleanup() {
   local status=$? cleanup_failed=0
   trap - EXIT INT TERM
   set +e
+
+  if ((otlp_owned == 1)); then
+    if container_exists "${OTLP_CONTAINER}"; then
+      docker rm --force "${OTLP_CONTAINER}" >/dev/null 2>&1 || cleanup_failed=1
+    fi
+    rm -rf -- "${OTLP_DATA_DIRECTORY}" || cleanup_failed=1
+    ! container_exists "${OTLP_CONTAINER}" || cleanup_failed=1
+    [[ ! -e "${OTLP_DATA_DIRECTORY}" ]] || cleanup_failed=1
+  fi
 
   docker exec "${MANAGER_CONTAINER}" rm -f "${MANAGER_MANIFEST}" >/dev/null 2>&1 || cleanup_failed=1
   if container_exists "${COORDINATOR_CONTAINER}"; then
@@ -357,11 +426,11 @@ trap 'exit 143' TERM
 
 [[ "${SMOKE_MODE}" == full || "${SMOKE_MODE}" == config ]] || \
   die "TIANGONG_PEER_SMOKE_MODE must be full or config."
-for command in docker jq grep awk sha256sum; do
+for command in docker jq grep awk sha256sum node curl; do
   command -v "${command}" >/dev/null 2>&1 || die "Missing required command: ${command}"
 done
 for path in "${MANIFEST}" "${BUILD_WORKER_IMAGE}" "${PEER_ROUNDTRIP}" \
-  "${ROOM_MEMBERS}" "${ALIAS_HELPER}"; do
+  "${ROOM_MEMBERS}" "${ALIAS_HELPER}" "${OTLP_RECEIVER}"; do
   [[ -f "${path}" && ! -L "${path}" ]] || die "Required smoke asset is missing or symlinked: ${path}"
 done
 [[ -x "${BUILD_WORKER_IMAGE}" && -x "${PEER_ROUNDTRIP}" && \
@@ -382,6 +451,10 @@ done
 for container in "${LEADER_CONTAINER}" "${COORDINATOR_CONTAINER}" "${ENGINEER_CONTAINER}"; do
   ! container_exists "${container}" || die "Reserved container ${container} already exists; refusing to replace it."
 done
+! container_exists "${OTLP_CONTAINER}" || \
+  die "Reserved observability container ${OTLP_CONTAINER} already exists; refusing to replace it."
+[[ ! -e "${OTLP_DATA_DIRECTORY}" ]] || \
+  die "Reserved observability data path already exists; refusing to replace it."
 reserved_storage_absent || die "Reserved peer smoke storage is not empty; refusing to replace it."
 docker exec "${MANAGER_CONTAINER}" test ! -e "${MANAGER_MANIFEST}" || \
   die "Reserved Manager helper path already exists; refusing to replace it."
@@ -392,7 +465,31 @@ docker exec "${CONTROLLER_CONTAINER}" test ! -e "${CONTROLLER_ALIAS_HELPER}" || 
 
 docker cp "${ALIAS_HELPER}" "${CONTROLLER_CONTAINER}:${CONTROLLER_ALIAS_HELPER}"
 docker exec "${CONTROLLER_CONTAINER}" "${CONTROLLER_ALIAS_HELPER}" assert-absent
-"${BUILD_WORKER_IMAGE}"
+TIANGONG_OTEL_EXPORTER_ENDPOINT="${OTLP_ENDPOINT}" "${BUILD_WORKER_IMAGE}"
+mkdir -m 700 "${OTLP_DATA_DIRECTORY}"
+otlp_owned=1
+docker run --detach \
+  --name "${OTLP_CONTAINER}" \
+  --network agentteams-net \
+  --network-alias "${OTLP_NETWORK_ALIAS}" \
+  --read-only \
+  --cap-drop ALL \
+  --security-opt no-new-privileges=true \
+  --mount "type=bind,src=${OTLP_RECEIVER},dst=/opt/tiangong-otlp-receiver.mjs,readonly" \
+  --mount "type=bind,src=${OTLP_DATA_DIRECTORY},dst=/data" \
+  --entrypoint node \
+  "${IMAGE}" /opt/tiangong-otlp-receiver.mjs /data/spans.jsonl >/dev/null
+for _ in $(seq 1 30); do
+  if docker exec "${OTLP_CONTAINER}" node -e \
+      'fetch("http://127.0.0.1:4318/health").then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))'; then
+    break
+  fi
+  sleep 1
+done
+docker exec "${OTLP_CONTAINER}" node -e \
+  'fetch("http://127.0.0.1:4318/health").then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))' || \
+  die "OTLP smoke receiver did not become ready."
+printf 'peer_observability_receiver=pass\n'
 docker cp "${PEER_ROUNDTRIP}" "${CONTROLLER_CONTAINER}:${CONTROLLER_PEER_ROUNDTRIP}"
 docker cp "${MANIFEST}" "${MANAGER_CONTAINER}:${MANAGER_MANIFEST}"
 owned_resources=1
@@ -511,6 +608,16 @@ if ! peer_output="$(docker exec "${CONTROLLER_CONTAINER}" "${CONTROLLER_PEER_ROU
     printf '[Tiangong] Nonce-bearing session files for %s: %s\n' \
       "${diagnostic_member}" "${nonce_file_count}" >&2
   done
+  if start_event_id="$(probe_output_value "${peer_output}" peer_probe_start_event)"; then
+    for _ in $(seq 1 15); do
+      trace="$(trace_summary "${start_event_id}")"
+      [[ "${trace}" != '[]' ]] && break
+      sleep 1
+    done
+    printf '[Tiangong] Sanitized Coordinator start-event trace: %s\n' "${trace}" >&2
+  else
+    printf '[Tiangong] Coordinator start-event trace correlation is unavailable.\n' >&2
+  fi
   if ! docker exec "${COORDINATOR_CONTAINER}" "${COORDINATOR_ROOM_MEMBERS}" event-visible \
       "${coordinator_config}" "${team_room_id}" "${admin_user_id}" \
       "${coordinator_user_id}" "${nonce}" TG_PEER_START; then
@@ -535,6 +642,18 @@ grep -Fqx 'worker_peer_event_chain=pass' <<<"${peer_output}" || die "Worker peer
 grep -Fqx 'stock_leader_message_count=0' <<<"${peer_output}" || die "Stock Leader emitted a message."
 assert_harness "${COORDINATOR_CONTAINER}" "${COORDINATOR_NAME}" "${coordinator_harness_before}"
 assert_harness "${ENGINEER_CONTAINER}" "${ENGINEER_NAME}" "${engineer_harness_before}"
+start_event_id="$(probe_output_value "${peer_output}" peer_start_event)" || \
+  die "Peer output omitted the start event correlation."
+ping_event_id="$(probe_output_value "${peer_output}" peer_ping_event)" || \
+  die "Peer output omitted the ping event correlation."
+pong_event_id="$(probe_output_value "${peer_output}" peer_pong_event)" || \
+  die "Peer output omitted the pong event correlation."
+assert_trace_complete "${start_event_id}" coordinator_start || \
+  die "Coordinator start-event trace did not complete."
+assert_trace_complete "${ping_event_id}" engineer_ping || \
+  die "Engineer ping-event trace did not complete."
+assert_trace_complete "${pong_event_id}" coordinator_pong || \
+  die "Coordinator pong-event trace did not complete."
 assert_nonce_persisted "${COORDINATOR_CONTAINER}" "${COORDINATOR_NAME}" "${nonce}"
 assert_nonce_persisted "${ENGINEER_CONTAINER}" "${ENGINEER_NAME}" "${nonce}"
 leader_snapshot_after="$(stock_session_snapshot)"

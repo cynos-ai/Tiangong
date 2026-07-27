@@ -253,6 +253,7 @@ run_probe() {
     printf 'ERROR: Matrix did not return the start event ID.\n' >&2
     return 1
   }
+  printf 'peer_probe_start_event=%s\n' "${start_event_id}"
   events="$(jq -cn \
     --arg room "${room_id}" \
     --arg sender "${admin_id}" \
