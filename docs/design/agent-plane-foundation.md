@@ -1,6 +1,6 @@
 # Tiangong Agent Plane 基础设施实现合同：Reviewer v1
 
-> **状态：** 已完成设计决策；PR1–PR4 已实现确定性合同，PR5 真实集成与发布验证待完成。
+> **状态：** PR1–PR4 已实现；PR5 Basic 通过，Full 与发布 Gate 阻塞。
 > **范围：** 在当前单 Worker 受控执行内核上，实现第一个可信专业角色：只读、显式文件范围、Evidence-backed 的 Reviewer。
 > **保证等级：** `worker-local / static-review-only`。
 > **不是：** 已实现能力说明、Team Work、独立 Candidate 验收、测试执行、PR/commit/diff 评审或发布承诺。
@@ -58,7 +58,7 @@ Reviewer v1 不证明：
 
 ## 2. 当前公开实现基线
 
-当前 kernel runtime 使用固定 digest-bound profile、静态 methodology、read/write 顺序 wrapper 和 read-allow/write-approval Gate。transcript 位于 `sessions/<hash>/pi/`；Evidence、idempotency、pending payload 和 rollback 由统一 resolver 定位在独立顶层，reset 只删除 `pi/`。Reviewer image 已 materialize 精确五工具面、scoped UTF-8 text read、file-version Evidence projection、claim/checkpoint、ContextPack 和 machine status，并通过确定性与容器合同；真实 Reviewer Matrix Basic/Full smoke 尚属 PR5，因此尚不能声明发布可用。official OpenClaw 继续拥有 Matrix；peer transport 只是传输诊断，不能声明为 Team Work。
+当前 kernel runtime 使用固定 digest-bound profile、静态 methodology、read/write 顺序 wrapper 和 read-allow/write-approval Gate。transcript 位于 `sessions/<hash>/pi/`；Evidence、idempotency、pending payload 和 rollback 由统一 resolver 定位在独立顶层，reset 只删除 `pi/`。Reviewer image 已 materialize 精确五工具面、scoped UTF-8 text read、file-version Evidence projection、claim/checkpoint、ContextPack 和 machine status，并通过确定性、容器合同与真实 Matrix Basic；Full 仍阻塞，不能声明发布可用。official OpenClaw 继续拥有 Matrix；peer transport 只是传输诊断，不能声明为 Team Work。
 
 ---
 

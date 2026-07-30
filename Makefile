@@ -4,11 +4,13 @@ SHELL := /usr/bin/env bash
 AGENTTEAMS := ./scripts/agentteams.sh
 WORKER_IMAGE_BUILD := ./scripts/build-worker-image.sh
 WORKER_IMAGE_TEST := ./smoke-testing/support/run-worker-smoke.sh
+REVIEWER_IMAGE_TEST := ./smoke-testing/support/run-reviewer-smoke.sh
 PEER_MENTION_SMOKE := ./smoke-testing/support/run-peer-mention-smoke.sh
 PEER_MENTION_SMOKE_TEST := ./scripts/test-peer-mention-smoke.sh
 SKILL_CHECK := node ./scripts/check-skills.mjs
+REVIEWER_SMOKE_CONTRACT := node ./scripts/test-reviewer-smoke-oracle.mjs
 
-.PHONY: help init up start stop down status verify config logs login uninstall check-skills build-worker-image test-worker-image-basic test-worker-image test-peer-mention-smoke-contract test-peer-mention-smoke
+.PHONY: help init up start stop down status verify config logs login uninstall check-skills build-worker-image test-worker-image-basic test-worker-image test-reviewer-smoke-contract test-reviewer-image-basic test-reviewer-image test-peer-mention-smoke-contract test-peer-mention-smoke
 
 help: ## Show available commands
 	@printf '%s\n' 'Tiangong local development commands:'
@@ -54,6 +56,15 @@ test-worker-image-basic: ## Run the fast Matrix-to-pi Worker smoke and clean up
 
 test-worker-image: ## Run the full Gate/approval/recovery Worker smoke and clean up
 	@TIANGONG_WORKER_SMOKE_LEVEL=full $(WORKER_IMAGE_TEST)
+
+test-reviewer-smoke-contract: ## Validate Reviewer smoke oracle phase semantics
+	@$(REVIEWER_SMOKE_CONTRACT)
+
+test-reviewer-image-basic: ## Run the Reviewer Matrix Basic smoke and clean up
+	@TIANGONG_REVIEWER_SMOKE_LEVEL=basic $(REVIEWER_IMAGE_TEST)
+
+test-reviewer-image: ## Run the Reviewer scope/restart Full smoke and clean up
+	@TIANGONG_REVIEWER_SMOKE_LEVEL=full $(REVIEWER_IMAGE_TEST)
 
 test-peer-mention-smoke-contract: ## Validate the Worker peer mention fixture and event oracle
 	@$(PEER_MENTION_SMOKE_TEST)
