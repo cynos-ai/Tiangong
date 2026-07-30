@@ -31,6 +31,18 @@ test("state path resolver produces physically separate per-session roots", () =>
   assert.equal(paths.sessionDirectory, join(stateDirectory, "sessions", sessionHash));
   assert.equal(paths.piDirectory, join(stateDirectory, "sessions", sessionHash, "pi"));
   assert.equal(paths.practiceRunDirectory, join(stateDirectory, "practice-runs", sessionHash));
+  assert.equal(
+    paths.practiceRunJournalPath,
+    join(stateDirectory, "practice-runs", sessionHash, "events.jsonl"),
+  );
+  assert.equal(
+    paths.practiceRunSnapshotPath,
+    join(stateDirectory, "practice-runs", sessionHash, "snapshot.json"),
+  );
+  assert.equal(
+    paths.practiceRunProtectedDirectory,
+    join(stateDirectory, "practice-runs", sessionHash, "protected"),
+  );
   assert.equal(paths.evidenceFilePath, join(stateDirectory, "evidence", sessionHash, "events.jsonl"));
   assert.equal(
     paths.idempotencyFilePath,

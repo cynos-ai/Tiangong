@@ -102,7 +102,7 @@ make build-worker-image
 docker run --rm --entrypoint pi tiangong-worker:dev --version
 ```
 
-The build also produces `tiangong-worker-reviewer:dev` to validate the fixed Reviewer profile, closed capability registries, and static role/methodology assets. Its Work tools are intentionally not materialized in this implementation stage, so it fails closed before a model session and is not yet a usable Reviewer.
+The build also produces `tiangong-worker-reviewer:dev` to validate the fixed Reviewer profile and closed registries. Its durable `start_work`, `extend_scope`, and `abandon_work` state kernel is materialized, but scoped `read` and `check_completion` are not; the image therefore still fails closed before a model session and is not yet a usable Reviewer.
 
 ### Interrupted write reconciliation
 

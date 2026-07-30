@@ -195,6 +195,7 @@ export class TiangongAgentRuntime {
       peerReplies: new PeerReplyRouter(),
       peerTransport: new PeerTransportProbe(),
       providerTrace,
+      profileDigest: profileBundle.profileDigest,
       provider: request.provider,
       modelId: request.modelId,
       workspaceDir: request.workspaceDir,
@@ -332,6 +333,8 @@ export class TiangongAgentRuntime {
       sessionId: checkpoint.sessionId,
       turnId: checkpoint.turnId,
       actor: request.actor,
+      ingress: { prompt: request.prompt },
+      profileDigest: state.profileDigest,
       resumed: true,
       observability,
     });
@@ -407,6 +410,8 @@ export class TiangongAgentRuntime {
       sessionId: request.sessionId,
       turnId: request.turnId,
       actor: request.actor,
+      ingress: { prompt: request.prompt },
+      profileDigest: state.profileDigest,
       observability,
     });
     let completedTurn;

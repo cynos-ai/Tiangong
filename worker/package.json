@@ -18,7 +18,8 @@
     "@opentelemetry/exporter-trace-otlp-http": "0.221.0",
     "@opentelemetry/resources": "2.10.0",
     "@opentelemetry/sdk-trace-base": "2.10.0",
-    "brace-expansion": "5.0.8"
+    "brace-expansion": "5.0.8",
+    "typebox": "1.1.38"
   },
   "overrides": {
     "brace-expansion": "$brace-expansion"
