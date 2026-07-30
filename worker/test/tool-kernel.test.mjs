@@ -13,6 +13,12 @@ import { createCoreToolRegistry } from "../agent/tools/registry.mjs";
 import { GateDeniedError } from "../agent/tools/wrapper.mjs";
 import { TurnContextController } from "../agent/turn-context.mjs";
 
+const KERNEL_PROFILE = Object.freeze({
+  roleId: "kernel",
+  gatePolicyId: "workspace-tools-v1",
+  toolIds: ["read", "write"],
+});
+
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "tiangong-tool-kernel-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -46,6 +52,7 @@ function createKernel({
     idempotencyStore: store,
     pendingOperationStore: pendingOperations,
     getInvocation: turns.current,
+    profile: KERNEL_PROFILE,
   });
   return { evidence, gate, paths, pendingOperations, registry, sessionId, store, turns };
 }
@@ -77,6 +84,19 @@ async function execute(kernel, {
     kernel.turns.end();
   }
 }
+
+test("core tool registry rejects a non-kernel role profile before creating executors", () => {
+  assert.throws(
+    () => createCoreToolRegistry({
+      profile: {
+        roleId: "reviewer",
+        gatePolicyId: "reviewer-v1",
+        toolIds: ["start_work", "extend_scope", "read", "check_completion", "abandon_work"],
+      },
+    }),
+    /fixed kernel role profile/u,
+  );
+});
 
 test("read is gated and records proposal, decision, start, and completion", async (t) => {
   const paths = await fixture(t);

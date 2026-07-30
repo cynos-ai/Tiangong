@@ -48,7 +48,12 @@ export function createCoreToolRegistry({
   idempotencyStore,
   pendingOperationStore,
   getInvocation,
+  profile,
 }) {
+  if (profile?.roleId !== "kernel" || profile.gatePolicyId !== "workspace-tools-v1" ||
+      profile.toolIds?.length !== 2 || profile.toolIds[0] !== "read" || profile.toolIds[1] !== "write") {
+    throw new Error("The core tool registry requires the fixed kernel role profile");
+  }
   const registry = new TiangongToolRegistry();
   const read = createReadToolDefinition(workspaceDir);
   registry.register(createGatedTool({

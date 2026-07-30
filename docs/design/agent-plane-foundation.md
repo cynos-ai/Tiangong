@@ -58,7 +58,7 @@ Reviewer v1 不证明：
 
 ## 2. 当前公开实现基线
 
-当前 runtime 使用固定 prompt、read/write 顺序 wrapper 和 read-allow/write-approval Gate。transcript 位于 `sessions/<hash>/pi/`；Evidence、idempotency、pending payload 和 rollback 已由统一 resolver 定位在独立顶层，reset 只删除 `pi/`。PracticeRun 顶层仅预留路径，尚无 active run、work status、file digest 或 fixed Reviewer image/profile。official OpenClaw 继续拥有 Matrix；peer transport 仅是 `docs/peer-transport-diagnostic.md` 所述传输诊断，不能声明为 Team Work。
+当前 kernel runtime 使用固定 digest-bound profile、静态 methodology、read/write 顺序 wrapper 和 read-allow/write-approval Gate。transcript 位于 `sessions/<hash>/pi/`；Evidence、idempotency、pending payload 和 rollback 由统一 resolver 定位在独立顶层，reset 只删除 `pi/`。Reviewer profile validation image 已固定 profile/registry/methodology，但 Work tools 尚未 materialize，并在模型 session 前 fail closed；尚无 active run、work status 或 file digest。official OpenClaw 继续拥有 Matrix；peer transport 只是传输诊断，不能声明为 Team Work。
 
 ---
 

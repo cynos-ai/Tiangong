@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "roleId": "kernel",
+  "title": "Tiangong Kernel",
+  "practiceIds": ["workspace-operations"],
+  "toolIds": ["read", "write"],
+  "gatePolicyId": "workspace-tools-v1",
+  "roleSkillId": "kernel-v1"
+}
