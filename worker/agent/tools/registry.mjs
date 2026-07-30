@@ -42,7 +42,7 @@ export class TiangongToolRegistry {
 
 export function createCoreToolRegistry({
   workspaceDir,
-  stateDir,
+  rollbackDir,
   gate,
   evidence,
   idempotencyStore,
@@ -59,10 +59,7 @@ export function createCoreToolRegistry({
     getInvocation,
   }));
 
-  const write = createConstrainedWrite({
-    workspaceDir,
-    rollbackDir: `${stateDir}/rollback`,
-  });
+  const write = createConstrainedWrite({ workspaceDir, rollbackDir });
   registry.register(createGatedTool({
     definition: { ...write.definition, label: "Tiangong gated write" },
     summarize: (params) => summarizeWrite(workspaceDir, params),

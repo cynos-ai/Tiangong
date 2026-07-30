@@ -44,6 +44,7 @@ async function atomicWrite(path, content) {
 }
 
 export function createConstrainedWrite({ workspaceDir, rollbackDir }) {
+  if (!rollbackDir) throw new TypeError("rollbackDir is required");
   const definition = createWriteToolDefinition(workspaceDir, {
     operations: {
       async mkdir(path) {

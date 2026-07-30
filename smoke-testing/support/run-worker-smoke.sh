@@ -170,7 +170,7 @@ printf '%s\n' "${matrix_output}"
 grep -Fqx 'matrix_to_pi_response=pass' <<<"${matrix_output}" || die "Matrix-to-pi round trip failed."
 read_evidence_files="$(docker exec "${CONTAINER_NAME}" grep -RlF --include=events.jsonl \
   "\"target\":\"${read_target}\"" \
-  "${agent_root}/.tiangong/runtime/sessions" || true)"
+  "${agent_root}/.tiangong/runtime/evidence" || true)"
 [[ "$(grep -c . <<<"${read_evidence_files}")" == "1" ]] || \
   die "Expected exactly one Evidence chain for the Matrix read probe."
 read_turn_id="$(docker exec "${CONTAINER_NAME}" jq -r --arg target "${read_target}" '
@@ -262,7 +262,7 @@ if ! approve_output="$(docker exec "${MANAGER_CONTAINER}" \
   "${room_id}" "${worker_user_id}" "${approval_nonce}" "${approval_id}")"; then
   printf '[Tiangong] Approval diagnostics for %s:\n' "${approval_id}" >&2
   docker exec "${CONTAINER_NAME}" sh -lc '
-    find "$1/.tiangong/runtime/sessions" -type f -name idempotency.jsonl -exec \
+    find "$1/.tiangong/runtime/idempotency" -type f -name idempotency.jsonl -exec \
       jq -c --arg id "$2" "select(.entry.approvalId == \$id) | {status:.entry.status,errorCode:.entry.errorCode}" {} +
   ' _ "${agent_root}" "${approval_id}" >&2 || true
   docker exec "${CONTAINER_NAME}" cat /tmp/tiangong-pi-harness.last-run >&2 || true
@@ -285,7 +285,7 @@ replay_output="$(docker exec "${MANAGER_CONTAINER}" \
 printf '%s\n' "${replay_output}"
 evidence_files="$(docker exec "${CONTAINER_NAME}" grep -RlF --include=events.jsonl \
   "\"approvalId\":\"${approval_id}\"" \
-  "${agent_root}/.tiangong/runtime/sessions" || true)"
+  "${agent_root}/.tiangong/runtime/evidence" || true)"
 [[ "$(grep -c . <<<"${evidence_files}")" == "1" ]] || \
   die "Expected exactly one Evidence chain for ${approval_id}."
 evidence_file="${evidence_files}"
@@ -301,13 +301,13 @@ printf 'write_execution_count=%s\nwrite_replay_count=%s\n' \
   die "Approval replay was not exactly once."
 printf 'matrix_write_exactly_once=pass\n'
 terminal_key="$(docker exec "${CONTAINER_NAME}" sh -lc '
-  find "$1/.tiangong/runtime/sessions" -type f -name idempotency.jsonl -exec \
+  find "$1/.tiangong/runtime/idempotency" -type f -name idempotency.jsonl -exec \
     jq -r --arg id "$2" "select(.entry.approvalId == \$id) | .key" {} + | tail -n 1
 ' _ "${agent_root}" "${approval_id}")"
 [[ "${terminal_key}" =~ ^[0-9a-f]{64}$ ]] || die "Terminal idempotency record was not found."
 terminal_payload="$(docker exec "${CONTAINER_NAME}" find \
-  "${agent_root}/.tiangong/runtime/sessions" -type f \
-  -path "*/pending-operations/${terminal_key}/write-content" -print -quit)"
+  "${agent_root}/.tiangong/runtime/pending-operations" -type f \
+  -path "*/${terminal_key}/write-content" -print -quit)"
 [[ -n "${terminal_payload}" ]] || die "Terminal payload tombstone was not found."
 terminal_directory="${terminal_payload%/write-content}"
 terminal_bytes="$(docker exec "${CONTAINER_NAME}" stat -c '%s' "${terminal_payload}")"

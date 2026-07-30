@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { sha256 } from "../agent/canonical-json.mjs";
 import { PeerReplyRouter } from "../agent/peer-reply-router.mjs";
+import { statePathsForSession } from "../agent/persistence/state-paths.mjs";
 import {
   parsePeerTransportCommand,
   PeerTransportProbe,
@@ -157,17 +157,18 @@ test("runtime handles the transport control without dispatching a model request"
   assert.equal(result.text, `TG_PEER_PING nonce=${NONCE}`);
   assert.deepEqual(result.replyTarget, ENGINEER);
   assert.equal(result.usage.totalTokens, 0);
-  const piDirectory = join(
-    workspaceDir,
-    ".tiangong",
-    "runtime",
-    "sessions",
-    sha256("session-one"),
-    "pi",
-  );
-  const sessionFiles = (await readdir(piDirectory)).filter((name) => name.endsWith(".jsonl"));
+  const stateDirectory = join(workspaceDir, ".tiangong", "runtime");
+  const paths = statePathsForSession({ stateDirectory, sessionId: "session-one" });
+  const sessionFiles = (await readdir(paths.piDirectory)).filter((name) => name.endsWith(".jsonl"));
   assert.equal(sessionFiles.length, 1);
-  assert.match(await readFile(join(piDirectory, sessionFiles[0]), "utf8"), new RegExp(NONCE, "u"));
+  assert.match(await readFile(join(paths.piDirectory, sessionFiles[0]), "utf8"), new RegExp(NONCE, "u"));
+
+  const evidenceSentinel = join(paths.evidenceDirectory, "reset-sentinel");
+  await mkdir(paths.evidenceDirectory, { recursive: true });
+  await writeFile(evidenceSentinel, "preserved\n");
+  await runtime.reset("session-one");
+  await assert.rejects(readdir(paths.piDirectory), { code: "ENOENT" });
+  assert.equal(await readFile(evidenceSentinel, "utf8"), "preserved\n");
 });
 
 test("fails closed on ambiguous targets, unauthenticated peers, nonce mismatch, and replay", () => {

@@ -7,6 +7,7 @@ import { EvidenceRecorder } from "../evidence/recorder.mjs";
 import { IdempotencyStore } from "../idempotency/store.mjs";
 import { createAgentTeamsPendingStorage } from "../pending-operation/agentteams-storage.mjs";
 import { PendingOperationStore } from "../pending-operation/store.mjs";
+import { statePathsForSessionHash, stateRootPaths } from "../persistence/state-paths.mjs";
 import { WriteReconciler } from "./write-reconciler.mjs";
 
 function usage() {
@@ -73,26 +74,33 @@ function workerPaths() {
 }
 
 async function locateSession(stateDirectory, identifier) {
-  const sessionsDirectory = join(stateDirectory, "sessions");
+  const roots = stateRootPaths(stateDirectory);
   const matches = [];
   const isApprovalId = /^approval-[0-9a-f]{24}$/u.test(identifier);
-  for (const entry of await readdir(sessionsDirectory, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const directory = join(sessionsDirectory, entry.name);
-    const idempotencyStore = new IdempotencyStore({ filePath: join(directory, "idempotency.jsonl") });
+  let entries;
+  try {
+    entries = await readdir(roots.idempotencyRoot, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") entries = [];
+    else throw error;
+  }
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.isDirectory()) throw new Error("Unexpected entry in Tiangong idempotency state root");
+    const paths = statePathsForSessionHash({ stateDirectory, sessionHash: entry.name });
+    const idempotencyStore = new IdempotencyStore({ filePath: paths.idempotencyFilePath });
     const match = isApprovalId
       ? await idempotencyStore.findApproval(identifier)
       : await idempotencyStore.get(identifier);
     if (match) {
       matches.push({
-        directory,
+        paths,
         idempotencyStore,
         key: isApprovalId ? match.key : identifier,
       });
     }
   }
-  if (matches.length === 0) throw new Error("Operation not found in Tiangong sessions");
-  if (matches.length > 1) throw new Error("Operation identifier is not unique across Tiangong sessions");
+  if (matches.length === 0) throw new Error("Operation not found in Tiangong state");
+  if (matches.length > 1) throw new Error("Operation identifier is not unique across Tiangong state");
   return matches[0];
 }
 
@@ -106,15 +114,13 @@ async function main() {
   const session = await locateSession(paths.stateDirectory, parsed.identifier);
   const reconciler = new WriteReconciler({
     workspaceDir: paths.workspaceDir,
-    rollbackDir: join(session.directory, "rollback"),
+    rollbackDir: session.paths.rollbackDirectory,
     idempotencyStore: session.idempotencyStore,
     pendingOperationStore: new PendingOperationStore({
-      directory: join(session.directory, "pending-operations"),
+      directory: session.paths.pendingOperationDirectory,
       remoteStorage: createAgentTeamsPendingStorage({ workspaceDir: paths.workspaceDir }),
     }),
-    evidence: new EvidenceRecorder({
-      filePath: join(session.directory, "evidence", "events.jsonl"),
-    }),
+    evidence: new EvidenceRecorder({ filePath: session.paths.evidenceFilePath }),
   });
 
   if (parsed.command === "inspect") {

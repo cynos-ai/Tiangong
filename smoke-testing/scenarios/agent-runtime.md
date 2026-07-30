@@ -79,6 +79,8 @@
 
 - Purpose: Bound sensitive payload, terminal idempotency, Evidence-file, and transcript growth without silently weakening recovery or auditability.
 - Required outcomes:
+  - transcript reset or deletion of its entire per-session root cannot alter independent Evidence/idempotency/pending/rollback state;
+  - runtime and maintenance CLIs use the clean-cut independent layout without scanning legacy co-located paths;
   - completed/rejected/applied-reconciled payloads are removed; uncertain/conflict payloads remain;
   - only completed/rejected records older than 90 days are eligible for explicitly confirmed compaction;
   - normal idempotency transitions append to a verified journal and key/invocation/approval indexes remain unique across independent writers;
@@ -90,7 +92,7 @@
 
 ## Maintenance notes
 
-- **Current status (2026-07-25)**: F1 passes with a Tiangong-owned, versioned pending-operation envelope and protected write payload. Deterministic tests reopen the store, validate invocation/digest binding, reject payload tampering and broad permissions, execute once after approval, and replay safely. The real Matrix Full smoke passes pending → Worker restart → approval → write → replay with `tool.execution.started=1`, `tool.execution.replayed=1`, and cleanup proof.
+- **Current status (2026-07-30)**: transcript and durable business state use independent per-session roots; deterministic tests prove reset/session-root deletion isolation and maintenance clean-cut behavior. A fresh real Matrix F1 after the path change passed pending → restart → approval → write → replay → payload erasure, with exactly one execution, one replay, and exact run-owned cleanup.
 - Promotion candidates from past runs: sender mismatch, operation mutation after approval, executing-state reconciliation, and Evidence tamper detection may move into Full once their runtime contracts stabilize.
 - Known environment sensitivities:
   - Worker `Running` and `openclaw health` do not alone prove Matrix sync readiness; wait for the room join observation after restart.

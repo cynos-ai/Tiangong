@@ -14,6 +14,7 @@ import {
 import { EvidenceRecorder } from "../agent/evidence/recorder.mjs";
 import { IdempotencyStore } from "../agent/idempotency/store.mjs";
 import { PendingOperationStore } from "../agent/pending-operation/store.mjs";
+import { statePathsForSession } from "../agent/persistence/state-paths.mjs";
 import { summarizeWrite } from "../agent/tools/operations.mjs";
 
 const CLI_PATH = fileURLToPath(new URL("../agent/reconciliation/cli.mjs", import.meta.url));
@@ -38,7 +39,7 @@ test("operator CLI resolves a stale not-applied write without exposing its conte
   t.after(() => rm(root, { recursive: true, force: true }));
   const workspaceDir = join(root, "workspace");
   const stateDirectory = join(workspaceDir, ".tiangong", "runtime");
-  const sessionDirectory = join(stateDirectory, "sessions", "session-one");
+  const paths = statePathsForSession({ stateDirectory, sessionId: "session-one" });
   await mkdir(workspaceDir);
 
   const params = { path: "output.txt", content: "must not appear in CLI output\n" };
@@ -63,11 +64,9 @@ test("operator CLI resolves a stale not-applied write without exposing its conte
     operationDigest: digest,
   });
 
-  const idempotencyStore = new IdempotencyStore({
-    filePath: join(sessionDirectory, "idempotency.jsonl"),
-  });
+  const idempotencyStore = new IdempotencyStore({ filePath: paths.idempotencyFilePath });
   const pendingOperationStore = new PendingOperationStore({
-    directory: join(sessionDirectory, "pending-operations"),
+    directory: paths.pendingOperationDirectory,
   });
   await pendingOperationStore.put(checkpoint, params);
   await idempotencyStore.putPending(checkpoint.idempotencyKey, checkpoint);
@@ -76,9 +75,7 @@ test("operator CLI resolves a stale not-applied write without exposing its conte
     approvedBy: checkpoint.requestedBy,
   });
   await idempotencyStore.beginExecution(checkpoint.idempotencyKey, checkpoint);
-  const residentEvidence = new EvidenceRecorder({
-    filePath: join(sessionDirectory, "evidence", "events.jsonl"),
-  });
+  const residentEvidence = new EvidenceRecorder({ filePath: paths.evidenceFilePath });
   await residentEvidence.append({ type: "runtime.before_reconciliation" });
 
   const result = await runCli([

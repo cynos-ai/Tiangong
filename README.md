@@ -89,8 +89,8 @@ The current runtime is intentionally constrained:
 - it claims only the Worker-scoped `agentteams-gateway` provider and disables OpenClaw's fallback to another agent harness;
 - OpenClaw parameters cross a stable Tiangong Turn DTO; provider credentials are non-enumerable request data and are injected into pi only in memory;
 - pi extensions, skills, prompt templates, and automatic repository context are disabled;
-- persistent sessions and hash-chained Evidence live under the Worker's AgentTeams-synchronized state directory;
-- restartable writes persist a digest-bound operation envelope and a separate mode-`600` content payload under that state directory; raw write content never enters Evidence, but is visible to principals with Worker storage administration access and currently follows session-state retention;
+- transcript files live only under `sessions/<session-hash>/pi/`; Evidence, idempotency, pending payload, and rollback state use independent per-session roots beneath the synchronized state directory, so transcript reset cannot erase business state;
+- restartable writes persist a digest-bound operation envelope and a separate mode-`600` content payload under that state directory; raw write content never enters Evidence, but is visible to principals with Worker storage administration access and follows explicit operation retention;
 - only gated `read` and path-restricted, atomic `write` are active; `write` requires persisted approval from the same authenticated Matrix sender that requested it, ignores upstream owner assertions for authorization, supports restart recovery, and blocks duplicate execution;
 - runtime state, credential-bearing paths, symlink traversal, workspace escape, image input, and `bash` are unavailable.
 
@@ -131,7 +131,7 @@ docker exec agentteams-worker-<worker> tiangong-retain compact \
   --actor <operator-id> --confirm expire-90-day-replay-window
 ```
 
-Evidence rotates at 16 MiB into ordered segments whose ranges and terminal hashes remain linked to the next active segment; it is not automatically deleted. Session transcripts reject new model turns at 10,000 persisted entries or 32 MiB and require an explicit session reset. Approval/rejection control commands remain available at that capacity so an outstanding operation is not stranded.
+Evidence rotates at 16 MiB into ordered segments whose ranges and terminal hashes remain linked to the next active segment; it is not automatically deleted. Session transcripts reject new model turns at 10,000 persisted entries or 32 MiB and require an explicit transcript-only reset. Approval/rejection control commands remain available at that capacity so an outstanding operation is not stranded.
 
 ### Local security model
 

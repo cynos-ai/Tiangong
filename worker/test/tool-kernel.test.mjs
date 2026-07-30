@@ -8,6 +8,7 @@ import { EvidenceRecorder } from "../agent/evidence/recorder.mjs";
 import { PolicyGate } from "../agent/gates/policy-gate.mjs";
 import { IdempotencyStore } from "../agent/idempotency/store.mjs";
 import { PendingOperationStore } from "../agent/pending-operation/store.mjs";
+import { statePathsForSession } from "../agent/persistence/state-paths.mjs";
 import { createCoreToolRegistry } from "../agent/tools/registry.mjs";
 import { GateDeniedError } from "../agent/tools/wrapper.mjs";
 import { TurnContextController } from "../agent/turn-context.mjs";
@@ -16,32 +17,37 @@ async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "tiangong-tool-kernel-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const workspaceDir = join(root, "workspace");
-  const stateDir = join(root, "state");
+  const stateDirectory = join(root, "state");
   await writeFile(join(root, ".keep"), "");
   await mkdir(workspaceDir);
-  return { root, workspaceDir, stateDir };
+  return { root, workspaceDir, stateDirectory };
 }
 
-function createKernel({ workspaceDir, stateDir, evidenceOverride, gateOverride }) {
-  const evidence = evidenceOverride ?? new EvidenceRecorder({
-    filePath: join(stateDir, "evidence", "events.jsonl"),
-  });
-  const store = new IdempotencyStore({ filePath: join(stateDir, "idempotency.jsonl") });
+function createKernel({
+  workspaceDir,
+  stateDirectory,
+  evidenceOverride,
+  gateOverride,
+  sessionId = "session-1",
+}) {
+  const paths = statePathsForSession({ stateDirectory, sessionId });
+  const evidence = evidenceOverride ?? new EvidenceRecorder({ filePath: paths.evidenceFilePath });
+  const store = new IdempotencyStore({ filePath: paths.idempotencyFilePath });
   const pendingOperations = new PendingOperationStore({
-    directory: join(stateDir, "pending-operations"),
+    directory: paths.pendingOperationDirectory,
   });
   const gate = gateOverride ?? new PolicyGate({ idempotencyStore: store });
   const turns = new TurnContextController();
   const registry = createCoreToolRegistry({
     workspaceDir,
-    stateDir,
+    rollbackDir: paths.rollbackDirectory,
     gate,
     evidence,
     idempotencyStore: store,
     pendingOperationStore: pendingOperations,
     getInvocation: turns.current,
   });
-  return { evidence, gate, pendingOperations, registry, store, turns };
+  return { evidence, gate, paths, pendingOperations, registry, sessionId, store, turns };
 }
 
 function tool(kernel, name) {
@@ -52,7 +58,7 @@ function tool(kernel, name) {
 }
 
 async function execute(kernel, {
-  sessionId = "session-1",
+  sessionId = kernel.sessionId,
   turnId,
   toolCallId,
   name,
@@ -176,9 +182,9 @@ test("pending write survives restart, executes once after approval, and replays 
 
 test("first pending call suspends later tools in the same sequential turn", async (t) => {
   const paths = await fixture(t);
-  const kernel = createKernel(paths);
+  const kernel = createKernel({ ...paths, sessionId: "session-batch" });
   kernel.turns.begin({
-    sessionId: "session-batch",
+    sessionId: kernel.sessionId,
     turnId: "turn-batch",
     actor: { id: "@requester:example.test" },
   });
@@ -258,7 +264,11 @@ test("write rejects path escape and symbolic-link traversal", async (t) => {
 
 test("write rolls back when durable completion evidence fails", async (t) => {
   const paths = await fixture(t);
-  const recorder = new EvidenceRecorder({ filePath: join(paths.stateDir, "evidence", "events.jsonl") });
+  const recorderPaths = statePathsForSession({
+    stateDirectory: paths.stateDirectory,
+    sessionId: "session-1",
+  });
+  const recorder = new EvidenceRecorder({ filePath: recorderPaths.evidenceFilePath });
   let failCompletionOnce = true;
   const evidence = {
     append(event) {
