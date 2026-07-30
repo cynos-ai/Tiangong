@@ -72,22 +72,49 @@ reviewer_profile="$(docker run --rm --entrypoint node "${REVIEWER_IMAGE}" \
   /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role reviewer)"
 docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${REVIEWER_IMAGE}" \
   --input-type=module -e '
-    const [{ ReviewerPracticeGate }, { PracticeRunService }, { createReviewerStateToolRegistry }] = await Promise.all([
+    const [
+      { loadFixedRoleProfileBundle },
+      { EvidenceRecorder },
+      { ReviewerPracticeGate },
+      { PracticeRunService },
+      { TurnContextController },
+      { createReviewerToolRegistry },
+    ] = await Promise.all([
+      import("./agent/config/role-profile.mjs"),
+      import("./agent/evidence/recorder.mjs"),
       import("./agent/gates/reviewer-practice-gate.mjs"),
       import("./agent/practices/practice-run-service.mjs"),
-      import("./agent/work/state-tools.mjs"),
+      import("./agent/turn-context.mjs"),
+      import("./agent/work/reviewer-tools.mjs"),
     ]);
-    if (![ReviewerPracticeGate, PracticeRunService, createReviewerStateToolRegistry].every((value) => typeof value === "function")) process.exit(1);
+    const profileBundle = await loadFixedRoleProfileBundle();
+    const turns = new TurnContextController();
+    const service = new PracticeRunService({
+      sessionId: "image-contract",
+      workspaceDir: "/root/hiclaw-fs",
+      profileBundle,
+      journalPath: "/tmp/tiangong-image-contract/events.jsonl",
+      snapshotPath: "/tmp/tiangong-image-contract/snapshot.json",
+      protectedDirectory: "/tmp/tiangong-image-contract/protected",
+    });
+    const registry = createReviewerToolRegistry({
+      workspaceDir: "/root/hiclaw-fs",
+      service,
+      gate: new ReviewerPracticeGate({ profileBundle }),
+      evidence: new EvidenceRecorder({ filePath: "/tmp/tiangong-image-contract/evidence.jsonl" }),
+      getInvocation: turns.current,
+    });
+    if (registry.names().join(",") !== "start_work,extend_scope,read,check_completion,abandon_work") process.exit(1);
   '
 node -e '
   const [kernel, reviewer] = process.argv.slice(1).map(JSON.parse);
   if (kernel.roleId !== "kernel" || kernel.runtimeReady !== true) process.exit(1);
-  if (reviewer.roleId !== "reviewer" || reviewer.runtimeReady !== false) process.exit(1);
+  if (reviewer.roleId !== "reviewer" || reviewer.runtimeReady !== true) process.exit(1);
   if (reviewer.toolIds.join(",") !== "start_work,extend_scope,read,check_completion,abandon_work") process.exit(1);
-  if (reviewer.materializedToolIds.join(",") !== "start_work,extend_scope,abandon_work") process.exit(1);
+  if (reviewer.materializedToolIds.join(",") !== "start_work,extend_scope,read,check_completion,abandon_work") process.exit(1);
 ' "${kernel_profile}" "${reviewer_profile}"
 
 printf '[Tiangong] Worker image ready: %s (Node.js %s, pi %s, fixed kernel profile)\n' \
   "${IMAGE}" "${actual_node_version}" "${actual_pi_version}"
-printf '[Tiangong] Reviewer profile image validated: %s (runtimeReady=false for this PR boundary)\n' \
+printf '[Tiangong] Reviewer profile image validated: %s (runtimeReady=true; deterministic Reviewer slice)\n' \
   "${REVIEWER_IMAGE}"

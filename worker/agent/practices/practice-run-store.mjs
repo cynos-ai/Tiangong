@@ -13,6 +13,16 @@ const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
 const RUN_ID_PATTERN = /^run-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const EVENT_ID_PATTERN = /^event-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const ID_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/u;
+const CHECKPOINT_IDS = [
+  "claim-schema-valid",
+  "criteria-covered",
+  "scope-matches-final",
+  "scope-fully-read",
+  "observation-targets-valid",
+  "outcome-consistent",
+  "static-review-limitation-recorded",
+  "no-mutation-observed",
+];
 const ABANDON_REASON_CODES = new Set([
   "superseded_by_new_request",
   "unsupported_scope",
@@ -259,6 +269,112 @@ function validateScopePayload(record, run) {
   }
 }
 
+function validateCheckpointResult(value, record, run, allSatisfied) {
+  assertExactKeys(
+    value,
+    ["allSatisfied", "claimDigest", "evaluatedAt", "evidenceTerminalHash", "results", "runId", "runRevision", "schemaVersion"],
+    "checkpoint result",
+  );
+  if (value.schemaVersion !== 1 || value.runId !== run.runId || value.runRevision !== run.revision ||
+      value.allSatisfied !== allSatisfied || !Array.isArray(value.results) || value.results.length !== 8) {
+    practiceRunFail("STATE_CORRUPTED", "Checkpoint result identity is invalid");
+  }
+  assertDigest(value.claimDigest, "checkpoint claim digest");
+  assertDigest(value.evidenceTerminalHash, "checkpoint Evidence terminal hash");
+  assertTimestamp(value.evaluatedAt);
+  const ids = new Set();
+  for (const item of value.results) {
+    const keys = ["checkpointId", "satisfied"];
+    if (item.satisfied === false) keys.push("reasonCode");
+    if (Object.hasOwn(item, "selectedEventRefs")) keys.push("selectedEventRefs");
+    assertExactKeys(item, keys, "checkpoint item");
+    if (!ID_PATTERN.test(item.checkpointId) || typeof item.satisfied !== "boolean" || ids.has(item.checkpointId) ||
+        (item.satisfied === false && (typeof item.reasonCode !== "string" || item.reasonCode === "")) ||
+        (item.satisfied === true && Object.hasOwn(item, "reasonCode"))) {
+      practiceRunFail("STATE_CORRUPTED", "Checkpoint item is invalid");
+    }
+    ids.add(item.checkpointId);
+    if (item.selectedEventRefs) {
+      if (!Array.isArray(item.selectedEventRefs) || item.selectedEventRefs.length > 2048) {
+        practiceRunFail("STATE_CORRUPTED", "Checkpoint selected Evidence refs are invalid");
+      }
+      for (const ref of item.selectedEventRefs) {
+        assertExactKeys(ref, ["eventHash", "sequence", "sessionId", "toolCallId", "turnId"], "Evidence event ref");
+        assertDigest(ref.eventHash, "Evidence event hash");
+        if (!Number.isSafeInteger(ref.sequence) || ref.sequence <= 0 ||
+            [ref.sessionId, ref.turnId, ref.toolCallId].some((entry) => typeof entry !== "string" || entry === "")) {
+          practiceRunFail("STATE_CORRUPTED", "Checkpoint Evidence event ref is invalid");
+        }
+      }
+    }
+  }
+  if (value.results.map((item) => item.checkpointId).join(",") !== CHECKPOINT_IDS.join(",") ||
+      value.results.every((item) => item.satisfied) !== value.allSatisfied ||
+      value.claimDigest !== record.payload.claim.digest ||
+      value.evidenceTerminalHash !== record.payload.evidenceBoundary.hash) {
+    practiceRunFail("STATE_CORRUPTED", "Checkpoint result conflicts with its journal payload");
+  }
+}
+
+function validateCheckpointPayload(record, run, completed) {
+  const payload = record.payload;
+  assertExactKeys(
+    payload,
+    ["checkpointResult", "claim", "evidenceBoundary", "selectedEventRefs", "sourceRequestDigest", "sourceRequestPayloadRef"],
+    "checkpoint payload",
+  );
+  assertExactKeys(payload.claim, ["digest", "payloadRef"], "checkpoint claim reference");
+  assertExactKeys(payload.evidenceBoundary, ["hash", "sequence"], "checkpoint Evidence boundary");
+  assertDigest(payload.claim.digest, "checkpoint claim digest");
+  assertReference(payload.claim.payloadRef, "claims");
+  assertDigest(payload.evidenceBoundary.hash, "checkpoint Evidence terminal hash");
+  assertDigest(payload.sourceRequestDigest, "checkpoint source request digest");
+  assertReference(payload.sourceRequestPayloadRef, "requests");
+  if (!Number.isSafeInteger(payload.evidenceBoundary.sequence) || payload.evidenceBoundary.sequence < 0 ||
+      !Array.isArray(payload.selectedEventRefs) || payload.selectedEventRefs.length > 2048) {
+    practiceRunFail("STATE_CORRUPTED", "Checkpoint Evidence boundary or refs are invalid");
+  }
+  const expectedRefs = payload.checkpointResult.results.flatMap((item) => item.selectedEventRefs ?? []);
+  if (canonicalJson(expectedRefs) !== canonicalJson(payload.selectedEventRefs)) {
+    practiceRunFail("STATE_CORRUPTED", "Checkpoint selected Evidence refs conflict with its results");
+  }
+  const refIdentities = new Set();
+  for (const ref of payload.selectedEventRefs) {
+    assertExactKeys(ref, ["eventHash", "sequence", "sessionId", "toolCallId", "turnId"], "selected Evidence event ref");
+    assertDigest(ref.eventHash, "selected Evidence event hash");
+    const identity = `${ref.sequence}:${ref.eventHash}`;
+    if (ref.sessionId !== run.sessionId || !Number.isSafeInteger(ref.sequence) || ref.sequence <= 0 ||
+        ref.sequence > payload.evidenceBoundary.sequence || refIdentities.has(identity)) {
+      practiceRunFail("STATE_CORRUPTED", "Checkpoint selected Evidence ref is invalid or duplicated");
+    }
+    refIdentities.add(identity);
+  }
+  validateOperation(record, {
+    toolName: "check_completion",
+    roleId: run.roleId,
+    profileDigest: run.profileDigest,
+    practiceId: run.practiceId,
+    practiceVersion: run.practiceVersion,
+    run,
+  });
+  assertExactKeys(
+    record.operation.input,
+    ["checkpointSetId", "checkpointSetVersion", "claimDigest", "completionSchemaId", "completionSchemaVersion", "evidenceTerminalHash", "evidenceTerminalSequence"],
+    "check_completion operation input",
+  );
+  if (record.operation.input.checkpointSetId !== "review-v1" ||
+      record.operation.input.checkpointSetVersion !== 1 ||
+      record.operation.input.completionSchemaId !== "review-claim-v1" ||
+      record.operation.input.completionSchemaVersion !== 1 ||
+      record.operation.input.claimDigest !== payload.claim.digest ||
+      record.operation.input.evidenceTerminalHash !== payload.evidenceBoundary.hash ||
+      record.operation.input.evidenceTerminalSequence !== payload.evidenceBoundary.sequence ||
+      payload.sourceRequestDigest !== record.requestDigest || record.runRevision !== run.revision + 1) {
+    practiceRunFail("STATE_CORRUPTED", "Invalid check_completion transition");
+  }
+  validateCheckpointResult(payload.checkpointResult, record, run, completed);
+}
+
 function validateAbandonPayload(record, run) {
   const payload = record.payload;
   validateOperation(record, {
@@ -360,6 +476,24 @@ function applyRecord(state, record, sessionId) {
       };
       run.revision = record.runRevision;
       run.updatedAt = record.timestamp;
+    } else if (record.eventType === "checkpoint.evaluated" || record.eventType === "run.completed") {
+      const completed = record.eventType === "run.completed";
+      validateCheckpointPayload(record, run, completed);
+      run.lastCheckpoint = {
+        ...structuredClone(record.payload.checkpointResult),
+        claimPayloadRef: record.payload.claim.payloadRef,
+        evidenceTerminalSequence: record.payload.evidenceBoundary.sequence,
+        selectedEventRefs: structuredClone(record.payload.selectedEventRefs),
+        completionTurnId: record.turnId,
+        completionToolCallId: record.toolCallId,
+      };
+      run.revision = record.runRevision;
+      run.updatedAt = record.timestamp;
+      if (completed) {
+        run.status = "done";
+        run.finishedAt = record.timestamp;
+        state.activeRunId = null;
+      }
     } else if (record.eventType === "run.abandoned") {
       validateAbandonPayload(record, run);
       run.status = "abandoned";
@@ -740,6 +874,33 @@ export class PracticeRunStore {
       }
       if (input.expectedRunRevision !== run.revision || input.runRevision !== run.revision + 1) {
         practiceRunFail("STALE_RUN_REVISION", "PracticeRun revision changed before scope extension");
+      }
+      const record = await this.#append(state, input);
+      return {
+        replayed: false,
+        stateEventId: record.stateEventId,
+        eventType: record.eventType,
+        run: structuredClone(state.runs[record.runId]),
+        sequence: record.sequence,
+        terminalHash: record.hash,
+      };
+    });
+  }
+
+  async checkpoint(input) {
+    return this.#withState(async (state) => {
+      const replay = this.#replayOrConflict(state, input);
+      if (replay) return replay;
+      const run = state.activeRunId ? state.runs[state.activeRunId] : undefined;
+      if (!run) practiceRunFail("ACTIVE_RUN_REQUIRED", "An active PracticeRun is required");
+      if (run.origin.actorId !== input.actorId) {
+        practiceRunFail("RUN_REQUESTER_MISMATCH", "The authenticated requester does not own the active PracticeRun");
+      }
+      if (input.runId !== run.runId || run.status !== "active") {
+        practiceRunFail("RUN_NOT_ACTIVE", "The selected PracticeRun is not active");
+      }
+      if (input.expectedRunRevision !== run.revision || input.runRevision !== run.revision + 1) {
+        practiceRunFail("STALE_RUN_REVISION", "PracticeRun revision changed before checkpoint evaluation");
       }
       const record = await this.#append(state, input);
       return {

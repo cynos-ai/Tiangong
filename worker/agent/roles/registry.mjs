@@ -55,13 +55,13 @@ const registries = deepFreeze({
       id: "read",
       executionMode: "sequential",
       profileRoleIds: ["kernel", "reviewer"],
-      materializedRoleIds: ["kernel"],
+      materializedRoleIds: ["kernel", "reviewer"],
     },
     check_completion: {
       id: "check_completion",
       executionMode: "sequential",
       profileRoleIds: ["reviewer"],
-      materializedRoleIds: [],
+      materializedRoleIds: ["reviewer"],
     },
     abandon_work: {
       id: "abandon_work",

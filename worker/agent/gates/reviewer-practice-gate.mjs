@@ -1,4 +1,4 @@
-const PR3_TOOLS = new Set(["start_work", "extend_scope", "abandon_work"]);
+const STATE_TOOLS = new Set(["start_work", "extend_scope", "check_completion", "abandon_work"]);
 
 export class ReviewerPracticeGate {
   #profileDigest;
@@ -14,13 +14,16 @@ export class ReviewerPracticeGate {
 
   async evaluate(context) {
     const operation = context?.operation;
-    const allowed = operation?.policyVersion === "practice-run-v1" &&
-      operation.category === "state-transition" && operation.roleId === "reviewer" &&
-      operation.profileDigest === this.#profileDigest && operation.practiceId === "review" &&
-      operation.practiceVersion === 1 &&
-      PR3_TOOLS.has(operation.toolName) &&
+    const common = operation?.roleId === "reviewer" && operation.profileDigest === this.#profileDigest &&
+      operation.practiceId === "review" && operation.practiceVersion === 1 &&
       this.#toolIds.has(operation.toolName);
-    if (allowed) return { kind: "allow" };
+    const stateAllowed = common && operation.policyVersion === "practice-run-v1" &&
+      operation.category === "state-transition" && STATE_TOOLS.has(operation.toolName);
+    const readAllowed = common && operation.policyVersion === "review-read-v1" &&
+      operation.category === "read-only" && operation.toolName === "read" &&
+      typeof operation.state?.runId === "string" &&
+      Number.isSafeInteger(operation.state?.expectedRunRevision);
+    if (stateAllowed || readAllowed) return { kind: "allow" };
     return {
       kind: "deny",
       reason: "tool is not authorized by the Reviewer practice policy",

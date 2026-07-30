@@ -61,7 +61,9 @@ export function createGatedTool({
   getInvocation,
   sideEffect = false,
   category = sideEffect ? "external-side-effect" : "read-only",
+  beforeProposal,
   executeOperation,
+  completionMetadata,
   replayResult = (result) => result,
   lifecycle,
 }) {
@@ -88,6 +90,9 @@ export function createGatedTool({
       if (!invocation?.sessionId || !invocation?.turnId || !invocation?.turnState) {
         throw new Error("Tool invocation context is unavailable");
       }
+      const preflight = beforeProposal
+        ? await beforeProposal(params, { toolCallId, invocation })
+        : undefined;
       invocation.observability?.checkpoint("tool.proposed", {
         "tiangong.tool.name": definition.name,
       });
@@ -101,7 +106,7 @@ export function createGatedTool({
         toolName: definition.name,
       });
 
-      let operation = await summarize(params, { toolCallId, invocation });
+      let operation = await summarize(params, { toolCallId, invocation, preflight });
       const requestDigest = operationRequestDigest(operation);
       let digest = operationDigest(operation);
       let key = idempotencyKey({
@@ -129,6 +134,15 @@ export function createGatedTool({
         ...evidenceContext(invocation, toolCallId, definition.name, digest, key, category),
         requestDigest,
       };
+      if (operation?.roleId) {
+        Object.assign(common, {
+          practiceRunId: operation.state?.runId ?? null,
+          roleId: operation.roleId,
+          profileDigest: operation.profileDigest,
+          practiceId: operation.practiceId,
+          practiceVersion: operation.practiceVersion,
+        });
+      }
 
       const priorPending = invocation.turnState.decisionFor(toolCallId);
       const decision = priorPending ?? assertGateDecision(await gate.evaluate({
@@ -236,6 +250,7 @@ export function createGatedTool({
             runRevision: result?.details?.runRevision ?? null,
           });
         }
+        if (completionMetadata) Object.assign(completionEvent, completionMetadata(result));
         await evidence.append(completionEvent);
         if (sideEffect) {
           try {
