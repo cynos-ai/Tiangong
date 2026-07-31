@@ -490,7 +490,7 @@ base/head ref 在一次 admission 中各解析一次并固化 full commit OID。
 - artifact bytes 与 metadata 在 journal commit 前 durable；
 - journal 只保存 store-validated opaque ref 和有界 metadata，不保存 manifest/diff/raw content；
 - Evidence 只保存 artifact-ref digest、content digest、bytes、media type、truncated、producer/transform version，不保存 raw ref 或 bytes；
-- store 必须维护由 `sessionId + actorId + runId + targetId + invocation identity + artifactRefDigest` 精确查找 opaque ref 的受保护 index；coverage/restart 只能用这些 machine fields join，不能枚举 store 或从模型/transcript取得 ref；
+- journal/Evidence 必须保存 `artifactKey + artifactRefDigest` 和 expected binding/content identity；Store只按artifactKey direct lookup并与session/actor/run/target/invocation/operation binding exact join，不维护或枚举第二套ref index，也不从模型/transcript取得 ref；
 - ContextPack、OTel、tool errors 和 machine status 不暴露 artifact ref、manifest、diff 或 source content；
 - store read 必须重新验证 actor/run/target binding、ordinary file/no symlink、permissions、length 和 content digest；
 - missing、partial、tampered、cross-run 或 cross-target artifact 在模型循环前 fail closed；

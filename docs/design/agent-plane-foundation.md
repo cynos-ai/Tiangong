@@ -5,7 +5,7 @@
 > **保证等级：** `worker-local / static-review-only`。
 > **不是：** 已实现能力说明、Team Work、独立 Candidate 验收、测试执行、PR/commit/diff 评审或发布承诺。
 > **已验证增量：** [`reviewer-next-action.md`](./reviewer-next-action.md) 将 Reviewer ContextPack clean-cut 更新为 schema v2，并增加 Evidence-derived advisory `nextAction`；其它 Reviewer v1 能力与保证边界保持不变。
-> **待实现设计：** [`reviewer-typed-targets.md`](./reviewer-typed-targets.md) 定义 typed target 与 immutable snapshot 的下一项 clean-cut 合同；[`captured-artifact-store.md`](./captured-artifact-store.md) 定义其独立 bytes 持久化依赖。在两者实现和验证前，本文的显式 `scope.files[]` 与能力限制仍是当前事实。
+> **演进边界：** [`reviewer-typed-targets.md`](./reviewer-typed-targets.md) 定义尚待实现的 typed target 与 immutable snapshot clean-cut 合同；[`captured-artifact-store.md`](./captured-artifact-store.md) 的独立 bytes 持久化基础设施已实现，但尚无 current Reviewer consumer。在 typed-target runtime 实现和验证前，本文的显式 `scope.files[]` 与能力限制仍是当前事实。
 
 ## 0. 如何使用本文
 

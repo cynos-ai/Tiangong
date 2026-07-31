@@ -8,10 +8,16 @@ All notable changes to Tiangong are documented here. Tiangong follows Semantic V
 
 - Reviewer ContextPack v2 with a structured advisory `nextAction` derived from the active PracticeRun and validated read Evidence.
 - One practice-owned read-coverage projection shared by completion checkpoint and next-action guidance.
+- Non-model CapturedArtifactStore v1 infrastructure with exact practice-target bindings, canonical envelopes, kernel-locked atomic persistence, bounded replay/read joins, quotas, tamper checks, and a transcript-independent state root. No current Reviewer profile invokes the Store.
+
+### Security
+
+- Captured Artifact bytes remain outside Evidence and model-visible metadata. They are visible to Worker/storage administrators, have no v1 purge or end-to-end-encryption claim, and grant no authority without a future journal/Evidence consumer join.
 
 ### Verification
 
 - Deterministic next-action, fail-closed Evidence, checkpoint regression, restart reconstruction, Reviewer Basic, image/profile, and exact cleanup checks passed.
+- CapturedArtifactStore schema/golden identity, text policy, permission, symlink/tamper, replay/conflict, quota, temporary cleanup, restart/reset, cross-process kernel lock, ID collision, privacy, retention-isolation, and Worker-image lock-binding checks passed.
 - The one declared focused Journey canary safely returned `NO_VALID_READ_EVIDENCE`: the model reread A instead of B without false B Evidence, checkpoint, completion, mutation, or a new run.
 
 ## [0.1.0] - 2026-07-31

@@ -92,6 +92,7 @@ The current runtime is intentionally constrained:
 - the active kernel image loads a strict, digest-bound profile and static methodology from `/opt/tiangong-worker`; environment variables, Worker names, prompts, and tool arguments cannot select or elevate its role;
 - transcript files live only under `sessions/<session-hash>/pi/`; Evidence, idempotency, pending payload, and rollback state use independent per-session roots beneath the synchronized state directory, so transcript reset cannot erase business state;
 - restartable writes persist a digest-bound operation envelope and a separate mode-`600` content payload under that state directory; raw write content never enters Evidence, but is visible to principals with Worker storage administration access and follows explicit operation retention;
+- the image contains non-model CapturedArtifactStore infrastructure for later typed-target consumers, isolated under `captured-artifacts/<session-hash>/`; no current profile invokes it, and any bytes persisted by a future code-owned consumer remain visible to Worker/storage administrators and have no v1 purge or end-to-end-encryption claim;
 - only gated `read` and path-restricted, atomic `write` are active; `write` requires persisted approval from the same authenticated Matrix sender that requested it, ignores upstream owner assertions for authorization, supports restart recovery, and blocks duplicate execution;
 - runtime state, credential-bearing paths, symlink traversal, workspace escape, image input, and `bash` are unavailable.
 

@@ -15,7 +15,9 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
     && npm run patch-dependencies \
     && ln -s /opt/openclaw ./node_modules/openclaw \
     && npm cache clean --force \
-    && ./node_modules/.bin/pi --version
+    && ./node_modules/.bin/pi --version \
+    && test -x /usr/bin/flock \
+    && /usr/bin/flock --version
 
 COPY agent/ ./agent/
 COPY observability/ ./observability/

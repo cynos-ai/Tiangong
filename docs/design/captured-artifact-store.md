@@ -1,6 +1,6 @@
 # CapturedArtifactStore 持久化与 Evidence 合同
 
-> **状态：** 公开设计合同，尚未实现；本文不描述当前已发布行为。
+> **状态：** v1 持久化基础设施已实现并通过 deterministic tests；尚无 current Reviewer consumer 或 model-visible artifact tool。
 > **基础：** [`agent-plane-foundation.md`](./agent-plane-foundation.md) 与待实现的 [`reviewer-typed-targets.md`](./reviewer-typed-targets.md)。
 > **范围：** 定义第一个 target-bound CapturedArtifactStore：保存 backend 规范化并实际可交给模型的有界 bytes，同时保持与 PracticeRun Machine State、Machine Evidence、claim 和 transcript 分离。
 > **保证不变：** artifact 不授予权限、不认证内容真实性、不推进 checkpoint；`worker-local / static-review-only` 不因持久化 bytes 提升。
@@ -10,10 +10,10 @@
 
 本文是 CapturedArtifactStore v1 的窄公开合同。实现者仍须遵守根目录 `AGENTS.md` 以及 implementation、verification、security-and-evidence 和 worker-runtime rules。
 
-在本文实现并通过验证前：
+当前实现边界：
 
-- 当前 runtime 没有 CapturedArtifactStore；现有 Reviewer read output 仍只受当前 Evidence metadata 合同约束；
-- typed target、directory manifest、canonical git diff、search/fetch 或 vision 不得把本文描述为已实现依赖；
+- Worker image已有concrete CapturedArtifactStore模块和独立state root，但没有current profile/tool调用它；现有 Reviewer read output 仍只受当前 Evidence metadata合同约束；
+- typed target、directory manifest、canonical git diff、search/fetch 或 vision仍未实现，不得把Store基础设施描述为对应capability已可用；
 - 不得把 artifact bytes 塞入 Evidence、PracticeRun journal、OTel、transcript、自定义 prompt message、错误或 filename 来绕过 Store；
 - 不得以 protected payload store、pending write payload 或 workspace 临时文件冒充 artifact store；
 - 不加入旧路径扫描、迁移、双写或 compatibility shim。

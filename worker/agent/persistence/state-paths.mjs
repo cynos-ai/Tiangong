@@ -16,6 +16,7 @@ export function stateRootPaths(stateDirectory) {
     sessionsRoot: join(root, "sessions"),
     practiceRunsRoot: join(root, "practice-runs"),
     evidenceRoot: join(root, "evidence"),
+    capturedArtifactsRoot: join(root, "captured-artifacts"),
     idempotencyRoot: join(root, "idempotency"),
     pendingOperationsRoot: join(root, "pending-operations"),
     rollbacksRoot: join(root, "rollbacks"),
@@ -30,6 +31,7 @@ export function statePathsForSessionHash({ stateDirectory, sessionHash }) {
   const sessionDirectory = join(roots.sessionsRoot, sessionHash);
   const practiceRunDirectory = join(roots.practiceRunsRoot, sessionHash);
   const evidenceDirectory = join(roots.evidenceRoot, sessionHash);
+  const capturedArtifactDirectory = join(roots.capturedArtifactsRoot, sessionHash);
   const idempotencyDirectory = join(roots.idempotencyRoot, sessionHash);
   return Object.freeze({
     ...roots,
@@ -42,6 +44,10 @@ export function statePathsForSessionHash({ stateDirectory, sessionHash }) {
     practiceRunProtectedDirectory: join(practiceRunDirectory, "protected"),
     evidenceDirectory,
     evidenceFilePath: join(evidenceDirectory, "events.jsonl"),
+    capturedArtifactDirectory,
+    capturedArtifactObjectsDirectory: join(capturedArtifactDirectory, "objects"),
+    capturedArtifactTemporaryDirectory: join(capturedArtifactDirectory, "tmp"),
+    capturedArtifactLockPath: join(capturedArtifactDirectory, "store-lock-target"),
     idempotencyDirectory,
     idempotencyFilePath: join(idempotencyDirectory, "idempotency.jsonl"),
     pendingOperationDirectory: join(roots.pendingOperationsRoot, sessionHash),
