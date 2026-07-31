@@ -1,6 +1,6 @@
 # Tiangong Agent Plane 基础设施实现合同：Reviewer v1
 
-> **状态：** 已完成设计决策；PR1–PR4 已实现确定性合同，PR5 真实集成与发布验证待完成。
+> **状态：** PR1–PR5 硬 Gate 通过；Journey canary 记录为模型 no-progress。
 > **范围：** 在当前单 Worker 受控执行内核上，实现第一个可信专业角色：只读、显式文件范围、Evidence-backed 的 Reviewer。
 > **保证等级：** `worker-local / static-review-only`。
 > **不是：** 已实现能力说明、Team Work、独立 Candidate 验收、测试执行、PR/commit/diff 评审或发布承诺。
@@ -58,7 +58,7 @@ Reviewer v1 不证明：
 
 ## 2. 当前公开实现基线
 
-当前 kernel runtime 使用固定 digest-bound profile、静态 methodology、read/write 顺序 wrapper 和 read-allow/write-approval Gate。transcript 位于 `sessions/<hash>/pi/`；Evidence、idempotency、pending payload 和 rollback 由统一 resolver 定位在独立顶层，reset 只删除 `pi/`。Reviewer image 已 materialize 精确五工具面、scoped UTF-8 text read、file-version Evidence projection、claim/checkpoint、ContextPack 和 machine status，并通过确定性与容器合同；真实 Reviewer Matrix Basic/Full smoke 尚属 PR5，因此尚不能声明发布可用。official OpenClaw 继续拥有 Matrix；peer transport 只是传输诊断，不能声明为 Team Work。
+当前 kernel runtime 使用固定 digest-bound profile、静态 methodology、read/write 顺序 wrapper 和 read-allow/write-approval Gate。transcript 位于 `sessions/<hash>/pi/`；Evidence、idempotency、pending payload 和 rollback 由统一 resolver 定位在独立顶层，reset 只删除 `pi/`。Reviewer image 已实现五工具面、scoped UTF-8 read、Evidence、checkpoint、ContextPack 和 machine status，并通过确定性、容器、Matrix Basic 与 Recovery Full。Journey no-progress 保持安全 active。official OpenClaw 拥有 Matrix；peer transport 不是 Team Work。
 
 ---
 
@@ -1155,7 +1155,7 @@ OTel phase 只允许 `practice.run.start`、`practice.scope.extend`、`practice.
 | PR2 Trusted profile | fixed profile、strict loader、closed registries、静态 methodology context | profile/path/digest/spoof、role×tool、container image/profile；不宣称闭环完成 |
 | PR3 PracticeRun kernel | journal/snapshot/protected payload、CAS/lock、state-transition replay、start/extend/abandon | one-active、scope append、limits、duplicate/stale/corruption；只声明状态内核 |
 | PR4 Reviewer slice | scoped text read、file digest/range、Evidence projection、claim/checkpoint、check tool、ContextPack、status、Reviewer image | 全部 deterministic/container truth tables；不得省略 fail-closed 邻接路径 |
-| PR5 Real integration | official OpenClaw + Matrix/Gateway 的 Basic/Full smoke 与公开行为文档 | exact machine oracle、run-owned resources、cleanup absence、现有 Gate/approval/recovery 回归；通过后才更新 README |
+| PR5 Real integration | official OpenClaw + Matrix/Gateway 的 Basic/Recovery Full、Journey canary 与公开文档 | hard machine oracle、canary 分类、run-owned cleanup、现有 Gate/approval/recovery 回归；硬 Gate 通过后才更新 README |
 
 每个 PR 必须保持系统可运行，不能用 TODO、mock success 或 prompt-only enforcement 代替当前边界。
 
@@ -1248,61 +1248,41 @@ Required machine facts：
 
 不能把模型说“读过/完成”当 oracle。
 
-### 19.2 Full smoke
+### 19.2 Recovery Full smoke
 
-目的：证明跨 turn scope extension 和 restart recovery。
+目的：硬证明跨 turn append-only scope 与 restart 恢复；post-restart 模型活性不充当状态 oracle。
 
 ```text
-start with file A
-  → read A
-  → later Matrix turn requests same-objective expansion to B
-  → extend_scope(B)
-  → Worker restart
-  → recover active run/final scope A+B
-  → read B
-  → check_completion
-  → done
+start/read A → later extend_scope(B) → journal remote durable
+→ delete derived snapshot → restart → rebuild same active A+B run
 ```
 
-Required machine facts：
+Required machine facts：同一 runId/actor/profile；objective/criteria digest 不变；唯一 scope event 只追加 B；A read digest 独立匹配；journal/Evidence boundary 跨重启不变；snapshot 从 journal 重建；恢复后 active/not-run；无 mutation 工具；official delivery、Harness、cleanup 通过。
 
-- 同一 runId；
-- objective/criteria digest 未改变；
-- `scope.revised` 只追加 B；
-- A/B Evidence 均绑定当前 run；
-- restart 后 state 来自 journal，不来自 transcript claim；
-- final checkpoint 使用最终 scope digest；
-- duplicate notification/replay 不重复 scope event 或 completion；
-- terminal machine status正确；
-- exact cleanup pass。
+### 19.3 Journey canary
 
-### 19.3 Block rules
+独立 fresh run 在 Recovery Full 后观察 `read B → check_completion → done`。PASS 要求完整 B Evidence、唯一 final-scope completion 和 terminal status。每个 image/provider/model artifact 只运行预定次数，不抽样求绿；记录 PASS、NO_VALID_READ_EVIDENCE、NO_VALID_COMPLETION 或 INCONCLUSIVE。它只衡量长链活性，不阻断发布；cleanup 仍硬阻断，no-progress 不得生成虚假 Evidence 或 done。
 
-以下任一情况保持红或 BLOCKED：
+### 19.4 Block rules
 
-- profile/image 不可证明，或 required Work/read/check tool 未调用；
-- Evidence chain 无效，或只能从 prose 推断 read/completion；
-- wrong run、partial/mixed read，或 restart 新建 run 冒充恢复；
-- official Channel Plane 被替换，或使用仓库外私有 fixture/service/package；
-- cleanup 不完整，或为判绿放宽 scope、Evidence、状态断言。
+profile/image、A read、journal/Evidence、same-run recovery、official Channel Plane 或 cleanup 任一不可证明，Recovery Full 保持红色。不得用私有依赖、prose 或放宽断言判绿。Journey 仅满足 terminal oracle 才记录 PASS，失败必须分类。
 
 ---
 
 ## 20. Reviewer v1 发布 Gate
 
-只有同时满足以下条件才可声明 Reviewer v1 可用：
+发布必须同时满足：
 
-1. 五个 PR、全部 deterministic tests 和四类 truth table 通过；
-2. profile spoof、wrong scope/run、Evidence tamper 均 fail closed，read oracle 一致；
-3. physical state-root isolation/reset/restart/replay 通过，现有 write approval/rollback/recovery/idempotency/retention/reconciliation 未削弱；
-4. Reviewer container/image profile 检查通过；
-5. Basic、Full smoke 和 cleanup 通过；
-6. OTel 仅含 sanitized allowlist metadata 且未充当 Evidence；
-7. README 只声明已验证范围，repository 无仓库外私有依赖、fixture、Skill、报告或运行时引用。
+1. 五个 PR、deterministic tests/truth tables、profile 与容器合同通过；
+2. spoof、wrong scope/run、Evidence tamper 均 fail closed，read oracle 一致；
+3. state-root isolation/reset/restart/replay 与现有 approval/rollback/recovery/idempotency/maintenance 未削弱；
+4. Basic、Recovery Full、kernel regression 和各自 exact cleanup 通过；
+5. OTel 仅含 sanitized allowlist metadata，repository 无私有依赖或运行材料；
+6. Journey canary 按预定 artifact 运行并诚实记录，但不替代任何硬 Gate。
 
-发布口径必须是：
+发布口径：
 
-> Reviewer can perform a Worker-local, static-only review of an explicit, bounded list of workspace text files. Completion is checked against run-bound machine Evidence proving complete reads of specific file versions. The result does not claim test execution, git/PR review, immutable Candidate freshness, or Team verification.
+> Reviewer statically reviews explicit bounded workspace text files. Run-bound Evidence checks complete versioned reads. State recovers after restart; later progress is model-dependent, and no-progress cannot create Evidence or completion. This does not claim tests, git/PR freshness, or Team verification.
 
 ---
 
@@ -1336,6 +1316,6 @@ Required machine facts：
 5. read 如何证明完整读取特定文件版本？
 6. 哪个 event 推进 done，reset/restart/crash 后如何恢复？
 7. claim、state、Evidence、OTel 有何区别？
-8. 五个 PR、Basic/Full oracle 和禁止放宽的 block rules 是什么？
+8. 五个 PR、Basic/Recovery Full oracle、Journey canary 和禁止放宽的 block rules 是什么？
 
 合格：fresh AI 仅依据本文一致作答，不依赖仓库外背景，不混淆现状或 prompt、claim、state、Evidence、OTel。

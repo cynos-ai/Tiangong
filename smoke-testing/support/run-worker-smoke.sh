@@ -67,7 +67,12 @@ cleanup() {
 
   docker exec "${MANAGER_CONTAINER}" rm -f \
     "${MANAGER_MANIFEST}" "${MANAGER_MATRIX_ROUNDTRIP}" \
-    "${MANAGER_MATRIX_APPROVAL_ROUNDTRIP}" >/dev/null 2>&1
+    "${MANAGER_MATRIX_APPROVAL_ROUNDTRIP}" >/dev/null 2>&1 || cleanup_failed=1
+  if docker exec "${MANAGER_CONTAINER}" test -e "${MANAGER_MANIFEST}" 2>/dev/null ||
+      docker exec "${MANAGER_CONTAINER}" test -e "${MANAGER_MATRIX_ROUNDTRIP}" 2>/dev/null ||
+      docker exec "${MANAGER_CONTAINER}" test -e "${MANAGER_MATRIX_APPROVAL_ROUNDTRIP}" 2>/dev/null; then
+    cleanup_failed=1
+  fi
   if ((created == 1)); then
     log "Deleting temporary Worker ${WORKER_NAME}"
     docker exec "${MANAGER_CONTAINER}" hiclaw delete worker "${WORKER_NAME}" >/dev/null 2>&1 || cleanup_failed=1
@@ -87,7 +92,11 @@ cleanup() {
     fi
   fi
 
-  ((cleanup_failed == 0)) || status=1
+  if ((cleanup_failed == 0)); then
+    printf 'worker_cleanup=pass\n'
+  else
+    status=1
+  fi
   exit "${status}"
 }
 trap cleanup EXIT
