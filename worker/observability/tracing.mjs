@@ -37,6 +37,8 @@ const PHASES = new Set([
   "peer.transport.pong",
   "practice.run.start",
   "practice.scope.extend",
+  "practice.checkpoint.pass",
+  "practice.checkpoint.fail",
   "practice.run.abandon",
   "pi.agent_turn.start",
   "pi.turn.start",

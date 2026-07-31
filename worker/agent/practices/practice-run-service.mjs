@@ -4,6 +4,7 @@ import { isAbsolute } from "node:path";
 import { sha256 } from "../canonical-json.mjs";
 import { resolveWorkspacePath } from "../tools/operations.mjs";
 import { practiceRunFail } from "./errors.mjs";
+import { evaluateReviewCheckpoint, validateReviewClaim } from "./review-checkpoint.mjs";
 import {
   PracticeRunStore,
   practiceInvocationIdentity,
@@ -21,6 +22,8 @@ const MAX_SCOPE_TOTAL_PATH_BYTES = 32 * 1024;
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_SCOPE_BYTES_AT_ADMISSION = 16 * 1024 * 1024;
 const MAX_REQUEST_PAYLOAD_BYTES = 256 * 1024;
+const MAX_CONTEXT_PACK_BYTES = 64 * 1024;
+const CONTEXT_PACK_FIXED_RESERVE_BYTES = 8 * 1024;
 const MAX_ABANDON_SUMMARY_BYTES = 8 * 1024;
 const ABANDON_REASON_CODES = new Set([
   "superseded_by_new_request",
@@ -53,6 +56,17 @@ function normalizedText(value, { code, name, maxBytes }) {
     practiceRunFail(code, `${name} is empty or exceeds its fixed limit`);
   }
   return { text, bytes, digest: sha256(text) };
+}
+
+function assertContextPackCapacity({ objective, criteria, files }) {
+  const bytes = Buffer.byteLength(JSON.stringify({
+    objective,
+    acceptanceCriteria: criteria,
+    scope: { files },
+  }));
+  if (bytes + CONTEXT_PACK_FIXED_RESERVE_BYTES > MAX_CONTEXT_PACK_BYTES) {
+    practiceRunFail("CONTEXT_PACK_LIMIT_EXCEEDED", "Reviewer context would exceed its fixed size limit");
+  }
 }
 
 function invocationContext(invocation, sessionId) {
@@ -115,10 +129,12 @@ function mapPathError(error) {
   if (/credential-bearing|runtime state directory/iu.test(error?.message ?? "")) {
     practiceRunFail("SENSITIVE_PATH_DENIED", "Sensitive paths are not allowed in PracticeRun scope");
   }
-  throw error;
+  if (error?.name === "PracticeRunError") throw error;
+  practiceRunFail("PATH_NOT_REGULAR_FILE", "Scope path could not be validated as a regular file");
 }
 
 export class PracticeRunService {
+  #clock;
   #payloads;
   #prepared = new WeakMap();
   #profile;
@@ -136,7 +152,7 @@ export class PracticeRunService {
     journalPath,
     snapshotPath,
     protectedDirectory,
-    clock,
+    clock = () => new Date(),
     uuid = () => crypto.randomUUID(),
   }) {
     for (const [name, value] of Object.entries({
@@ -157,6 +173,7 @@ export class PracticeRunService {
     }
     this.#sessionId = sessionId;
     this.#workspaceDir = workspaceDir;
+    this.#clock = clock;
     this.#profile = profileBundle.profile;
     this.#profileDigest = profileBundle.profileDigest;
     this.#reviewPractice = reviewPractice.definition;
@@ -310,6 +327,15 @@ export class PracticeRunService {
       practiceRunFail("INVALID_CRITERIA", "Acceptance criteria must be unique after normalization");
     }
     const files = await this.#normalizeScope(params.files);
+    assertContextPackCapacity({
+      objective: { text: objective.text, source: "model_normalized" },
+      criteria: criteria.map((criterion) => ({
+        id: criterion.id,
+        description: criterion.text,
+        source: "model_normalized",
+      })),
+      files,
+    });
     const scopeDigest = sha256(files);
     const operation = {
       policyVersion: POLICY_VERSION,
@@ -405,13 +431,18 @@ export class PracticeRunService {
     if (replay) return this.#markPrepared({ replay, operation: replay.operation }, "extend");
     const context = invocationContext(invocation, this.#sessionId);
     this.#assertInvocationProfile(invocation);
-    const run = await this.#store.activeForActor(context.actorId);
+    const run = await this.activeForActor(context.actorId);
     const newFiles = await this.#normalizeScope(params.files);
     const existing = new Set(run.scope.files);
     if (newFiles.some((file) => existing.has(file))) {
       practiceRunFail("SCOPE_FILE_ALREADY_PRESENT", "Scope extension contains an existing file");
     }
     const finalFiles = await this.#normalizeScope([...run.scope.files, ...newFiles]);
+    assertContextPackCapacity({
+      objective: run.objective,
+      criteria: run.acceptanceCriteria,
+      files: finalFiles,
+    });
     const operation = {
       policyVersion: POLICY_VERSION,
       category: "state-transition",
@@ -476,6 +507,119 @@ export class PracticeRunService {
 
   async extend(params, invocation) {
     return this.commitExtend(await this.prepareExtend(params, invocation));
+  }
+
+  async prepareCompletion(params, invocation, evidenceBoundaryProvider) {
+    exactObject(params, ["completionClaim"], "CLAIM_SCHEMA_INVALID", "check_completion input");
+    const replay = await this.#replay("check_completion", params, invocation);
+    if (replay) {
+      const claim = await this.claimForRun(replay.run);
+      return this.#markPrepared({ replay: { ...replay, claim, checkpointResult: replay.run.lastCheckpoint }, operation: replay.operation }, "completion");
+    }
+    const context = invocationContext(invocation, this.#sessionId);
+    this.#assertInvocationProfile(invocation);
+    const run = await this.activeForActor(context.actorId);
+    const validatedClaim = validateReviewClaim(params.completionClaim);
+    if (typeof evidenceBoundaryProvider !== "function") throw new TypeError("Evidence boundary provider is required");
+    const evidenceBoundary = await evidenceBoundaryProvider();
+    if (!evidenceBoundary || !Number.isSafeInteger(evidenceBoundary.sequence) || evidenceBoundary.sequence < 0 ||
+        typeof evidenceBoundary.hash !== "string" || !/^[a-f0-9]{64}$/u.test(evidenceBoundary.hash)) {
+      practiceRunFail("EVIDENCE_BOUNDARY_INVALID", "Evidence terminal boundary is invalid");
+    }
+    const operation = {
+      policyVersion: POLICY_VERSION,
+      category: "state-transition",
+      toolName: "check_completion",
+      roleId: run.roleId,
+      profileDigest: run.profileDigest,
+      practiceId: run.practiceId,
+      practiceVersion: run.practiceVersion,
+      origin: {
+        actorId: context.actorId,
+        sourceMessageId: context.sourceMessageId,
+        requestDigest: context.requestDigest,
+      },
+      state: { runId: run.runId, expectedRunRevision: run.revision },
+      input: {
+        completionSchemaId: "review-claim-v1",
+        completionSchemaVersion: 1,
+        checkpointSetId: "review-v1",
+        checkpointSetVersion: 1,
+        claimDigest: validatedClaim.digest,
+        evidenceTerminalSequence: evidenceBoundary.sequence,
+        evidenceTerminalHash: evidenceBoundary.hash,
+      },
+    };
+    return this.#markPrepared({
+      context,
+      run,
+      validatedClaim,
+      evidenceBoundary: { ...evidenceBoundary },
+      operation,
+      inputDigest: this.#inputDigest("check_completion", params),
+      ...actionIdentity(this.#sessionId, context, operation),
+    }, "completion");
+  }
+
+  async persistCompletionClaim(prepared) {
+    this.#assertPrepared(prepared, "completion");
+    if (prepared.replay) return undefined;
+    const claim = await this.#payloads.put("claim", prepared.validatedClaim.claim);
+    if (claim.digest !== prepared.validatedClaim.digest) {
+      practiceRunFail("STATE_CORRUPTED", "Protected claim digest changed before checkpoint evaluation");
+    }
+    return claim;
+  }
+
+  async commitCompletion(prepared, projection, claim) {
+    this.#assertPrepared(prepared, "completion");
+    if (prepared.replay) return prepared.replay;
+    if (projection?.boundary?.sequence !== prepared.evidenceBoundary.sequence ||
+        projection?.boundary?.hash !== prepared.evidenceBoundary.hash) {
+      practiceRunFail("EVIDENCE_BOUNDARY_INVALID", "Projected Evidence does not match the fixed completion boundary");
+    }
+    if (claim?.digest !== prepared.validatedClaim.digest || typeof claim.ref !== "string") {
+      practiceRunFail("STATE_CORRUPTED", "A durable protected claim is required before checkpoint evaluation");
+    }
+    const checkpointResult = evaluateReviewCheckpoint({
+      run: prepared.run,
+      validatedClaim: prepared.validatedClaim,
+      projection,
+      evaluatedAt: this.#clock().toISOString(),
+    });
+    const request = await this.#payloads.put("request", prepared.context.requestPayload);
+    const completed = checkpointResult.allSatisfied;
+    const result = await this.#store.checkpoint({
+      eventType: completed ? "run.completed" : "checkpoint.evaluated",
+      runId: prepared.run.runId,
+      expectedRunRevision: prepared.run.revision,
+      runRevision: prepared.run.revision + 1,
+      actorId: prepared.context.actorId,
+      sourceMessageId: prepared.context.sourceMessageId,
+      turnId: prepared.context.turnId,
+      toolCallId: prepared.context.toolCallId,
+      invocationIdentity: prepared.invocationIdentity,
+      invocationKey: prepared.invocationKey,
+      actionDigest: prepared.actionDigest,
+      requestDigest: prepared.context.requestDigest,
+      inputDigest: prepared.inputDigest,
+      operation: prepared.operation,
+      payload: {
+        claim: { digest: claim.digest, payloadRef: claim.ref },
+        evidenceBoundary: { ...prepared.evidenceBoundary },
+        checkpointResult,
+        selectedEventRefs: checkpointResult.results.flatMap((item) => item.selectedEventRefs ?? []),
+        sourceRequestDigest: request.digest,
+        sourceRequestPayloadRef: request.ref,
+      },
+    });
+    return {
+      ...result,
+      run: await this.#hydrate(result.run),
+      claim: structuredClone(prepared.validatedClaim.claim),
+      checkpointResult,
+      requestDigest: request.digest,
+    };
   }
 
   async prepareAbandon(params, invocation) {
@@ -562,7 +706,30 @@ export class PracticeRunService {
   }
 
   async activeForActor(actorId, options) {
+    if (typeof actorId !== "string" || actorId === "") {
+      practiceRunFail("AUTHENTICATED_ACTOR_REQUIRED", "An authenticated actor is required");
+    }
     return this.#hydrate(await this.#store.activeForActor(actorId, options));
+  }
+
+  async latestForActor(actorId) {
+    if (typeof actorId !== "string" || actorId === "") {
+      practiceRunFail("AUTHENTICATED_ACTOR_REQUIRED", "An authenticated actor is required");
+    }
+    const state = await this.#store.state();
+    const runs = Object.values(state.runs).filter((run) => run.origin.actorId === actorId);
+    const latest = runs.at(-1);
+    return latest ? this.#hydrate(latest) : undefined;
+  }
+
+  async claimForRun(run) {
+    const ref = run?.lastCheckpoint?.claimPayloadRef;
+    if (!ref) return undefined;
+    const claim = await this.#payloads.read("claim", ref);
+    if (sha256(claim) !== run.lastCheckpoint.claimDigest) {
+      practiceRunFail("STATE_CORRUPTED", "Protected claim does not match the checkpoint digest");
+    }
+    return claim;
   }
 
   state() {

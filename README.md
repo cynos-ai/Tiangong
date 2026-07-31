@@ -102,7 +102,7 @@ make build-worker-image
 docker run --rm --entrypoint pi tiangong-worker:dev --version
 ```
 
-The build also produces `tiangong-worker-reviewer:dev` to validate the fixed Reviewer profile and closed registries. Its durable `start_work`, `extend_scope`, and `abandon_work` state kernel is materialized, but scoped `read` and `check_completion` are not; the image therefore still fails closed before a model session and is not yet a usable Reviewer.
+The build also produces `tiangong-worker-reviewer:dev` with the fixed Reviewer profile and an exact five-tool surface: `start_work`, `extend_scope`, scoped text `read`, `check_completion`, and `abandon_work`. Deterministic tests and image checks cover the Worker-local PracticeRun, file-version Evidence, checkpoint, ContextPack, and machine-status contracts. The real Reviewer Matrix Basic/Full smoke and release gate remain pending, so this is not yet a public Reviewer availability claim.
 
 ### Interrupted write reconciliation
 
