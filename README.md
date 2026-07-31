@@ -89,6 +89,7 @@ The current runtime is intentionally constrained:
 - it claims only the Worker-scoped `agentteams-gateway` provider and disables OpenClaw's fallback to another agent harness;
 - OpenClaw parameters cross a stable Tiangong Turn DTO; provider credentials are non-enumerable request data and are injected into pi only in memory;
 - pi extensions, skills, prompt templates, and automatic repository context are disabled;
+- the active kernel image loads a strict, digest-bound profile and static methodology from `/opt/tiangong-worker`; environment variables, Worker names, prompts, and tool arguments cannot select or elevate its role;
 - transcript files live only under `sessions/<session-hash>/pi/`; Evidence, idempotency, pending payload, and rollback state use independent per-session roots beneath the synchronized state directory, so transcript reset cannot erase business state;
 - restartable writes persist a digest-bound operation envelope and a separate mode-`600` content payload under that state directory; raw write content never enters Evidence, but is visible to principals with Worker storage administration access and follows explicit operation retention;
 - only gated `read` and path-restricted, atomic `write` are active; `write` requires persisted approval from the same authenticated Matrix sender that requested it, ignores upstream owner assertions for authorization, supports restart recovery, and blocks duplicate execution;
@@ -100,6 +101,8 @@ To build and inspect the image without creating a Worker:
 make build-worker-image
 docker run --rm --entrypoint pi tiangong-worker:dev --version
 ```
+
+The build also produces `tiangong-worker-reviewer:dev` to validate the fixed Reviewer profile, closed capability registries, and static role/methodology assets. Its Work tools are intentionally not materialized in this implementation stage, so it fails closed before a model session and is not yet a usable Reviewer.
 
 ### Interrupted write reconciliation
 

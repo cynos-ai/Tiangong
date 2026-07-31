@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
+import { loadRoleProfileBundle } from "../agent/config/role-profile.mjs";
 import { PeerReplyRouter } from "../agent/peer-reply-router.mjs";
 import { statePathsForSession } from "../agent/persistence/state-paths.mjs";
 import {
@@ -13,6 +15,7 @@ import {
 import { TiangongAgentRuntime } from "../agent/runtime.mjs";
 import { createTurnRequest } from "../agent/turn-contract.mjs";
 
+const WORKER_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const NONCE = "11111111-2222-4333-8444-555555555555";
 const OTHER_NONCE = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 const COORDINATOR = Object.freeze({
@@ -136,7 +139,15 @@ test("runtime handles the transport control without dispatching a model request"
       },
     },
   }));
-  const runtime = new TiangongAgentRuntime({ configPath, provider: "agentteams-gateway" });
+  const profileBundle = await loadRoleProfileBundle({
+    profilePath: join(WORKER_ROOT, "role-profiles", "kernel.json"),
+    resourceRoot: WORKER_ROOT,
+  });
+  const runtime = new TiangongAgentRuntime({
+    configPath,
+    provider: "agentteams-gateway",
+    profileBundle,
+  });
   t.after(async () => {
     await runtime.dispose();
     await rm(directory, { recursive: true, force: true });

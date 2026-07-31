@@ -4,6 +4,11 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 
+import {
+  assertRuntimeProfileMaterialized,
+  loadFixedRoleProfileBundle,
+} from "./config/role-profile.mjs";
+import { buildBaseSystemPrompt } from "./context/base-system-prompt.mjs";
 import { EvidenceRecorder } from "./evidence/recorder.mjs";
 import {
   approvalOutcomeText,
@@ -29,8 +34,6 @@ import { TurnContextController } from "./turn-context.mjs";
 import { createPiSessionTraceObserver } from "../observability/pi-session-tracing.mjs";
 import { createProviderTraceBridge } from "../observability/provider-tracing.mjs";
 import { observabilityOutcome } from "../observability/tracing.mjs";
-
-const SYSTEM_PROMPT = `You are the Tiangong agent runtime. Use only the tools exposed by the runtime. Tool authorization is enforced in code. A pending tool result means the operation did not execute; do not claim otherwise. Never invent an approval or alter an approval identifier.`;
 
 function assistantText(message) {
   if (message?.role !== "assistant" || !Array.isArray(message.content)) return "";
@@ -105,14 +108,21 @@ function appendDeterministicAssistantMessage(state, content) {
 
 export class TiangongAgentRuntime {
   #gateway;
+  #profileBundle;
   #sessions = new Map();
   #stores = new Map();
 
-  constructor({ configPath, provider }) {
+  constructor({ configPath, provider, profileBundle }) {
     this.#gateway = new ModelGateway({ configPath, provider });
+    this.#profileBundle = profileBundle ? Promise.resolve(profileBundle) : null;
   }
 
-  async #createSession(request, model, modelRuntime) {
+  #trustedProfileBundle() {
+    if (!this.#profileBundle) this.#profileBundle = loadFixedRoleProfileBundle();
+    return this.#profileBundle;
+  }
+
+  async #createSession(request, model, modelRuntime, profileBundle) {
     const stateDirectory = defaultStateDirectory(request.workspaceDir);
     let sessionStore = this.#stores.get(stateDirectory);
     if (!sessionStore) {
@@ -140,6 +150,7 @@ export class TiangongAgentRuntime {
       idempotencyStore,
       pendingOperationStore,
       getInvocation: turns.current,
+      profile: profileBundle.profile,
     });
     const settingsManager = SettingsManager.inMemory({
       compaction: { enabled: false },
@@ -156,7 +167,7 @@ export class TiangongAgentRuntime {
       noThemes: true,
       extensionFactories: [providerTrace.extension],
       settingsManager,
-      systemPrompt: SYSTEM_PROMPT,
+      systemPrompt: buildBaseSystemPrompt(profileBundle),
     });
     await resourceLoader.reload();
     const { session } = await createAgentSession({
@@ -190,10 +201,10 @@ export class TiangongAgentRuntime {
     };
   }
 
-  async #stateFor(request, model, modelRuntime) {
+  async #stateFor(request, model, modelRuntime, profileBundle) {
     let state = this.#sessions.get(request.sessionId);
     if (!state) {
-      state = await this.#createSession(request, model, modelRuntime);
+      state = await this.#createSession(request, model, modelRuntime, profileBundle);
       this.#sessions.set(request.sessionId, state);
     } else {
       if (state.workspaceDir !== request.workspaceDir) {
@@ -340,6 +351,7 @@ export class TiangongAgentRuntime {
 
   async runTurn(request, observability) {
     if (request.images.length > 0) throw new Error("The Tiangong agent runtime does not support image input yet");
+    const profileBundle = assertRuntimeProfileMaterialized(await this.#trustedProfileBundle());
     observability?.checkpoint("runtime.start");
     const setup = observability?.startOperation("tiangong.runtime.setup");
     let resolved;
@@ -362,7 +374,7 @@ export class TiangongAgentRuntime {
         "tiangong.session.open_or_reuse",
         {},
         request.abortSignal,
-        () => this.#stateFor(request, resolved.model, resolved.modelRuntime),
+        () => this.#stateFor(request, resolved.model, resolved.modelRuntime, profileBundle),
       );
       observability?.checkpoint("session.ready");
       setup?.end("complete");

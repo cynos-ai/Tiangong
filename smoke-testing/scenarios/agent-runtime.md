@@ -92,7 +92,7 @@
 
 ## Maintenance notes
 
-- **Current status (2026-07-30)**: transcript and durable business state use independent per-session roots; deterministic tests prove reset/session-root deletion isolation and maintenance clean-cut behavior. A fresh real Matrix F1 after the path change passed pending → restart → approval → write → replay → payload erasure, with exactly one execution, one replay, and exact run-owned cleanup.
+- **Current status (2026-07-30)**: transcript and durable business state use independent per-session roots; deterministic tests prove reset/session-root deletion isolation and maintenance clean-cut behavior. A fresh real Matrix F1 after the path change, and again after fixed kernel profile integration, passed pending → restart → approval → write → replay → payload erasure, with exactly one execution, one replay, and exact run-owned cleanup.
 - Promotion candidates from past runs: sender mismatch, operation mutation after approval, executing-state reconciliation, and Evidence tamper detection may move into Full once their runtime contracts stabilize.
 - Known environment sensitivities:
   - Worker `Running` and `openclaw health` do not alone prove Matrix sync readiness; wait for the room join observation after restart.

@@ -1,5 +1,5 @@
 ARG AGENTTEAMS_WORKER_IMAGE=higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-worker@sha256:0e91141495af352660b956de49e0581886ac11b38de7381e46e43424b030fdff
-FROM ${AGENTTEAMS_WORKER_IMAGE}
+FROM ${AGENTTEAMS_WORKER_IMAGE} AS worker-base
 
 ARG TIANGONG_OTEL_EXPORTER_ENDPOINT=""
 
@@ -20,6 +20,8 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
 COPY agent/ ./agent/
 COPY observability/ ./observability/
 COPY plugin/ ./plugin/
+COPY roles/ ./roles/
+COPY practices/ ./practices/
 RUN npm run check-observability \
     && node -e 'import("./plugin/index.mjs").then((module) => { if (module.default?.id !== "tiangong-pi") process.exit(1); })'
 
@@ -33,3 +35,13 @@ ENV PATH="/opt/tiangong-worker/bin:/opt/tiangong-worker/node_modules/.bin:${PATH
     TIANGONG_OTEL_EXPORTER_ENDPOINT="${TIANGONG_OTEL_EXPORTER_ENDPOINT}"
 
 WORKDIR /root/hiclaw-fs
+
+FROM worker-base AS kernel
+COPY role-profiles/kernel.json /opt/tiangong-worker/profile.json
+RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role kernel
+
+FROM worker-base AS reviewer
+COPY role-profiles/reviewer.json /opt/tiangong-worker/profile.json
+RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role reviewer
+
+FROM kernel AS default
