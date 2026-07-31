@@ -70,11 +70,21 @@ kernel_profile="$(docker run --rm --entrypoint node "${IMAGE}" \
   /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role kernel)"
 reviewer_profile="$(docker run --rm --entrypoint node "${REVIEWER_IMAGE}" \
   /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role reviewer)"
+docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${REVIEWER_IMAGE}" \
+  --input-type=module -e '
+    const [{ ReviewerPracticeGate }, { PracticeRunService }, { createReviewerStateToolRegistry }] = await Promise.all([
+      import("./agent/gates/reviewer-practice-gate.mjs"),
+      import("./agent/practices/practice-run-service.mjs"),
+      import("./agent/work/state-tools.mjs"),
+    ]);
+    if (![ReviewerPracticeGate, PracticeRunService, createReviewerStateToolRegistry].every((value) => typeof value === "function")) process.exit(1);
+  '
 node -e '
   const [kernel, reviewer] = process.argv.slice(1).map(JSON.parse);
   if (kernel.roleId !== "kernel" || kernel.runtimeReady !== true) process.exit(1);
   if (reviewer.roleId !== "reviewer" || reviewer.runtimeReady !== false) process.exit(1);
   if (reviewer.toolIds.join(",") !== "start_work,extend_scope,read,check_completion,abandon_work") process.exit(1);
+  if (reviewer.materializedToolIds.join(",") !== "start_work,extend_scope,abandon_work") process.exit(1);
 ' "${kernel_profile}" "${reviewer_profile}"
 
 printf '[Tiangong] Worker image ready: %s (Node.js %s, pi %s, fixed kernel profile)\n' \

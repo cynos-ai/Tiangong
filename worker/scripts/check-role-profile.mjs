@@ -32,6 +32,9 @@ async function main() {
     roleSkillDigest: bundle.roleSkill.digest,
     methodologyDigests: bundle.practices.map((practice) => practice.methodology.digest),
     toolIds: bundle.profile.toolIds,
+    materializedToolIds: bundle.tools
+      .filter((tool) => tool.materializedRoleIds.includes(bundle.profile.roleId))
+      .map((tool) => tool.id),
     runtimeReady,
   })}\n`);
 }

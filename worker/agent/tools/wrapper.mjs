@@ -38,13 +38,14 @@ function pendingResult(decision, key, digest) {
   };
 }
 
-function evidenceContext(invocation, toolCallId, toolName, digest, key) {
+function evidenceContext(invocation, toolCallId, toolName, digest, key, category) {
   return {
     sessionId: invocation.sessionId,
     turnId: invocation.turnId,
     actorId: invocation.actor?.id ?? null,
     toolCallId,
     toolName,
+    executionCategory: category,
     operationDigest: digest,
     idempotencyKey: key,
   };
@@ -59,11 +60,18 @@ export function createGatedTool({
   pendingOperationStore,
   getInvocation,
   sideEffect = false,
+  category = sideEffect ? "external-side-effect" : "read-only",
+  executeOperation,
   replayResult = (result) => result,
   lifecycle,
 }) {
-  if (!definition?.name || typeof definition.execute !== "function") {
-    throw new TypeError("A tool definition with execute is required");
+  if (!definition?.name ||
+      (typeof definition.execute !== "function" && typeof executeOperation !== "function")) {
+    throw new TypeError("A tool definition and code-owned executor are required");
+  }
+  if (!["read-only", "state-transition", "external-side-effect"].includes(category) ||
+      sideEffect !== (category === "external-side-effect")) {
+    throw new TypeError("Tool execution category conflicts with side-effect semantics");
   }
   for (const [name, value] of Object.entries({ summarize, gate, evidence, getInvocation })) {
     if (!value) throw new TypeError(`${name} is required`);
@@ -93,7 +101,7 @@ export function createGatedTool({
         toolName: definition.name,
       });
 
-      let operation = await summarize(params);
+      let operation = await summarize(params, { toolCallId, invocation });
       const requestDigest = operationRequestDigest(operation);
       let digest = operationDigest(operation);
       let key = idempotencyKey({
@@ -118,7 +126,7 @@ export function createGatedTool({
         }
       }
       const common = {
-        ...evidenceContext(invocation, toolCallId, definition.name, digest, key),
+        ...evidenceContext(invocation, toolCallId, definition.name, digest, key, category),
         requestDigest,
       };
 
@@ -189,7 +197,19 @@ export function createGatedTool({
         });
         let result;
         try {
-          result = await definition.execute(toolCallId, params, signal, onUpdate, ctx);
+          result = executeOperation
+            ? await executeOperation({
+              toolCallId,
+              params,
+              signal,
+              onUpdate,
+              ctx,
+              operation,
+              actionDigest: digest,
+              invocationKey: key,
+              invocation,
+            })
+            : await definition.execute(toolCallId, params, signal, onUpdate, ctx);
           execution?.end("complete");
         } catch (error) {
           execution?.end(observabilityOutcome(signal), error);
@@ -201,11 +221,22 @@ export function createGatedTool({
             replayResult: replayResult(result),
           });
         }
-        await evidence.append({
-          type: "tool.execution.completed",
+        const stateReplay = category === "state-transition" && result?.details?.replayed === true;
+        const completionEvent = {
+          type: stateReplay ? "tool.execution.replayed" : "tool.execution.completed",
           ...common,
           status: "success",
-        });
+        };
+        if (category === "state-transition") {
+          Object.assign(completionEvent, {
+            stateEventId: result?.details?.stateEventId ?? null,
+            stateEventHash: result?.details?.stateEventHash ?? null,
+            stateSequence: result?.details?.stateSequence ?? null,
+            practiceRunId: result?.details?.runId ?? null,
+            runRevision: result?.details?.runRevision ?? null,
+          });
+        }
+        await evidence.append(completionEvent);
         if (sideEffect) {
           try {
             await lifecycle?.commit?.(prepared);

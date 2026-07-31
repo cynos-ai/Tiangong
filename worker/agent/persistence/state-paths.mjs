@@ -28,6 +28,7 @@ export function statePathsForSessionHash({ stateDirectory, sessionHash }) {
   }
   const roots = stateRootPaths(stateDirectory);
   const sessionDirectory = join(roots.sessionsRoot, sessionHash);
+  const practiceRunDirectory = join(roots.practiceRunsRoot, sessionHash);
   const evidenceDirectory = join(roots.evidenceRoot, sessionHash);
   const idempotencyDirectory = join(roots.idempotencyRoot, sessionHash);
   return Object.freeze({
@@ -35,7 +36,10 @@ export function statePathsForSessionHash({ stateDirectory, sessionHash }) {
     sessionHash,
     sessionDirectory,
     piDirectory: join(sessionDirectory, "pi"),
-    practiceRunDirectory: join(roots.practiceRunsRoot, sessionHash),
+    practiceRunDirectory,
+    practiceRunJournalPath: join(practiceRunDirectory, "events.jsonl"),
+    practiceRunSnapshotPath: join(practiceRunDirectory, "snapshot.json"),
+    practiceRunProtectedDirectory: join(practiceRunDirectory, "protected"),
     evidenceDirectory,
     evidenceFilePath: join(evidenceDirectory, "events.jsonl"),
     idempotencyDirectory,
