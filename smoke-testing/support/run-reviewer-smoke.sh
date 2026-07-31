@@ -250,7 +250,7 @@ if [[ "${SMOKE_LEVEL}" == "basic" ]]; then
   printf '%s\n' "${output}"
   mapfile -t paths < <(practice_paths "${target}" "${agent_root}")
   oracle="$(run_oracle "${paths[0]}" "${paths[1]}" "${paths[2]}" \
-    "${target}" "${digest}" - - done 1 1 all)"
+    "${target}" "${digest}" - - "done" 1 1 all)"
   printf '%s\n' "${oracle}"
   [[ "$(jq -r '.status' <<<"${oracle}")" == "done" &&
       "$(jq -r '.checkpoint' <<<"${oracle}")" == "passed" ]] || die "Reviewer Basic oracle failed."
@@ -375,7 +375,7 @@ else
       else
         printf '%s\n' "${complete_output}"
         if ! final_oracle="$(run_oracle "${paths[0]}" "${paths[1]}" "${paths[2]}" \
-            "${target_a}" "${digest_a}" "${target_b}" "${digest_b}" done 2 2 all-at-least-once)"; then
+            "${target_a}" "${digest_a}" "${target_b}" "${digest_b}" "done" 2 2 all-at-least-once)"; then
           diagnose_reviewer_state "${paths[0]}" "${paths[2]}"
           safety_oracle="$(run_oracle "${paths[0]}" "${paths[1]}" "${paths[2]}" \
             "${target_a}" "${digest_a}" "${target_b}" "${digest_b}" active 2 2 all-at-least-once)" ||
