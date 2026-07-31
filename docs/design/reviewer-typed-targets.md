@@ -1,7 +1,7 @@
 # Reviewer typed target 与 immutable snapshot 设计合同
 
 > **状态：** 公开设计合同，尚未实现；本文不描述当前已发布行为。
-> **基础：** [`agent-plane-foundation.md`](./agent-plane-foundation.md) 与已验证的 [`reviewer-next-action.md`](./reviewer-next-action.md)。
+> **基础：** [`agent-plane-foundation.md`](./agent-plane-foundation.md)、已验证的 [`reviewer-next-action.md`](./reviewer-next-action.md) 与已实现的 [`captured-artifact-store.md`](./captured-artifact-store.md)。
 > **范围：** 将 Reviewer 的显式文件 scope clean-cut 演进为 append-only typed targets，并在 target admission 时固化不可变 snapshot identity。
 > **保证不变：** `worker-local / static-review-only`；target、snapshot、Captured Artifact 和 `nextAction` 都不授予权限、不认证模型判断、不执行测试或修改 workspace。
 > **不是：** CapturedArtifactStore 实现、目录浏览工具、git executor、working-tree/index diff、远程 PR、search/fetch、vision、bash、Team Work 或兼容迁移。
@@ -21,7 +21,7 @@
 
 1. 单独评审 [`CapturedArtifactStore`](./captured-artifact-store.md) 的持久化、配额、Evidence、restart、tamper 和 retention 合同；
 2. 只有目标种类的 admission、consume backend 和固定 profile policy 全部存在时，才 materialize 该 target kind；
-3. directory inspection 和 local git inspection 各自保留独立工具、executor 与 smoke 合同。
+3. directory inspection 使用独立的 [`reviewer-directory-inspection.md`](./reviewer-directory-inspection.md) 合同；local git inspection仍保留独立工具、executor与smoke合同。
 
 本文定义稳定的 target/state seam，不提前实现这些后续能力。
 
@@ -269,23 +269,39 @@ journal 折叠后的 target 使用 exact schema：
 - `snapshot.source` 必须是 `runtime_captured`；`facts` 和 `artifacts` 使用 kind-owned exact schema；
 - captureVersion exact enum 为：file=`review-file-snapshot-v1`、directory=`review-directory-snapshot-v1`、commit=`review-commit-snapshot-v1`、git_diff=`review-git-diff-snapshot-v1`；每个 ID 冻结对应 path/workspace/text/producer contract，任一语义变化必须 bump ID，不能拼接版本字符串；
 - `capturedAt` 必须是 injected clock 产生的 UTC millisecond RFC 3339 `YYYY-MM-DDTHH:mm:ss.sssZ`；每个 target 在其 capture 完成时取一次，replay 使用 journal 原值；它不参与 content identity；
-- admission artifact content identity 使用 exact keys：
+- journal中的admission artifact binding exact为：
 
 ```json
 {
-  "purpose": "directory_manifest",
-  "contentDigest": "<sha256>",
-  "contentBytes": 1234,
-  "contentLines": 1,
-  "mediaType": "application/vnd.tiangong.directory-manifest+json;version=1",
-  "truncated": false,
-  "producerId": "review-directory-capture",
-  "producerVersion": 1,
-  "transformVersion": 1
+  "artifactRef": "artifact-v1/artifact-...",
+  "artifactRefDigest": "<sha256>",
+  "artifactKey": "<sha256>",
+  "storeBinding": {
+    "kind": "practice_target",
+    "sessionHash": "<sha256>",
+    "actorId": "@user:example.test",
+    "practiceRunId": "run-...",
+    "targetId": "target-...",
+    "invocationIdentity": "<sha256>",
+    "sourceOperationDigest": "<sha256>"
+  },
+  "ordinal": 0,
+  "encoding": "utf-8",
+  "contentIdentity": {
+    "purpose": "directory_manifest",
+    "contentDigest": "<sha256>",
+    "contentBytes": 1234,
+    "contentLines": 1,
+    "mediaType": "application/vnd.tiangong.directory-manifest+json;version=1",
+    "truncated": false,
+    "producerId": "review-directory-capture",
+    "producerVersion": 1,
+    "transformVersion": 1
+  }
 }
 ```
 
-`purpose` 是 kind-owned fixed enum；artifact identities 按 `purpose`、再按 `contentDigest` 排序且不得重复。当前 file admission 使用空 array，directory/commit/git_diff 各要求一个合同指定 purpose。
+binding、`storeBinding`和`contentIdentity`都拒绝missing/extra key。journal validator要求storeBinding的session/actor/run/target与journal envelope/origin/target exact一致，并独立复核invocation/source-operation digest schema；因此completion Evidence缺失时restart仍能从authoritative journal构造Store expected binding，而不是信任Store envelope自证。`artifactRef`只存在于journal/protected runtime；ref/key/storeBinding/ordinal/encoding用于Store exact read，不参与target snapshot identity。调用Store时，`expectedContentIdentity` exact构造为`{...contentIdentity,ordinal,encoding}`，不能把窄projection直接冒充Store DTO。`purpose`是kind-owned fixed enum；artifact bindings按`contentIdentity.purpose`、再按`contentIdentity.contentDigest`排序且不得重复。当前file admission使用空array，directory/commit/git_diff各要求一个合同指定purpose。
 - `snapshot.identity` exact formula：
 
 ```text
@@ -296,7 +312,7 @@ sha256(canonicalJson({
   descriptor,
   captureVersion,
   facts,
-  artifacts: artifactContentIdentities
+  artifacts: artifactBindings.map(binding => binding.contentIdentity)
 }))
 ```
 
@@ -365,7 +381,8 @@ scope 规则：
     "contentDigest": "<sha256>",
     "contentBytes": 1234,
     "contentLines": 42,
-    "encoding": "utf-8"
+    "encoding": "utf-8",
+    "requiredConsumeSegments": 1
   },
   "artifacts": []
 }
@@ -383,7 +400,7 @@ admission 必须：
 
 该算法证明两次受约束 capture 得到相同 bytes 并且 descriptor 在验证点仍绑定同一 inode；它不声称观察到发生后又恢复为相同 bytes 的所有 filesystem write。initial physical resolution 使用 §14 path errors；一旦 handle 已成功打开，最终 descriptor re-resolution 的 ENOENT/EACCES/symlink/different inode/type 都统一视为 observed race，返回 `TARGET_CHANGED_DURING_CAPTURE`，不重新映射为 initial path error。
 
-后续 consume 必须重新计算并匹配 admission `contentDigest/contentBytes/contentLines`。不匹配返回 `TARGET_CHANGED`，不得把新版本当作原 target。
+后续 consume 必须重新计算并匹配 admission `contentDigest/contentBytes/contentLines`。不匹配返回 `TARGET_CHANGED`，不得把新版本当作原 target。file admission另按directory capability合同的canonical maximal-chunk plan计算`requiredConsumeSegments`；首行不可消费或计划超过128 segments时拒绝，供final-scope全局可完成性检查。
 
 ### 6.2 `directory_snapshot`
 
@@ -394,6 +411,7 @@ snapshot facts：
   "facts": {
     "memberCount": 12,
     "totalContentBytes": 45678,
+    "requiredConsumeSegments": 12,
     "selectionDigest": "<sha256>",
     "manifestContentDigest": "<sha256>"
   },
@@ -415,13 +433,14 @@ canonical manifest 是 Captured Artifact，使用 media type `application/vnd.ti
       "contentDigest": "<sha256>",
       "contentBytes": 1234,
       "contentLines": 42,
-      "encoding": "utf-8"
+      "encoding": "utf-8",
+      "requiredConsumeSegments": 1
     }
   ]
 }
 ```
 
-目录 capture 不是 filesystem 级原子快照。backend 必须以以下有限合同形成稳定 capture：
+`requiredConsumeSegments`由directory capability合同的canonical maximal-chunk plan计算并限制，保证存在不超过Store artifact与selected-Evidence预算的完整消费路径；它不表示model已经消费。目录 capture 不是 filesystem 级原子快照。backend 必须以以下有限合同形成稳定 capture：
 
 1. 第一次稳定排序枚举 selected path set；
 2. 对每个 selected regular file 执行与 `file` 相同的 stable Buffer capture；
@@ -968,7 +987,10 @@ MAX_TARGET_DESCRIPTOR_BYTES=4KiB
 MAX_SCOPE_DESCRIPTOR_BYTES=32KiB
 MAX_PATH_BYTES=1KiB
 MAX_SELECTOR_PREFIXES_PER_TARGET=128
-MAX_DIRECTORY_MEMBERS=2048
+MAX_DIRECTORY_MEMBERS=960
+MAX_REQUIRED_CONSUME_SEGMENTS_PER_DIRECTORY=960
+MAX_REQUIRED_CONSUME_SEGMENTS_PER_RUN=960
+MAX_RUN_DIRECTORY_MANIFEST_BYTES=8MiB
 MAX_MEMBER_BYTES=2MiB
 MAX_TARGET_CONTENT_BYTES=16MiB
 MAX_RUN_TARGET_CONTENT_BYTES=16MiB
@@ -977,7 +999,7 @@ MAX_CONSUME_SEGMENTS_PER_RESOURCE=128
 MAX_SELECTED_EVENT_REFS=2048
 ```
 
-CapturedArtifactStore 或 Channel Plane 有更低 limit 时取更低值并同步公开合同。任何 aggregate limit 必须在 journal append 前验证；不允许截断后标记 complete。
+CapturedArtifactStore 或 Channel Plane 有更低 limit 时取更低值并同步公开合同。file+directory activation对existing final scope + candidates求和：`requiredConsumeSegments<=960`且directory manifest actual bytes总和≤8MiB；在journal append前失败为`CAPTURE_LIMIT_EXCEEDED`。任何aggregate limit必须在journal append前验证；不允许截断后标记complete。
 
 稳定错误至少包括：
 
