@@ -114,4 +114,16 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: ./scripts/check-dco.sh "${BASE_SHA}" "${HEAD_SHA}"
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          dco_base="${BASE_SHA}"
+          if [[ "${BASE_REF}" == "main" && "${HEAD_REF}" == release/* ]]; then
+            develop_sha="$(git rev-parse origin/develop)"
+            git merge-base --is-ancestor "${develop_sha}" "${HEAD_SHA}" || {
+              printf 'ERROR: release branch does not contain current develop.\n' >&2
+              exit 1
+            }
+            dco_base="${develop_sha}"
+          fi
+          ./scripts/check-dco.sh "${dco_base}" "${HEAD_SHA}"
