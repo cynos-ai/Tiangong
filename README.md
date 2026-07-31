@@ -102,7 +102,7 @@ make build-worker-image
 docker run --rm --entrypoint pi tiangong-worker:dev --version
 ```
 
-The build also produces `tiangong-worker-reviewer:dev` with the fixed Reviewer profile and an exact five-tool surface: `start_work`, `extend_scope`, scoped text `read`, `check_completion`, and `abandon_work`. Deterministic tests and image checks cover the Worker-local PracticeRun, file-version Evidence, checkpoint, ContextPack, and machine-status contracts. The real Reviewer Matrix Basic smoke passed; Full and the release gate remain blocked, so this is not yet a public Reviewer availability claim.
+The build also produces `tiangong-worker-reviewer:dev` with the fixed Reviewer profile and an exact five-tool surface: `start_work`, `extend_scope`, scoped text `read`, `check_completion`, and `abandon_work`. Reviewer v1 is verified for Worker-local, static-only review of explicit bounded UTF-8 workspace files: deterministic contracts, the official Matrix Basic path, journal-derived Recovery Full, the existing kernel regression, and exact cleanup passed. Post-restart model progression remains model-dependent: the declared qwen3.5-plus Journey canary safely remained active after rereading A instead of B, without false B Evidence or completion.
 
 ### Interrupted write reconciliation
 

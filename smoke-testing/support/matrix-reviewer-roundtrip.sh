@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 if (($# != 4)); then
-  printf 'Usage: %s basic|full-start|full-extend|full-read|full-check ROOM_ID WORKER_USER_ID NONCE\n' "$0" >&2
+  printf 'Usage: %s basic|recovery-start|recovery-extend|journey-read|journey-check ROOM_ID WORKER_USER_ID NONCE\n' "$0" >&2
   exit 2
 fi
 
@@ -12,8 +12,8 @@ readonly WORKER_USER_ID="$3"
 readonly NONCE="$4"
 readonly MANAGER_CONFIG="${HOME}/openclaw.json"
 readonly BASIC_TARGET="reviewer-basic-${NONCE}.txt"
-readonly FULL_A="reviewer-full-a-${NONCE}.txt"
-readonly FULL_B="reviewer-full-b-${NONCE}.txt"
+readonly RECOVERY_A="reviewer-recovery-a-${NONCE}.txt"
+readonly RECOVERY_B="reviewer-recovery-b-${NONCE}.txt"
 
 case "${ACTION}" in
   basic)
@@ -23,29 +23,29 @@ case "${ACTION}" in
     expected_revision="1"
     expected_files="1"
     ;;
-  full-start)
-    prompt="Start a Reviewer run and leave it active for a later scope expansion. Call start_work exactly once with practiceId review, objective 'Review the explicit smoke fixtures as their scope is appended', acceptanceCriteria containing exactly 'Confirm every file in the final scope contains its expected harmless smoke marker.', and files containing exactly ${FULL_A}. Then call read exactly once for the complete ${FULL_A}. Do not call extend_scope, check_completion, or abandon_work in this turn."
+  recovery-start)
+    prompt="Start a Reviewer run and leave it active for a later scope expansion. Call start_work exactly once with practiceId review, objective 'Review the explicit smoke fixtures as their scope is appended', acceptanceCriteria containing exactly 'Confirm every file in the final scope contains its expected harmless smoke marker.', and files containing exactly ${RECOVERY_A}. Then call read exactly once for the complete ${RECOVERY_A}. Do not call extend_scope, check_completion, or abandon_work in this turn."
     expected_state="active"
     expected_checkpoint="not-run"
     expected_revision="1"
     expected_files="1"
     ;;
-  full-extend)
-    prompt="Continue the existing active Reviewer run. Call extend_scope exactly once with files containing exactly ${FULL_B}. Do not call read, check_completion, start_work, or abandon_work in this turn; the Worker will restart before review continues."
+  recovery-extend)
+    prompt="Continue the existing active Reviewer run. Call extend_scope exactly once with files containing exactly ${RECOVERY_B}. Do not call read, check_completion, start_work, or abandon_work in this turn; the Worker will restart before review continues."
     expected_state="active"
     expected_checkpoint="not-run"
     expected_revision="2"
     expected_files="2"
     ;;
-  full-read)
-    prompt="Recover the existing active Reviewer run from machine state. Call read exactly once for the complete ${FULL_B}. Do not call start_work, extend_scope, check_completion, or abandon_work in this turn."
+  journey-read)
+    prompt="Recover the existing active Reviewer run from machine state. Call read exactly once for the complete ${RECOVERY_B}. Do not call start_work, extend_scope, check_completion, or abandon_work in this turn."
     expected_state="active"
     expected_checkpoint="not-run"
     expected_revision="2"
     expected_files="2"
     ;;
-  full-check)
-    prompt="Complete the existing active Reviewer run. Call check_completion exactly once. Its completionClaim must use criterion-1 as addressed, scope files exactly [${FULL_A}, ${FULL_B}] in that order, outcome accept, a nonempty synopsis, no observations, exactly one STATIC_REVIEW_ONLY limitation with nonempty detail, and no nextActions. Do not call start_work, extend_scope, read, or abandon_work."
+  journey-check)
+    prompt="Complete the existing active Reviewer run. Call check_completion exactly once. Its completionClaim must use criterion-1 as addressed, scope files exactly [${RECOVERY_A}, ${RECOVERY_B}] in that order, outcome accept, a nonempty synopsis, no observations, exactly one STATIC_REVIEW_ONLY limitation with nonempty detail, and no nextActions. Do not call start_work, extend_scope, read, or abandon_work."
     expected_state="done"
     expected_checkpoint="passed"
     expected_revision="2"

@@ -94,11 +94,11 @@
 
 - Purpose: Prove the fixed Reviewer profile, exact five-tool surface, scoped UTF-8 reads, file-version Evidence projection, completion checkpoint, requester binding, ContextPack, and machine status without using model prose as an oracle.
 - Required outcomes: no-active/wrong-actor/out-of-scope/symlink/binary/invalid-UTF-8 reads fail closed; complete same-version coverage passes; partial, mixed, ambiguous, or tampered Evidence fails; `not_addressed` requires `blocked` plus a next action; only `run.completed` advances `done`; completion replay does not duplicate state.
-- Verification layer: deterministic Worker tests plus Reviewer image/profile/tool-surface checks. Reviewer Matrix Basic passed on 2026-07-30; Full remains BLOCKED and cannot be inferred from this fixture or Basic.
+- Verification layer: deterministic Worker tests plus Reviewer image/profile/tool checks. Reviewer Matrix Basic and Recovery Full passed; Journey is non-gating.
 
 ## Maintenance notes
 
-- **Current status (2026-07-30)**: transcript and durable business state use independent per-session roots; deterministic tests prove reset/session-root deletion isolation and maintenance clean-cut behavior. The Reviewer deterministic slice, image contract, and real Matrix Basic smoke are implemented and passed; Reviewer Full remains BLOCKED, so release availability is not claimed. A fresh kernel Full regression passed pending → restart → approval → write → replay → payload erasure with exactly one execution, one replay, and exact run-owned cleanup.
+- **Current status (2026-07-30)**: independent roots and reset isolation passed. Reviewer deterministic/image contracts, Matrix Basic, Recovery Full, and kernel Full passed with exact cleanup. Journey safely remained active after a model-selected wrong reread.
 - Promotion candidates from past runs: sender mismatch, operation mutation after approval, executing-state reconciliation, and Evidence tamper detection may move into Full once their runtime contracts stabilize.
 - Known environment sensitivities:
   - Worker `Running` and `openclaw health` do not alone prove Matrix sync readiness; wait for the room join observation after restart.

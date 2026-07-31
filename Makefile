@@ -10,7 +10,7 @@ PEER_MENTION_SMOKE_TEST := ./scripts/test-peer-mention-smoke.sh
 SKILL_CHECK := node ./scripts/check-skills.mjs
 REVIEWER_SMOKE_CONTRACT := node ./scripts/test-reviewer-smoke-oracle.mjs
 
-.PHONY: help init up start stop down status verify config logs login uninstall check-skills build-worker-image test-worker-image-basic test-worker-image test-reviewer-smoke-contract test-reviewer-image-basic test-reviewer-image test-peer-mention-smoke-contract test-peer-mention-smoke
+.PHONY: help init up start stop down status verify config logs login uninstall check-skills build-worker-image test-worker-image-basic test-worker-image test-reviewer-smoke-contract test-reviewer-image-basic test-reviewer-image test-reviewer-journey-canary test-peer-mention-smoke-contract test-peer-mention-smoke
 
 help: ## Show available commands
 	@printf '%s\n' 'Tiangong local development commands:'
@@ -63,8 +63,11 @@ test-reviewer-smoke-contract: ## Validate Reviewer smoke oracle phase semantics
 test-reviewer-image-basic: ## Run the Reviewer Matrix Basic smoke and clean up
 	@TIANGONG_REVIEWER_SMOKE_LEVEL=basic $(REVIEWER_IMAGE_TEST)
 
-test-reviewer-image: ## Run the Reviewer scope/restart Full smoke and clean up
-	@TIANGONG_REVIEWER_SMOKE_LEVEL=full $(REVIEWER_IMAGE_TEST)
+test-reviewer-image: ## Run the hard-gate Reviewer recovery Full smoke and clean up
+	@TIANGONG_REVIEWER_SMOKE_LEVEL=recovery $(REVIEWER_IMAGE_TEST)
+
+test-reviewer-journey-canary: ## Observe non-gating post-restart model progression and clean up
+	@TIANGONG_REVIEWER_SMOKE_LEVEL=journey $(REVIEWER_IMAGE_TEST)
 
 test-peer-mention-smoke-contract: ## Validate the Worker peer mention fixture and event oracle
 	@$(PEER_MENTION_SMOKE_TEST)

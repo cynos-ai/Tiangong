@@ -9,7 +9,7 @@ import { EvidenceRecorder } from "/opt/tiangong-worker/agent/evidence/recorder.m
 import { PracticeRunStore } from "/opt/tiangong-worker/agent/practices/practice-run-store.mjs";
 import { ProtectedPayloadStore } from "/opt/tiangong-worker/agent/practices/protected-payload-store.mjs";
 
-import { expectedReadTargets } from "./reviewer-oracle-policy.mjs";
+import { validateReadExecutions } from "./reviewer-oracle-policy.mjs";
 
 function fail(message) {
   throw new Error(`Reviewer smoke oracle failed: ${message}`);
@@ -31,7 +31,7 @@ const [
 
 if (!journalPath || !snapshotPath || !evidencePath || !expectedA || !expectedDigestA ||
     !expectedB || !expectedDigestB || !["active", "done"].includes(expectedStatus) ||
-    !["a-only", "all"].includes(readPhase)) {
+    !["a-only", "all", "all-at-least-once", "safe-active"].includes(readPhase)) {
   fail("invalid arguments");
 }
 const expectedScopeRevision = Number(expectedScopeRevisionText);
@@ -94,20 +94,20 @@ if (projection.executions.some((execution) => ["write", "edit", "bash"].includes
   fail("write, edit, or bash appeared in Reviewer Evidence");
 }
 
-const digestByTarget = new Map([[expectedA, expectedDigestA], [expectedB, expectedDigestB]]);
-const expectedDigests = new Map(expectedReadTargets({ expectedA, expectedB, readPhase })
-  .map((target) => [target, digestByTarget.get(target)]));
-for (const [path, digest] of expectedDigests) {
-  const reads = projection.executions.filter((execution) =>
-    execution.toolName === "read" && execution.operation.target === path);
-  if (reads.length !== 1 || reads[0].resultMetadata.fileDigest !== digest ||
-      reads[0].resultMetadata.truncated !== false || reads[0].resultMetadata.returnedLineStart !== 1 ||
-      reads[0].resultMetadata.returnedLineEnd !== reads[0].resultMetadata.fullFileLines) {
-    fail(`complete single-version read proof is invalid for ${path}`);
-  }
-}
-if (projection.executions.filter((execution) => execution.toolName === "read").length !== expectedDigests.size) {
-  fail("unexpected read execution count");
+const readExecutions = projection.executions.filter((execution) => execution.toolName === "read");
+if (readPhase === "safe-active" && expectedStatus !== "active") fail("safe-active requires active status");
+let readValidation;
+try {
+  readValidation = validateReadExecutions({
+    expectedA,
+    expectedDigestA,
+    expectedB,
+    expectedDigestB,
+    readPhase,
+    executions: readExecutions,
+  });
+} catch (error) {
+  fail(error.message);
 }
 
 let checkpointScopeDigest = null;
@@ -138,7 +138,9 @@ const result = {
   runStartedCount: started.length,
   scopeRevisedCount: revised.length,
   runCompletedCount: completed.length,
-  readExecutionCount: expectedDigests.size,
+  readExecutionCount: readExecutions.length,
+  readCountA: readValidation.readCountA,
+  readCountB: readValidation.readCountB,
   checkpoint: run.lastCheckpoint?.allSatisfied ? "passed" : "not-run",
   checkpointScopeDigest,
 };

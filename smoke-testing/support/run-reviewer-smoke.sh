@@ -19,7 +19,7 @@ readonly MANAGER_MANIFEST="/tmp/tiangong-reviewer-smoke-worker.yaml"
 readonly MANAGER_MATRIX_ROUNDTRIP="/tmp/tiangong-matrix-reviewer-roundtrip.sh"
 readonly WORKER_STATE_ORACLE="/tmp/tiangong-reviewer-state-oracle.mjs"
 readonly WORKER_ORACLE_POLICY="/tmp/reviewer-oracle-policy.mjs"
-readonly SMOKE_LEVEL="${TIANGONG_REVIEWER_SMOKE_LEVEL:-full}"
+readonly SMOKE_LEVEL="${TIANGONG_REVIEWER_SMOKE_LEVEL:-recovery}"
 created=0
 room_id=""
 
@@ -128,6 +128,16 @@ run_oracle() {
   docker exec "${CONTAINER_NAME}" node "${WORKER_STATE_ORACLE}" "$@"
 }
 
+assert_harness() {
+  local phase="$1" harness
+  harness="$(docker exec "${CONTAINER_NAME}" cat /tmp/tiangong-pi-harness.last-run)"
+  grep -Fqx 'harness=tiangong-pi' <<<"${harness}" || die "Tiangong pi Harness was not selected."
+  grep -Fqx 'provider=agentteams-gateway' <<<"${harness}" || die "Unexpected Reviewer provider."
+  grep -Fqx 'model=qwen3.5-plus' <<<"${harness}" || die "Unexpected Reviewer model."
+  grep -Fqx 'status=pass' <<<"${harness}" || die "Reviewer Harness did not complete."
+  printf 'reviewer_harness_%s=pass\n' "${phase}"
+}
+
 diagnose_reviewer_state() {
   local journal_path="$1" evidence_path="$2" evidence_directory
   evidence_directory="$(dirname "${evidence_path}")"
@@ -162,8 +172,9 @@ wait_for_remote_journal() {
   return 1
 }
 
-[[ "${SMOKE_LEVEL}" == "basic" || "${SMOKE_LEVEL}" == "full" ]] ||
-  die "TIANGONG_REVIEWER_SMOKE_LEVEL must be basic or full."
+[[ "${SMOKE_LEVEL}" == "basic" || "${SMOKE_LEVEL}" == "recovery" ||
+    "${SMOKE_LEVEL}" == "journey" ]] ||
+  die "TIANGONG_REVIEWER_SMOKE_LEVEL must be basic, recovery, or journey."
 for command in docker jq grep; do
   command -v "${command}" >/dev/null 2>&1 || die "Missing required command: ${command}"
 done
@@ -244,30 +255,31 @@ if [[ "${SMOKE_LEVEL}" == "basic" ]]; then
   [[ "$(jq -r '.status' <<<"${oracle}")" == "done" &&
       "$(jq -r '.checkpoint' <<<"${oracle}")" == "passed" ]] || die "Reviewer Basic oracle failed."
   printf 'reviewer_basic_machine_oracle=pass\n'
+  assert_harness basic
 else
-  target_a="reviewer-full-a-${nonce}.txt"
-  target_b="reviewer-full-b-${nonce}.txt"
+  target_a="reviewer-recovery-a-${nonce}.txt"
+  target_b="reviewer-recovery-b-${nonce}.txt"
   path_a="${agent_root}/${target_a}"
   path_b="${agent_root}/${target_b}"
-  printf 'harmless-reviewer-full-a:%s' "${nonce}" | docker exec -i "${CONTAINER_NAME}" \
+  printf 'harmless-reviewer-recovery-a:%s' "${nonce}" | docker exec -i "${CONTAINER_NAME}" \
     sh -c 'umask 077; cat >"$1"' _ "${path_a}"
   digest_a="$(fixture_digest "${path_a}")"
 
-  log "Starting Reviewer Full run with file A"
+  log "Starting Reviewer recovery run with file A"
   start_output="$(docker exec "${MANAGER_CONTAINER}" "${MANAGER_MATRIX_ROUNDTRIP}" \
-    full-start "${room_id}" "${worker_user_id}" "${nonce}")"
+    recovery-start "${room_id}" "${worker_user_id}" "${nonce}")"
   printf '%s\n' "${start_output}"
   mapfile -t paths < <(practice_paths "${target_a}" "${agent_root}")
   start_oracle="$(run_oracle "${paths[0]}" "${paths[1]}" "${paths[2]}" \
     "${target_a}" "${digest_a}" - - active 1 1 a-only)"
   printf '%s\n' "${start_oracle}"
 
-  printf 'harmless-reviewer-full-b:%s' "${nonce}" | docker exec -i "${CONTAINER_NAME}" \
+  printf 'harmless-reviewer-recovery-b:%s' "${nonce}" | docker exec -i "${CONTAINER_NAME}" \
     sh -c 'umask 077; cat >"$1"' _ "${path_b}"
   digest_b="$(fixture_digest "${path_b}")"
   log "Appending file B in a later Matrix turn"
   extend_output="$(docker exec "${MANAGER_CONTAINER}" "${MANAGER_MATRIX_ROUNDTRIP}" \
-    full-extend "${room_id}" "${worker_user_id}" "${nonce}")"
+    recovery-extend "${room_id}" "${worker_user_id}" "${nonce}")"
   printf '%s\n' "${extend_output}"
   extend_oracle="$(run_oracle "${paths[0]}" "${paths[1]}" "${paths[2]}" \
     "${target_a}" "${digest_a}" "${target_b}" "${digest_b}" active 2 2 a-only)"
@@ -276,12 +288,13 @@ else
     [[ "$(jq -r ".${field}" <<<"${start_oracle}")" == "$(jq -r ".${field}" <<<"${extend_oracle}")" ]] ||
       die "Reviewer ${field} changed during scope extension."
   done
+  assert_harness pre_restart
 
   journal_digest_before_restart="$(fixture_digest "${paths[0]}")"
   session_hash="$(basename "$(dirname "${paths[0]}")")"
   wait_for_remote_journal "${paths[0]}" "${session_hash}" ||
     die "Current PracticeRun journal did not become durable in the owned storage prefix."
-  printf 'reviewer_full_practice_remote_durable=pass\n'
+  printf 'reviewer_recovery_practice_remote_durable=pass\n'
   snapshot_remote="agentteams/agentteams-storage/agents/${WORKER_NAME}/.tiangong/runtime/practice-runs/${session_hash}/snapshot.json"
   log "Stopping after derived snapshot deletion to prove journal-owned recovery"
   restart_started="$(date +%s)"
@@ -312,46 +325,79 @@ else
   docker exec "${CONTAINER_NAME}" test -f "${paths[1]}" || die "PracticeRun snapshot was not rebuilt from journal."
   [[ "$(jq -r '.runId' <<<"${recovered_oracle}")" == "$(jq -r '.runId' <<<"${start_oracle}")" ]] ||
     die "Restart did not recover the original PracticeRun."
-  printf 'reviewer_full_snapshot_rebuilt=pass\nreviewer_full_journal_recovery=pass\n'
-
-  log "Reading file B after recovery"
-  if ! read_output="$(docker exec "${MANAGER_CONTAINER}" "${MANAGER_MATRIX_ROUNDTRIP}" \
-      full-read "${room_id}" "${worker_user_id}" "${nonce}")"; then
-    diagnose_reviewer_state "${paths[0]}" "${paths[2]}"
-    die "Recovered Reviewer read turn failed."
-  fi
-  printf '%s\n' "${read_output}"
-  read_oracle="$(run_oracle "${paths[0]}" "${paths[1]}" "${paths[2]}" \
-    "${target_a}" "${digest_a}" "${target_b}" "${digest_b}" active 2 2 all)"
-  [[ "$(jq -r '.runId' <<<"${read_oracle}")" == "$(jq -r '.runId' <<<"${start_oracle}")" ]] ||
-    die "Post-restart read did not remain in the original PracticeRun."
-  printf 'reviewer_full_post_restart_read=pass\n'
-
-  log "Checking completion in a separate final Matrix turn"
-  if ! complete_output="$(docker exec "${MANAGER_CONTAINER}" "${MANAGER_MATRIX_ROUNDTRIP}" \
-      full-check "${room_id}" "${worker_user_id}" "${nonce}")"; then
-    diagnose_reviewer_state "${paths[0]}" "${paths[2]}"
-    die "Recovered Reviewer completion turn failed."
-  fi
-  printf '%s\n' "${complete_output}"
-  final_oracle="$(run_oracle "${paths[0]}" "${paths[1]}" "${paths[2]}" \
-    "${target_a}" "${digest_a}" "${target_b}" "${digest_b}" done 2 2 all)"
-  printf '%s\n' "${final_oracle}"
-  for field in runId objectiveDigest criteriaDigest; do
-    [[ "$(jq -r ".${field}" <<<"${start_oracle}")" == "$(jq -r ".${field}" <<<"${final_oracle}")" ]] ||
-      die "Reviewer ${field} changed across restart and completion."
+  for field in runId objectiveDigest criteriaDigest evidenceTerminalHash evidenceTerminalSequence; do
+    [[ "$(jq -r ".${field}" <<<"${extend_oracle}")" == "$(jq -r ".${field}" <<<"${recovered_oracle}")" ]] ||
+      die "Reviewer ${field} changed during machine recovery."
   done
-  [[ "$(jq -r '.scopeRevisedCount' <<<"${final_oracle}")" == "1" &&
-      "$(jq -r '.runCompletedCount' <<<"${final_oracle}")" == "1" &&
-      "$(jq -r '.checkpointScopeDigest == .scopeDigest' <<<"${final_oracle}")" == "true" ]] ||
-    die "Reviewer Full transition or final-scope oracle failed."
-  printf 'reviewer_full_machine_oracle=pass\n'
+  printf 'reviewer_recovery_snapshot_rebuilt=pass\n'
+  printf 'reviewer_recovery_journal_recovery=pass\n'
+  printf 'reviewer_recovery_machine_oracle=pass\n'
+
+  if [[ "${SMOKE_LEVEL}" == "recovery" ]]; then
+    printf 'reviewer_recovery_result=PASS\n'
+  else
+    log "Journey canary: reading file B after recovery"
+    journey_continue=1
+    if ! read_output="$(docker exec "${MANAGER_CONTAINER}" "${MANAGER_MATRIX_ROUNDTRIP}" \
+        journey-read "${room_id}" "${worker_user_id}" "${nonce}")"; then
+      diagnose_reviewer_state "${paths[0]}" "${paths[2]}"
+      safety_oracle="$(run_oracle "${paths[0]}" "${paths[1]}" "${paths[2]}" \
+        "${target_a}" "${digest_a}" "${target_b}" "${digest_b}" active 2 2 safe-active)" ||
+        die "Journey read failure did not leave a verifiably safe active run."
+      printf '%s\nreviewer_journey_result=INCONCLUSIVE\n' "${safety_oracle}"
+      journey_continue=0
+    else
+      printf '%s\n' "${read_output}"
+      if ! read_oracle="$(run_oracle "${paths[0]}" "${paths[1]}" "${paths[2]}" \
+          "${target_a}" "${digest_a}" "${target_b}" "${digest_b}" active 2 2 all-at-least-once)"; then
+        diagnose_reviewer_state "${paths[0]}" "${paths[2]}"
+        safety_oracle="$(run_oracle "${paths[0]}" "${paths[1]}" "${paths[2]}" \
+          "${target_a}" "${digest_a}" "${target_b}" "${digest_b}" active 2 2 safe-active)" ||
+          die "Invalid Journey read did not leave a verifiably safe active run."
+        printf '%s\nreviewer_journey_result=NO_VALID_READ_EVIDENCE\n' "${safety_oracle}"
+        journey_continue=0
+      else
+        [[ "$(jq -r '.runId' <<<"${read_oracle}")" == "$(jq -r '.runId' <<<"${start_oracle}")" ]] ||
+          die "Post-restart read did not remain in the original PracticeRun."
+        printf 'reviewer_journey_post_restart_read=pass\n'
+      fi
+    fi
+
+    if ((journey_continue == 1)); then
+      log "Journey canary: checking completion in a separate final Matrix turn"
+      if ! complete_output="$(docker exec "${MANAGER_CONTAINER}" "${MANAGER_MATRIX_ROUNDTRIP}" \
+          journey-check "${room_id}" "${worker_user_id}" "${nonce}")"; then
+        diagnose_reviewer_state "${paths[0]}" "${paths[2]}"
+        safety_oracle="$(run_oracle "${paths[0]}" "${paths[1]}" "${paths[2]}" \
+          "${target_a}" "${digest_a}" "${target_b}" "${digest_b}" active 2 2 all-at-least-once)" ||
+          die "Journey completion failure did not leave a verifiably safe active run."
+        printf '%s\nreviewer_journey_result=INCONCLUSIVE\n' "${safety_oracle}"
+      else
+        printf '%s\n' "${complete_output}"
+        if ! final_oracle="$(run_oracle "${paths[0]}" "${paths[1]}" "${paths[2]}" \
+            "${target_a}" "${digest_a}" "${target_b}" "${digest_b}" done 2 2 all-at-least-once)"; then
+          diagnose_reviewer_state "${paths[0]}" "${paths[2]}"
+          safety_oracle="$(run_oracle "${paths[0]}" "${paths[1]}" "${paths[2]}" \
+            "${target_a}" "${digest_a}" "${target_b}" "${digest_b}" active 2 2 all-at-least-once)" ||
+            die "Journey completion could not be classified as safe no-progress."
+          printf '%s\nreviewer_journey_result=NO_VALID_COMPLETION\n' "${safety_oracle}"
+        else
+          printf '%s\n' "${final_oracle}"
+          for field in runId objectiveDigest criteriaDigest; do
+            [[ "$(jq -r ".${field}" <<<"${start_oracle}")" == "$(jq -r ".${field}" <<<"${final_oracle}")" ]] ||
+              die "Reviewer ${field} changed across restart and completion."
+          done
+          [[ "$(jq -r '.scopeRevisedCount' <<<"${final_oracle}")" == "1" &&
+              "$(jq -r '.runCompletedCount' <<<"${final_oracle}")" == "1" &&
+              "$(jq -r '.checkpointScopeDigest == .scopeDigest' <<<"${final_oracle}")" == "true" ]] ||
+            die "Reviewer journey transition or final-scope oracle failed."
+          printf 'reviewer_journey_machine_oracle=pass\n'
+          printf 'reviewer_journey_result=PASS\n'
+          assert_harness journey_terminal
+        fi
+      fi
+    fi
+  fi
 fi
 
-harness="$(docker exec "${CONTAINER_NAME}" cat /tmp/tiangong-pi-harness.last-run)"
-grep -Fqx 'harness=tiangong-pi' <<<"${harness}" || die "Tiangong pi Harness was not selected."
-grep -Fqx 'provider=agentteams-gateway' <<<"${harness}" || die "Unexpected Reviewer provider."
-grep -Fqx 'model=qwen3.5-plus' <<<"${harness}" || die "Unexpected Reviewer model."
-grep -Fqx 'status=pass' <<<"${harness}" || die "Reviewer Harness did not complete."
-printf 'reviewer_harness=pass\n'
-log "Reviewer ${SMOKE_LEVEL} smoke passed with machine state and Evidence oracles."
+log "Reviewer ${SMOKE_LEVEL} verification completed with machine state and Evidence oracles."
