@@ -3,7 +3,7 @@
 Tiangong is an evidence-backed AI software engineering team built on [AgentTeams](https://github.com/agentscope-ai/AgentTeams).
 
 > [!NOTE]
-> The project is being initialized. The current runnable scope bootstraps the upstream AgentTeams collaboration layer and provides a minimal Matrix-to-pi Worker runtime. The broader Tiangong product experience is not implemented yet.
+> v0.1.0 is Tiangong's first public source release. It provides the documented local Worker runtime and Reviewer v1 for static review of explicit bounded UTF-8 workspace files. Directory/git/PR review, test execution, workspace repair, Team verification, and the broader multi-role product experience are not implemented. See the [release notes](docs/releases/v0.1.0.md) and [changelog](CHANGELOG.md).
 
 ## Vision
 
