@@ -1,0 +1,7 @@
+# Local configuration and generated runtime state
+.env
+.env.*
+!.env.example
+.runtime/
+node_modules/
+npm-debug.log*

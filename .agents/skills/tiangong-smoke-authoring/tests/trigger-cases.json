@@ -1,0 +1,12 @@
+{
+  "shouldTrigger": [
+    "Write Basic and Full smoke scenarios for approval rejection.",
+    "Create a focused regression plan for the Evidence selection bug.",
+    "Review the cleanup proof and truth-table coverage in this smoke scenario."
+  ],
+  "shouldNotTrigger": [
+    "Execute make test-worker-image now.",
+    "Implement the approval state machine.",
+    "Audit a general Agent Skill package."
+  ]
+}

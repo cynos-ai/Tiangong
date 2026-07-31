@@ -1,0 +1,20 @@
+{
+  "id": "tiangong-pi",
+  "name": "Tiangong pi Harness",
+  "description": "Runs AgentTeams Worker turns through Tiangong's controlled pi SDK runtime.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "observability": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["enabled"],
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "endpoint": { "type": "string", "maxLength": 2048 }
+        }
+      }
+    }
+  }
+}
