@@ -80,7 +80,7 @@ The Full smoke additionally asks pi to propose a constrained workspace write, ve
 
 Cleanup removes the temporary Worker and the exact MinIO prefix owned by the reserved smoke identity. It never operates on another Worker prefix. Provider credentials are not copied into the image, repository, model configuration, session, or Evidence.
 
-The Worker resource retains AgentTeams' supported `openclaw` runtime, Node.js version, entrypoint, and gateway. A narrow `openclaw` command wrapper injects the Tiangong plugin path into the generated configuration and then delegates to the upstream executable. OpenClaw continues to own Matrix, configuration retrieval, storage sync, re-login, readiness, channel policy, and reply delivery. Tiangong owns the pi harness and its future evidence, approval, Concern, and Gate behavior.
+The Worker resource retains AgentTeams' supported `openclaw` runtime, Node.js version, entrypoint, and gateway. A narrow `openclaw` command wrapper injects the Tiangong plugin path into the generated configuration and then delegates to the upstream executable. OpenClaw continues to own Matrix, configuration retrieval, storage sync, re-login, readiness, channel policy, and reply delivery. Tiangong owns the pi harness and its Evidence, approval, advisory next-action, and Gate behavior.
 
 Optional, backend-neutral Worker tracing is documented in [`docs/observability.md`](./docs/observability.md). It is disabled by default, exports only allowlisted sanitized OpenTelemetry spans, and remains diagnostic telemetry rather than authorization or hash-chained Evidence. The bounded [`peer transport diagnostic`](./docs/peer-transport-diagnostic.md) keeps exact ping/pong markers in deterministic Worker code while deriving targets only from authenticated effective Matrix allowlists; it is transport-only and is not Team Work or Evidence.
 
@@ -102,7 +102,7 @@ make build-worker-image
 docker run --rm --entrypoint pi tiangong-worker:dev --version
 ```
 
-The build also produces `tiangong-worker-reviewer:dev` with the fixed Reviewer profile and an exact five-tool surface: `start_work`, `extend_scope`, scoped text `read`, `check_completion`, and `abandon_work`. Reviewer v1 is verified for Worker-local, static-only review of explicit bounded UTF-8 workspace files: deterministic contracts, the official Matrix Basic path, journal-derived Recovery Full, the existing kernel regression, and exact cleanup passed. Post-restart model progression remains model-dependent: the declared qwen3.5-plus Journey canary safely remained active after rereading A instead of B, without false B Evidence or completion.
+The build also produces `tiangong-worker-reviewer:dev` with the fixed Reviewer profile and an exact five-tool surface: `start_work`, `extend_scope`, scoped text `read`, `check_completion`, and `abandon_work`. Reviewer v1 is verified for Worker-local, static-only review of explicit bounded UTF-8 workspace files: deterministic contracts, the official Matrix Basic path, journal-derived Recovery Full, the existing kernel regression, and exact cleanup passed. Its ContextPack v2 now derives a structured advisory `nextAction` from the active run and validated read Evidence; this does not grant authority, execute tools, complete work, or guarantee model progress. In the declared focused qwen3.5-plus canary, the model still safely reread A instead of B, leaving the original run active without false B Evidence or completion.
 
 ### Interrupted write reconciliation
 

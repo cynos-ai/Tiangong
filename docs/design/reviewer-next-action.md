@@ -1,6 +1,6 @@
 # Reviewer nextAction 扩展设计合同
 
-> **状态：** 设计合同（待实现与验证）。本文不描述当前已发布行为。
+> **状态：** 已实现并通过确定性、Reviewer Basic 与 focused Journey 验证；Journey 安全分类为 `NO_VALID_READ_EVIDENCE`，不构成模型活性保证。
 > **基础：** [`agent-plane-foundation.md`](./agent-plane-foundation.md) 定义并已实现的 Reviewer v1。
 > **范围：** 为 Reviewer 的 per-turn ContextPack 增加由 Machine Evidence 确定性派生的 advisory `nextAction`。
 > **保证不变：** `worker-local / static-review-only`；`nextAction` 不授予权限、不修改状态、不推进完成。
@@ -10,14 +10,13 @@
 
 本文是 Reviewer v1 的窄增量合同。实现前后都必须继续遵守根目录 `AGENTS.md` 及 `docs/rules/` 下的 implementation、verification、security-and-evidence 和 worker-runtime 规则。
 
-在本合同实现并通过验证前：
+本合同已实现并形成以下增量边界：
 
-- Reviewer v1 的现有 ContextPack 和公开限制仍是当前事实；
-- 本文不得被 README、release notes 或用户界面表述为已实现能力；
-- 不得用 prompt、Skill 或 smoke 文本模拟 `nextAction`；
-- 不得顺手加入 typed target、Captured Artifact、目录/git 或其它后续能力。
+- Reviewer ContextPack 使用本文定义的 schema version 2；
+- `nextAction` 由代码和验证过的 Machine Evidence 投影生成，不由 prompt、Skill 或 smoke 文本模拟；
+- typed target、Captured Artifact、目录/git 或其它后续能力仍不在本切片内。
 
-实现并验证后，本文仅对 `agent-plane-foundation.md` 的以下 v1 设计点形成增量覆盖：
+本文仅对 `agent-plane-foundation.md` 的以下 v1 设计点形成增量覆盖：
 
 - §6.1 “v1 不实现 Concern runner”：仍不实现通用 runner，但增加 review practice-owned 的纯函数式 `nextAction`；
 - §12.2 ContextPack：从 schema version 1 clean-cut 更新为本文定义的 version 2；
