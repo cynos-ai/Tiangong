@@ -2,6 +2,18 @@
 
 All notable changes to Tiangong are documented here. Tiangong follows Semantic Versioning and uses `v0.y.z` while public contracts are stabilizing.
 
+## [Unreleased]
+
+### Added
+
+- Reviewer ContextPack v2 with a structured advisory `nextAction` derived from the active PracticeRun and validated read Evidence.
+- One practice-owned read-coverage projection shared by completion checkpoint and next-action guidance.
+
+### Verification
+
+- Deterministic next-action, fail-closed Evidence, checkpoint regression, restart reconstruction, Reviewer Basic, image/profile, and exact cleanup checks passed.
+- The one declared focused Journey canary safely returned `NO_VALID_READ_EVIDENCE`: the model reread A instead of B without false B Evidence, checkpoint, completion, mutation, or a new run.
+
 ## [0.1.0] - 2026-07-31
 
 ### Added

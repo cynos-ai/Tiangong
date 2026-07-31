@@ -198,6 +198,7 @@ export class TiangongAgentRuntime {
         ...(practiceService ? [createReviewerContextExtension({
           service: practiceService,
           turns,
+          evidence,
           profileDigest: profileBundle.profileDigest,
         })] : []),
       ],

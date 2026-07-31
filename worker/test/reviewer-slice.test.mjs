@@ -6,12 +6,17 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { loadRoleProfileBundle } from "../agent/config/role-profile.mjs";
-import { buildReviewerContextPack } from "../agent/context/reviewer-context.mjs";
-import { projectReviewEvidence } from "../agent/evidence/projection.mjs";
+import {
+  buildReviewerContextPack,
+  createReviewerContextExtension,
+} from "../agent/context/reviewer-context.mjs";
+import { evidenceBoundary, projectReviewEvidence } from "../agent/evidence/projection.mjs";
 import { EvidenceRecorder } from "../agent/evidence/recorder.mjs";
 import { ReviewerPracticeGate } from "../agent/gates/reviewer-practice-gate.mjs";
 import { statePathsForSession } from "../agent/persistence/state-paths.mjs";
 import { PracticeRunService } from "../agent/practices/practice-run-service.mjs";
+import { deriveReviewNextAction } from "../agent/practices/review-next-action.mjs";
+import { projectReviewReadCoverage } from "../agent/practices/review-read-coverage.mjs";
 import { TiangongAgentRuntime } from "../agent/runtime.mjs";
 import { createTurnRequest, createTurnResult } from "../agent/turn-contract.mjs";
 import { TurnContextController } from "../agent/turn-context.mjs";
@@ -329,6 +334,84 @@ test("final append-only scope requires complete Evidence for every file", async 
   assert.equal(done.details.checkpointPassed, true);
 });
 
+test("Reviewer nextAction rebuilds remaining scope from durable state and Evidence", async (t) => {
+  const f = await fixture(t);
+  await start(f);
+  await readRange(f, { path: "a.mjs" }, "read-a-before-restart", "call-a-before-restart");
+  f.begin("extend-before-restart", "add b");
+  try {
+    await f.tools.extend_scope.execute("extend-call-before-restart", { files: ["b.mjs"] });
+  } finally {
+    f.turns.end();
+  }
+
+  const restartedService = new PracticeRunService({
+    sessionId: "session-review",
+    workspaceDir: f.workspace,
+    profileBundle: f.profileBundle,
+    journalPath: join(f.practice, "events.jsonl"),
+    snapshotPath: join(f.practice, "snapshot.json"),
+    protectedDirectory: join(f.practice, "protected"),
+  });
+  const restartedEvidence = new EvidenceRecorder({ filePath: join(f.root, "evidence", "events.jsonl") });
+  let run = await restartedService.activeForActor("@reviewer:example.test");
+  let boundary = await evidenceBoundary(restartedEvidence);
+  let evidenceProjection = await projectReviewEvidence({ evidence: restartedEvidence, boundary, run });
+  let coverage = projectReviewReadCoverage(run, evidenceProjection);
+  let nextAction = deriveReviewNextAction({ run, coverage, evidenceProjection });
+  assert.deepEqual(nextAction, {
+    code: "READ_REMAINING_SCOPE",
+    targetRefs: ["scope-file-2"],
+    reasonCodes: ["SCOPE_READ_INCOMPLETE"],
+  });
+  let beforeAgentStart;
+  createReviewerContextExtension({
+    service: restartedService,
+    turns: f.turns,
+    evidence: restartedEvidence,
+    profileDigest: f.profileBundle.profileDigest,
+  })({ on(_name, handler) { beforeAgentStart = handler; } });
+  f.begin("context-after-restart", "continue review");
+  const context = await beforeAgentStart({ systemPrompt: "base" });
+  f.turns.end();
+  assert.match(context.systemPrompt, /"code":"READ_REMAINING_SCOPE"/u);
+  assert.match(context.systemPrompt, /"targetRefs":\["scope-file-2"\]/u);
+
+  await readRange(f, { path: "b.mjs" }, "read-b-after-restart", "call-b-after-restart");
+  run = await restartedService.activeForActor("@reviewer:example.test");
+  boundary = await evidenceBoundary(restartedEvidence);
+  evidenceProjection = await projectReviewEvidence({ evidence: restartedEvidence, boundary, run });
+  coverage = projectReviewReadCoverage(run, evidenceProjection);
+  nextAction = deriveReviewNextAction({ run, coverage, evidenceProjection });
+  assert.deepEqual(nextAction, {
+    code: "CHECK_COMPLETION",
+    targetRefs: [],
+    reasonCodes: [],
+  });
+});
+
+test("Reviewer nextAction addresses a failed checkpoint after read coverage becomes complete", async (t) => {
+  const f = await fixture(t);
+  await start(f);
+  await readRange(f, { path: "a.mjs", offset: 1, limit: 1 }, "partial-before-check", "partial-call");
+  const failed = await complete(f, claim(), "failed-before-guidance", "failed-guidance-call");
+  assert.equal(failed.details.checkpointPassed, false);
+  await readRange(f, { path: "a.mjs", offset: 2, limit: 10 }, "complete-after-check", "complete-call");
+
+  const run = await f.service.activeForActor("@reviewer:example.test");
+  const boundary = await evidenceBoundary(f.evidence);
+  const evidenceProjection = await projectReviewEvidence({ evidence: f.evidence, boundary, run });
+  const coverage = projectReviewReadCoverage(run, evidenceProjection);
+  const nextAction = deriveReviewNextAction({ run, coverage, evidenceProjection });
+  assert.deepEqual(nextAction, {
+    code: "ADDRESS_CHECKPOINT_FAILURE",
+    targetRefs: [],
+    reasonCodes: [...new Set(run.lastCheckpoint.results
+      .filter((item) => !item.satisfied)
+      .map((item) => item.reasonCode))],
+  });
+});
+
 test("ambiguous or tampered Evidence fails before a completion state event", async (t) => {
   const ambiguous = await fixture(t);
   await start(ambiguous);
@@ -355,6 +438,22 @@ test("ambiguous or tampered Evidence fails before a completion state event", asy
   last.resultMetadata.fullFileLines += 1;
   lines[lines.length - 1] = JSON.stringify(last);
   await writeFile(evidencePath, `${lines.join("\n")}\n`);
+  let beforeAgentStart;
+  createReviewerContextExtension({
+    service: tampered.service,
+    turns: tampered.turns,
+    evidence: tampered.evidence,
+    profileDigest: tampered.profileBundle.profileDigest,
+  })({ on(name, handler) {
+    assert.equal(name, "before_agent_start");
+    beforeAgentStart = handler;
+  } });
+  tampered.begin("tamper-context", "continue review");
+  await assert.rejects(
+    beforeAgentStart({ systemPrompt: "base" }),
+    /Evidence hash mismatch/u,
+  );
+  tampered.turns.end();
   await assert.rejects(
     complete(tampered, claim(), "tamper-check", "tamper-call"),
     /Evidence hash mismatch/u,
@@ -475,8 +574,15 @@ test("ContextPack and status rendering are bounded machine projections", async (
   const f = await fixture(t);
   await start(f);
   const run = await f.service.activeForActor("@reviewer:example.test");
-  const pack = buildReviewerContextPack({ profileDigest: f.profileBundle.profileDigest, run });
+  const boundary = await evidenceBoundary(f.evidence);
+  const evidenceProjection = await projectReviewEvidence({ evidence: f.evidence, boundary, run });
+  const coverage = projectReviewReadCoverage(run, evidenceProjection);
+  const nextAction = deriveReviewNextAction({ run, coverage, evidenceProjection });
+  const pack = buildReviewerContextPack({ profileDigest: f.profileBundle.profileDigest, run, nextAction });
   assert.match(pack, new RegExp(run.runId, "u"));
+  assert.match(pack, /"schemaVersion":2/u);
+  assert.match(pack, /"code":"READ_REMAINING_SCOPE"/u);
+  assert.match(pack, /"targetRefs":\["scope-file-1"\]/u);
   assert.doesNotMatch(pack, /review these files/u);
   const status = workStatusForRun(run);
   assert.match(renderWorkStatus(status), /assurance: worker-local/u);

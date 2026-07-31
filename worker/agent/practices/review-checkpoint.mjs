@@ -1,5 +1,6 @@
 import { sha256 } from "../canonical-json.mjs";
 import { practiceRunFail } from "./errors.mjs";
+import { projectReviewReadCoverage } from "./review-read-coverage.mjs";
 
 const MAX_CLAIM_BYTES = 256 * 1024;
 const MAX_OBSERVATIONS = 256;
@@ -107,46 +108,6 @@ function result(checkpointId, satisfied, reasonCode, selectedEventRefs) {
   return item;
 }
 
-function readCoverage(run, projection) {
-  const reads = projection.executions.filter((entry) => entry.toolName === "read");
-  const byPath = new Map(run.scope.files.map((path) => [path, []]));
-  for (const read of reads) {
-    if (byPath.has(read.operation.target)) byPath.get(read.operation.target).push(read);
-  }
-  const fileFacts = {};
-  const selectedEventRefs = [];
-  for (const path of run.scope.files) {
-    const entries = byPath.get(path);
-    if (entries.length === 0 || entries.length > 128) return { satisfied: false, reason: "SCOPE_READ_INCOMPLETE" };
-    const versions = new Map();
-    for (const entry of entries) {
-      const key = `${entry.resultMetadata.fileDigest}:${entry.resultMetadata.fullFileLines}`;
-      const group = versions.get(key) ?? [];
-      group.push(entry);
-      versions.set(key, group);
-    }
-    const selected = [...versions.values()].sort((left, right) =>
-      right.at(-1).completedRef.sequence - left.at(-1).completedRef.sequence)[0];
-    const total = selected[0].resultMetadata.fullFileLines;
-    const intervals = selected.map((entry) => [entry.resultMetadata.returnedLineStart, entry.resultMetadata.returnedLineEnd])
-      .sort((left, right) => left[0] - right[0]);
-    let covered = 0;
-    for (const [start, end] of intervals) {
-      if (start > covered + 1) break;
-      covered = Math.max(covered, end);
-    }
-    if (covered < total) {
-      return { satisfied: false, reason: versions.size > 1 ? "FILE_VERSION_MIXED" : "SCOPE_READ_INCOMPLETE" };
-    }
-    fileFacts[path] = {
-      fileDigest: selected[0].resultMetadata.fileDigest,
-      fullFileLines: selected[0].resultMetadata.fullFileLines,
-    };
-    for (const entry of selected) selectedEventRefs.push(entry.startedRef, entry.completedRef);
-  }
-  return { satisfied: true, fileFacts, selectedEventRefs };
-}
-
 export function evaluateReviewCheckpoint({ run, validatedClaim, projection, evaluatedAt }) {
   const claim = validatedClaim.claim;
   const results = [result("claim-schema-valid", true)];
@@ -158,8 +119,13 @@ export function evaluateReviewCheckpoint({ run, validatedClaim, projection, eval
   const scopeMatches = claim.scope.files.length === run.scope.files.length &&
     claim.scope.files.every((path, index) => path === run.scope.files[index]);
   results.push(result("scope-matches-final", scopeMatches, "CLAIM_SCOPE_MISMATCH"));
-  const coverage = readCoverage(run, projection);
-  results.push(result("scope-fully-read", coverage.satisfied, coverage.reason, coverage.selectedEventRefs));
+  const coverage = projectReviewReadCoverage(run, projection);
+  results.push(result(
+    "scope-fully-read",
+    coverage.satisfied,
+    coverage.reason,
+    coverage.satisfied ? coverage.selectedEventRefs : undefined,
+  ));
   const targetsValid = coverage.satisfied && claim.report.observations.every((observation) => {
     const fact = coverage.fileFacts[observation.target.path];
     return fact && (observation.target.lineStart === undefined || observation.target.lineEnd <= fact.fullFileLines);

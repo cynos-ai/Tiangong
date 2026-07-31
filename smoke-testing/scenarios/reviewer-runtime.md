@@ -4,7 +4,7 @@
 
 - Related implementation: `worker/agent/practices/`, `worker/agent/work/`, `worker/agent/evidence/projection.mjs`, `worker/agent/runtime.mjs`, and `worker/plugin/openclaw-adapter.mjs`
 - Related Skills: `tiangong-smoke-authoring`, `tiangong-smoke-running`
-- Related state/Evidence: fixed Reviewer profile, PracticeRun journal/snapshot/protected claim, hash-chained Evidence, transcript-independent ContextPack, and authoritative `workStatus`
+- Related state/Evidence: fixed Reviewer profile, PracticeRun journal/snapshot/protected claim, hash-chained Evidence, transcript-independent ContextPack v2 with advisory `nextAction`, and authoritative `workStatus`
 - Update triggers: Reviewer profile/tool/schema changes, PracticeRun transitions, Evidence projection, completion rendering, Matrix Harness integration, state-root layout, restart behavior, model baseline, or cleanup ownership
 
 ## Basic smoke
@@ -47,14 +47,16 @@
 
 ## Journey canary
 
-### C1: Post-restart model progression to completion
+### C1: Post-restart model progression with machine-derived guidance
 
-- Purpose: Observe model-driven liveness after F1; it is not an authorization, persistence, recovery, or release oracle.
+- Purpose: Observe model-driven liveness after F1 when ContextPack v2 deterministically identifies unread B; it is not an authorization, persistence, recovery, or release oracle.
 - Setup: Repeat F1 with a separate fresh Worker, then continue after recovery.
 - Prompt sequence: request one complete B read, verify active A+B Evidence, then request completion in a separate turn.
 - PASS oracle: B has at least one complete independently matched read; exactly one final-scope claim/checkpoint and `run.completed` produce terminal done/passed status on the original run.
 - Non-PASS outcomes: `NO_VALID_READ_EVIDENCE`, `NO_VALID_COMPLETION`, or `INCONCLUSIVE`, with bounded lifecycle counts and unchanged safe state recorded before exact cleanup.
 - Rules:
+  - deterministic tests, not model behavior, prove that the recovered A+B run derives `READ_REMAINING_SCOPE` for `scope-file-2`;
+  - do not record the raw ContextPack or paths as smoke diagnostics, and do not infer guidance injection from assistant prose;
   - run once per declared image/provider/model artifact; do not sample until green;
   - never weaken the PASS oracle or infer execution from prose;
   - a no-progress turn must not create false read/completion Evidence or advance done;
@@ -69,7 +71,7 @@
 | actor/run | one authenticated actor and run | wrong actor/new run | original run remains authoritative |
 | scope | A then append-only B | replacement/reorder/duplicate | final claim, if any, uses A+B |
 | read Evidence | complete A, correct digest | missing/mixed/wrong-run A | observe complete B or safe no-progress |
-| recovery | unchanged journal/Evidence rebuild active A+B | journal change, snapshot authority, invalid rebuild | model receives recovered active context |
+| recovery | unchanged journal/Evidence rebuild active A+B | journal change, snapshot authority, invalid rebuild | model receives recovered active context with advisory guidance |
 | completion | active/not-run after recovery | false checkpoint or completion | optional exact done/passed oracle |
 | cleanup | owned resources absent | any residue | always mandatory |
 
@@ -77,7 +79,9 @@
 
 - Commands: `make test-reviewer-smoke-contract`, `make test-reviewer-image-basic`, `make test-reviewer-image`, and `make test-reviewer-journey-canary`.
 - `test-reviewer-image` is the hard Recovery Full gate; the journey command is intentionally separate and non-gating.
+- Raw ContextPack inspection is not a smoke oracle. Focused deterministic tests own schema, Evidence-bound coverage, fail-closed projection, and `scope-file-N` mapping.
 - Never read unrestricted logs or transcripts as an oracle. Diagnostics remain bounded to state, stable IDs/digests, lifecycle counts, and Harness status.
 - The fixed ownership is Worker `tiangong-reviewer-smoke` and storage `agents/tiangong-reviewer-smoke/` only.
 - Every level uses a separate fresh Worker and independently proves cleanup.
-- **Current status (2026-07-30):** Basic and Recovery Full hard gates passed. The single qwen3.5-plus Journey run returned `NO_VALID_READ_EVIDENCE`: it safely reread A instead of B, stayed active, and cleanup passed.
+- **Release baseline (2026-07-30):** Basic and Recovery Full hard gates passed. The single qwen3.5-plus Journey run returned `NO_VALID_READ_EVIDENCE`: it safely reread A instead of B, stayed active, and cleanup passed.
+- **nextAction focused run (2026-07-31):** deterministic ContextPack v2 guidance, image/profile, Reviewer Basic, and exact cleanup passed. The one declared Journey canary again returned `NO_VALID_READ_EVIDENCE`: the model safely reread A despite machine-derived guidance for B; no false B Evidence, checkpoint, completion, mutation, or new run appeared.
