@@ -4,6 +4,7 @@
 > **范围：** 在当前单 Worker 受控执行内核上，实现第一个可信专业角色：只读、显式文件范围、Evidence-backed 的 Reviewer。
 > **保证等级：** `worker-local / static-review-only`。
 > **不是：** 已实现能力说明、Team Work、独立 Candidate 验收、测试执行、PR/commit/diff 评审或发布承诺。
+> **后续设计：** [`reviewer-next-action.md`](./reviewer-next-action.md) 是待实现的窄增量合同；在其完成验证前，本文的 Reviewer v1 ContextPack 与能力边界仍是当前事实。
 
 ## 0. 如何使用本文
 
