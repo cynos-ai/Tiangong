@@ -13,6 +13,7 @@ import { EvidenceRecorder } from "../agent/evidence/recorder.mjs";
 import { PolicyGate } from "../agent/gates/policy-gate.mjs";
 import { IdempotencyStore } from "../agent/idempotency/store.mjs";
 import { PendingOperationStore } from "../agent/pending-operation/store.mjs";
+import { statePathsForSession } from "../agent/persistence/state-paths.mjs";
 import { WriteReconciler } from "../agent/reconciliation/write-reconciler.mjs";
 import { createConstrainedWrite } from "../agent/tools/constrained-write.mjs";
 import { summarizeWrite } from "../agent/tools/operations.mjs";
@@ -21,8 +22,9 @@ async function fixture(t, { previousContent } = {}) {
   const root = await mkdtemp(join(tmpdir(), "tiangong-reconcile-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const workspaceDir = join(root, "workspace");
-  const stateDir = join(root, "state");
-  const rollbackDir = join(stateDir, "rollback");
+  const stateDirectory = join(root, "state");
+  const paths = statePathsForSession({ stateDirectory, sessionId: "session-one" });
+  const rollbackDir = paths.rollbackDirectory;
   await mkdir(workspaceDir);
   const targetPath = join(workspaceDir, "output.txt");
   if (previousContent !== undefined) await writeFile(targetPath, previousContent);
@@ -49,11 +51,11 @@ async function fixture(t, { previousContent } = {}) {
     operationDigest: digest,
   });
 
-  const idempotencyStore = new IdempotencyStore({ filePath: join(stateDir, "idempotency.jsonl") });
+  const idempotencyStore = new IdempotencyStore({ filePath: paths.idempotencyFilePath });
   const pendingOperationStore = new PendingOperationStore({
-    directory: join(stateDir, "pending-operations"),
+    directory: paths.pendingOperationDirectory,
   });
-  const evidence = new EvidenceRecorder({ filePath: join(stateDir, "evidence", "events.jsonl") });
+  const evidence = new EvidenceRecorder({ filePath: paths.evidenceFilePath });
   await pendingOperationStore.put(checkpoint, params);
   await idempotencyStore.putPending(checkpoint.idempotencyKey, checkpoint);
   await idempotencyStore.approve(checkpoint.idempotencyKey, {
@@ -76,7 +78,6 @@ async function fixture(t, { previousContent } = {}) {
 
   return {
     workspaceDir,
-    stateDir,
     rollbackDir,
     targetPath,
     params,

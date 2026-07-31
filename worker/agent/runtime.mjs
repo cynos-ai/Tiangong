@@ -1,5 +1,3 @@
-import { join } from "node:path";
-
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -123,20 +121,20 @@ export class TiangongAgentRuntime {
     }
     const persisted = await sessionStore.open(request);
     const evidence = new EvidenceRecorder({
-      filePath: join(persisted.directory, "evidence", "events.jsonl"),
+      filePath: persisted.paths.evidenceFilePath,
     });
     const idempotencyStore = new IdempotencyStore({
-      filePath: join(persisted.directory, "idempotency.jsonl"),
+      filePath: persisted.paths.idempotencyFilePath,
     });
     const pendingOperationStore = new PendingOperationStore({
-      directory: join(persisted.directory, "pending-operations"),
+      directory: persisted.paths.pendingOperationDirectory,
       remoteStorage: createAgentTeamsPendingStorage({ workspaceDir: request.workspaceDir }),
     });
     const turns = new TurnContextController();
     const gate = new PolicyGate({ idempotencyStore });
     const registry = createCoreToolRegistry({
       workspaceDir: request.workspaceDir,
-      stateDir: persisted.directory,
+      rollbackDir: persisted.paths.rollbackDirectory,
       gate,
       evidence,
       idempotencyStore,
@@ -149,7 +147,7 @@ export class TiangongAgentRuntime {
     });
     const providerTrace = createProviderTraceBridge();
     const resourceLoader = new DefaultResourceLoader({
-      agentDir: persisted.directory,
+      agentDir: persisted.paths.piDirectory,
       cwd: request.workspaceDir,
       noContextFiles: true,
       noExtensions: true,
@@ -162,7 +160,7 @@ export class TiangongAgentRuntime {
     });
     await resourceLoader.reload();
     const { session } = await createAgentSession({
-      agentDir: persisted.directory,
+      agentDir: persisted.paths.piDirectory,
       cwd: request.workspaceDir,
       model,
       modelRuntime,

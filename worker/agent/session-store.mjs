@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
-import { sha256 } from "./canonical-json.mjs";
+import { statePathsForSession } from "./persistence/state-paths.mjs";
 
 const MAX_SESSION_ENTRIES = 10_000;
 const MAX_SESSION_BYTES = 32 * 1024 * 1024;
@@ -37,23 +37,19 @@ export class PersistentSessionStore {
     this.#stateDirectory = stateDirectory;
   }
 
-  #directory(sessionId) {
-    return join(this.#stateDirectory, "sessions", sha256(sessionId));
-  }
-
   async open({ sessionId, workspaceDir }) {
-    const directory = this.#directory(sessionId);
-    const piDirectory = join(directory, "pi");
-    await mkdir(piDirectory, { recursive: true, mode: 0o700 });
-    const sessions = await SessionManager.list(workspaceDir, piDirectory);
+    const paths = statePathsForSession({ stateDirectory: this.#stateDirectory, sessionId });
+    await mkdir(paths.piDirectory, { recursive: true, mode: 0o700 });
+    const sessions = await SessionManager.list(workspaceDir, paths.piDirectory);
     if (sessions.length > 1) throw new Error("Multiple pi session files exist for one Tiangong session");
     const manager = sessions.length === 1
-      ? SessionManager.open(sessions[0].path, piDirectory, workspaceDir)
-      : SessionManager.create(workspaceDir, piDirectory, { id: sha256(sessionId).slice(0, 32) });
-    return { manager, directory };
+      ? SessionManager.open(sessions[0].path, paths.piDirectory, workspaceDir)
+      : SessionManager.create(workspaceDir, paths.piDirectory, { id: paths.sessionHash.slice(0, 32) });
+    return { manager, paths };
   }
 
   async reset(sessionId) {
-    await rm(this.#directory(sessionId), { recursive: true, force: true });
+    const paths = statePathsForSession({ stateDirectory: this.#stateDirectory, sessionId });
+    await rm(paths.piDirectory, { recursive: true, force: true });
   }
 }

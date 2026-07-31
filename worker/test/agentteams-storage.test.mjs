@@ -2,15 +2,19 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import test from "node:test";
 
+import { sha256 } from "../agent/canonical-json.mjs";
 import { createAgentTeamsPendingStorage } from "../agent/pending-operation/agentteams-storage.mjs";
+import { statePathsForSession } from "../agent/persistence/state-paths.mjs";
 
 test("AgentTeams pending storage scopes remote erasure to the Worker workspace", async () => {
   const calls = [];
   const workspaceDir = "/root/hiclaw-fs/agents/worker-one";
-  const operationDirectory = join(
-    workspaceDir,
-    ".tiangong/runtime/sessions/session-one/pending-operations/operation-one",
-  );
+  const stateDirectory = join(workspaceDir, ".tiangong", "runtime");
+  const sessionId = "session-one";
+  const operationKey = sha256("operation-one");
+  const paths = statePathsForSession({ stateDirectory, sessionId });
+  const operationDirectory = join(paths.pendingOperationDirectory, operationKey);
+  const remotePath = `.tiangong/runtime/pending-operations/${paths.sessionHash}/${operationKey}`;
   const storage = createAgentTeamsPendingStorage({
     workspaceDir,
     workerName: "worker-one",
@@ -20,11 +24,7 @@ test("AgentTeams pending storage scopes remote erasure to the Worker workspace",
   await storage.publishErasure({ operationDirectory });
   await storage.purge({ operationDirectory });
   assert.equal(calls.length, 2);
-  assert.deepEqual(calls[0].args, [
-    "worker-one",
-    ".tiangong/runtime/sessions/session-one/pending-operations/operation-one",
-    operationDirectory,
-  ]);
+  assert.deepEqual(calls[0].args, ["worker-one", remotePath, operationDirectory]);
   assert.equal(calls[0].script.includes("ensure_mc_credentials >/dev/null 2>&1 || true"), true);
   assert.equal(calls[0].script.includes("mc cp"), true);
   assert.equal(calls[1].script.includes("mc rm --recursive --force"), true);

@@ -7,6 +7,7 @@ import { EvidenceRecorder } from "../evidence/recorder.mjs";
 import { IdempotencyStore } from "../idempotency/store.mjs";
 import { createAgentTeamsPendingStorage } from "../pending-operation/agentteams-storage.mjs";
 import { PendingOperationStore } from "../pending-operation/store.mjs";
+import { statePathsForSessionHash, stateRootPaths } from "../persistence/state-paths.mjs";
 
 const REPLAY_WINDOW_MILLISECONDS = 90 * 24 * 60 * 60 * 1000;
 const CONFIRMATION = "expire-90-day-replay-window";
@@ -66,25 +67,25 @@ function workerPaths() {
   return { workspaceDir: normalizedWorkspace, stateDirectory: normalizedState };
 }
 
-async function sessions(stateDirectory, workspaceDir) {
-  const sessionsDirectory = join(stateDirectory, "sessions");
+async function operationSessions(stateDirectory, workspaceDir) {
+  const roots = stateRootPaths(stateDirectory);
   let entries;
   try {
-    entries = await readdir(sessionsDirectory, { withFileTypes: true });
+    entries = await readdir(roots.idempotencyRoot, { withFileTypes: true });
   } catch (error) {
     if (error?.code === "ENOENT") return [];
     throw error;
   }
-  return entries.filter((entry) => entry.isDirectory()).map((entry) => {
-    const directory = join(sessionsDirectory, entry.name);
+  return entries.sort((left, right) => left.name.localeCompare(right.name)).map((entry) => {
+    if (!entry.isDirectory()) throw new Error("Unexpected entry in Tiangong idempotency state root");
+    const paths = statePathsForSessionHash({ stateDirectory, sessionHash: entry.name });
     return {
-      directory,
-      idempotencyStore: new IdempotencyStore({ filePath: join(directory, "idempotency.jsonl") }),
+      idempotencyStore: new IdempotencyStore({ filePath: paths.idempotencyFilePath }),
       pendingOperationStore: new PendingOperationStore({
-        directory: join(directory, "pending-operations"),
+        directory: paths.pendingOperationDirectory,
         remoteStorage: createAgentTeamsPendingStorage({ workspaceDir }),
       }),
-      evidence: new EvidenceRecorder({ filePath: join(directory, "evidence", "events.jsonl") }),
+      evidence: new EvidenceRecorder({ filePath: paths.evidenceFilePath }),
     };
   });
 }
@@ -98,7 +99,7 @@ async function main() {
   const paths = workerPaths();
   const before = new Date(Date.now() - REPLAY_WINDOW_MILLISECONDS).toISOString();
   const candidateGroups = [];
-  for (const session of await sessions(paths.stateDirectory, paths.workspaceDir)) {
+  for (const session of await operationSessions(paths.stateDirectory, paths.workspaceDir)) {
     candidateGroups.push({
       session,
       candidates: await session.idempotencyStore.listTerminalBefore(before),
