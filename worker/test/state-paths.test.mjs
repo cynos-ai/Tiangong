@@ -22,6 +22,7 @@ test("state path resolver produces physically separate per-session roots", () =>
     sessionsRoot: join(stateDirectory, "sessions"),
     practiceRunsRoot: join(stateDirectory, "practice-runs"),
     evidenceRoot: join(stateDirectory, "evidence"),
+    capturedArtifactsRoot: join(stateDirectory, "captured-artifacts"),
     idempotencyRoot: join(stateDirectory, "idempotency"),
     pendingOperationsRoot: join(stateDirectory, "pending-operations"),
     rollbacksRoot: join(stateDirectory, "rollbacks"),
@@ -44,6 +45,22 @@ test("state path resolver produces physically separate per-session roots", () =>
     join(stateDirectory, "practice-runs", sessionHash, "protected"),
   );
   assert.equal(paths.evidenceFilePath, join(stateDirectory, "evidence", sessionHash, "events.jsonl"));
+  assert.equal(
+    paths.capturedArtifactDirectory,
+    join(stateDirectory, "captured-artifacts", sessionHash),
+  );
+  assert.equal(
+    paths.capturedArtifactObjectsDirectory,
+    join(stateDirectory, "captured-artifacts", sessionHash, "objects"),
+  );
+  assert.equal(
+    paths.capturedArtifactTemporaryDirectory,
+    join(stateDirectory, "captured-artifacts", sessionHash, "tmp"),
+  );
+  assert.equal(
+    paths.capturedArtifactLockPath,
+    join(stateDirectory, "captured-artifacts", sessionHash, "store-lock-target"),
+  );
   assert.equal(
     paths.idempotencyFilePath,
     join(stateDirectory, "idempotency", sessionHash, "idempotency.jsonl"),

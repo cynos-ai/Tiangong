@@ -42,6 +42,12 @@ actual_pi_version="$(docker run --rm --entrypoint pi "${IMAGE}" --version)"
   exit 1
 }
 
+actual_flock_version="$(docker run --rm --entrypoint /usr/bin/flock "${IMAGE}" --version)"
+grep -Fq 'flock from util-linux ' <<<"${actual_flock_version}" || {
+  printf 'ERROR: the Worker image lacks the required util-linux kernel flock binding.\n' >&2
+  exit 1
+}
+
 docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${IMAGE}" \
   --input-type=module -e '
     import {
@@ -53,6 +59,52 @@ docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${IMAGE}" \
     if (config.enabled !== expected) process.exit(1);
     const observability = createWorkerObservability({ config });
     await observability.shutdown();
+  '
+docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${IMAGE}" \
+  --input-type=module -e '
+    import { mkdir, rm } from "node:fs/promises";
+    import { CapturedArtifactStore } from "./agent/artifacts/store.mjs";
+    import { sha256 } from "./agent/canonical-json.mjs";
+    const stateDirectory = "/tmp/tiangong-artifact-image-contract";
+    await mkdir(stateDirectory, { mode: 0o700 });
+    try {
+      const store = new CapturedArtifactStore({ stateDirectory, sessionId: "image-contract" });
+      const binding = {
+        kind: "practice_target",
+        sessionHash: store.sessionHash,
+        actorId: "@image:example.test",
+        practiceRunId: "run-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        targetId: "target-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        invocationIdentity: sha256("image-invocation"),
+        sourceOperationDigest: sha256("image-operation"),
+      };
+      const receipt = await store.put({
+        binding,
+        purpose: "review_target_chunk",
+        ordinal: 0,
+        mediaType: "text/plain;charset=utf-8",
+        encoding: "utf-8",
+        truncated: false,
+        producerId: "review-target-consume",
+        producerVersion: 1,
+        transformVersion: 1,
+        canonicalBytes: Buffer.from("image contract\n"),
+      });
+      const expectedContentIdentity = Object.fromEntries([
+        "purpose", "ordinal", "contentDigest", "contentBytes", "contentLines",
+        "mediaType", "encoding", "truncated", "producerId", "producerVersion",
+        "transformVersion",
+      ].map((key) => [key, receipt[key]]));
+      const resolved = await store.readFromEvidence({
+        artifactRefDigest: receipt.artifactRefDigest,
+        artifactKey: receipt.artifactKey,
+        expectedBinding: binding,
+        expectedContentIdentity,
+      });
+      if (resolved.bytes.toString("utf8") !== "image contract\n") process.exit(1);
+    } finally {
+      await rm(stateDirectory, { recursive: true, force: true });
+    }
   '
 
 reconciliation_help="$(docker run --rm --entrypoint tiangong-reconcile "${IMAGE}" --help)"
