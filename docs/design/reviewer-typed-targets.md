@@ -19,7 +19,7 @@
 
 本合同被接受后，后续实现仍必须按依赖边界拆分：
 
-1. 单独评审 CapturedArtifactStore 的持久化、配额、Evidence、restart、tamper 和 retention 合同；
+1. 单独评审 [`CapturedArtifactStore`](./captured-artifact-store.md) 的持久化、配额、Evidence、restart、tamper 和 retention 合同；
 2. 只有目标种类的 admission、consume backend 和固定 profile policy 全部存在时，才 materialize 该 target kind；
 3. directory inspection 和 local git inspection 各自保留独立工具、executor 与 smoke 合同。
 
@@ -485,7 +485,7 @@ base/head ref 在一次 admission 中各解析一次并固化 full commit OID。
 
 ## 7. CapturedArtifactStore seam
 
-任何 kind 在 journal 中引用 artifact 前，CapturedArtifactStore 必须已经通过独立公开合同和 deterministic tests。D2a 只冻结以下接口不变量：
+任何 kind 在 journal 中引用 artifact 前，[`CapturedArtifactStore`](./captured-artifact-store.md) 必须已经通过独立公开合同和 deterministic tests。D2a 只冻结以下接口不变量：
 
 - artifact bytes 与 metadata 在 journal commit 前 durable；
 - journal 只保存 store-validated opaque ref 和有界 metadata，不保存 manifest/diff/raw content；
