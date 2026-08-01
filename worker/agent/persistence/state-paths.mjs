@@ -17,6 +17,7 @@ export function stateRootPaths(stateDirectory) {
     practiceRunsRoot: join(root, "practice-runs"),
     evidenceRoot: join(root, "evidence"),
     capturedArtifactsRoot: join(root, "captured-artifacts"),
+    localGitRoot: join(root, "local-git"),
     idempotencyRoot: join(root, "idempotency"),
     pendingOperationsRoot: join(root, "pending-operations"),
     rollbacksRoot: join(root, "rollbacks"),
@@ -32,6 +33,7 @@ export function statePathsForSessionHash({ stateDirectory, sessionHash }) {
   const practiceRunDirectory = join(roots.practiceRunsRoot, sessionHash);
   const evidenceDirectory = join(roots.evidenceRoot, sessionHash);
   const capturedArtifactDirectory = join(roots.capturedArtifactsRoot, sessionHash);
+  const localGitDirectory = join(roots.localGitRoot, sessionHash);
   const idempotencyDirectory = join(roots.idempotencyRoot, sessionHash);
   return Object.freeze({
     ...roots,
@@ -42,7 +44,9 @@ export function statePathsForSessionHash({ stateDirectory, sessionHash }) {
     practiceRunJournalPath: join(practiceRunDirectory, "events.jsonl"),
     practiceRunSnapshotPath: join(practiceRunDirectory, "snapshot.json"),
     practiceRunProtectedDirectory: join(practiceRunDirectory, "protected"),
-    directoryInspectionLockPath: join(practiceRunDirectory, "directory-inspection-lock-target"),
+    reviewInspectionLockPath: join(practiceRunDirectory, "review-inspection-lock-target"),
+    localGitDirectory,
+    localGitLockPath: join(localGitDirectory, "lock-target"),
     evidenceDirectory,
     evidenceFilePath: join(evidenceDirectory, "events.jsonl"),
     capturedArtifactDirectory,

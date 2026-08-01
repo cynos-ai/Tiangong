@@ -2,7 +2,7 @@
 
 > **状态：** 已由Reviewer v2 clean-cut取代；本文保留为v1历史设计与已完成验证记录，不描述current runtime。
 > **历史范围：** 第一个只读、显式文件范围、Evidence-backed Reviewer及其ContextPack v2/nextAction。
-> **当前合同：** [`reviewer-typed-targets.md`](./reviewer-typed-targets.md) 与 [`reviewer-directory-inspection.md`](./reviewer-directory-inspection.md) 定义并拥有current `file`/`directory_snapshot` targets、PracticeRun v2、ContextPack v3、target-bound consume和structured inspection；[`captured-artifact-store.md`](./captured-artifact-store.md) 保存其非Evidence bytes。
+> **当前合同：** [`reviewer-typed-targets.md`](./reviewer-typed-targets.md)、[`reviewer-directory-inspection.md`](./reviewer-directory-inspection.md) 与 [`reviewer-local-git-targets.md`](./reviewer-local-git-targets.md) 定义并拥有current `file`/`directory_snapshot`/`commit`/`git_diff` targets、PracticeRun v2、ContextPack v3、target-bound consume和structured inspection；[`captured-artifact-store.md`](./captured-artifact-store.md) 保存其非Evidence bytes。
 > **保证等级不变：** `worker-local / static-review-only`。
 > **迁移边界：** current runtime不读取、迁移或兼容本文的`scope.files[]`、journal v1、claim v1、checkpoint `review-v1`或ContextPack v2；遇到旧durable journal返回`UNSUPPORTED_STATE_SCHEMA`。
 > **不是：** Team Work、独立Candidate验收、测试执行、workspace mutation、PR/commit/diff评审或发布承诺。
@@ -328,6 +328,12 @@ Role Skill 描述身份与能力边界，Practice methodology 描述静态评审
   evidence/<session-hash>/
     events.jsonl
     events.jsonl.segment-...
+  captured-artifacts/<session-hash>/
+    store-lock-target
+    objects/
+    tmp/
+  local-git/<session-hash>/
+    lock-target                     # lock only; mirrors remain under owned /tmp
   idempotency/<session-hash>/
     idempotency.jsonl
   pending-operations/<session-hash>/
@@ -337,7 +343,7 @@ Role Skill 描述身份与能力边界，Practice methodology 描述静态评审
 要求：
 
 - `session-hash` 由已有稳定 session identity 派生，不能用模型输入构造路径；
-- 五类业务状态顶层与 `sessions/` 平级，均保持 per-session 语义；
+- 各类业务状态顶层与 `sessions/` 平级，均保持 per-session 语义；CapturedArtifactStore 与 local-Git lock 独立于 transcript，local-Git object mirror 不进入同步 state root；
 - 所有 runtime、retention、reconciliation 和 test caller 必须共用代码拥有的 state-path resolver，不得各自拼接布局；
 - 布局改变不削弱 Evidence chain、approval、idempotency、pending payload、rollback 或 recovery 合同；
 - AgentTeams pending payload 的 remote object path 随新固定本地路径同步更新并测试；

@@ -11,13 +11,13 @@ const NEXT_ACTION_CODES = new Set([
   "RESOLVE_TARGET_BLOCKER", "CONSUME_REMAINING_TARGETS", "ADDRESS_CHECKPOINT_FAILURE", "CHECK_COMPLETION", "NONE",
 ]);
 const REASON_CODES = new Set([
-  "TARGET_CONSUMPTION_INCOMPLETE", "TARGET_CHANGED", "TARGET_UNAVAILABLE", "GIT_OBJECT_UNAVAILABLE",
+  "TARGET_CONSUMPTION_INCOMPLETE", "TARGET_CHANGED", "TARGET_UNAVAILABLE", "GIT_OBJECT_UNAVAILABLE", "TARGET_ARTIFACT_INVALID",
   "TARGET_EVIDENCE_LIMIT_EXCEEDED", "CRITERIA_COVERAGE_INVALID", "CLAIM_SCOPE_MISMATCH",
   "OBSERVATION_TARGET_INVALID", "REPORT_OUTCOME_INCONSISTENT", "STATIC_LIMITATION_REQUIRED", "MUTATION_OBSERVED",
 ]);
 const CHECKPOINT_REASONS = new Set([
   "CRITERIA_COVERAGE_INVALID", "CLAIM_SCOPE_MISMATCH", "TARGET_CONSUMPTION_INCOMPLETE",
-  "TARGET_CHANGED", "TARGET_UNAVAILABLE", "GIT_OBJECT_UNAVAILABLE", "TARGET_EVIDENCE_LIMIT_EXCEEDED",
+  "TARGET_CHANGED", "TARGET_UNAVAILABLE", "GIT_OBJECT_UNAVAILABLE", "TARGET_ARTIFACT_INVALID", "TARGET_EVIDENCE_LIMIT_EXCEEDED",
   "OBSERVATION_TARGET_INVALID", "REPORT_OUTCOME_INCONSISTENT", "STATIC_LIMITATION_REQUIRED", "MUTATION_OBSERVED",
 ]);
 export const REVIEWER_CONTEXT_PREAMBLE = [
@@ -63,15 +63,39 @@ function assertNextAction(nextAction, run) {
 }
 
 function targetSummary(target) {
-  const snapshotSummary = target.kind === "file" ? {
-    identity: target.snapshot.identity,
-    contentBytes: target.snapshot.facts.contentBytes,
-    contentLines: target.snapshot.facts.contentLines,
-  } : {
-    identity: target.snapshot.identity,
-    memberCount: target.snapshot.facts.memberCount,
-    totalContentBytes: target.snapshot.facts.totalContentBytes,
-  };
+  let snapshotSummary;
+  if (target.kind === "file") {
+    snapshotSummary = {
+      identity: target.snapshot.identity,
+      contentBytes: target.snapshot.facts.contentBytes,
+      contentLines: target.snapshot.facts.contentLines,
+    };
+  } else if (target.kind === "directory_snapshot") {
+    snapshotSummary = {
+      identity: target.snapshot.identity,
+      memberCount: target.snapshot.facts.memberCount,
+      totalContentBytes: target.snapshot.facts.totalContentBytes,
+    };
+  } else if (target.kind === "commit") {
+    snapshotSummary = {
+      identity: target.snapshot.identity,
+      objectFormat: target.snapshot.facts.objectFormat,
+      commitOid: target.snapshot.facts.commitOid,
+      treeOid: target.snapshot.facts.treeOid,
+      memberCount: target.snapshot.facts.memberCount,
+      totalContentBytes: target.snapshot.facts.totalContentBytes,
+    };
+  } else {
+    snapshotSummary = {
+      identity: target.snapshot.identity,
+      objectFormat: target.snapshot.facts.objectFormat,
+      baseCommitOid: target.snapshot.facts.baseCommitOid,
+      headCommitOid: target.snapshot.facts.headCommitOid,
+      changedFileCount: target.snapshot.facts.changedFileCount,
+      diffContentBytes: target.snapshot.facts.diffContentBytes,
+      diffContentLines: target.snapshot.facts.diffContentLines,
+    };
+  }
   return {
     targetId: target.targetId,
     kind: target.kind,

@@ -24,7 +24,7 @@ const EFFECTS = Object.freeze({
 export const REVIEWER_READ_DEFINITION = Object.freeze({
   name: "read",
   label: "Tiangong target-bound review read",
-  description: "Consume a bounded line chunk from an immutable file target or an exact directory-manifest member.",
+  description: "Consume a bounded line chunk from an immutable file, directory member, commit member, or Git diff target.",
   parameters: Type.Object({
     targetId: Type.String({ minLength: 43, maxLength: 43 }),
     memberPath: Type.Optional(Type.String({ minLength: 1, maxLength: 1024 })),
@@ -112,34 +112,41 @@ export async function executeReviewerRead(prepared, { service, actionDigest }) {
   if (resourceSelectorDigest(target.targetId, prepared.memberPath) !== prepared.selectorDigest) {
     practiceRunFail("INVALID_TARGET", "read resource selector binding changed");
   }
-  const resource = await service.targetCapture.captureResource(target, prepared.memberPath);
-  const chunk = maximalChunk(resource.lines, prepared.operation.input.offset, prepared.operation.input.limit);
-  const canonicalBytes = Buffer.from(chunk.text, "utf8");
-  let receipt;
+  let materialized;
   try {
-    receipt = await service.artifactStore.put({
-      binding: {
-        kind: "practice_target",
-        sessionHash: service.artifactStore.sessionHash,
-        actorId: prepared.actorId,
-        practiceRunId: current.runId,
-        targetId: target.targetId,
-        invocationIdentity: prepared.invocationIdentity,
-        sourceOperationDigest: actionDigest,
+    materialized = await service.targetCapture.captureResource(
+      target,
+      prepared.memberPath,
+      prepared.invocationIdentity,
+      async (resource) => {
+        const chunk = maximalChunk(resource.lines, prepared.operation.input.offset, prepared.operation.input.limit);
+        const receipt = await service.artifactStore.put({
+          binding: {
+            kind: "practice_target",
+            sessionHash: service.artifactStore.sessionHash,
+            actorId: prepared.actorId,
+            practiceRunId: current.runId,
+            targetId: target.targetId,
+            invocationIdentity: prepared.invocationIdentity,
+            sourceOperationDigest: actionDigest,
+          },
+          purpose: "review_target_chunk",
+          ordinal: 0,
+          mediaType: "text/plain;charset=utf-8",
+          encoding: "utf-8",
+          truncated: chunk.truncated,
+          producerId: "review-target-consume",
+          producerVersion: 1,
+          transformVersion: 1,
+          canonicalBytes: Buffer.from(chunk.text, "utf8"),
+        });
+        return Object.freeze({ resource, chunk, receipt });
       },
-      purpose: "review_target_chunk",
-      ordinal: 0,
-      mediaType: "text/plain;charset=utf-8",
-      encoding: "utf-8",
-      truncated: chunk.truncated,
-      producerId: "review-target-consume",
-      producerVersion: 1,
-      transformVersion: 1,
-      canonicalBytes,
-    });
+    );
   } catch (error) {
     mapArtifactError(error);
   }
+  const { resource, chunk, receipt } = materialized;
   const artifact = evidenceMetadataFromReceipt(receipt);
   const reviewTargetConsume = Object.freeze({
     targetId: target.targetId,

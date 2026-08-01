@@ -48,7 +48,11 @@ const sessionIds = new Set(records.map((record) => record.sessionId).filter(Bool
 if (sessionIds.size !== 1) fail("Evidence must identify exactly one session");
 const sessionId = [...sessionIds][0];
 const artifactStore = new CapturedArtifactStore({ stateDirectory, sessionId });
-const targetCapture = new ReviewTargetCapture({ workspaceDir, artifactStore });
+const targetCapture = new ReviewTargetCapture({
+  workspaceDir,
+  artifactStore,
+  localGitLockPath: join(stateDirectory, "local-git", artifactStore.sessionHash, "lock-target"),
+});
 const store = new PracticeRunStore({ filePath: journalPath, snapshotPath, sessionId });
 const state = await store.state();
 const runs = Object.values(state.runs);

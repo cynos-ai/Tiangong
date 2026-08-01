@@ -67,6 +67,7 @@ export function createGatedTool({
   replayResult = (result) => result,
   lifecycle,
   executionBoundary,
+  evidenceOperation = (operation) => operation,
   resultProjection = (result) => result,
 }) {
   if (!definition?.name ||
@@ -77,7 +78,7 @@ export function createGatedTool({
       sideEffect !== (category === "external-side-effect")) {
     throw new TypeError("Tool execution category conflicts with side-effect semantics");
   }
-  for (const [name, value] of Object.entries({ summarize, gate, evidence, getInvocation })) {
+  for (const [name, value] of Object.entries({ summarize, gate, evidence, getInvocation, evidenceOperation })) {
     if (!value) throw new TypeError(`${name} is required`);
   }
   if (sideEffect && (!idempotencyStore || !pendingOperationStore)) {
@@ -186,7 +187,7 @@ export function createGatedTool({
         type: "gate.decided",
         ...common,
         decision: decision.kind,
-        operation,
+        operation: evidenceOperation(operation),
         reasonCode: decision.reasonCode ?? null,
         approvalId: decision.approvalId ?? null,
         blockedByToolCallId: decision.blockedByToolCallId ?? null,

@@ -6,6 +6,16 @@ import { TextDecoder } from "node:util";
 import { canonicalJson, sha256 } from "../canonical-json.mjs";
 import { isCapturedArtifactError } from "../artifacts/errors.mjs";
 import {
+  GIT_POLICY_VERSION,
+  GIT_RUNTIME_VERSION,
+  LocalGitExecutor,
+  MAX_GIT_COMMIT_MEMBERS,
+  MAX_GIT_DIFF_BYTES,
+  MAX_GIT_MANIFEST_BYTES,
+  MAX_GIT_TARGETS_PER_ADMISSION,
+  MAX_GIT_TARGETS_PER_RUN,
+} from "../git/local-git-executor.mjs";
+import {
   ARTIFACT_REF_PATTERN,
   deriveArtifactKey,
   deriveArtifactRefDigest,
@@ -13,7 +23,7 @@ import {
 import { practiceRunFail } from "./errors.mjs";
 
 export const TARGET_ID_PATTERN = /^target-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-export const MATERIALIZED_TARGET_KINDS = Object.freeze(["file", "directory_snapshot"]);
+export const MATERIALIZED_TARGET_KINDS = Object.freeze(["file", "directory_snapshot", "commit", "git_diff"]);
 export const MAX_SCOPE_TARGETS = 64;
 export const MAX_MEMBER_BYTES = 2 * 1024 * 1024;
 export const MAX_RUN_TARGET_CONTENT_BYTES = 16 * 1024 * 1024;
@@ -29,6 +39,7 @@ const MAX_TARGET_DESCRIPTOR_BYTES = 4 * 1024;
 const MAX_SCOPE_DESCRIPTOR_BYTES = 32 * 1024;
 const MAX_SELECTOR_PREFIXES = 128;
 const MAX_SELECTOR_BYTES = 16 * 1024;
+const GIT_OID_CANDIDATE = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 const DIGEST = /^[a-f0-9]{64}$/u;
 const RFC3339_MILLISECONDS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
@@ -64,6 +75,10 @@ function sensitiveSegment(segment) {
     || lower.endsWith(".pem") || lower.endsWith(".key") || lower.endsWith(".p12");
 }
 
+function wellFormedString(value) {
+  return typeof value === "string" && value.isWellFormed();
+}
+
 function assertNotSensitive(path) {
   if (path.split("/").some(sensitiveSegment)) {
     fail("TARGET_SENSITIVE_PATH_DENIED", "Target selector contains a denied sensitive path segment");
@@ -71,7 +86,7 @@ function assertNotSensitive(path) {
 }
 
 export function normalizeRelativePath(value, { allowRoot = false, sensitive = true } = {}) {
-  if (typeof value !== "string" || value === "" || value.includes("\0") || value.endsWith("/")) {
+  if (!wellFormedString(value) || value === "" || value.includes("\0") || value.endsWith("/")) {
     fail("TARGET_SELECTOR_INVALID", "Target path has invalid relative-path grammar");
   }
   if (value.startsWith("/")) fail("TARGET_OUTSIDE_WORKSPACE", "Target path escapes the authorized workspace");
@@ -110,6 +125,61 @@ function normalizePrefixArray(value, name) {
   return normalized;
 }
 
+function normalizeGitRef(value) {
+  if (!wellFormedString(value) || value === "" || Buffer.byteLength(value, "utf8") > MAX_PATH_BYTES) {
+    fail("GIT_REF_INVALID", "Git ref has invalid closed grammar");
+  }
+  if (value === "HEAD" || GIT_OID_CANDIDATE.test(value)) return value;
+  if ((!value.startsWith("refs/heads/") && !value.startsWith("refs/tags/"))
+      || value.includes("..") || value.includes("@{") || value.includes("//")
+      || value.startsWith(".") || value.startsWith("/") || value.endsWith(".") || value.endsWith("/")
+      || /[\x00-\x20\x7f~^:?*[\\]/u.test(value)
+      || value.split("/").some((segment) => segment === "" || segment.startsWith(".") || segment.endsWith(".lock"))) {
+    fail("GIT_REF_INVALID", "Git ref has invalid closed grammar");
+  }
+  return value;
+}
+
+export function normalizeGitPathPrefix(value) {
+  if (typeof value !== "string" || value === "" || value.startsWith("-") || value.startsWith(":")
+      || value.includes("\\") || /[\x00-\x1f\x7f]/u.test(value)) {
+    fail("TARGET_SELECTOR_INVALID", "Git path prefix has invalid literal grammar");
+  }
+  const normalized = normalizeRelativePath(value, { allowRoot: true, sensitive: true });
+  return normalized;
+}
+
+export function gitInspectionPrefixDigest(prefix) {
+  return sha256(canonicalJson({ schemaId: "tiangong.git-inspection-prefix.v1", prefix }));
+}
+
+export function repositoryInspectionSelectorDigest({ targetId, action, prefix, offset, limit }) {
+  return sha256(canonicalJson({
+    schemaId: "tiangong.git-inspection-selector.v1",
+    targetId,
+    action,
+    prefix,
+    offset,
+    limit,
+  }));
+}
+
+function normalizeGitPrefixes(value) {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_SELECTOR_PREFIXES) {
+    fail("TARGET_SELECTOR_INVALID", "pathPrefixes must be a non-empty bounded array");
+  }
+  const normalized = value.map(normalizeGitPathPrefix).sort(utf8Compare);
+  for (let index = 1; index < normalized.length; index += 1) {
+    if (normalized[index] === normalized[index - 1] || pathIsWithin(normalized[index], normalized[index - 1])) {
+      fail("TARGET_SELECTOR_INVALID", "pathPrefixes contains duplicate or overlapping prefixes");
+    }
+  }
+  if (Buffer.byteLength(canonicalJson(normalized), "utf8") > MAX_SELECTOR_BYTES) {
+    fail("TARGET_LIMIT_EXCEEDED", "Git path prefixes exceed their fixed byte limit");
+  }
+  return Object.freeze(normalized);
+}
+
 function normalizeSelection(value) {
   if (!exact(value, ["excludePrefixes", "includePrefixes"])) {
     fail("INVALID_TARGET", "Directory selection has missing or unknown fields");
@@ -145,7 +215,7 @@ export function normalizeTargetRequests(value, materializedKinds = MATERIALIZED_
     if (request.kind === "file") {
       if (!exact(request, ["kind", "path"])) fail("INVALID_TARGET", "File target has missing or unknown fields");
       result = { kind: "file", path: normalizeRelativePath(request.path) };
-    } else {
+    } else if (request.kind === "directory_snapshot") {
       if (!exact(request, ["kind", "path", "selection"])) {
         fail("INVALID_TARGET", "Directory target has missing or unknown fields");
       }
@@ -154,6 +224,27 @@ export function normalizeTargetRequests(value, materializedKinds = MATERIALIZED_
         path: normalizeRelativePath(request.path, { allowRoot: true }),
         selection: normalizeSelection(request.selection),
       };
+    } else if (request.kind === "commit") {
+      if (!exact(request, ["kind", "pathPrefixes", "ref", "repositoryPath"])) {
+        fail("INVALID_TARGET", "Commit target has missing or unknown fields");
+      }
+      result = {
+        kind: "commit",
+        repositoryPath: normalizeRelativePath(request.repositoryPath, { allowRoot: true }),
+        ref: normalizeGitRef(request.ref),
+        pathPrefixes: normalizeGitPrefixes(request.pathPrefixes),
+      };
+    } else {
+      if (!exact(request, ["baseRef", "headRef", "kind", "pathPrefixes", "repositoryPath"])) {
+        fail("INVALID_TARGET", "Git diff target has missing or unknown fields");
+      }
+      result = {
+        kind: "git_diff",
+        repositoryPath: normalizeRelativePath(request.repositoryPath, { allowRoot: true }),
+        baseRef: normalizeGitRef(request.baseRef),
+        headRef: normalizeGitRef(request.headRef),
+        pathPrefixes: normalizeGitPrefixes(request.pathPrefixes),
+      };
     }
     const descriptor = { schemaVersion: 1, source: "model_normalized", value: descriptorValue(result) };
     if (Buffer.byteLength(canonicalJson(descriptor), "utf8") > MAX_TARGET_DESCRIPTOR_BYTES) {
@@ -161,6 +252,10 @@ export function normalizeTargetRequests(value, materializedKinds = MATERIALIZED_
     }
     return Object.freeze(result);
   });
+  const gitTargetCount = normalized.filter((request) => ["commit", "git_diff"].includes(request.kind)).length;
+  if (gitTargetCount > MAX_GIT_TARGETS_PER_ADMISSION) {
+    fail("TARGET_LIMIT_EXCEEDED", "A single admission contains too many local Git targets");
+  }
   const identities = normalized.map((request) => canonicalJson(request));
   if (new Set(identities).size !== identities.length) {
     fail("SCOPE_TARGET_ALREADY_PRESENT", "Target batch contains duplicate normalized descriptors");
@@ -177,12 +272,26 @@ export function normalizeTargetRequests(value, materializedKinds = MATERIALIZED_
 }
 
 export function descriptorValue(request) {
-  return request.kind === "file"
-    ? Object.freeze({ path: request.path })
-    : Object.freeze({ path: request.path, selection: {
+  if (request.kind === "file") return Object.freeze({ path: request.path });
+  if (request.kind === "directory_snapshot") {
+    return Object.freeze({ path: request.path, selection: {
       includePrefixes: [...request.selection.includePrefixes],
       excludePrefixes: [...request.selection.excludePrefixes],
     } });
+  }
+  if (request.kind === "commit") {
+    return Object.freeze({
+      repositoryPath: request.repositoryPath,
+      ref: request.ref,
+      pathPrefixes: [...request.pathPrefixes],
+    });
+  }
+  return Object.freeze({
+    repositoryPath: request.repositoryPath,
+    baseRef: request.baseRef,
+    headRef: request.headRef,
+    pathPrefixes: [...request.pathPrefixes],
+  });
 }
 
 export function targetRequestsDigest(targets) {
@@ -195,6 +304,26 @@ export function directorySelectionDigest(rootPath, selection) {
     rootPath,
     includePrefixes: selection.includePrefixes,
     excludePrefixes: selection.excludePrefixes,
+  }));
+}
+
+export function gitRepositoryIdentity(repositoryPath, objectFormat) {
+  return sha256(canonicalJson({
+    schemaId: "tiangong.git-repository.v1",
+    repositoryPath,
+    gitDirectoryPath: repositoryPath === "." ? ".git" : `${repositoryPath}/.git`,
+    objectFormat,
+    repositoryFormat: objectFormat === "sha1" ? 0 : 1,
+    refStorage: "files-v1",
+    objectStorage: "local-only-v1",
+  }));
+}
+
+export function gitSelectionDigest(repositoryPath, pathPrefixes) {
+  return sha256(canonicalJson({
+    schemaId: "tiangong.git-selection.v1",
+    repositoryPath,
+    pathPrefixes,
   }));
 }
 
@@ -406,17 +535,32 @@ export class ReviewTargetCapture {
   #artifactStore;
   #clock;
   #initialized = null;
+  #localGit;
   #rootIdentity = null;
   #workspaceDir;
   #workspaceRealpath = null;
 
-  constructor({ workspaceDir, artifactStore, clock = () => new Date() }) {
-    if (typeof workspaceDir !== "string" || workspaceDir === "" || !artifactStore || typeof clock !== "function") {
+  constructor({
+    workspaceDir,
+    artifactStore,
+    localGitLockPath,
+    localGitExecutor = null,
+    localGitOptions = {},
+    clock = () => new Date(),
+  }) {
+    if (typeof workspaceDir !== "string" || workspaceDir === "" || !artifactStore || typeof clock !== "function"
+        || (!localGitExecutor && (typeof localGitLockPath !== "string" || localGitLockPath === ""))) {
       throw new TypeError("ReviewTargetCapture dependencies are required");
     }
     this.#workspaceDir = resolve(workspaceDir);
     this.#artifactStore = artifactStore;
     this.#clock = clock;
+    this.#localGit = localGitExecutor ?? new LocalGitExecutor({
+      ...localGitOptions,
+      workspaceDir,
+      sessionHash: artifactStore.sessionHash,
+      lockPath: localGitLockPath,
+    });
   }
 
   get workspaceScope() {
@@ -747,7 +891,7 @@ export class ReviewTargetCapture {
         captureVersion = "review-file-snapshot-v1";
         totalContentBytes += captured.contentBytes;
         totalSegments += captured.requiredConsumeSegments;
-      } else {
+      } else if (request.kind === "directory_snapshot") {
         const captured = await this.#captureDirectory(request);
         const selectionDigest = directorySelectionDigest(request.path, request.selection);
         const manifest = {
@@ -805,6 +949,55 @@ export class ReviewTargetCapture {
         totalContentBytes += captured.totalContentBytes;
         totalSegments += captured.requiredConsumeSegments;
         totalManifestBytes += bytes.byteLength;
+      } else {
+        const producer = request.kind === "commit"
+          ? Object.freeze({
+            purpose: "git_tree_manifest",
+            mediaType: "application/vnd.tiangong.git-tree-manifest+json;version=1",
+            producerId: "review-git-commit-capture",
+          })
+          : Object.freeze({
+            purpose: "git_diff",
+            mediaType: "text/x-diff;charset=utf-8",
+            producerId: "review-git-diff-capture",
+          });
+        let receipt;
+        let captured;
+        const onValidated = async (validated) => {
+          receipt = await this.#artifactStore.put({
+            binding: {
+              kind: "practice_target",
+              sessionHash: this.#artifactStore.sessionHash,
+              actorId,
+              practiceRunId: runId,
+              targetId,
+              invocationIdentity,
+              sourceOperationDigest,
+            },
+            purpose: producer.purpose,
+            ordinal: 0,
+            mediaType: producer.mediaType,
+            encoding: "utf-8",
+            truncated: false,
+            producerId: producer.producerId,
+            producerVersion: 1,
+            transformVersion: 1,
+            canonicalBytes: validated.bytes,
+          });
+          return validated;
+        };
+        try {
+          captured = request.kind === "commit"
+            ? await this.#localGit.captureCommit(request, { invocationIdentity, onValidated })
+            : await this.#localGit.captureDiff(request, { invocationIdentity, onValidated });
+        } catch (error) {
+          this.#mapArtifactError(error);
+        }
+        artifacts = [artifactBinding(receipt)];
+        facts = captured.facts;
+        captureVersion = request.kind === "commit" ? "review-commit-snapshot-v1" : "review-git-diff-snapshot-v1";
+        totalContentBytes += request.kind === "commit" ? facts.totalContentBytes : facts.diffContentBytes;
+        totalSegments += facts.requiredConsumeSegments;
       }
       if (totalContentBytes > MAX_RUN_TARGET_CONTENT_BYTES || totalSegments > MAX_REQUIRED_CONSUME_SEGMENTS_PER_RUN
           || totalManifestBytes > MAX_RUN_DIRECTORY_MANIFEST_BYTES) {
@@ -829,14 +1022,17 @@ export class ReviewTargetCapture {
     return Object.freeze(targets);
   }
 
-  async readDirectoryManifest(target) {
-    if (target?.kind !== "directory_snapshot" || target.snapshot?.artifacts?.length !== 1) {
-      fail("TARGET_ARTIFACT_INVALID", "Directory target artifact binding is invalid");
+  async #readAdmissionArtifact(target, { purpose, producerId, mediaType }) {
+    if (target?.snapshot?.artifacts?.length !== 1) {
+      fail("TARGET_ARTIFACT_INVALID", "Target artifact binding is invalid");
     }
     const binding = target.snapshot.artifacts[0];
-    let read;
+    if (binding.contentIdentity.purpose !== purpose || binding.contentIdentity.producerId !== producerId
+        || binding.contentIdentity.mediaType !== mediaType) {
+      fail("TARGET_ARTIFACT_INVALID", "Target artifact binding is invalid");
+    }
     try {
-      read = await this.#artifactStore.readFromJournal({
+      return await this.#artifactStore.readFromJournal({
         artifactKey: binding.artifactKey,
         artifactRef: binding.artifactRef,
         artifactRefDigest: binding.artifactRefDigest,
@@ -844,9 +1040,20 @@ export class ReviewTargetCapture {
         expectedContentIdentity: expectedArtifactContentIdentity(binding),
       });
     } catch (error) {
-      if (isCapturedArtifactError(error)) fail("TARGET_ARTIFACT_INVALID", "Directory manifest artifact is unavailable or invalid");
+      if (isCapturedArtifactError(error)) fail("TARGET_ARTIFACT_INVALID", "Target admission artifact is unavailable or invalid");
       throw error;
     }
+  }
+
+  async readDirectoryManifest(target) {
+    if (target?.kind !== "directory_snapshot" || target.snapshot?.artifacts?.length !== 1) {
+      fail("TARGET_ARTIFACT_INVALID", "Directory target artifact binding is invalid");
+    }
+    const read = await this.#readAdmissionArtifact(target, {
+      purpose: "directory_manifest",
+      producerId: "review-directory-capture",
+      mediaType: "application/vnd.tiangong.directory-manifest+json;version=1",
+    });
     let manifest;
     try {
       manifest = JSON.parse(read.bytes.toString("utf8"));
@@ -865,17 +1072,78 @@ export class ReviewTargetCapture {
     return Object.freeze(manifest);
   }
 
-  async captureResource(target, memberPath) {
+  async readCommitManifest(target) {
+    if (target?.kind !== "commit") fail("TARGET_KIND_MISMATCH", "Target is not a commit snapshot");
+    const read = await this.#readAdmissionArtifact(target, {
+      purpose: "git_tree_manifest",
+      producerId: "review-git-commit-capture",
+      mediaType: "application/vnd.tiangong.git-tree-manifest+json;version=1",
+    });
+    let manifest;
+    try { manifest = JSON.parse(read.bytes.toString("utf8")); }
+    catch { fail("TARGET_ARTIFACT_INVALID", "Git commit manifest is invalid"); }
+    const facts = target.snapshot.facts;
+    if (sha256(read.bytes) !== facts.manifestContentDigest || manifest.repositoryPath !== target.descriptor.value.repositoryPath
+        || manifest.objectFormat !== facts.objectFormat || manifest.commitOid !== facts.commitOid
+        || manifest.treeOid !== facts.treeOid || manifest.selectionDigest !== facts.selectionDigest
+        || manifest.members.length !== facts.memberCount
+        || manifest.members.reduce((sum, member) => sum + member.contentBytes, 0) !== facts.totalContentBytes
+        || manifest.members.reduce((sum, member) => sum + member.requiredConsumeSegments, 0) !== facts.requiredConsumeSegments) {
+      fail("TARGET_ARTIFACT_INVALID", "Git commit manifest conflicts with its target snapshot");
+    }
+    return Object.freeze(manifest);
+  }
+
+  async readDiffArtifact(target) {
+    const read = await this.#readAdmissionArtifact(target, {
+      purpose: "git_diff",
+      producerId: "review-git-diff-capture",
+      mediaType: "text/x-diff;charset=utf-8",
+    });
+    const captured = captureFacts(read.bytes);
+    const facts = target.snapshot.facts;
+    if (captured.contentDigest !== facts.diffContentDigest || captured.contentBytes !== facts.diffContentBytes
+        || captured.contentLines !== facts.diffContentLines
+        || captured.requiredConsumeSegments !== facts.requiredConsumeSegments) {
+      fail("TARGET_ARTIFACT_INVALID", "Git diff artifact conflicts with its target snapshot");
+    }
+    return Object.freeze({ memberPath: null, ...captured });
+  }
+
+  async captureResource(
+    target,
+    memberPath,
+    invocationIdentity = undefined,
+    onValidated = (resource) => resource,
+  ) {
+    if (typeof onValidated !== "function") throw new TypeError("captureResource onValidated callback is required");
     if (target.kind === "file") {
       if (memberPath !== null) fail("TARGET_KIND_MISMATCH", "File target does not accept memberPath");
       const captured = await this.#captureFile(target.descriptor.value.path, { postAdmission: true });
       if (!contentFactsEqual(captured, target.snapshot.facts)) {
         fail("TARGET_CHANGED", "Target source no longer matches its snapshot");
       }
-      return Object.freeze({ memberPath: null, ...captured });
+      return onValidated(Object.freeze({ memberPath: null, ...captured }));
     }
-    if (target.kind !== "directory_snapshot" || typeof memberPath !== "string") {
-      fail("TARGET_KIND_MISMATCH", "Directory target requires memberPath");
+    if (target.kind === "git_diff") {
+      if (memberPath !== null) fail("TARGET_KIND_MISMATCH", "Git diff target does not accept memberPath");
+      return onValidated(await this.readDiffArtifact(target));
+    }
+    if (!["directory_snapshot", "commit"].includes(target.kind) || typeof memberPath !== "string") {
+      fail("TARGET_KIND_MISMATCH", "Target kind requires memberPath");
+    }
+    if (target.kind === "commit") {
+      const manifest = await this.readCommitManifest(target);
+      const member = manifest.members.find((entry) => entry.path === memberPath);
+      if (!member) fail("TARGET_MEMBER_NOT_FOUND", "Commit member is not in the target manifest");
+      return this.#localGit.readCommitBlob({
+        repositoryPath: target.descriptor.value.repositoryPath,
+        objectFormat: target.snapshot.facts.objectFormat,
+        blobOid: member.blobOid,
+        expected: member,
+        invocationIdentity,
+        onValidated: (captured) => onValidated(Object.freeze({ memberPath, ...captured })),
+      });
     }
     const manifest = await this.readDirectoryManifest(target);
     const member = manifest.members.find((entry) => entry.path === memberPath);
@@ -884,7 +1152,7 @@ export class ReviewTargetCapture {
     const fullPath = root === "." ? member.path : `${root}/${member.path}`;
     const captured = await this.#captureFile(fullPath, { postAdmission: true });
     if (!contentFactsEqual(captured, member)) fail("TARGET_CHANGED", "Directory member no longer matches its snapshot");
-    return Object.freeze({ memberPath, ...captured });
+    return onValidated(Object.freeze({ memberPath, ...captured }));
   }
 
   #mapArtifactError(error) {
@@ -903,8 +1171,32 @@ function assertDigest(value, name) {
   if (typeof value !== "string" || !DIGEST.test(value)) fail("STATE_CORRUPTED", `${name} is invalid`);
 }
 
-function validateJournalArtifact(binding, { sessionHash, actorId, runId, targetId }) {
-  if (!exact(binding, [
+function validateJournalArtifact(binding, { sessionHash, actorId, runId, targetId, targetKind }) {
+  const contracts = {
+    directory_snapshot: {
+      purpose: "directory_manifest",
+      mediaType: "application/vnd.tiangong.directory-manifest+json;version=1",
+      producerId: "review-directory-capture",
+      maxBytes: MAX_DIRECTORY_MANIFEST_BYTES,
+      contentLines: 1,
+    },
+    commit: {
+      purpose: "git_tree_manifest",
+      mediaType: "application/vnd.tiangong.git-tree-manifest+json;version=1",
+      producerId: "review-git-commit-capture",
+      maxBytes: MAX_GIT_MANIFEST_BYTES,
+      contentLines: 1,
+    },
+    git_diff: {
+      purpose: "git_diff",
+      mediaType: "text/x-diff;charset=utf-8",
+      producerId: "review-git-diff-capture",
+      maxBytes: MAX_GIT_DIFF_BYTES,
+      contentLines: null,
+    },
+  };
+  const contract = contracts[targetKind];
+  if (!contract || !exact(binding, [
     "artifactRef", "artifactRefDigest", "artifactKey", "storeBinding", "ordinal", "encoding", "contentIdentity",
   ]) || !ARTIFACT_REF_PATTERN.test(binding.artifactRef) || !DIGEST.test(binding.artifactRefDigest)
       || !DIGEST.test(binding.artifactKey) || binding.ordinal !== 0 || binding.encoding !== "utf-8"
@@ -917,13 +1209,14 @@ function validateJournalArtifact(binding, { sessionHash, actorId, runId, targetI
       || !exact(binding.contentIdentity, [
         "purpose", "contentDigest", "contentBytes", "contentLines", "mediaType", "truncated",
         "producerId", "producerVersion", "transformVersion",
-      ]) || binding.contentIdentity.purpose !== "directory_manifest"
+      ]) || binding.contentIdentity.purpose !== contract.purpose
       || !DIGEST.test(binding.contentIdentity.contentDigest)
       || !Number.isSafeInteger(binding.contentIdentity.contentBytes) || binding.contentIdentity.contentBytes < 0
-      || binding.contentIdentity.contentBytes > MAX_DIRECTORY_MANIFEST_BYTES
-      || binding.contentIdentity.contentLines !== 1
-      || binding.contentIdentity.mediaType !== "application/vnd.tiangong.directory-manifest+json;version=1"
-      || binding.contentIdentity.truncated !== false || binding.contentIdentity.producerId !== "review-directory-capture"
+      || binding.contentIdentity.contentBytes > contract.maxBytes
+      || !Number.isSafeInteger(binding.contentIdentity.contentLines) || binding.contentIdentity.contentLines < 1
+      || (contract.contentLines !== null && binding.contentIdentity.contentLines !== contract.contentLines)
+      || binding.contentIdentity.mediaType !== contract.mediaType
+      || binding.contentIdentity.truncated !== false || binding.contentIdentity.producerId !== contract.producerId
       || binding.contentIdentity.producerVersion !== 1 || binding.contentIdentity.transformVersion !== 1) {
     fail("STATE_CORRUPTED", "Target artifact binding is invalid");
   }
@@ -971,7 +1264,7 @@ export function validateMaterializedTarget(target, context) {
         || target.snapshot.facts.requiredConsumeSegments > MAX_CONSUME_SEGMENTS_PER_RESOURCE) {
       fail("STATE_CORRUPTED", "File target snapshot facts are invalid");
     }
-  } else {
+  } else if (target.kind === "directory_snapshot") {
     if (target.snapshot.captureVersion !== "review-directory-snapshot-v1" || target.snapshot.artifacts.length !== 1
         || !exact(target.snapshot.facts, [
           "memberCount", "totalContentBytes", "requiredConsumeSegments", "selectionDigest", "manifestContentDigest",
@@ -989,9 +1282,67 @@ export function validateMaterializedTarget(target, context) {
         )) {
       fail("STATE_CORRUPTED", "Directory target snapshot facts are invalid");
     }
-    validateJournalArtifact(target.snapshot.artifacts[0], { ...context, targetId: target.targetId });
+    validateJournalArtifact(target.snapshot.artifacts[0], {
+      ...context, targetId: target.targetId, targetKind: target.kind,
+    });
     if (target.snapshot.artifacts[0].contentIdentity.contentDigest !== target.snapshot.facts.manifestContentDigest) {
       fail("STATE_CORRUPTED", "Directory target manifest digest conflicts with its facts");
+    }
+  } else if (target.kind === "commit") {
+    const facts = target.snapshot.facts;
+    const descriptor = target.descriptor.value;
+    const oid = facts?.objectFormat === "sha1" ? /^[a-f0-9]{40}$/u : /^[a-f0-9]{64}$/u;
+    if (target.snapshot.captureVersion !== "review-commit-snapshot-v1" || target.snapshot.artifacts.length !== 1
+        || !exact(facts, [
+          "objectFormat", "repositoryIdentity", "gitPolicyVersion", "gitVersion", "commitOid", "treeOid",
+          "memberCount", "totalContentBytes", "requiredConsumeSegments", "selectionDigest", "manifestContentDigest",
+        ]) || !["sha1", "sha256"].includes(facts.objectFormat) || !oid.test(facts.commitOid) || !oid.test(facts.treeOid)
+        || !DIGEST.test(facts.repositoryIdentity)
+        || facts.repositoryIdentity !== gitRepositoryIdentity(descriptor.repositoryPath, facts.objectFormat)
+        || facts.gitPolicyVersion !== GIT_POLICY_VERSION
+        || facts.gitVersion !== GIT_RUNTIME_VERSION || !Number.isSafeInteger(facts.memberCount) || facts.memberCount < 1
+        || facts.memberCount > MAX_GIT_COMMIT_MEMBERS || !Number.isSafeInteger(facts.totalContentBytes)
+        || facts.totalContentBytes < 0 || facts.totalContentBytes > MAX_RUN_TARGET_CONTENT_BYTES
+        || !Number.isSafeInteger(facts.requiredConsumeSegments) || facts.requiredConsumeSegments < facts.memberCount
+        || facts.requiredConsumeSegments > MAX_REQUIRED_CONSUME_SEGMENTS_PER_RUN
+        || !DIGEST.test(facts.selectionDigest) || !DIGEST.test(facts.manifestContentDigest)
+        || facts.selectionDigest !== gitSelectionDigest(descriptor.repositoryPath, descriptor.pathPrefixes)) {
+      fail("STATE_CORRUPTED", "Commit target snapshot facts are invalid");
+    }
+    validateJournalArtifact(target.snapshot.artifacts[0], {
+      ...context, targetId: target.targetId, targetKind: target.kind,
+    });
+    if (target.snapshot.artifacts[0].contentIdentity.contentDigest !== facts.manifestContentDigest) {
+      fail("STATE_CORRUPTED", "Commit manifest digest conflicts with its facts");
+    }
+  } else {
+    const facts = target.snapshot.facts;
+    const descriptor = target.descriptor.value;
+    const oid = facts?.objectFormat === "sha1" ? /^[a-f0-9]{40}$/u : /^[a-f0-9]{64}$/u;
+    if (target.snapshot.captureVersion !== "review-git-diff-snapshot-v1" || target.snapshot.artifacts.length !== 1
+        || !exact(facts, [
+          "objectFormat", "repositoryIdentity", "gitPolicyVersion", "gitVersion", "baseCommitOid", "headCommitOid",
+          "changedFileCount", "diffContentDigest", "diffContentBytes", "diffContentLines", "requiredConsumeSegments",
+        ]) || !["sha1", "sha256"].includes(facts.objectFormat) || !oid.test(facts.baseCommitOid)
+        || !oid.test(facts.headCommitOid) || facts.baseCommitOid === facts.headCommitOid
+        || !DIGEST.test(facts.repositoryIdentity)
+        || facts.repositoryIdentity !== gitRepositoryIdentity(descriptor.repositoryPath, facts.objectFormat)
+        || facts.gitPolicyVersion !== GIT_POLICY_VERSION
+        || facts.gitVersion !== GIT_RUNTIME_VERSION || !Number.isSafeInteger(facts.changedFileCount)
+        || facts.changedFileCount < 1 || facts.changedFileCount > 256 || !DIGEST.test(facts.diffContentDigest)
+        || !Number.isSafeInteger(facts.diffContentBytes) || facts.diffContentBytes < 1 || facts.diffContentBytes > MAX_GIT_DIFF_BYTES
+        || !Number.isSafeInteger(facts.diffContentLines) || facts.diffContentLines < 1
+        || !Number.isSafeInteger(facts.requiredConsumeSegments) || facts.requiredConsumeSegments < 1
+        || facts.requiredConsumeSegments > MAX_CONSUME_SEGMENTS_PER_RESOURCE) {
+      fail("STATE_CORRUPTED", "Git diff target snapshot facts are invalid");
+    }
+    validateJournalArtifact(target.snapshot.artifacts[0], {
+      ...context, targetId: target.targetId, targetKind: target.kind,
+    });
+    if (target.snapshot.artifacts[0].contentIdentity.contentDigest !== facts.diffContentDigest
+        || target.snapshot.artifacts[0].contentIdentity.contentBytes !== facts.diffContentBytes
+        || target.snapshot.artifacts[0].contentIdentity.contentLines !== facts.diffContentLines) {
+      fail("STATE_CORRUPTED", "Git diff artifact identity conflicts with its facts");
     }
   }
   const expectedIdentity = targetSnapshotIdentity({
@@ -1047,14 +1398,36 @@ export function normalizeMemberPath(value) {
   }
 }
 
+export function assertScopeRequestCountFeasible(existingTargets, targetRequests) {
+  if (!Array.isArray(existingTargets) || !Array.isArray(targetRequests)) {
+    throw new TypeError("Review scope request count inputs are required");
+  }
+  const totalTargets = existingTargets.length + targetRequests.length;
+  const gitTargets = [...existingTargets, ...targetRequests]
+    .filter((target) => ["commit", "git_diff"].includes(target.kind)).length;
+  if (gitTargets > MAX_GIT_TARGETS_PER_RUN) {
+    fail("TARGET_LIMIT_EXCEEDED", "Final target scope exceeds its local Git target limit");
+  }
+  if (totalTargets > MAX_SCOPE_TARGETS) {
+    fail("CAPTURE_LIMIT_EXCEEDED", "Final target scope exceeds its aggregate capture budget");
+  }
+}
+
 export function assertFinalScopeFeasible(targets) {
-  const contentBytes = targets.reduce((sum, target) => sum + (target.kind === "file"
-    ? target.snapshot.facts.contentBytes : target.snapshot.facts.totalContentBytes), 0);
+  const contentBytes = targets.reduce((sum, target) => {
+    if (target.kind === "file") return sum + target.snapshot.facts.contentBytes;
+    if (target.kind === "git_diff") return sum + target.snapshot.facts.diffContentBytes;
+    return sum + target.snapshot.facts.totalContentBytes;
+  }, 0);
   const segments = targets.reduce((sum, target) => sum + target.snapshot.facts.requiredConsumeSegments, 0);
   const manifestBytes = targets.reduce((sum, target) => sum + (target.kind === "directory_snapshot"
     ? target.snapshot.artifacts[0].contentIdentity.contentBytes : 0), 0);
-  if (targets.length > MAX_SCOPE_TARGETS || contentBytes > MAX_RUN_TARGET_CONTENT_BYTES
-      || segments > MAX_REQUIRED_CONSUME_SEGMENTS_PER_RUN || manifestBytes > MAX_RUN_DIRECTORY_MANIFEST_BYTES) {
+  const gitTargets = targets.filter((target) => ["commit", "git_diff"].includes(target.kind)).length;
+  const commitMembers = targets.reduce((sum, target) => sum + (target.kind === "commit"
+    ? target.snapshot.facts.memberCount : 0), 0);
+  if (targets.length > MAX_SCOPE_TARGETS || gitTargets > MAX_GIT_TARGETS_PER_RUN || commitMembers > 960
+      || contentBytes > MAX_RUN_TARGET_CONTENT_BYTES || segments > MAX_REQUIRED_CONSUME_SEGMENTS_PER_RUN
+      || manifestBytes > MAX_RUN_DIRECTORY_MANIFEST_BYTES) {
     fail("CAPTURE_LIMIT_EXCEEDED", "Final target scope exceeds its aggregate capture budget");
   }
 }

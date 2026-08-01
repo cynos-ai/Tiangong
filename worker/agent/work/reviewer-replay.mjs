@@ -6,6 +6,7 @@ import {
   expectedArtifactContentIdentity,
   normalizeMemberPath,
   normalizeRelativePath,
+  repositoryInspectionSelectorDigest,
   resourceSelectorDigest,
 } from "../practices/review-targets.mjs";
 
@@ -37,6 +38,17 @@ function paramsMatch(toolName, params, operation) {
     return params.targetId === operation.state.targetId && params.offset === operation.input.offset
       && params.limit === operation.input.limit
       && resourceSelectorDigest(params.targetId, memberPath) === operation.input.resourceSelectorDigest;
+  }
+  if (toolName === "inspect_repository") {
+    return exact(params, ["action", "limit", "offset", "prefix", "targetId"])
+      && params.action === "list_commit" && params.targetId === operation.state.targetId
+      && repositoryInspectionSelectorDigest({
+        targetId: params.targetId,
+        action: params.action,
+        prefix: normalizeRelativePath(params.prefix, { allowRoot: true }),
+        offset: params.offset,
+        limit: params.limit,
+      }) === operation.input.selectorDigest;
   }
   const keys = params.action === "list" ? ["action", "limit", "offset", "prefix", "targetId"]
     : ["action", "maxResults", "prefix", "query", "targetId"];
@@ -122,14 +134,17 @@ export async function durableReviewerReplay({ service, evidence, toolName, param
     practiceRunFail("EVIDENCE_JOIN_INVALID", "Reviewer replay lifecycle is invalid");
   }
   const metadata = toolName === "read"
-    ? completion.metadata.reviewTargetConsume : completion.metadata.reviewDirectoryInspection;
+    ? completion.metadata.reviewTargetConsume
+    : toolName === "inspect_repository"
+      ? completion.metadata.reviewRepositoryInspection
+      : completion.metadata.reviewDirectoryInspection;
   let artifact;
   try {
     artifact = await service.artifactStore.readFromEvidence(artifactRequest(service, gate, metadata.artifact, metadata.targetId));
   } catch {
     practiceRunFail("TARGET_ARTIFACT_INVALID", "Reviewer replay Artifact is invalid");
   }
-  const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(artifact.bytes);
+  const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(artifact.bytes);
   const details = toolName === "read" ? {
     targetId: metadata.targetId,
     memberPath: Object.hasOwn(params, "memberPath") ? normalizeMemberPath(params.memberPath) : null,

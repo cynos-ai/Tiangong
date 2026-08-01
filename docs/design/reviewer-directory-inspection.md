@@ -11,10 +11,10 @@
 Reviewer v2已一次性clean-cut激活以下集合；它们共同构成current runtime，不能只更新prompt或单个DTO：
 
 - Reviewer profile/role skill/Gate=`reviewer-v2`；
-- `targetKindIds=["file","directory_snapshot"]`；
+- `targetKindIds=["file","directory_snapshot","commit","git_diff"]`，本文只拥有directory kind；
 - PracticeDefinition/PracticeRun/journal/claim=`v2`；
 - ContextPack=`v3`，checkpoint=`review-v2`；
-- tools ordered exact 为 `start_work,extend_scope,read,inspect_directory,check_completion,abandon_work`；
+- tools ordered exact 为 `start_work,extend_scope,read,inspect_directory,inspect_repository,check_completion,abandon_work`；
 - `start_work.targets[]` / `extend_scope.targets[]` 与 `scope.targets[]`；
 - status 使用 `scopeTargetCount`，OTel 使用 `tiangong.practice.target_count`；
 - CapturedArtifactStore closed registry新增本文两个 producer。
@@ -58,7 +58,7 @@ profile exact目标：
   "roleId": "reviewer",
   "title": "Reviewer",
   "practiceIds": ["review"],
-  "targetKindIds": ["file", "directory_snapshot"],
+  "targetKindIds": ["file", "directory_snapshot", "commit", "git_diff"],
   "toolIds": [
     "start_work",
     "extend_scope",
@@ -72,7 +72,7 @@ profile exact目标：
 }
 ```
 
-closed target-kind registry materialize且仅materialize `file` 与 `directory_snapshot`。`commit` / `git_diff` 即使已在typed-target设计registry中定义，也不得进入ToolDefinition union、prompt或backend dispatch。ENV、Worker name、workspace文件、prompt和tool参数不能增加kind/producer/action。
+closed target-kind registry current materialize `file`、`directory_snapshot`、`commit` 与 `git_diff`；本合同只定义前两者中的directory行为，local-git dispatch由独立合同拥有。ENV、Worker name、workspace文件、prompt和tool参数不能增加kind/producer/action。
 
 `read` 是target-bound consume，不接受自由workspace path：
 
@@ -292,7 +292,7 @@ MAX_PATH_BYTES=1KiB
 
 admission必须对每个decoded member模拟唯一canonical completion plan：从offset=1开始，每次`limit=min(2000,remaining lines)`，应用typed-target§9 exact 50KiB maximal-complete-line-prefix算法，下一offset=`returnedLineEnd+1`，直至覆盖全部lines；empty member计划exact为一次zero-byte `[1,1]` consume。若任一当前位置第一逻辑行无法在50KiB内返回、单member计划超过128 segments，或全directory计划之和超过960，admission在写manifest前返回`TARGET_LIMIT_EXCEEDED`。每member count写入`requiredConsumeSegments`，facts保存sum。
 
-因此单个admitted directory target存在一条bounded non-overlap完整路径。start/extend在所有candidate capture后、任何journal append前，还必须对`existing final scope + candidates`执行global feasibility：所有materialized file `facts.requiredConsumeSegments`与directory aggregate之和≤960，全部directory manifest actual bytes之和≤8MiB；违反任一返回final aggregate `CAPTURE_LIMIT_EXCEEDED`，整个array不commit。file target使用同一canonical plan，首行不可消费或单resource>128时在其capture阶段`TARGET_LIMIT_EXCEEDED`。
+因此单个admitted directory target存在一条bounded non-overlap完整路径。start/extend在所有candidate capture后、任何journal append前，还必须对`existing final scope + candidates`执行global feasibility：所有materialized file/directory/commit/git_diff resources的`requiredConsumeSegments`之和≤960，全部directory manifest actual bytes之和≤8MiB，并满足local-git合同的run aggregate；违反任一返回final aggregate `CAPTURE_LIMIT_EXCEEDED`，整个array不commit。file target使用同一canonical plan，首行不可消费或单resource>128时在其capture阶段`TARGET_LIMIT_EXCEEDED`。
 
 final scope canonical plan因此最多960 successful consume artifacts/1920 selected Evidence refs。每directory最多64、每run最多128个inspection；run最多64个manifest、960 consume与128 inspection artifacts，共≤1152，低于Store run count4096。optimal consume bytes≤16MiB、all manifest≤8MiB、all inspection≤8MiB，合计≤32MiB，低于Store run content128MiB；单target的manifest+consume+64 inspection也低于Store target count/content quota。模型选择冗余/重叠小range或后续orphan仍可能消耗额外quota并触发既有hard limit，但这不使新commit的final scope在canonical plan和reserved inspection budget下先天不可完成。
 
@@ -602,9 +602,9 @@ search替换对应purpose/media；其余keys相同。`resultCount`始终等于mo
 
 model tool result exact为`{content:[{type:"text",text:<same canonical JSON UTF-8 decoded string>}],details:{targetId,action,resultCount,truncated}}`；details不含prefix/query/digest/ref。
 
-V1固定`MAX_DIRECTORY_INSPECTIONS_PER_TARGET=64`和`MAX_DIRECTORY_INSPECTIONS_PER_RUN=128`。v2 state resolver在`practice-runs/<sessionHash>/directory-inspection-lock-target`提供mode0600、empty、no-symlink kernel `flock` target；它不是business state。successful replay在加锁前返回。new execution在Gate allow后取得该session-wide exclusive lock，持锁执行：reload run/revision/target → 在validated Evidence boundary同时计数该target与run的successful `reviewDirectoryInspection` completions → target已64或run已128时返回`DIRECTORY_INSPECTION_LIMIT_EXCEEDED`且不调用Store → backend/Store put → wrapper successful completion Evidence append；append完成或任一failure后才释放。crash/descriptor close由kernel释放；Store已成功而Evidence失败时artifact为orphan且不计64。
+V1固定`MAX_DIRECTORY_INSPECTIONS_PER_TARGET=64`和combined `MAX_SUCCESSFUL_INSPECTIONS_PER_RUN=128`。v2 state resolver在`practice-runs/<sessionHash>/review-inspection-lock-target`提供mode0600、empty、no-symlink kernel `flock` target；它不是business state，并与`inspect_repository`共享。successful replay在加锁前返回。new execution在Gate allow后取得该session-wide exclusive lock，持锁执行：reload run/revision/target → 在validated Evidence boundary同时计数该target与run的successful directory/repository inspection completions → target已64或combined run已128时，directory返回`DIRECTORY_INSPECTION_LIMIT_EXCEEDED`且不调用Store → backend/Store put → wrapper successful completion Evidence append；append完成或任一failure后才释放。crash/descriptor close由kernel释放；Store已成功而Evidence失败时artifact为orphan且不计64。
 
-所有实现使用lock order `directory-inspection lock → CapturedArtifactStore session lock → Evidence append lock`；其它路径不得持Store/Evidence lock后再请求inspection lock。lock wait固定35秒，失败映射`DIRECTORY_INSPECTION_LOCK_FAILED`。这样target 63或run 127边界的并发inspection只能一个占用最后相应slot，另一个在reload/recount后稳定失败；不能只依赖普通Evidence append serialization做check-then-append。
+所有实现使用lock order `review-inspection lock → CapturedArtifactStore session lock → Evidence append lock`；其它路径不得持Store/Evidence lock后再请求inspection lock。lock wait固定35秒，directory失败映射`DIRECTORY_INSPECTION_LOCK_FAILED`。这样target 63或run 127边界的并发inspection只能一个占用最后相应slot，另一个在reload/recount后稳定失败；不能只依赖普通Evidence append serialization做check-then-append。
 
 ---
 

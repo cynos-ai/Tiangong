@@ -164,6 +164,7 @@ export class TiangongAgentRuntime {
         snapshotPath: persisted.paths.practiceRunSnapshotPath,
         protectedDirectory: persisted.paths.practiceRunProtectedDirectory,
         artifactStore,
+        localGitLockPath: persisted.paths.localGitLockPath,
       });
       gate = new ReviewerPracticeGate({ profileBundle });
       registry = createReviewerToolRegistry({
@@ -172,7 +173,7 @@ export class TiangongAgentRuntime {
         gate,
         evidence,
         getInvocation: turns.current,
-        inspectionLockPath: persisted.paths.directoryInspectionLockPath,
+        inspectionLockPath: persisted.paths.reviewInspectionLockPath,
       });
     } else {
       gate = new PolicyGate({ idempotencyStore });

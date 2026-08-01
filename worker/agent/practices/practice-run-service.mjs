@@ -1,3 +1,5 @@
+import { basename, dirname, join } from "node:path";
+
 import { sha256, canonicalJson } from "../canonical-json.mjs";
 import { practiceRunFail } from "./errors.mjs";
 import { evaluateReviewCheckpoint, validateReviewClaim } from "./review-checkpoint.mjs";
@@ -11,6 +13,7 @@ import {
   MATERIALIZED_TARGET_KINDS,
   ReviewTargetCapture,
   assertFinalScopeFeasible,
+  assertScopeRequestCountFeasible,
   normalizeTargetRequests,
   reviewScopeDigest,
   targetRequestsDigest,
@@ -65,15 +68,39 @@ function normalizedText(value, { code, name, maxBytes }) {
 }
 
 function targetSummary(target) {
-  const snapshotSummary = target.kind === "file" ? {
-    identity: target.snapshot.identity,
-    contentBytes: target.snapshot.facts.contentBytes,
-    contentLines: target.snapshot.facts.contentLines,
-  } : {
-    identity: target.snapshot.identity,
-    memberCount: target.snapshot.facts.memberCount,
-    totalContentBytes: target.snapshot.facts.totalContentBytes,
-  };
+  let snapshotSummary;
+  if (target.kind === "file") {
+    snapshotSummary = {
+      identity: target.snapshot.identity,
+      contentBytes: target.snapshot.facts.contentBytes,
+      contentLines: target.snapshot.facts.contentLines,
+    };
+  } else if (target.kind === "directory_snapshot") {
+    snapshotSummary = {
+      identity: target.snapshot.identity,
+      memberCount: target.snapshot.facts.memberCount,
+      totalContentBytes: target.snapshot.facts.totalContentBytes,
+    };
+  } else if (target.kind === "commit") {
+    snapshotSummary = {
+      identity: target.snapshot.identity,
+      objectFormat: target.snapshot.facts.objectFormat,
+      commitOid: target.snapshot.facts.commitOid,
+      treeOid: target.snapshot.facts.treeOid,
+      memberCount: target.snapshot.facts.memberCount,
+      totalContentBytes: target.snapshot.facts.totalContentBytes,
+    };
+  } else {
+    snapshotSummary = {
+      identity: target.snapshot.identity,
+      objectFormat: target.snapshot.facts.objectFormat,
+      baseCommitOid: target.snapshot.facts.baseCommitOid,
+      headCommitOid: target.snapshot.facts.headCommitOid,
+      changedFileCount: target.snapshot.facts.changedFileCount,
+      diffContentBytes: target.snapshot.facts.diffContentBytes,
+      diffContentLines: target.snapshot.facts.diffContentLines,
+    };
+  }
   return {
     targetId: target.targetId,
     kind: target.kind,
@@ -168,6 +195,12 @@ function operationBase({ toolName, profile, profileDigest, practice, context, wo
   };
 }
 
+function localGitLockForJournal(journalPath) {
+  const practiceRunDirectory = dirname(journalPath);
+  const stateDirectory = dirname(dirname(practiceRunDirectory));
+  return join(stateDirectory, "local-git", basename(practiceRunDirectory), "lock-target");
+}
+
 function captureInput(targets) {
   return {
     targetRequests: targets,
@@ -199,6 +232,9 @@ export class PracticeRunService {
     snapshotPath,
     protectedDirectory,
     artifactStore,
+    localGitLockPath = localGitLockForJournal(journalPath),
+    localGitExecutor = null,
+    localGitOptions = {},
     clock = () => new Date(),
     uuid = () => crypto.randomUUID(),
   }) {
@@ -226,7 +262,14 @@ export class PracticeRunService {
     this.#artifactStore = artifactStore;
     this.#payloads = new ProtectedPayloadStore({ directory: protectedDirectory });
     this.#store = new PracticeRunStore({ filePath: journalPath, snapshotPath, sessionId, clock, uuid });
-    this.#targetCapture = new ReviewTargetCapture({ workspaceDir, artifactStore, clock });
+    this.#targetCapture = new ReviewTargetCapture({
+      workspaceDir,
+      artifactStore,
+      localGitLockPath,
+      localGitExecutor,
+      localGitOptions,
+      clock,
+    });
   }
 
   get targetCapture() { return this.#targetCapture; }
@@ -321,6 +364,7 @@ export class PracticeRunService {
       practiceRunFail("INVALID_CRITERIA", "Acceptance criteria must be unique after normalization");
     }
     const targets = normalizeTargetRequests(params.targets, this.#profile.targetKindIds);
+    assertScopeRequestCountFeasible([], targets);
     await this.#targetCapture.initialize();
     const operation = {
       ...operationBase({
@@ -404,6 +448,7 @@ export class PracticeRunService {
     this.#assertInvocationProfile(invocation);
     const run = await this.activeForActor(context.actorId);
     const targets = normalizeTargetRequests(params.targets, this.#profile.targetKindIds);
+    assertScopeRequestCountFeasible(run.scope.targets, targets);
     await this.#targetCapture.initialize();
     const operation = {
       ...operationBase({

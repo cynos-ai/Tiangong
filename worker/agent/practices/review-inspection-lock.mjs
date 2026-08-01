@@ -45,54 +45,73 @@ async function openLockTarget(path) {
     }
     return handle;
   } catch {
-    practiceRunFail("DIRECTORY_INSPECTION_LOCK_FAILED", "Directory inspection lifecycle lock is unavailable");
+    throw new Error("review-inspection-lock-unavailable");
   }
 }
 
-function assertInspectionMetadata(value) {
+function inspectionMetadata(record) {
+  if (record.toolName === "inspect_directory") {
+    const value = record.metadata?.reviewDirectoryInspection;
+    if (!exact(value, ["action", "artifact", "resultCount", "selectorDigest", "snapshotIdentity", "targetId", "truncated"])
+        || !["list", "search"].includes(value.action) || typeof value.targetId !== "string") {
+      practiceRunFail("EVIDENCE_RESULT_INVALID", "Directory inspection Evidence metadata is invalid");
+    }
+    return value;
+  }
+  const value = record.metadata?.reviewRepositoryInspection;
   if (!exact(value, ["action", "artifact", "resultCount", "selectorDigest", "snapshotIdentity", "targetId", "truncated"])
-      || !["list", "search"].includes(value.action) || typeof value.targetId !== "string") {
-    practiceRunFail("EVIDENCE_RESULT_INVALID", "Directory inspection Evidence metadata is invalid");
+      || value.action !== "list_commit" || typeof value.targetId !== "string") {
+    practiceRunFail("EVIDENCE_RESULT_INVALID", "Repository inspection Evidence metadata is invalid");
   }
+  return value;
 }
 
-export class DirectoryInspectionBoundary {
+export class ReviewInspectionBoundary {
   #evidence;
   #lockPath;
 
   constructor({ evidence, lockPath }) {
     if (!evidence || typeof lockPath !== "string" || lockPath === "") {
-      throw new TypeError("Directory inspection lock dependencies are required");
+      throw new TypeError("Review inspection lock dependencies are required");
     }
     this.#evidence = evidence;
     this.#lockPath = lockPath;
   }
 
   async run({ operation }, callback) {
-    const handle = await openLockTarget(this.#lockPath);
+    let handle;
     try {
+      handle = await openLockTarget(this.#lockPath);
       return await withKernelFileLock(handle, async () => {
         const records = await this.#evidence.readAll();
         let runCount = 0;
         let targetCount = 0;
         for (const record of records) {
           if (record.type !== "tool.execution.completed" || record.status !== "success"
-              || record.toolName !== "inspect_directory" || record.practiceRunId !== operation.state.runId) continue;
-          const metadata = record.metadata?.reviewDirectoryInspection;
-          assertInspectionMetadata(metadata);
+              || !["inspect_directory", "inspect_repository"].includes(record.toolName)
+              || record.practiceRunId !== operation.state.runId) continue;
+          const metadata = inspectionMetadata(record);
           runCount += 1;
           if (metadata.targetId === operation.state.targetId) targetCount += 1;
         }
         if (targetCount >= TARGET_LIMIT || runCount >= RUN_LIMIT) {
-          practiceRunFail("DIRECTORY_INSPECTION_LIMIT_EXCEEDED", "Directory inspection budget is exhausted");
+          const repository = operation.toolName === "inspect_repository";
+          practiceRunFail(
+            repository ? "GIT_INSPECTION_LIMIT_EXCEEDED" : "DIRECTORY_INSPECTION_LIMIT_EXCEEDED",
+            repository ? "Repository inspection budget is exhausted" : "Directory inspection budget is exhausted",
+          );
         }
         return callback();
       }, { timeoutSeconds: ARTIFACT_LOCK_TIMEOUT_SECONDS });
     } catch (error) {
       if (error?.name === "PracticeRunError") throw error;
-      practiceRunFail("DIRECTORY_INSPECTION_LOCK_FAILED", "Directory inspection lifecycle lock failed");
+      const repository = operation.toolName === "inspect_repository";
+      practiceRunFail(
+        repository ? "GIT_EXECUTION_LOCK_FAILED" : "DIRECTORY_INSPECTION_LOCK_FAILED",
+        repository ? "Repository inspection lifecycle lock failed" : "Directory inspection lifecycle lock failed",
+      );
     } finally {
-      await handle.close().catch(() => {});
+      await handle?.close().catch(() => {});
     }
   }
 }

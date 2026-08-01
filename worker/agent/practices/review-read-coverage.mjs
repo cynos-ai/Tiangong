@@ -2,7 +2,9 @@ import { practiceRunFail } from "./errors.mjs";
 
 const MAX_SEGMENTS_PER_RESOURCE = 128;
 const MAX_SELECTED_EVENT_REFS = 2048;
-const BLOCKING_ERRORS = new Set(["TARGET_CHANGED", "TARGET_UNAVAILABLE", "GIT_OBJECT_UNAVAILABLE"]);
+const BLOCKING_ERRORS = new Set([
+  "TARGET_CHANGED", "TARGET_UNAVAILABLE", "GIT_OBJECT_UNAVAILABLE", "TARGET_ARTIFACT_INVALID",
+]);
 
 function targetCoverage(target, status, reasonCode, selectedEventRefs) {
   return Object.freeze({

@@ -16,8 +16,21 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
     && ln -s /opt/openclaw ./node_modules/openclaw \
     && npm cache clean --force \
     && ./node_modules/.bin/pi --version \
+    && test -x /usr/bin/git \
+    && test -x /usr/bin/prlimit \
     && test -x /usr/bin/flock \
-    && /usr/bin/flock --version
+    && test ! -L /usr/bin/git \
+    && test ! -L /usr/bin/prlimit \
+    && test ! -L /usr/bin/flock \
+    && test "$(stat -c '%F:%u' /usr/bin/git)" = "regular file:0" \
+    && test "$(stat -c '%F:%u' /usr/bin/prlimit)" = "regular file:0" \
+    && test "$(stat -c '%F:%u' /usr/bin/flock)" = "regular file:0" \
+    && test "$(/usr/bin/git --version)" = "git version 2.43.0" \
+    && test "$(/usr/bin/prlimit --version | head -n 1)" = "prlimit from util-linux 2.39.3" \
+    && test "$(/usr/bin/flock --version | head -n 1)" = "flock from util-linux 2.39.3" \
+    && test -d /usr/lib/git-core \
+    && test ! -L /usr/lib/git-core \
+    && test "$(stat -c '%F:%u' /usr/lib/git-core)" = "directory:0"
 
 COPY agent/ ./agent/
 COPY observability/ ./observability/

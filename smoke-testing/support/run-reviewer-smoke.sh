@@ -14,10 +14,12 @@ readonly MANIFEST="${REPO_ROOT}/smoke-testing/fixtures/reviewer-smoke-worker.yam
 readonly BUILD_WORKER_IMAGE="${REPO_ROOT}/scripts/build-worker-image.sh"
 readonly MATRIX_ROUNDTRIP="${SCRIPT_DIR}/matrix-reviewer-roundtrip.sh"
 readonly STATE_ORACLE="${SCRIPT_DIR}/reviewer-state-oracle.mjs"
+readonly GIT_STATE_ORACLE="${SCRIPT_DIR}/reviewer-git-state-oracle.mjs"
 readonly ORACLE_POLICY="${SCRIPT_DIR}/reviewer-oracle-policy.mjs"
 readonly MANAGER_MANIFEST="/tmp/tiangong-reviewer-smoke-worker.yaml"
 readonly MANAGER_MATRIX_ROUNDTRIP="/tmp/tiangong-matrix-reviewer-roundtrip.sh"
 readonly WORKER_STATE_ORACLE="/tmp/tiangong-reviewer-state-oracle.mjs"
+readonly WORKER_GIT_STATE_ORACLE="/tmp/tiangong-reviewer-git-state-oracle.mjs"
 readonly WORKER_ORACLE_POLICY="/tmp/reviewer-oracle-policy.mjs"
 readonly SMOKE_LEVEL="${TIANGONG_REVIEWER_SMOKE_LEVEL:-recovery}"
 created=0
@@ -128,6 +130,44 @@ run_oracle() {
   docker exec "${CONTAINER_NAME}" node "${WORKER_STATE_ORACLE}" "$@"
 }
 
+run_git_oracle() {
+  docker exec "${CONTAINER_NAME}" node "${WORKER_GIT_STATE_ORACLE}" "$@"
+}
+
+repository_digest() {
+  docker exec "${CONTAINER_NAME}" node - "$1" <<'NODE'
+const { createHash } = require("node:crypto");
+const { lstatSync, readFileSync, readdirSync } = require("node:fs");
+const { join, relative } = require("node:path");
+const root = process.argv[2];
+const entries = [];
+function walk(directory) {
+  for (const name of readdirSync(directory).sort()) {
+    const path = join(directory, name);
+    const value = lstatSync(path);
+    const item = { path: relative(root, path), mode: value.mode & 0o7777 };
+    if (value.isDirectory()) {
+      item.kind = "directory";
+      entries.push(item);
+      walk(path);
+    } else if (value.isFile()) {
+      item.kind = "file";
+      item.digest = createHash("sha256").update(readFileSync(path)).digest("hex");
+      entries.push(item);
+    } else if (value.isSymbolicLink()) {
+      item.kind = "symlink";
+      entries.push(item);
+    } else {
+      item.kind = "other";
+      entries.push(item);
+    }
+  }
+}
+walk(root);
+process.stdout.write(createHash("sha256").update(JSON.stringify(entries)).digest("hex"));
+NODE
+}
+
 assert_harness() {
   local phase="$1" harness
   harness="$(docker exec "${CONTAINER_NAME}" cat /tmp/tiangong-pi-harness.last-run)"
@@ -177,13 +217,13 @@ wait_for_remote_journal() {
     "agentteams/agentteams-storage/agents/${WORKER_NAME}/.tiangong/runtime/practice-runs/${session_hash}/events.jsonl"
 }
 
-[[ "${SMOKE_LEVEL}" == "basic" || "${SMOKE_LEVEL}" == "recovery" ||
+[[ "${SMOKE_LEVEL}" == "basic" || "${SMOKE_LEVEL}" == "git" || "${SMOKE_LEVEL}" == "recovery" ||
     "${SMOKE_LEVEL}" == "journey" ]] ||
-  die "TIANGONG_REVIEWER_SMOKE_LEVEL must be basic, recovery, or journey."
+  die "TIANGONG_REVIEWER_SMOKE_LEVEL must be basic, git, recovery, or journey."
 for command in docker jq grep; do
   command -v "${command}" >/dev/null 2>&1 || die "Missing required command: ${command}"
 done
-for file in "${MANIFEST}" "${MATRIX_ROUNDTRIP}" "${STATE_ORACLE}" "${ORACLE_POLICY}"; do
+for file in "${MANIFEST}" "${MATRIX_ROUNDTRIP}" "${STATE_ORACLE}" "${GIT_STATE_ORACLE}" "${ORACLE_POLICY}"; do
   [[ -f "${file}" ]] || die "Missing Reviewer smoke asset: ${file}"
 done
 [[ -x "${MATRIX_ROUNDTRIP}" ]] || die "Reviewer Matrix helper is not executable."
@@ -226,8 +266,8 @@ expected_image_id="$(docker image inspect "${IMAGE}" --format '{{.Id}}')"
 profile="$(docker exec "${CONTAINER_NAME}" node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role reviewer)"
 node -e '
   const profile = JSON.parse(process.argv[1]);
-  const tools = "start_work,extend_scope,read,inspect_directory,check_completion,abandon_work";
-  const kinds = "file,directory_snapshot";
+  const tools = "start_work,extend_scope,read,inspect_directory,inspect_repository,check_completion,abandon_work";
+  const kinds = "file,directory_snapshot,commit,git_diff";
   if (profile.schemaVersion !== 2 || profile.roleId !== "reviewer" || profile.runtimeReady !== true ||
       profile.toolIds.join(",") !== tools || profile.materializedToolIds.join(",") !== tools ||
       profile.targetKindIds.join(",") !== kinds || profile.materializedTargetKindIds.join(",") !== kinds) process.exit(1);
@@ -241,6 +281,7 @@ room_id="$(docker exec "${CONTAINER_NAME}" printenv AGENTTEAMS_WORKER_ROOM_ID)"
 [[ -n "${worker_user_id}" && -n "${room_id}" ]] || die "Reviewer Matrix identity is incomplete."
 wait_for_worker_channel 0 || die "Reviewer Matrix channel did not become ready."
 docker cp "${STATE_ORACLE}" "${CONTAINER_NAME}:${WORKER_STATE_ORACLE}"
+docker cp "${GIT_STATE_ORACLE}" "${CONTAINER_NAME}:${WORKER_GIT_STATE_ORACLE}"
 docker cp "${ORACLE_POLICY}" "${CONTAINER_NAME}:${WORKER_ORACLE_POLICY}"
 
 nonce="$(cat /proc/sys/kernel/random/uuid)"
@@ -277,6 +318,77 @@ if [[ "${SMOKE_LEVEL}" == "basic" ]]; then
       "$(jq -r '.checkpoint' <<<"${oracle}")" == "passed" ]] || die "Reviewer Basic oracle failed."
   printf 'reviewer_basic_machine_oracle=pass\n'
   assert_harness basic
+elif [[ "${SMOKE_LEVEL}" == "git" ]]; then
+  target="reviewer-git-${nonce}"
+  target_path="${agent_root}/${target}"
+  expected_patch="${agent_root}/reviewer-git-expected-${nonce}.patch"
+  helper_path="${agent_root}/reviewer-git-helper-${nonce}"
+  sentinel_path="${agent_root}/reviewer-git-sentinel-${nonce}"
+  docker exec "${CONTAINER_NAME}" mkdir -p -- "${target_path}/src"
+  docker exec "${CONTAINER_NAME}" /usr/bin/git -C "${target_path}" init --quiet
+  docker exec "${CONTAINER_NAME}" /usr/bin/git -C "${target_path}" config user.name "Reviewer Smoke"
+  docker exec "${CONTAINER_NAME}" /usr/bin/git -C "${target_path}" config user.email "reviewer-smoke@example.test"
+  printf 'harmless-reviewer-git-base:%s\n' "${nonce}" | docker exec -i "${CONTAINER_NAME}" \
+    sh -c 'umask 077; cat >"$1"' _ "${target_path}/src/one.txt"
+  docker exec "${CONTAINER_NAME}" /usr/bin/git -C "${target_path}" add -- src/one.txt
+  docker exec "${CONTAINER_NAME}" /usr/bin/git -C "${target_path}" commit --quiet -m base
+  base_oid="$(docker exec "${CONTAINER_NAME}" /usr/bin/git -C "${target_path}" rev-parse HEAD)"
+  docker exec "${CONTAINER_NAME}" /usr/bin/git -C "${target_path}" branch base "${base_oid}"
+  printf 'harmless-reviewer-git-head:%s\n' "${nonce}" | docker exec -i "${CONTAINER_NAME}" \
+    sh -c 'umask 077; cat >"$1"' _ "${target_path}/src/one.txt"
+  printf 'harmless-reviewer-git-second:%s\n' "${nonce}" | docker exec -i "${CONTAINER_NAME}" \
+    sh -c 'umask 077; cat >"$1"' _ "${target_path}/src/two.txt"
+  docker exec "${CONTAINER_NAME}" /usr/bin/git -C "${target_path}" add -- src/one.txt src/two.txt
+  docker exec "${CONTAINER_NAME}" /usr/bin/git -C "${target_path}" commit --quiet -m head
+  head_oid="$(docker exec "${CONTAINER_NAME}" /usr/bin/git -C "${target_path}" rev-parse HEAD)"
+  docker exec "${CONTAINER_NAME}" /usr/bin/git -C "${target_path}" branch head "${head_oid}"
+  docker exec "${CONTAINER_NAME}" /usr/bin/git -C "${target_path}" gc --prune=now
+  docker exec "${CONTAINER_NAME}" sh -c '
+    set -eu
+    GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_GLOBAL=/dev/null \
+      /usr/bin/git -C "$1" --no-pager --no-replace-objects --no-optional-locks --literal-pathspecs \
+      -c color.ui=false -c core.attributesFile=/dev/null -c core.commitGraph=false -c core.fsmonitor=false \
+      -c core.multiPackIndex=false -c credential.helper= -c diff.external= -c diff.renames=false \
+      -c pager.diff=false -c protocol.allow=never -c submodule.recurse=false \
+      --attr-source="$3" diff-tree --no-commit-id -r -p --no-renames --no-ext-diff --no-textconv \
+      --no-color --full-index --unified=3 --diff-algorithm=myers --no-indent-heuristic \
+      --src-prefix=a/ --dst-prefix=b/ "$2" "$3" -- src >"$4"
+  ' _ "${target_path}" "${base_oid}" "${head_oid}" "${expected_patch}"
+  diff_digest="$(fixture_digest "${expected_patch}")"
+  digest_one="$(fixture_digest "${target_path}/src/one.txt")"
+  digest_two="$(fixture_digest "${target_path}/src/two.txt")"
+  printf '#!/usr/bin/env sh\nprintf executed >%q\nexit 97\n' "${sentinel_path}" | docker exec -i "${CONTAINER_NAME}" \
+    sh -c 'umask 077; cat >"$1"; chmod 700 "$1"' _ "${helper_path}"
+  docker exec "${CONTAINER_NAME}" /usr/bin/git -C "${target_path}" config diff.external "${helper_path}"
+  repository_digest_before="$(repository_digest "${target_path}")"
+
+  log "Running Reviewer local-Git Basic Matrix turn"
+  if ! output="$(docker exec "${MANAGER_CONTAINER}" "${MANAGER_MATRIX_ROUNDTRIP}" \
+      git-basic "${room_id}" "${worker_user_id}" "${nonce}")"; then
+    diagnostic_paths="$(practice_paths "${target}" "${agent_root}" 2>/dev/null || true)"
+    if [[ -n "${diagnostic_paths}" ]]; then
+      mapfile -t paths <<<"${diagnostic_paths}"
+      diagnose_reviewer_state "${paths[0]}" "${paths[2]}"
+    fi
+    die "Reviewer local-Git Basic Matrix turn did not produce its required machine status."
+  fi
+  printf '%s\n' "${output}"
+  mapfile -t paths < <(practice_paths "${target}" "${agent_root}")
+  oracle="$(run_git_oracle "${paths[0]}" "${paths[1]}" "${paths[2]}" \
+    "${agent_root}/.tiangong/runtime" "${agent_root}" "${target}" \
+    "${base_oid}" "${head_oid}" "${digest_one}" "${digest_two}" "${diff_digest}")"
+  printf '%s\n' "${oracle}"
+  [[ "$(jq -r '.status' <<<"${oracle}")" == "done" &&
+      "$(jq -r '.checkpoint' <<<"${oracle}")" == "passed" &&
+      "$(jq -r '.readExecutionCount' <<<"${oracle}")" == "3" ]] || die "Reviewer local-Git oracle failed."
+  [[ "$(repository_digest "${target_path}")" == "${repository_digest_before}" ]] ||
+    die "Reviewer local-Git backend mutated the source repository."
+  ! docker exec "${CONTAINER_NAME}" test -e "${sentinel_path}" ||
+    die "Repository-configured external helper executed."
+  printf 'reviewer_git_repository_unchanged=pass\n'
+  printf 'reviewer_git_external_helper_not_executed=pass\n'
+  printf 'reviewer_git_machine_oracle=pass\n'
+  assert_harness git
 else
   target_a="reviewer-recovery-a-${nonce}"
   target_b="reviewer-recovery-b-${nonce}"

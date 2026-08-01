@@ -50,7 +50,7 @@ async function fixture(t, { evidenceOverride } = {}) {
   const gate = new ReviewerPracticeGate({ profileBundle });
   let current;
   const registry = createReviewerToolRegistry({
-    service, gate, evidence, getInvocation: () => current, inspectionLockPath: paths.directoryInspectionLockPath,
+    service, gate, evidence, getInvocation: () => current, inspectionLockPath: paths.reviewInspectionLockPath,
   });
   const tool = (name) => registry.definitions().find((entry) => entry.name === name);
   function begin(turnId, messageId = "message-1") {
@@ -96,10 +96,10 @@ async function expectCode(promise, code) {
   await assert.rejects(promise, (error) => error?.code === code);
 }
 
-test("six-tool Reviewer v2 proves directory inspection is exploration and target-bound reads complete every resource", async (t) => {
+test("seven-tool Reviewer v2 proves directory inspection is exploration and target-bound reads complete every resource", async (t) => {
   const f = await fixture(t);
   assert.deepEqual(f.registry.names(), [
-    "start_work", "extend_scope", "read", "inspect_directory", "check_completion", "abandon_work",
+    "start_work", "extend_scope", "read", "inspect_directory", "inspect_repository", "check_completion", "abandon_work",
   ]);
   f.begin("turn-start");
   const started = await f.tool("start_work").execute("call-start", startTargets());

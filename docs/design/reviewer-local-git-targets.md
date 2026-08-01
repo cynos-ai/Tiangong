@@ -1,28 +1,23 @@
 # Reviewer local-git target contract
 
-> **状态：** 设计冻结；runtime尚未materialize `commit` / `git_diff`，实现与真实smoke必须走独立PR。
+> **状态：** 已实现；Reviewer v2 runtime materialize `commit` / `git_diff` 与 bounded `inspect_repository`，真实集成smoke记录在独立run plan。
 >
 > **范围：** Worker-local、non-mutating、本地普通repository中的immutable commit snapshot与direct commit-to-commit diff；不包含working tree/index diff、remote fetch/PR、任意git argv、shell或项目执行。
 
 ## 0. Current boundary and activation Gate
 
-当前Reviewer profile schema v2只materialize：
+当前Reviewer profile schema v2 exact materialize：
 
-- target kinds：`file`、`directory_snapshot`；
-- tools：`start_work`、`extend_scope`、`read`、`inspect_directory`、`check_completion`、`abandon_work`。
+- target kinds：`file`、`directory_snapshot`、`commit`、`git_diff`；
+- tools：`start_work`、`extend_scope`、`read`、`inspect_directory`、`inspect_repository`、`check_completion`、`abandon_work`。
 
-[`reviewer-typed-targets.md`](./reviewer-typed-targets.md) 已为`commit`和`git_diff`保留kind-owned snapshot/coverage位置，但明确禁止在local-git合同落地前使executor可达。本文冻结该独立合同；设计PR本身不得修改profile、tool registry、producer registry或runtime dispatch。
+[`reviewer-typed-targets.md`](./reviewer-typed-targets.md) 定义共享typed-target authority，本文拥有local-git capture、consume和inspection边界。activation保持：
 
-实现activation必须一次性满足：
-
-- profile schema仍为v2，profile `targetKindIds` exact为`file,directory_snapshot,commit,git_diff`；`materializedTargetKindIds`是image/profile checker从closed runtime registry派生的assertion output，不是profile JSON字段，且必须exact同序；
-- tool顺序exact为`start_work,extend_scope,read,inspect_directory,inspect_repository,check_completion,abandon_work`；
+- `materializedTargetKindIds`由image/profile checker从closed runtime registry派生，exact同序且不是profile JSON字段；
 - PracticeRun/journal/claim继续使用v2，ContextPack继续使用v3，checkpoint继续使用`review-v2`；
-- `commit`/`git_diff` target、artifact producer、read/coverage/checkpoint/context/status/OTel和smoke oracle同时激活；
+- `commit`/`git_diff` target、artifact producer、read/coverage/checkpoint/context/status、profile和tool dispatch同步激活；
 - 不保留只接受两种kind的双dispatch、旧profile digest shim、journal自动迁移或模型侧fallback；
 - 旧active run若绑定不同fixed profile digest，按既有profile binding规则fail closed，不重写其target或Evidence。
-
-本文不会把尚未实现的能力写成current product behavior。实现与hard gates通过后，才更新README、CHANGELOG和current-behavior文档。
 
 ---
 

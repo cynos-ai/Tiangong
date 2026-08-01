@@ -15,7 +15,7 @@
 - Setup: Build the current Reviewer image, refuse an existing reserved Worker/container, empty only its owned storage prefix, and create one nonce-owned directory with `one.txt`, `two.txt`, and an explicit `excluded/ignored.txt` subtree.
 - Prompt: One Matrix mention requests exactly one directory target (`include=[.]`, `exclude=[excluded]`), one list, one literal search, complete reads of both manifest members by runtime target ID, and one target-ID claim.
 - Expected observations:
-  - actual profile is v2 with exactly `file,directory_snapshot` and six tools;
+  - actual profile is v2 with exactly `file,directory_snapshot,commit,git_diff` and seven tools;
   - Matrix delivers `worker-local / done / checkpoint passed / targets 1 / static-review-only`;
   - one `run.started` binds a canonical manifest Artifact and one runtime target ID;
   - list/search have successful bounded Artifact/Evidence but do not satisfy member coverage;
@@ -24,6 +24,21 @@
   - excluded content is absent from the manifest and no write/edit/bash Evidence exists.
 - Required evidence: image/profile/kind/tool identities, Matrix event IDs, journal/Evidence/artifact joins, run/target/snapshot IDs, independent member digests, inspection counts, checkpoint, Harness pass, and exact cleanup.
 - Skip/block rules: Block if any machine fact, official delivery, Store join, or cleanup cannot be proven. Model prose is never the oracle.
+
+### B2: Pinned local commit and direct diff through Matrix
+
+- Purpose: Prove the official Matrix → Reviewer image → Gate-allowed local-Git mirror → immutable commit/diff targets → repository inspection/read coverage → completion path without workspace mutation.
+- Setup: Create one nonce-owned ordinary non-bare repository in the Worker workspace with base/head commits, two selected UTF-8 files, packed objects, a source config external-diff sentinel helper, and independently calculate base/head OIDs, member digests, canonical patch digest, and a pre-run repository byte-state digest.
+- Prompt: One Matrix mention requests exactly one `commit` target pinned to head and one direct `git_diff` target pinned base→head, both with literal prefix `src`; list the commit once, read both commit members and the full diff, then submit one ordered target-ID claim.
+- Expected observations:
+  - target facts bind supported object format, fixed Git policy/version, exact full OIDs, manifest/diff digests, counts, and runtime snapshot identities;
+  - `inspect_repository` returns the two canonical commit members but creates no consume coverage;
+  - three target-bound reads exactly cover both commit members and the diff artifact;
+  - journal/Evidence/Store joins validate the manifest, patch, chunks, claim, and final scope digest;
+  - pre/post repository byte-state digest is identical, external helper sentinel is absent, and no write/edit/bash Evidence exists;
+  - Matrix delivery, Harness, and owned cleanup pass.
+- Required evidence: fixed image/profile/tool/kind identities, Matrix event IDs, run/target/snapshot/OID facts, independent member/patch/repository digests, admission and consume Artifact joins, inspection count, checkpoint, sentinel absence, Harness, and cleanup.
+- Skip/block rules: Block on any unsupported image/runtime version, missing machine join, source mutation, sentinel execution, model-only claim, official delivery failure, or cleanup residue.
 
 ## Recovery Full smoke
 
@@ -67,7 +82,7 @@
 
 | Boundary | Hard intended pass | Hard fail/block | Journey observation |
 |---|---|---|---|
-| image/profile | v2, two kinds, exact six tools | unknown image/kind/tool mismatch | same fixed profile |
+| image/profile | v2, four kinds, exact seven tools | unknown image/kind/tool mismatch | same fixed profile |
 | actor/run | one authenticated actor and run | wrong actor/new run | original run remains authoritative |
 | target scope | A then append-only B | replacement/reorder/duplicate | final claim uses ordered target IDs |
 | manifest/inspection | journal-bound manifest; bounded list/search | missing/tampered/cross-target Artifact | inspection never grants coverage |
@@ -78,7 +93,7 @@
 
 ## Maintenance notes
 
-- Commands: `make test-reviewer-smoke-contract`, `make test-reviewer-image-basic`, `make test-reviewer-image`, and `make test-reviewer-journey-canary`.
+- Commands: `make test-reviewer-smoke-contract`, `make test-reviewer-image-basic`, `make test-reviewer-image-git`, `make test-reviewer-image`, and `make test-reviewer-journey-canary`.
 - `test-reviewer-image` is the hard Recovery Full gate; Journey remains separate and non-gating.
 - Deterministic tests own schema, capture ordering, Evidence/Store joins, coverage, concurrency, limits, privacy, and target-ID mapping.
 - Never use unrestricted logs, transcripts, model wording, filesystem traversal order, or raw Artifact refs as an oracle.

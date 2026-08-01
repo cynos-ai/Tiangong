@@ -23,6 +23,7 @@ test("state path resolver produces physically separate per-session roots", () =>
     practiceRunsRoot: join(stateDirectory, "practice-runs"),
     evidenceRoot: join(stateDirectory, "evidence"),
     capturedArtifactsRoot: join(stateDirectory, "captured-artifacts"),
+    localGitRoot: join(stateDirectory, "local-git"),
     idempotencyRoot: join(stateDirectory, "idempotency"),
     pendingOperationsRoot: join(stateDirectory, "pending-operations"),
     rollbacksRoot: join(stateDirectory, "rollbacks"),
@@ -45,9 +46,11 @@ test("state path resolver produces physically separate per-session roots", () =>
     join(stateDirectory, "practice-runs", sessionHash, "protected"),
   );
   assert.equal(
-    paths.directoryInspectionLockPath,
-    join(stateDirectory, "practice-runs", sessionHash, "directory-inspection-lock-target"),
+    paths.reviewInspectionLockPath,
+    join(stateDirectory, "practice-runs", sessionHash, "review-inspection-lock-target"),
   );
+  assert.equal(paths.localGitDirectory, join(stateDirectory, "local-git", sessionHash));
+  assert.equal(paths.localGitLockPath, join(stateDirectory, "local-git", sessionHash, "lock-target"));
   assert.equal(paths.evidenceFilePath, join(stateDirectory, "evidence", sessionHash, "events.jsonl"));
   assert.equal(
     paths.capturedArtifactDirectory,

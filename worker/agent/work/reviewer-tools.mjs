@@ -2,7 +2,7 @@ import { Type } from "typebox";
 
 import { sha256 } from "../canonical-json.mjs";
 import { evidenceBoundary, projectReviewEvidence } from "../evidence/projection.mjs";
-import { DirectoryInspectionBoundary } from "../practices/directory-inspection-lock.mjs";
+import { ReviewInspectionBoundary } from "../practices/review-inspection-lock.mjs";
 import { TiangongToolRegistry } from "../tools/registry.mjs";
 import { createGatedTool } from "../tools/wrapper.mjs";
 import {
@@ -18,6 +18,12 @@ import {
   reviewerReadEvidenceMetadata,
 } from "./reviewer-read.mjs";
 import { durableReviewerReplay } from "./reviewer-replay.mjs";
+import {
+  executeRepositoryInspection,
+  prepareRepositoryInspection,
+  repositoryInspectionEvidenceMetadata,
+  REVIEWER_REPOSITORY_DEFINITION,
+} from "./reviewer-repository.mjs";
 import { createReviewerStateToolRegistry } from "./state-tools.mjs";
 
 const TARGET_ID = Type.String({ minLength: 43, maxLength: 43 });
@@ -159,7 +165,7 @@ export function createReviewerToolRegistry({ service, gate, evidence, getInvocat
     gate,
     evidence,
     getInvocation,
-    executionBoundary: new DirectoryInspectionBoundary({ evidence, lockPath: inspectionLockPath }),
+    executionBoundary: new ReviewInspectionBoundary({ evidence, lockPath: inspectionLockPath }),
     async executeOperation({ operation, actionDigest }) {
       const prepared = inspectionPrepared.get(operation);
       inspectionPrepared.delete(operation);
@@ -169,6 +175,39 @@ export function createReviewerToolRegistry({ service, gate, evidence, getInvocat
       return executeDirectoryInspection(prepared, { service, actionDigest });
     },
     completionMetadata: directoryInspectionEvidenceMetadata,
+    resultProjection(result) {
+      return { content: result.content, details: result.details };
+    },
+  }));
+
+  const repositoryPrepared = new WeakMap();
+  registry.register(createGatedTool({
+    definition: REVIEWER_REPOSITORY_DEFINITION,
+    category: "read-only",
+    async beforeProposal(params, { toolCallId, invocation }) {
+      const toolInvocation = invocationForTool(invocation, toolCallId);
+      const replay = await durableReviewerReplay({
+        service, evidence, toolName: "inspect_repository", params, invocation: toolInvocation,
+      });
+      if (replay) return replay;
+      const prepared = await prepareRepositoryInspection({ service, params, invocation: toolInvocation });
+      repositoryPrepared.set(prepared.operation, prepared);
+      return prepared;
+    },
+    async summarize(_params, { preflight }) { return preflight.operation; },
+    gate,
+    evidence,
+    getInvocation,
+    executionBoundary: new ReviewInspectionBoundary({ evidence, lockPath: inspectionLockPath }),
+    async executeOperation({ operation, actionDigest }) {
+      const prepared = repositoryPrepared.get(operation);
+      repositoryPrepared.delete(operation);
+      if (!prepared || sha256(operation) !== actionDigest) {
+        throw new Error("Prepared repository inspection does not match its wrapped operation");
+      }
+      return executeRepositoryInspection(prepared, { service, actionDigest });
+    },
+    completionMetadata: repositoryInspectionEvidenceMetadata,
     resultProjection(result) {
       return { content: result.content, details: result.details };
     },
@@ -227,7 +266,9 @@ export function createReviewerToolRegistry({ service, gate, evidence, getInvocat
 
   const ordered = new TiangongToolRegistry();
   const byName = new Map(registry.definitions().map((definition) => [definition.name, definition]));
-  for (const name of ["start_work", "extend_scope", "read", "inspect_directory", "check_completion", "abandon_work"]) {
+  for (const name of [
+    "start_work", "extend_scope", "read", "inspect_directory", "inspect_repository", "check_completion", "abandon_work",
+  ]) {
     ordered.register(byName.get(name));
   }
   return ordered;

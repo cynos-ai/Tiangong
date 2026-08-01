@@ -1,7 +1,12 @@
-import { idempotencyKey, operationDigest, sha256 } from "../canonical-json.mjs";
+import { canonicalJson, idempotencyKey, operationDigest, sha256 } from "../canonical-json.mjs";
 import { practiceRunFail } from "../practices/errors.mjs";
 import { practiceInvocationIdentity } from "../practices/practice-run-store.mjs";
-import { expectedArtifactContentIdentity, resourceSelectorDigest } from "../practices/review-targets.mjs";
+import {
+  expectedArtifactContentIdentity,
+  gitInspectionPrefixDigest,
+  repositoryInspectionSelectorDigest,
+  resourceSelectorDigest,
+} from "../practices/review-targets.mjs";
 
 const GENESIS_HASH = "0".repeat(64);
 const MUTATION_TOOLS = new Set(["write", "edit", "bash"]);
@@ -27,6 +32,24 @@ function ref(record) {
 function exact(value, keys) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     && Object.keys(value).sort().join(",") === [...keys].sort().join(",");
+}
+
+function gitPrefixMatches(path, prefix) {
+  return prefix === "." || path === prefix || path.startsWith(`${prefix}/`);
+}
+
+function gitListOutput(targetId, prefix, offset, totalMatchingMembers, members) {
+  return {
+    schemaVersion: 1,
+    kind: "git-commit-list",
+    targetId,
+    prefix,
+    offset,
+    returnedCount: members.length,
+    totalMatchingMembers,
+    truncated: offset + members.length < totalMatchingMembers,
+    members,
+  };
 }
 
 function sameIdentity(left, right) {
@@ -95,8 +118,22 @@ async function targetResources(run, targetCapture) {
         contentBytes: target.snapshot.facts.contentBytes,
         contentLines: target.snapshot.facts.contentLines,
       }));
+    } else if (target.kind === "git_diff") {
+      const admission = await targetCapture.readDiffArtifact(target);
+      const selectorDigest = resourceSelectorDigest(target.targetId, null);
+      bySelector.set(selectorDigest, Object.freeze({
+        selectorDigest,
+        targetId: target.targetId,
+        memberPath: null,
+        snapshotIdentity: target.snapshot.identity,
+        contentDigest: admission.contentDigest,
+        contentBytes: admission.contentBytes,
+        contentLines: admission.contentLines,
+      }));
     } else {
-      const manifest = await targetCapture.readDirectoryManifest(target);
+      const manifest = target.kind === "commit"
+        ? await targetCapture.readCommitManifest(target)
+        : await targetCapture.readDirectoryManifest(target);
       for (const member of manifest.members) {
         const selectorDigest = resourceSelectorDigest(target.targetId, member.path);
         if (bySelector.has(selectorDigest)) practiceRunFail("STATE_CORRUPTED", "Review resource selector digest is ambiguous");
@@ -194,6 +231,45 @@ function validateInspectionOperation(operation, run) {
   assertEffects(operation.effects);
 }
 
+function validateRepositoryInspectionOperation(operation, run) {
+  if (!exact(operation, [
+    "category", "effects", "input", "policyVersion", "practiceId", "practiceVersion", "profileDigest",
+    "roleId", "state", "toolName", "workspaceScope",
+  ]) || !exact(operation.state, ["expectedRunRevision", "runId", "targetId"])
+      || !exact(operation.input, [
+        "action", "inspectionPolicyVersion", "limit", "offset", "prefixBytes", "prefixDigest", "selectorDigest",
+      ]) || operation.policyVersion !== "review-git-inspect-v1" || operation.toolName !== "inspect_repository"
+      || operation.category !== "read-only" || operation.state.runId !== run.runId
+      || !Number.isSafeInteger(operation.state.expectedRunRevision) || operation.state.expectedRunRevision < 1
+      || operation.state.expectedRunRevision > run.revision
+      || !run.scope.targets.some((target) => target.targetId === operation.state.targetId && target.kind === "commit")
+      || operation.input.action !== "list_commit" || !DIGEST.test(operation.input.selectorDigest)
+      || !DIGEST.test(operation.input.prefixDigest) || operation.input.inspectionPolicyVersion !== "review-git-inspection-v1"
+      || !Number.isSafeInteger(operation.input.prefixBytes) || operation.input.prefixBytes < 1 || operation.input.prefixBytes > 1024
+      || !Number.isSafeInteger(operation.input.offset) || operation.input.offset < 0
+      || !Number.isSafeInteger(operation.input.limit) || operation.input.limit < 1 || operation.input.limit > 200
+      || operation.practiceVersion !== 2 || operation.profileDigest !== run.profileDigest || operation.roleId !== run.roleId
+      || operation.practiceId !== run.practiceId || !DIGEST.test(operation.workspaceScope)) {
+    practiceRunFail("EVIDENCE_OPERATION_INVALID", "Repository inspection Evidence operation is invalid");
+  }
+  assertEffects(operation.effects);
+}
+
+function validateRepositoryInspectionMetadata(value, operation, target) {
+  if (!exact(value, ["action", "artifact", "resultCount", "selectorDigest", "snapshotIdentity", "targetId", "truncated"])
+      || value.targetId !== target.targetId || value.snapshotIdentity !== target.snapshot.identity
+      || value.action !== "list_commit" || value.selectorDigest !== operation.input.selectorDigest
+      || !Number.isSafeInteger(value.resultCount) || value.resultCount < 1 || value.resultCount > 200
+      || typeof value.truncated !== "boolean") {
+    practiceRunFail("EVIDENCE_RESULT_INVALID", "Repository inspection Evidence metadata is invalid");
+  }
+  validateArtifactMetadata(value.artifact, "git_commit_list");
+  if (value.artifact.mediaType !== "application/vnd.tiangong.git-commit-list+json;version=1"
+      || value.artifact.producerId !== "review-git-inspect" || value.artifact.truncated !== false) {
+    practiceRunFail("EVIDENCE_RESULT_INVALID", "Repository inspection Artifact metadata is invalid");
+  }
+}
+
 function validateInspectionMetadata(value, operation, target) {
   if (!exact(value, ["action", "artifact", "resultCount", "selectorDigest", "snapshotIdentity", "targetId", "truncated"])
       || value.targetId !== target.targetId || value.snapshotIdentity !== target.snapshot.identity
@@ -262,7 +338,7 @@ export async function projectReviewEvidence({ evidence, boundary, run, targetCap
   const resources = await targetResources(run, targetCapture);
   const gates = records.filter((record) => record.type === "gate.decided"
     && record.practiceRunId === run.runId && record.actorId === run.origin.actorId
-    && (["read", "inspect_directory"].includes(record.toolName) || MUTATION_TOOLS.has(record.toolName)));
+    && (["read", "inspect_directory", "inspect_repository"].includes(record.toolName) || MUTATION_TOOLS.has(record.toolName)));
   const gateGroups = new Map();
   for (const gate of gates) {
     const identity = `${gate.sessionId}\u0000${gate.turnId}\u0000${gate.toolCallId}\u0000${gate.toolName}`;
@@ -327,6 +403,7 @@ export async function projectReviewEvidence({ evidence, boundary, run, targetCap
     }
     if (gate.toolName === "read") validateReadOperation(gate.operation, run);
     if (gate.toolName === "inspect_directory") validateInspectionOperation(gate.operation, run);
+    if (gate.toolName === "inspect_repository") validateRepositoryInspectionOperation(gate.operation, run);
     if (completed.status !== "success") {
       executions.push(Object.freeze({
         practiceRunId: run.runId,
@@ -385,6 +462,69 @@ export async function projectReviewEvidence({ evidence, boundary, run, targetCap
       executions.push(Object.freeze({
         practiceRunId: run.runId,
         toolName: "inspect_directory",
+        invocationIdentity: identity,
+        operationDigest: gate.operationDigest,
+        operation: structuredClone(gate.operation),
+        status: "success",
+        resultMetadata: structuredClone(metadata),
+        startedRef: ref(started),
+        completedRef: ref(completed),
+      }));
+    } else if (gate.toolName === "inspect_repository") {
+      const target = run.scope.targets.find((entry) => entry.targetId === gate.operation.state.targetId);
+      const metadata = completed.metadata?.reviewRepositoryInspection;
+      validateRepositoryInspectionMetadata(metadata, gate.operation, target);
+      const artifact = await validateEvidenceArtifact({
+        artifactStore, artifact: metadata.artifact, gate, targetId: target.targetId,
+      });
+      let result;
+      try { result = JSON.parse(artifact.bytes.toString("utf8")); }
+      catch { practiceRunFail("TARGET_ARTIFACT_INVALID", "Repository inspection Artifact JSON is invalid"); }
+      if (result.targetId !== metadata.targetId || result.returnedCount !== metadata.resultCount
+          || result.truncated !== metadata.truncated || result.kind !== "git-commit-list"
+          || gitInspectionPrefixDigest(result.prefix) !== gate.operation.input.prefixDigest
+          || repositoryInspectionSelectorDigest({
+            targetId: result.targetId,
+            action: "list_commit",
+            prefix: result.prefix,
+            offset: result.offset,
+            limit: gate.operation.input.limit,
+          }) !== gate.operation.input.selectorDigest
+          || result.offset !== gate.operation.input.offset || result.returnedCount > gate.operation.input.limit) {
+        practiceRunFail("TARGET_ARTIFACT_INVALID", "Repository inspection Artifact conflicts with Evidence");
+      }
+      const manifest = await targetCapture.readCommitManifest(target);
+      const matching = manifest.members.filter((member) => gitPrefixMatches(member.path, result.prefix));
+      const expectedMembers = [];
+      for (const member of matching.slice(result.offset, result.offset + gate.operation.input.limit)) {
+        const candidate = [...expectedMembers, {
+          path: member.path,
+          mode: member.mode,
+          contentBytes: member.contentBytes,
+          contentLines: member.contentLines,
+        }];
+        if (Buffer.byteLength(canonicalJson(gitListOutput(
+          target.targetId,
+          result.prefix,
+          result.offset,
+          matching.length,
+          candidate,
+        )), "utf8") > 64 * 1024) break;
+        expectedMembers.push(candidate.at(-1));
+      }
+      const expectedResult = gitListOutput(
+        target.targetId,
+        result.prefix,
+        result.offset,
+        matching.length,
+        expectedMembers,
+      );
+      if (canonicalJson(result) !== canonicalJson(expectedResult)) {
+        practiceRunFail("TARGET_ARTIFACT_INVALID", "Repository inspection Artifact conflicts with commit manifest");
+      }
+      executions.push(Object.freeze({
+        practiceRunId: run.runId,
+        toolName: "inspect_repository",
         invocationIdentity: identity,
         operationDigest: gate.operationDigest,
         operation: structuredClone(gate.operation),

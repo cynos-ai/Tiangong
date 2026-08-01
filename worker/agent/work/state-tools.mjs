@@ -17,6 +17,19 @@ const TARGET = Type.Union([
       excludePrefixes: Type.Array(Type.String({ minLength: 1, maxLength: 1024 }), { maxItems: 128 }),
     }, { additionalProperties: false }),
   }, { additionalProperties: false }),
+  Type.Object({
+    kind: Type.Literal("commit"),
+    repositoryPath: Type.String({ minLength: 1, maxLength: 1024 }),
+    ref: Type.String({ minLength: 1, maxLength: 1024 }),
+    pathPrefixes: Type.Array(Type.String({ minLength: 1, maxLength: 1024 }), { minItems: 1, maxItems: 128 }),
+  }, { additionalProperties: false }),
+  Type.Object({
+    kind: Type.Literal("git_diff"),
+    repositoryPath: Type.String({ minLength: 1, maxLength: 1024 }),
+    baseRef: Type.String({ minLength: 1, maxLength: 1024 }),
+    headRef: Type.String({ minLength: 1, maxLength: 1024 }),
+    pathPrefixes: Type.Array(Type.String({ minLength: 1, maxLength: 1024 }), { minItems: 1, maxItems: 128 }),
+  }, { additionalProperties: false }),
 ]);
 
 const TARGETS = Type.Array(TARGET, { minItems: 1, maxItems: 64 });
@@ -25,7 +38,7 @@ const DEFINITIONS = Object.freeze({
   start_work: Object.freeze({
     name: "start_work",
     label: "Start review work",
-    description: "Create one durable review run from an objective, criteria, and bounded file/directory targets.",
+    description: "Create one durable review run from an objective, criteria, and bounded typed targets.",
     parameters: Type.Object({
       practiceId: Type.Literal("review"),
       objective: Type.String({ minLength: 1, maxLength: 4096 }),
@@ -36,7 +49,7 @@ const DEFINITIONS = Object.freeze({
   extend_scope: Object.freeze({
     name: "extend_scope",
     label: "Extend review scope",
-    description: "Atomically append new immutable file/directory targets without changing the objective or criteria.",
+    description: "Atomically append new immutable typed targets without changing the objective or criteria.",
     parameters: Type.Object({ targets: TARGETS }, { additionalProperties: false }),
   }),
   abandon_work: Object.freeze({
@@ -58,6 +71,14 @@ const SERVICE_METHODS = Object.freeze({
   extend_scope: Object.freeze({ prepare: "prepareExtend", commit: "commitExtend", phase: "practice.scope.extend" }),
   abandon_work: Object.freeze({ prepare: "prepareAbandon", commit: "commitAbandon", phase: "practice.run.abandon" }),
 });
+
+function stateEvidenceOperation(operation) {
+  const projected = structuredClone(operation);
+  if (projected.input && Object.hasOwn(projected.input, "targetRequests")) {
+    delete projected.input.targetRequests;
+  }
+  return Object.freeze(projected);
+}
 
 function invocationForTool(invocation, toolCallId) {
   return {
@@ -117,6 +138,7 @@ export function createReviewerStateToolRegistry({ service, gate, evidence, getIn
       gate,
       evidence,
       getInvocation,
+      evidenceOperation: stateEvidenceOperation,
       async executeOperation({ operation, actionDigest, invocationKey, invocation }) {
         const prepared = preparedByOperation.get(operation);
         preparedByOperation.delete(operation);

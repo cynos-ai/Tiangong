@@ -25,6 +25,39 @@ const REVIEW_DIRECTORY_CAPTURE = Object.freeze({
   transformVersions: Object.freeze([1]),
 });
 
+const REVIEW_GIT_COMMIT_CAPTURE = Object.freeze({
+  producerId: "review-git-commit-capture",
+  producerVersion: 1,
+  allowedPurposes: Object.freeze(["git_tree_manifest"]),
+  allowedMediaTypes: Object.freeze(["application/vnd.tiangong.git-tree-manifest+json;version=1"]),
+  allowedEncodings: Object.freeze(["utf-8"]),
+  maxContentBytes: 4 * 1024 * 1024,
+  textPolicyId: "canonical-json-v1",
+  transformVersions: Object.freeze([1]),
+});
+
+const REVIEW_GIT_DIFF_CAPTURE = Object.freeze({
+  producerId: "review-git-diff-capture",
+  producerVersion: 1,
+  allowedPurposes: Object.freeze(["git_diff"]),
+  allowedMediaTypes: Object.freeze(["text/x-diff;charset=utf-8"]),
+  allowedEncodings: Object.freeze(["utf-8"]),
+  maxContentBytes: 4 * 1024 * 1024,
+  textPolicyId: "review-git-diff-v1",
+  transformVersions: Object.freeze([1]),
+});
+
+const REVIEW_GIT_INSPECT = Object.freeze({
+  producerId: "review-git-inspect",
+  producerVersion: 1,
+  allowedPurposes: Object.freeze(["git_commit_list"]),
+  allowedMediaTypes: Object.freeze(["application/vnd.tiangong.git-commit-list+json;version=1"]),
+  allowedEncodings: Object.freeze(["utf-8"]),
+  maxContentBytes: 64 * 1024,
+  textPolicyId: "canonical-json-v1",
+  transformVersions: Object.freeze([1]),
+});
+
 const REVIEW_DIRECTORY_INSPECT = Object.freeze({
   producerId: "review-directory-inspect",
   producerVersion: 1,
@@ -42,7 +75,10 @@ const REVIEW_DIRECTORY_INSPECT = Object.freeze({
 const PRODUCERS = new Map([
   [REVIEW_TARGET_CONSUME.producerId, REVIEW_TARGET_CONSUME],
   [REVIEW_DIRECTORY_CAPTURE.producerId, REVIEW_DIRECTORY_CAPTURE],
+  [REVIEW_GIT_COMMIT_CAPTURE.producerId, REVIEW_GIT_COMMIT_CAPTURE],
+  [REVIEW_GIT_DIFF_CAPTURE.producerId, REVIEW_GIT_DIFF_CAPTURE],
   [REVIEW_DIRECTORY_INSPECT.producerId, REVIEW_DIRECTORY_INSPECT],
+  [REVIEW_GIT_INSPECT.producerId, REVIEW_GIT_INSPECT],
 ]);
 
 function exact(value, keys) {
@@ -96,6 +132,61 @@ function validateManifest(value) {
   return totalBytes <= 16 * 1024 * 1024 && totalSegments <= 960;
 }
 
+function validOid(value, objectFormat) {
+  return typeof value === "string" && (objectFormat === "sha1" ? /^[a-f0-9]{40}$/u : /^[a-f0-9]{64}$/u).test(value);
+}
+
+function validateGitManifest(value) {
+  if (!exact(value, [
+    "schemaVersion", "kind", "repositoryPath", "objectFormat", "commitOid", "treeOid", "selectionDigest", "members",
+  ]) || value.schemaVersion !== 1 || value.kind !== "git-tree-manifest" || !validRootPath(value.repositoryPath)
+      || !["sha1", "sha256"].includes(value.objectFormat) || !validOid(value.commitOid, value.objectFormat)
+      || !validOid(value.treeOid, value.objectFormat) || !DIGEST.test(value.selectionDigest)
+      || !Array.isArray(value.members) || value.members.length === 0 || value.members.length > 256) return false;
+  let previous = null;
+  let bytes = 0;
+  let segments = 0;
+  for (const member of value.members) {
+    if (!exact(member, [
+      "path", "mode", "blobOid", "contentDigest", "contentBytes", "contentLines", "encoding", "requiredConsumeSegments",
+    ]) || !validRelativePath(member.path) || Buffer.byteLength(member.path, "utf8") > 1024
+      || !["100644", "100755"].includes(member.mode) || !validOid(member.blobOid, value.objectFormat)
+      || !DIGEST.test(member.contentDigest) || !safeCount(member.contentBytes) || member.contentBytes > 2 * 1024 * 1024
+      || !Number.isSafeInteger(member.contentLines) || member.contentLines < 1
+      || member.encoding !== "utf-8" || !Number.isSafeInteger(member.requiredConsumeSegments)
+      || member.requiredConsumeSegments < 1 || member.requiredConsumeSegments > 128) return false;
+    const current = Buffer.from(member.path, "utf8");
+    if (previous && Buffer.compare(previous, current) >= 0) return false;
+    previous = current;
+    bytes += member.contentBytes;
+    segments += member.requiredConsumeSegments;
+  }
+  return bytes <= 16 * 1024 * 1024 && segments <= 960;
+}
+
+function validateGitList(value) {
+  if (!exact(value, [
+    "schemaVersion", "kind", "targetId", "prefix", "offset", "returnedCount", "totalMatchingMembers", "truncated", "members",
+  ]) || value.schemaVersion !== 1 || value.kind !== "git-commit-list" || !TARGET_ID.test(value.targetId)
+      || !validPrefix(value.prefix) || !safeCount(value.offset) || !safeCount(value.returnedCount)
+      || value.returnedCount < 1 || !safeCount(value.totalMatchingMembers) || value.totalMatchingMembers < 1
+      || value.totalMatchingMembers > 256 || value.offset >= value.totalMatchingMembers || value.returnedCount > 200
+      || value.offset + value.returnedCount > value.totalMatchingMembers
+      || value.truncated !== (value.offset + value.returnedCount < value.totalMatchingMembers)
+      || !Array.isArray(value.members) || value.members.length !== value.returnedCount) return false;
+  let previous = null;
+  for (const member of value.members) {
+    if (!exact(member, ["path", "mode", "contentBytes", "contentLines"])
+        || !validRelativePath(member.path) || !prefixMatches(member.path, value.prefix)
+        || !["100644", "100755"].includes(member.mode) || !safeCount(member.contentBytes)
+        || member.contentBytes > 2 * 1024 * 1024 || !Number.isSafeInteger(member.contentLines) || member.contentLines < 1) return false;
+    const current = Buffer.from(member.path, "utf8");
+    if (previous && Buffer.compare(previous, current) >= 0) return false;
+    previous = current;
+  }
+  return true;
+}
+
 function validateList(value) {
   if (!exact(value, [
     "schemaVersion", "kind", "targetId", "prefix", "offset", "returnedCount",
@@ -147,8 +238,43 @@ function validateSearch(value) {
   return true;
 }
 
+function validReviewText(bytes) {
+  let text;
+  try { text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes); }
+  catch { return null; }
+  for (const character of text) {
+    const code = character.codePointAt(0);
+    if ((code < 0x20 && ![0x09, 0x0a, 0x0d].includes(code)) || code === 0x7f) return null;
+  }
+  return text;
+}
+
+function validateGitDiff(bytes) {
+  const text = validReviewText(bytes);
+  if (text === null || text.length === 0
+      || /^(?:GIT binary patch|Binary files |Submodule |diff --cc|diff --combined)/mu.test(text)) return false;
+  const paths = [];
+  for (const line of text.split("\n")) {
+    if (!line.startsWith("diff --git ")) continue;
+    const match = /^diff --git a\/([A-Za-z0-9._@+-]+(?:\/[A-Za-z0-9._@+-]+)*) b\/\1$/u.exec(line);
+    if (!match) return false;
+    if (match[1].split("/").some((segment) => segment.startsWith("-") || segment === "." || segment === "..")) return false;
+    paths.push(match[1]);
+  }
+  if (paths.length === 0 || new Set(paths).size !== paths.length) return false;
+  for (let index = 1; index < paths.length; index += 1) {
+    if (Buffer.compare(Buffer.from(paths[index - 1], "utf8"), Buffer.from(paths[index], "utf8")) >= 0) return false;
+  }
+  return true;
+}
+
 export function validateArtifactProducerBytes(producer, bytes, metadata = {}) {
-  if (producer.textPolicyId !== "canonical-json-v1") return true;
+  if (producer.textPolicyId === "review-text-lines-v1") return validReviewText(bytes) !== null;
+  if (producer.textPolicyId === "review-git-diff-v1") {
+    return metadata.purpose === "git_diff" && metadata.mediaType === "text/x-diff;charset=utf-8"
+      && metadata.truncated === false && validateGitDiff(bytes);
+  }
+  if (producer.textPolicyId !== "canonical-json-v1") return false;
   let text;
   let parsed;
   try {
@@ -162,6 +288,16 @@ export function validateArtifactProducerBytes(producer, bytes, metadata = {}) {
     return metadata.purpose === "directory_manifest"
       && metadata.mediaType === "application/vnd.tiangong.directory-manifest+json;version=1"
       && validateManifest(parsed);
+  }
+  if (producer.producerId === "review-git-commit-capture") {
+    return metadata.purpose === "git_tree_manifest"
+      && metadata.mediaType === "application/vnd.tiangong.git-tree-manifest+json;version=1"
+      && metadata.truncated === false && validateGitManifest(parsed);
+  }
+  if (producer.producerId === "review-git-inspect") {
+    return metadata.purpose === "git_commit_list"
+      && metadata.mediaType === "application/vnd.tiangong.git-commit-list+json;version=1"
+      && metadata.truncated === false && validateGitList(parsed);
   }
   if (producer.producerId === "review-directory-inspect") {
     if (parsed.kind === "directory-list") {
