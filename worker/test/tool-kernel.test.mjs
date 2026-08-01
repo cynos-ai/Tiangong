@@ -90,8 +90,8 @@ test("core tool registry rejects a non-kernel role profile before creating execu
     () => createCoreToolRegistry({
       profile: {
         roleId: "reviewer",
-        gatePolicyId: "reviewer-v1",
-        toolIds: ["start_work", "extend_scope", "read", "check_completion", "abandon_work"],
+        gatePolicyId: "reviewer-v2",
+        toolIds: ["start_work", "extend_scope", "read", "inspect_directory", "check_completion", "abandon_work"],
       },
     }),
     /fixed kernel role profile/u,

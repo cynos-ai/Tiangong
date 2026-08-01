@@ -1,6 +1,9 @@
 import { canonicalJson, sha256 } from "../canonical-json.mjs";
 import { artifactError } from "./errors.mjs";
-import { artifactProducerDefinition } from "./producer-registry.mjs";
+import {
+  artifactProducerDefinition,
+  validateArtifactProducerBytes,
+} from "./producer-registry.mjs";
 
 export const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 export const RUN_ID_PATTERN = /^run-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
@@ -210,6 +213,9 @@ export function validatePutInput(input, sessionHash) {
     throw artifactError("ARTIFACT_LIMIT_EXCEEDED");
   }
   const { contentLines } = decodeReviewText(input.canonicalBytes);
+  if (!validateArtifactProducerBytes(producer, input.canonicalBytes, input)) {
+    throw artifactError("ARTIFACT_METADATA_INVALID");
+  }
   return Object.freeze({
     binding,
     producer,

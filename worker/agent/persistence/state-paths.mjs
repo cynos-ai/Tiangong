@@ -42,6 +42,7 @@ export function statePathsForSessionHash({ stateDirectory, sessionHash }) {
     practiceRunJournalPath: join(practiceRunDirectory, "events.jsonl"),
     practiceRunSnapshotPath: join(practiceRunDirectory, "snapshot.json"),
     practiceRunProtectedDirectory: join(practiceRunDirectory, "protected"),
+    directoryInspectionLockPath: join(practiceRunDirectory, "directory-inspection-lock-target"),
     evidenceDirectory,
     evidenceFilePath: join(evidenceDirectory, "events.jsonl"),
     capturedArtifactDirectory,

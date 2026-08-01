@@ -2,20 +2,32 @@ import { Type } from "typebox";
 
 import { sha256 } from "../canonical-json.mjs";
 import { evidenceBoundary, projectReviewEvidence } from "../evidence/projection.mjs";
+import { DirectoryInspectionBoundary } from "../practices/directory-inspection-lock.mjs";
 import { TiangongToolRegistry } from "../tools/registry.mjs";
 import { createGatedTool } from "../tools/wrapper.mjs";
+import {
+  directoryInspectionEvidenceMetadata,
+  executeDirectoryInspection,
+  prepareDirectoryInspection,
+  REVIEWER_DIRECTORY_DEFINITION,
+} from "./reviewer-directory.mjs";
 import {
   executeReviewerRead,
   prepareReviewerRead,
   REVIEWER_READ_DEFINITION,
   reviewerReadEvidenceMetadata,
 } from "./reviewer-read.mjs";
+import { durableReviewerReplay } from "./reviewer-replay.mjs";
 import { createReviewerStateToolRegistry } from "./state-tools.mjs";
 
-const TARGET = Type.Union([
-  Type.Object({ path: Type.String({ minLength: 1, maxLength: 1024 }) }, { additionalProperties: false }),
+const TARGET_ID = Type.String({ minLength: 43, maxLength: 43 });
+const OBSERVATION_TARGET = Type.Union([
+  Type.Object({ targetId: TARGET_ID }, { additionalProperties: false }),
+  Type.Object({ targetId: TARGET_ID, lineStart: Type.Integer({ minimum: 1 }), lineEnd: Type.Integer({ minimum: 1 }) }, { additionalProperties: false }),
+  Type.Object({ targetId: TARGET_ID, memberPath: Type.String({ minLength: 1, maxLength: 1024 }) }, { additionalProperties: false }),
   Type.Object({
-    path: Type.String({ minLength: 1, maxLength: 1024 }),
+    targetId: TARGET_ID,
+    memberPath: Type.String({ minLength: 1, maxLength: 1024 }),
     lineStart: Type.Integer({ minimum: 1 }),
     lineEnd: Type.Integer({ minimum: 1 }),
   }, { additionalProperties: false }),
@@ -28,14 +40,14 @@ const CLAIM = Type.Object({
     explanation: Type.String({ minLength: 1, maxLength: 16384 }),
   }, { additionalProperties: false }), { minItems: 1, maxItems: 32 }),
   scope: Type.Object({
-    files: Type.Array(Type.String({ minLength: 1, maxLength: 1024 }), { minItems: 1, maxItems: 64 }),
+    targetIds: Type.Array(TARGET_ID, { minItems: 1, maxItems: 64 }),
   }, { additionalProperties: false }),
   report: Type.Object({
     outcome: Type.Union([Type.Literal("accept"), Type.Literal("changes_requested"), Type.Literal("blocked")]),
     synopsis: Type.String({ minLength: 1, maxLength: 16384 }),
     observations: Type.Array(Type.Object({
       level: Type.Union([Type.Literal("critical"), Type.Literal("major"), Type.Literal("minor"), Type.Literal("note")]),
-      target: TARGET,
+      target: OBSERVATION_TARGET,
       statement: Type.String({ minLength: 1, maxLength: 16384 }),
       rationale: Type.String({ minLength: 1, maxLength: 16384 }),
       suggestedAction: Type.String({ minLength: 1, maxLength: 16384 }),
@@ -52,7 +64,7 @@ const CLAIM = Type.Object({
 const CHECK_DEFINITION = Object.freeze({
   name: "check_completion",
   label: "Check review completion",
-  description: "Submit the structured static-review claim for machine checkpoint evaluation.",
+  description: "Submit the structured target-bound static-review claim for machine checkpoint evaluation.",
   parameters: Type.Object({ completionClaim: CLAIM }, { additionalProperties: false }),
 });
 
@@ -94,7 +106,7 @@ function completionToolResult(result) {
   };
 }
 
-export function createReviewerToolRegistry({ workspaceDir, service, gate, evidence, getInvocation }) {
+export function createReviewerToolRegistry({ service, gate, evidence, getInvocation, inspectionLockPath }) {
   const registry = new TiangongToolRegistry();
   const stateRegistry = createReviewerStateToolRegistry({ service, gate, evidence, getInvocation });
   for (const definition of stateRegistry.definitions()) registry.register(definition);
@@ -103,21 +115,63 @@ export function createReviewerToolRegistry({ workspaceDir, service, gate, eviden
   registry.register(createGatedTool({
     definition: REVIEWER_READ_DEFINITION,
     category: "read-only",
-    async summarize(params, { invocation }) {
-      const prepared = await prepareReviewerRead({ workspaceDir, service, params, invocation });
+    async beforeProposal(params, { toolCallId, invocation }) {
+      const toolInvocation = invocationForTool(invocation, toolCallId);
+      const replay = await durableReviewerReplay({ service, evidence, toolName: "read", params, invocation: toolInvocation });
+      if (replay) return replay;
+      const prepared = await prepareReviewerRead({ service, params, invocation: toolInvocation });
       readPrepared.set(prepared.operation, prepared);
-      return prepared.operation;
+      return prepared;
     },
+    async summarize(_params, { preflight }) { return preflight.operation; },
     gate,
     evidence,
     getInvocation,
     async executeOperation({ operation, actionDigest }) {
       const prepared = readPrepared.get(operation);
       readPrepared.delete(operation);
-      if (!prepared || sha256(operation) !== actionDigest) throw new Error("Prepared review read does not match its wrapped operation");
-      return executeReviewerRead(prepared);
+      if (!prepared || sha256(operation) !== actionDigest) {
+        throw new Error("Prepared review read does not match its wrapped operation");
+      }
+      return executeReviewerRead(prepared, { service, actionDigest });
     },
     completionMetadata: reviewerReadEvidenceMetadata,
+    resultProjection(result) {
+      return { content: result.content, details: result.details };
+    },
+  }));
+
+  const inspectionPrepared = new WeakMap();
+  registry.register(createGatedTool({
+    definition: REVIEWER_DIRECTORY_DEFINITION,
+    category: "read-only",
+    async beforeProposal(params, { toolCallId, invocation }) {
+      const toolInvocation = invocationForTool(invocation, toolCallId);
+      const replay = await durableReviewerReplay({
+        service, evidence, toolName: "inspect_directory", params, invocation: toolInvocation,
+      });
+      if (replay) return replay;
+      const prepared = await prepareDirectoryInspection({ service, params, invocation: toolInvocation });
+      inspectionPrepared.set(prepared.operation, prepared);
+      return prepared;
+    },
+    async summarize(_params, { preflight }) { return preflight.operation; },
+    gate,
+    evidence,
+    getInvocation,
+    executionBoundary: new DirectoryInspectionBoundary({ evidence, lockPath: inspectionLockPath }),
+    async executeOperation({ operation, actionDigest }) {
+      const prepared = inspectionPrepared.get(operation);
+      inspectionPrepared.delete(operation);
+      if (!prepared || sha256(operation) !== actionDigest) {
+        throw new Error("Prepared directory inspection does not match its wrapped operation");
+      }
+      return executeDirectoryInspection(prepared, { service, actionDigest });
+    },
+    completionMetadata: directoryInspectionEvidenceMetadata,
+    resultProjection(result) {
+      return { content: result.content, details: result.details };
+    },
   }));
 
   const completionPrepared = new WeakMap();
@@ -133,17 +187,15 @@ export function createReviewerToolRegistry({ workspaceDir, service, gate, eviden
       completionPrepared.set(prepared.operation, prepared);
       return prepared;
     },
-    async summarize(_params, { preflight }) {
-      return preflight.operation;
-    },
+    async summarize(_params, { preflight }) { return preflight.operation; },
     gate,
     evidence,
     getInvocation,
     async executeOperation({ operation, actionDigest, invocationKey, invocation }) {
       const prepared = completionPrepared.get(operation);
       completionPrepared.delete(operation);
-      if (!prepared || sha256(operation) !== actionDigest ||
-          (prepared.replay?.invocationKey ?? prepared.invocationKey) !== invocationKey) {
+      if (!prepared || sha256(operation) !== actionDigest
+          || (prepared.replay?.invocationKey ?? prepared.invocationKey) !== invocationKey) {
         throw new Error("Prepared completion does not match its wrapped operation");
       }
       let result;
@@ -154,6 +206,8 @@ export function createReviewerToolRegistry({ workspaceDir, service, gate, eviden
           evidence,
           boundary: prepared.evidenceBoundary,
           run: prepared.run,
+          targetCapture: service.targetCapture,
+          artifactStore: service.artifactStore,
         });
         result = await service.commitCompletion(prepared, projection, claim);
       }
@@ -162,7 +216,7 @@ export function createReviewerToolRegistry({ workspaceDir, service, gate, eviden
         {
           "tiangong.practice.id": result.run.practiceId,
           "tiangong.practice.status": result.run.status,
-          "tiangong.practice.scope_count": result.run.scope.files.length,
+          "tiangong.practice.target_count": result.run.scope.targets.length,
           "tiangong.practice.revision": result.run.revision,
           "tiangong.operation.outcome": result.claim.report.outcome,
         },
@@ -173,7 +227,7 @@ export function createReviewerToolRegistry({ workspaceDir, service, gate, eviden
 
   const ordered = new TiangongToolRegistry();
   const byName = new Map(registry.definitions().map((definition) => [definition.name, definition]));
-  for (const name of ["start_work", "extend_scope", "read", "check_completion", "abandon_work"]) {
+  for (const name of ["start_work", "extend_scope", "read", "inspect_directory", "check_completion", "abandon_work"]) {
     ordered.register(byName.get(name));
   }
   return ordered;

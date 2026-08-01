@@ -44,6 +44,10 @@ test("state path resolver produces physically separate per-session roots", () =>
     paths.practiceRunProtectedDirectory,
     join(stateDirectory, "practice-runs", sessionHash, "protected"),
   );
+  assert.equal(
+    paths.directoryInspectionLockPath,
+    join(stateDirectory, "practice-runs", sessionHash, "directory-inspection-lock-target"),
+  );
   assert.equal(paths.evidenceFilePath, join(stateDirectory, "evidence", sessionHash, "events.jsonl"));
   assert.equal(
     paths.capturedArtifactDirectory,

@@ -266,13 +266,13 @@ test("rejects unapproved span operations and attributes before export", async (t
   assert.doesNotThrow(() => attempt.checkpoint("practice.run.start", {
     "tiangong.practice.id": "review",
     "tiangong.practice.status": "active",
-    "tiangong.practice.scope_count": 2,
+    "tiangong.practice.target_count": 2,
     "tiangong.practice.revision": 1,
   }));
   assert.doesNotThrow(() => attempt.checkpoint("practice.checkpoint.pass", {
     "tiangong.practice.id": "review",
     "tiangong.practice.status": "done",
-    "tiangong.practice.scope_count": 2,
+    "tiangong.practice.target_count": 2,
     "tiangong.practice.revision": 2,
     "tiangong.operation.outcome": "accept",
   }));

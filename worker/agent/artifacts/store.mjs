@@ -21,6 +21,10 @@ import { statePathsForSession } from "../persistence/state-paths.mjs";
 import { artifactError, isCapturedArtifactError } from "./errors.mjs";
 import { enforceArtifactQuota } from "./quota.mjs";
 import {
+  artifactProducerDefinition,
+  validateArtifactProducerBytes,
+} from "./producer-registry.mjs";
+import {
   ARTIFACT_ID_PATTERN,
   ARTIFACT_REF_PATTERN,
   MAX_ARTIFACT_BYTES,
@@ -565,7 +569,9 @@ async function readContent(inspected, ioErrorCode) {
     } catch {
       throw artifactError("ARTIFACT_STORE_CORRUPTED");
     }
-    if (decoded.contentLines !== inspected.envelope.contentLines) {
+    const producer = artifactProducerDefinition(inspected.envelope.producerId);
+    if (decoded.contentLines !== inspected.envelope.contentLines ||
+        !producer || !validateArtifactProducerBytes(producer, bytes, inspected.envelope)) {
       throw artifactError("ARTIFACT_STORE_CORRUPTED");
     }
     return Buffer.from(bytes);

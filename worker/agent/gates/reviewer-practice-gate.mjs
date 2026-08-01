@@ -1,12 +1,26 @@
 const STATE_TOOLS = new Set(["start_work", "extend_scope", "check_completion", "abandon_work"]);
+const EFFECTS = Object.freeze({
+  localRead: true,
+  workspaceMutation: false,
+  networkEgress: false,
+  modelInference: false,
+  costBearing: false,
+});
+
+function exactEffects(value) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    && Object.keys(value).sort().join(",") === Object.keys(EFFECTS).sort().join(",")
+    && Object.entries(EFFECTS).every(([key, expected]) => value[key] === expected);
+}
 
 export class ReviewerPracticeGate {
   #profileDigest;
   #toolIds;
 
   constructor({ profileBundle }) {
-    if (!Object.isFrozen(profileBundle) || profileBundle.profile?.roleId !== "reviewer") {
-      throw new TypeError("ReviewerPracticeGate requires the validated Reviewer profile");
+    if (!Object.isFrozen(profileBundle) || profileBundle.profile?.roleId !== "reviewer"
+        || profileBundle.profile.gatePolicyId !== "reviewer-v2") {
+      throw new TypeError("ReviewerPracticeGate requires the validated Reviewer v2 profile");
     }
     this.#profileDigest = profileBundle.profileDigest;
     this.#toolIds = new Set(profileBundle.profile.toolIds);
@@ -14,16 +28,20 @@ export class ReviewerPracticeGate {
 
   async evaluate(context) {
     const operation = context?.operation;
-    const common = operation?.roleId === "reviewer" && operation.profileDigest === this.#profileDigest &&
-      operation.practiceId === "review" && operation.practiceVersion === 1 &&
-      this.#toolIds.has(operation.toolName);
-    const stateAllowed = common && operation.policyVersion === "practice-run-v1" &&
-      operation.category === "state-transition" && STATE_TOOLS.has(operation.toolName);
-    const readAllowed = common && operation.policyVersion === "review-read-v1" &&
-      operation.category === "read-only" && operation.toolName === "read" &&
-      typeof operation.state?.runId === "string" &&
-      Number.isSafeInteger(operation.state?.expectedRunRevision);
-    if (stateAllowed || readAllowed) return { kind: "allow" };
+    const common = operation?.roleId === "reviewer" && operation.profileDigest === this.#profileDigest
+      && operation.practiceId === "review" && operation.practiceVersion === 2
+      && this.#toolIds.has(operation.toolName) && exactEffects(operation.effects)
+      && typeof operation.workspaceScope === "string" && /^[a-f0-9]{64}$/u.test(operation.workspaceScope);
+    const stateAllowed = common && operation.policyVersion === "practice-run-v2"
+      && operation.category === "state-transition" && STATE_TOOLS.has(operation.toolName);
+    const targetState = typeof operation?.state?.runId === "string"
+      && Number.isSafeInteger(operation?.state?.expectedRunRevision)
+      && typeof operation?.state?.targetId === "string";
+    const readAllowed = common && targetState && operation.policyVersion === "review-target-consume-v2"
+      && operation.category === "read-only" && operation.toolName === "read";
+    const inspectionAllowed = common && targetState && operation.policyVersion === "review-directory-inspect-v1"
+      && operation.category === "read-only" && operation.toolName === "inspect_directory";
+    if (stateAllowed || readAllowed || inspectionAllowed) return { kind: "allow" };
     return {
       kind: "deny",
       reason: "tool is not authorized by the Reviewer practice policy",

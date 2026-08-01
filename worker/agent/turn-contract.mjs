@@ -75,14 +75,14 @@ export function createTurnRequest(input) {
 
 function normalizeWorkStatus(value) {
   if (value === undefined || value === null) return null;
-  const keys = ["assurance", "checkpoint", "practiceId", "runId", "scopeFileCount", "scopeRevision", "state"];
+  const keys = ["assurance", "checkpoint", "practiceId", "runId", "scopeRevision", "scopeTargetCount", "state"];
   if (typeof value !== "object" || Array.isArray(value) ||
       Object.keys(value).sort().join(",") !== keys.sort().join(",") ||
       !["direct-unverified", "worker-local"].includes(value.assurance) ||
       !["none", "active", "done", "abandoned"].includes(value.state) ||
       !["not-run", "failed", "passed", "not-applicable"].includes(value.checkpoint) ||
       !Number.isSafeInteger(value.scopeRevision) || value.scopeRevision < 0 ||
-      !Number.isSafeInteger(value.scopeFileCount) || value.scopeFileCount < 0) {
+      !Number.isSafeInteger(value.scopeTargetCount) || value.scopeTargetCount < 0) {
     throw new TypeError("Turn result workStatus is invalid");
   }
   if ((value.runId === null) !== (value.practiceId === null) ||

@@ -66,6 +66,8 @@ export function createGatedTool({
   completionMetadata,
   replayResult = (result) => result,
   lifecycle,
+  executionBoundary,
+  resultProjection = (result) => result,
 }) {
   if (!definition?.name ||
       (typeof definition.execute !== "function" && typeof executeOperation !== "function")) {
@@ -93,6 +95,35 @@ export function createGatedTool({
       const preflight = beforeProposal
         ? await beforeProposal(params, { toolCallId, invocation })
         : undefined;
+      if (preflight?.durableReplay === true) {
+        const operation = preflight.operation;
+        const digest = operationDigest(operation);
+        const key = idempotencyKey({
+          sessionId: invocation.sessionId,
+          turnId: invocation.turnId,
+          toolCallId,
+          operationDigest: digest,
+        });
+        if (digest !== preflight.operationDigest || key !== preflight.idempotencyKey) {
+          throw new Error("Durable replay operation identity is invalid");
+        }
+        const common = {
+          ...evidenceContext(invocation, toolCallId, definition.name, digest, key, category),
+          requestDigest: operationRequestDigest(operation),
+        };
+        if (operation?.roleId) {
+          Object.assign(common, {
+            practiceRunId: operation.state?.runId ?? null,
+            roleId: operation.roleId,
+            profileDigest: operation.profileDigest,
+            practiceId: operation.practiceId,
+            practiceVersion: operation.practiceVersion,
+          });
+        }
+        await evidence.append({ type: "tool.execution.replayed", ...common, status: "success" });
+        invocation.observability?.checkpoint("tool.replayed", { "tiangong.tool.name": definition.name });
+        return preflight.result;
+      }
       invocation.observability?.checkpoint("tool.proposed", {
         "tiangong.tool.name": definition.name,
       });
@@ -187,105 +218,126 @@ export function createGatedTool({
         );
       }
 
-      let prepared;
-      if (sideEffect) {
-        const begin = await idempotencyStore.beginExecution(key, { ...common, operation });
-        if (!begin.execute) {
-          if (begin.entry.status === "completed") {
-            await evidence.append({ type: "tool.execution.replayed", ...common });
-            invocation.observability?.checkpoint("tool.replayed", {
-              "tiangong.tool.name": definition.name,
-            });
-            return structuredClone(begin.entry.replayResult);
+      const terminalRecorded = new WeakSet();
+      const runExecution = async () => {
+        let prepared;
+        if (sideEffect) {
+          const begin = await idempotencyStore.beginExecution(key, { ...common, operation });
+          if (!begin.execute) {
+            if (begin.entry.status === "completed") {
+              await evidence.append({ type: "tool.execution.replayed", ...common });
+              invocation.observability?.checkpoint("tool.replayed", {
+                "tiangong.tool.name": definition.name,
+              });
+              return structuredClone(begin.entry.replayResult);
+            }
+            throw new ExecutionStateUncertainError();
           }
-          throw new ExecutionStateUncertainError();
         }
-      }
 
-      try {
-        if (sideEffect) prepared = await lifecycle?.prepare?.({ ...common, operation, params });
-        await evidence.append({ type: "tool.execution.started", ...common });
-        const execution = invocation.observability?.startOperation("execute_tool", {
-          "gen_ai.operation.name": "execute_tool",
-          "tiangong.tool.name": definition.name,
-        });
-        let result;
         try {
-          result = executeOperation
-            ? await executeOperation({
-              toolCallId,
-              params,
-              signal,
-              onUpdate,
-              ctx,
-              operation,
-              actionDigest: digest,
-              invocationKey: key,
-              invocation,
-            })
-            : await definition.execute(toolCallId, params, signal, onUpdate, ctx);
-          execution?.end("complete");
+          if (sideEffect) prepared = await lifecycle?.prepare?.({ ...common, operation, params });
+          await evidence.append({ type: "tool.execution.started", ...common });
+          const execution = invocation.observability?.startOperation("execute_tool", {
+            "gen_ai.operation.name": "execute_tool",
+            "tiangong.tool.name": definition.name,
+          });
+          let result;
+          try {
+            result = executeOperation
+              ? await executeOperation({
+                toolCallId,
+                params,
+                signal,
+                onUpdate,
+                ctx,
+                operation,
+                actionDigest: digest,
+                invocationKey: key,
+                invocation,
+              })
+              : await definition.execute(toolCallId, params, signal, onUpdate, ctx);
+            execution?.end("complete");
+          } catch (error) {
+            execution?.end(observabilityOutcome(signal), error);
+            throw error;
+          }
+          if (sideEffect) {
+            await idempotencyStore.complete(key, {
+              operationDigest: digest,
+              replayResult: replayResult(result),
+            });
+          }
+          const stateReplay = category === "state-transition" && result?.details?.replayed === true;
+          const completionEvent = {
+            type: stateReplay ? "tool.execution.replayed" : "tool.execution.completed",
+            ...common,
+            status: "success",
+          };
+          if (category === "state-transition") {
+            Object.assign(completionEvent, {
+              stateEventId: result?.details?.stateEventId ?? null,
+              stateEventHash: result?.details?.stateEventHash ?? null,
+              stateSequence: result?.details?.stateSequence ?? null,
+              practiceRunId: result?.details?.runId ?? null,
+              runRevision: result?.details?.runRevision ?? null,
+            });
+          }
+          if (completionMetadata) Object.assign(completionEvent, completionMetadata(result));
+          await evidence.append(completionEvent);
+          if (sideEffect) {
+            try {
+              await lifecycle?.commit?.(prepared);
+            } catch {
+              await evidence.append({ type: "tool.rollback.cleanup_deferred", ...common }).catch(() => {});
+            }
+            try {
+              await pendingOperationStore.remove(key);
+            } catch {
+              await evidence.append({ type: "operation.payload_cleanup_deferred", ...common }).catch(() => {});
+            }
+          }
+          return resultProjection(result);
         } catch (error) {
-          execution?.end(observabilityOutcome(signal), error);
+          let rollbackError;
+          if (sideEffect) {
+            try {
+              await lifecycle?.rollback?.(prepared);
+            } catch (caught) {
+              rollbackError = caught;
+            }
+            await idempotencyStore.fail(key, {
+              operationDigest: digest,
+              errorCode: rollbackError ? "ROLLBACK_FAILED" : (error?.code ?? "TOOL_EXECUTION_FAILED"),
+            });
+          }
+          await evidence.append({
+            type: "tool.execution.completed",
+            ...common,
+            status: "error",
+            errorCode: error?.code ?? "TOOL_EXECUTION_FAILED",
+            rollbackStatus: sideEffect ? (rollbackError ? "failed" : "completed") : null,
+          });
+          if (error && typeof error === "object") terminalRecorded.add(error);
+          if (rollbackError) throw new AggregateError([error, rollbackError], "Tool execution and rollback failed");
           throw error;
         }
-        if (sideEffect) {
-          await idempotencyStore.complete(key, {
-            operationDigest: digest,
-            replayResult: replayResult(result),
-          });
-        }
-        const stateReplay = category === "state-transition" && result?.details?.replayed === true;
-        const completionEvent = {
-          type: stateReplay ? "tool.execution.replayed" : "tool.execution.completed",
-          ...common,
-          status: "success",
-        };
-        if (category === "state-transition") {
-          Object.assign(completionEvent, {
-            stateEventId: result?.details?.stateEventId ?? null,
-            stateEventHash: result?.details?.stateEventHash ?? null,
-            stateSequence: result?.details?.stateSequence ?? null,
-            practiceRunId: result?.details?.runId ?? null,
-            runRevision: result?.details?.runRevision ?? null,
-          });
-        }
-        if (completionMetadata) Object.assign(completionEvent, completionMetadata(result));
-        await evidence.append(completionEvent);
-        if (sideEffect) {
-          try {
-            await lifecycle?.commit?.(prepared);
-          } catch {
-            await evidence.append({ type: "tool.rollback.cleanup_deferred", ...common }).catch(() => {});
-          }
-          try {
-            await pendingOperationStore.remove(key);
-          } catch {
-            await evidence.append({ type: "operation.payload_cleanup_deferred", ...common }).catch(() => {});
-          }
-        }
-        return result;
+      };
+
+      if (!executionBoundary) return runExecution();
+      try {
+        return await executionBoundary.run({ ...common, operation }, runExecution);
       } catch (error) {
-        let rollbackError;
-        if (sideEffect) {
-          try {
-            await lifecycle?.rollback?.(prepared);
-          } catch (caught) {
-            rollbackError = caught;
-          }
-          await idempotencyStore.fail(key, {
-            operationDigest: digest,
-            errorCode: rollbackError ? "ROLLBACK_FAILED" : (error?.code ?? "TOOL_EXECUTION_FAILED"),
+        if (!(error && typeof error === "object" && terminalRecorded.has(error))) {
+          await evidence.append({ type: "tool.execution.started", ...common });
+          await evidence.append({
+            type: "tool.execution.completed",
+            ...common,
+            status: "error",
+            errorCode: error?.code ?? "TOOL_EXECUTION_FAILED",
+            rollbackStatus: null,
           });
         }
-        await evidence.append({
-          type: "tool.execution.completed",
-          ...common,
-          status: "error",
-          errorCode: error?.code ?? "TOOL_EXECUTION_FAILED",
-          rollbackStatus: sideEffect ? (rollbackError ? "failed" : "completed") : null,
-        });
-        if (rollbackError) throw new AggregateError([error, rollbackError], "Tool execution and rollback failed");
         throw error;
       }
     },

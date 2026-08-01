@@ -2,7 +2,7 @@ const REVIEW_CHECKPOINT_IDS = [
   "claim-schema-valid",
   "criteria-covered",
   "scope-matches-final",
-  "scope-fully-read",
+  "targets-fully-consumed",
   "observation-targets-valid",
   "outcome-consistent",
   "static-review-limitation-recorded",
@@ -32,10 +32,23 @@ const registries = deepFreeze({
       id: "reviewer",
       title: "Reviewer",
       practiceIds: ["review"],
-      toolIds: ["start_work", "extend_scope", "read", "check_completion", "abandon_work"],
-      gatePolicyId: "reviewer-v1",
-      roleSkillId: "reviewer-v1",
-      profileDigest: "636a466beb58788da2786d1eabcad4a8479006b4f2e6df46fb1b648bc1ceeaf7",
+      targetKindIds: ["file", "directory_snapshot"],
+      toolIds: ["start_work", "extend_scope", "read", "inspect_directory", "check_completion", "abandon_work"],
+      gatePolicyId: "reviewer-v2",
+      roleSkillId: "reviewer-v2",
+      profileDigest: "117306115f251980d7bfd363d15990afc20c4a535d46f075c2bbfdad590fb639",
+    },
+  },
+  targetKinds: {
+    file: {
+      id: "file",
+      materializedRoleIds: ["reviewer"],
+      captureVersion: "review-file-snapshot-v1",
+    },
+    directory_snapshot: {
+      id: "directory_snapshot",
+      materializedRoleIds: ["reviewer"],
+      captureVersion: "review-directory-snapshot-v1",
     },
   },
   tools: {
@@ -56,6 +69,12 @@ const registries = deepFreeze({
       executionMode: "sequential",
       profileRoleIds: ["kernel", "reviewer"],
       materializedRoleIds: ["kernel", "reviewer"],
+    },
+    inspect_directory: {
+      id: "inspect_directory",
+      executionMode: "sequential",
+      profileRoleIds: ["reviewer"],
+      materializedRoleIds: ["reviewer"],
     },
     check_completion: {
       id: "check_completion",
@@ -85,10 +104,10 @@ const registries = deepFreeze({
     },
     review: {
       id: "review",
-      version: 1,
+      version: 2,
       supportedRoleIds: ["reviewer"],
-      methodologySkillId: "review-v1",
-      completionSchemaId: "review-claim-v1",
+      methodologySkillId: "review-v2",
+      completionSchemaId: "review-claim-v2",
       checkpointIds: REVIEW_CHECKPOINT_IDS,
     },
   },
@@ -98,10 +117,10 @@ const registries = deepFreeze({
       supportedRoleIds: ["kernel"],
       toolIds: ["read", "write"],
     },
-    "reviewer-v1": {
-      id: "reviewer-v1",
+    "reviewer-v2": {
+      id: "reviewer-v2",
       supportedRoleIds: ["reviewer"],
-      toolIds: ["start_work", "extend_scope", "read", "check_completion", "abandon_work"],
+      toolIds: ["start_work", "extend_scope", "read", "inspect_directory", "check_completion", "abandon_work"],
     },
   },
   roleSkills: {
@@ -112,11 +131,11 @@ const registries = deepFreeze({
       digest: "2913a8592c6f472df4a13b58645fd585320ee1365c089d0fa843d7718568d159",
       maxBytes: 16 * 1024,
     },
-    "reviewer-v1": {
-      id: "reviewer-v1",
+    "reviewer-v2": {
+      id: "reviewer-v2",
       supportedRoleIds: ["reviewer"],
       relativePath: "roles/reviewer/role.md",
-      digest: "6c6b566be09d6a0abc15d36f16bb59d709a4277ed506dfc296e7ec5c1ea47b9f",
+      digest: "4696719ce280106cb66da7968c6a472edcb271187322e7250e87583e88d4c776",
       maxBytes: 16 * 1024,
     },
   },
@@ -128,11 +147,11 @@ const registries = deepFreeze({
       digest: "21b3920ff57bfcf699a51eb2501d849d79983a192829b98cebb86c04fc566ba5",
       maxBytes: 32 * 1024,
     },
-    "review-v1": {
-      id: "review-v1",
+    "review-v2": {
+      id: "review-v2",
       supportedPracticeIds: ["review"],
       relativePath: "practices/review/methodology.md",
-      digest: "630e948158f5da71fb7f0b61d35d9d64f91ae32563b85cbe4c475e395db568a1",
+      digest: "a434fde636e5d847298fa9b4ec71c596a965defe24df27ead0640d3d0e73684b",
       maxBytes: 32 * 1024,
     },
   },
