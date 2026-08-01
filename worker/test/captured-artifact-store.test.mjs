@@ -278,8 +278,92 @@ test("binding, producer, metadata, byte, UTF-8 and text-policy validation follow
   );
   const manifest = await f.store.put(manifestInput);
   assert.equal((await f.store.readFromEvidence(evidenceRead(manifest))).bytes.equals(manifestInput.canonicalBytes), true);
-  const empty = await f.store.put(putInput(f.store, {
+  const commitManifestInput = {
+    ...putInput(f.store),
+    purpose: "git_tree_manifest",
     ordinal: 1,
+    mediaType: "application/vnd.tiangong.git-tree-manifest+json;version=1",
+    producerId: "review-git-commit-capture",
+    truncated: false,
+    canonicalBytes: Buffer.from(canonicalJson({
+      schemaVersion: 1,
+      kind: "git-tree-manifest",
+      repositoryPath: ".",
+      objectFormat: "sha1",
+      commitOid: "a".repeat(40),
+      treeOid: "b".repeat(40),
+      selectionDigest: sha256("git-selection"),
+      members: [{
+        path: "src/one.txt",
+        mode: "100644",
+        blobOid: "c".repeat(40),
+        contentDigest: sha256("git-one"),
+        contentBytes: 4,
+        contentLines: 2,
+        encoding: "utf-8",
+        requiredConsumeSegments: 1,
+      }],
+    }), "utf8"),
+  };
+  assert.equal((await f.store.put(commitManifestInput)).producerId, "review-git-commit-capture");
+  await expectCode(
+    f.store.put({ ...commitManifestInput, ordinal: 2, canonicalBytes: Buffer.from("{}") }),
+    "ARTIFACT_METADATA_INVALID",
+  );
+  const gitDiffInput = putInput(f.store, {
+    purpose: "git_diff",
+    ordinal: 3,
+    mediaType: "text/x-diff;charset=utf-8",
+    producerId: "review-git-diff-capture",
+    truncated: false,
+    canonicalBytes: Buffer.from("diff --git a/src/one.txt b/src/one.txt\n"),
+  });
+  assert.equal((await f.store.put(gitDiffInput)).producerId, "review-git-diff-capture");
+  await expectCode(
+    f.store.put({
+      ...gitDiffInput,
+      ordinal: 30,
+      canonicalBytes: Buffer.from("diff --git a/src/one.txt b/src/two.txt\n"),
+    }),
+    "ARTIFACT_METADATA_INVALID",
+  );
+  await expectCode(
+    f.store.put({
+      ...gitDiffInput,
+      ordinal: 31,
+      canonicalBytes: Buffer.from("diff --git a/src/one.txt b/src/one.txt\nGIT binary patch\n"),
+    }),
+    "ARTIFACT_METADATA_INVALID",
+  );
+  const contentMarkerDiff = Buffer.from(
+    "diff --git a/src/one.txt b/src/one.txt\n--- a/src/one.txt\n+++ b/src/one.txt\n@@ -1 +1 @@\n-docs about Submodule support\n+docs about GIT binary patch content\n",
+  );
+  assert.equal((await f.store.put({
+    ...gitDiffInput,
+    ordinal: 32,
+    canonicalBytes: contentMarkerDiff,
+  })).producerId, "review-git-diff-capture");
+  const gitList = Buffer.from(canonicalJson({
+    schemaVersion: 1,
+    kind: "git-commit-list",
+    targetId: binding(f.store).targetId,
+    prefix: "src",
+    offset: 0,
+    returnedCount: 1,
+    totalMatchingMembers: 1,
+    truncated: false,
+    members: [{ path: "src/one.txt", mode: "100644", contentBytes: 4, contentLines: 2 }],
+  }));
+  assert.equal((await f.store.put(putInput(f.store, {
+    purpose: "git_commit_list",
+    ordinal: 4,
+    mediaType: "application/vnd.tiangong.git-commit-list+json;version=1",
+    producerId: "review-git-inspect",
+    truncated: false,
+    canonicalBytes: gitList,
+  }))).producerId, "review-git-inspect");
+  const empty = await f.store.put(putInput(f.store, {
+    ordinal: 5,
     canonicalBytes: Buffer.alloc(0),
   }));
   assert.equal(empty.contentBytes, 0);

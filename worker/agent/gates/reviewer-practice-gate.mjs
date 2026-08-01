@@ -39,8 +39,9 @@ export class ReviewerPracticeGate {
       && typeof operation?.state?.targetId === "string";
     const readAllowed = common && targetState && operation.policyVersion === "review-target-consume-v2"
       && operation.category === "read-only" && operation.toolName === "read";
-    const inspectionAllowed = common && targetState && operation.policyVersion === "review-directory-inspect-v1"
-      && operation.category === "read-only" && operation.toolName === "inspect_directory";
+    const inspectionAllowed = common && targetState && operation.category === "read-only"
+      && ((operation.policyVersion === "review-directory-inspect-v1" && operation.toolName === "inspect_directory")
+        || (operation.policyVersion === "review-git-inspect-v1" && operation.toolName === "inspect_repository"));
     if (stateAllowed || readAllowed || inspectionAllowed) return { kind: "allow" };
     return {
       kind: "deny",

@@ -32,11 +32,11 @@ const registries = deepFreeze({
       id: "reviewer",
       title: "Reviewer",
       practiceIds: ["review"],
-      targetKindIds: ["file", "directory_snapshot"],
-      toolIds: ["start_work", "extend_scope", "read", "inspect_directory", "check_completion", "abandon_work"],
+      targetKindIds: ["file", "directory_snapshot", "commit", "git_diff"],
+      toolIds: ["start_work", "extend_scope", "read", "inspect_directory", "inspect_repository", "check_completion", "abandon_work"],
       gatePolicyId: "reviewer-v2",
       roleSkillId: "reviewer-v2",
-      profileDigest: "117306115f251980d7bfd363d15990afc20c4a535d46f075c2bbfdad590fb639",
+      profileDigest: "fbfb76ec336cc841e39cf42d028aa7f1883dfb5a7e546692da18c85648d928cd",
     },
   },
   targetKinds: {
@@ -49,6 +49,16 @@ const registries = deepFreeze({
       id: "directory_snapshot",
       materializedRoleIds: ["reviewer"],
       captureVersion: "review-directory-snapshot-v1",
+    },
+    commit: {
+      id: "commit",
+      materializedRoleIds: ["reviewer"],
+      captureVersion: "review-commit-snapshot-v1",
+    },
+    git_diff: {
+      id: "git_diff",
+      materializedRoleIds: ["reviewer"],
+      captureVersion: "review-git-diff-snapshot-v1",
     },
   },
   tools: {
@@ -72,6 +82,12 @@ const registries = deepFreeze({
     },
     inspect_directory: {
       id: "inspect_directory",
+      executionMode: "sequential",
+      profileRoleIds: ["reviewer"],
+      materializedRoleIds: ["reviewer"],
+    },
+    inspect_repository: {
+      id: "inspect_repository",
       executionMode: "sequential",
       profileRoleIds: ["reviewer"],
       materializedRoleIds: ["reviewer"],
@@ -120,7 +136,7 @@ const registries = deepFreeze({
     "reviewer-v2": {
       id: "reviewer-v2",
       supportedRoleIds: ["reviewer"],
-      toolIds: ["start_work", "extend_scope", "read", "inspect_directory", "check_completion", "abandon_work"],
+      toolIds: ["start_work", "extend_scope", "read", "inspect_directory", "inspect_repository", "check_completion", "abandon_work"],
     },
   },
   roleSkills: {
@@ -135,7 +151,7 @@ const registries = deepFreeze({
       id: "reviewer-v2",
       supportedRoleIds: ["reviewer"],
       relativePath: "roles/reviewer/role.md",
-      digest: "4696719ce280106cb66da7968c6a472edcb271187322e7250e87583e88d4c776",
+      digest: "8226e4884d33ab598ebdd435509756d084d120817088d5573f6208bbbe410e07",
       maxBytes: 16 * 1024,
     },
   },
@@ -151,7 +167,7 @@ const registries = deepFreeze({
       id: "review-v2",
       supportedPracticeIds: ["review"],
       relativePath: "practices/review/methodology.md",
-      digest: "a434fde636e5d847298fa9b4ec71c596a965defe24df27ead0640d3d0e73684b",
+      digest: "82a388f2172a7f845efbde83479776cd24e9100b841f116591156b4ad1ce12cc",
       maxBytes: 32 * 1024,
     },
   },

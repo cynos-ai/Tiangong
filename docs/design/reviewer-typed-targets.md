@@ -1,6 +1,6 @@
 # Reviewer typed target 与 immutable snapshot 设计合同
 
-> **状态：** Reviewer v2 的 `file` 与 `directory_snapshot` 已实现并通过对应deterministic/image/Matrix/recovery Gate；`commit`与`git_diff`的公开窄合同已冻结于 [`reviewer-local-git-targets.md`](./reviewer-local-git-targets.md)，但runtime尚未materialize。
+> **状态：** Reviewer v2 已materialize `file`、`directory_snapshot`、`commit`与`git_diff`；local-git exact边界见 [`reviewer-local-git-targets.md`](./reviewer-local-git-targets.md)。
 > **基础：** [`agent-plane-foundation.md`](./agent-plane-foundation.md)、历史 [`reviewer-next-action.md`](./reviewer-next-action.md) 与已实现的 [`captured-artifact-store.md`](./captured-artifact-store.md)。
 > **范围：** Reviewer 已从显式文件 scope clean-cut 演进为 append-only typed targets，并在 target admission 时固化不可变 snapshot identity。
 > **保证不变：** `worker-local / static-review-only`；target、snapshot、Captured Artifact 和 `nextAction` 都不授予权限、不认证模型判断、不执行测试或修改 workspace。
@@ -10,7 +10,7 @@
 
 本文是 Reviewer v2 typed-target runtime的current合同。实现者仍须遵守根目录 `AGENTS.md` 及 `docs/rules/` 下的 implementation、verification、security-and-evidence 和 worker-runtime 规则。
 
-当前公开事实为`scope.targets[]`、PracticeRun/claim v2、checkpoint `review-v2`、ContextPack v3，以及profile中exact `file,directory_snapshot`两种kind。runtime不保留旧`scope.files[]` shim、双读journal或自动迁移；旧durable schema fail closed。不得把尚未materialize的commit、diff或其它union成员描述为current capability，也不得用prompt、Skill、workspace manifest或模型自报digest模拟immutable snapshot。
+当前公开事实为`scope.targets[]`、PracticeRun/claim v2、checkpoint `review-v2`、ContextPack v3，以及profile中exact `file,directory_snapshot,commit,git_diff`四种kind。runtime不保留旧`scope.files[]` shim、双读journal或自动迁移；旧durable schema fail closed。不得把其它union成员描述为current capability，也不得用prompt、Skill、workspace manifest或模型自报digest模拟immutable snapshot。
 
 后续target实现仍必须按依赖边界拆分：
 

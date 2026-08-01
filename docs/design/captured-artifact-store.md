@@ -281,7 +281,7 @@ transformVersions[]
 
 `review-text-lines-v1` exact：先执行 byte predicate（byte `<0x20` 仅允许 TAB/LF/CR，拒绝 `0x7f`），再使用 `TextDecoder("utf-8",{fatal:true,ignoreBOM:false})`；以LF分割，bare CR保留，empty bytes=1 line，trailing LF增加最后一个empty line。producer交给Store的chunk已是model-visible canonical bytes且最大50KiB；Store按同一policy独立重算contentLines。`truncated`允许true/false但由target coverage解释。
 
-directory/git producer只有其独立 capability合同、canonical transform和profile materialize后才加入registry。
+current closed registry还包含：`review-directory-capture/1`（directory manifest）、`review-directory-inspect/1`（bounded list/search）、`review-git-commit-capture/1`（commit tree manifest）、`review-git-diff-capture/1`（canonical patch）与`review-git-inspect/1`（bounded commit list）。各项purpose/media/byte validator由对应capability合同冻结；它们只在profile/runtime同步materialize后进入registry。
 
 规则：
 

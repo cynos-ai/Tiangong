@@ -132,8 +132,9 @@ function observationValid(observation, run, coverage) {
   const targetCoverage = coverage.targets.find((entry) => entry.targetId === observation.target.targetId);
   if (!target || targetCoverage?.status !== "complete") return false;
   let selector;
-  if (target.kind === "file") {
+  if (["file", "git_diff"].includes(target.kind)) {
     if (Object.hasOwn(observation.target, "memberPath")) return false;
+    if (target.kind === "git_diff" && Object.hasOwn(observation.target, "lineStart")) return false;
     selector = resourceSelectorDigest(target.targetId, null);
   } else {
     if (!Object.hasOwn(observation.target, "memberPath")) return false;

@@ -56,15 +56,17 @@ test("valid fixed profiles load frozen code-owned role context", async () => {
     roleId: "reviewer",
     title: "Reviewer",
     practiceIds: ["review"],
-    targetKindIds: ["file", "directory_snapshot"],
-    toolIds: ["start_work", "extend_scope", "read", "inspect_directory", "check_completion", "abandon_work"],
+    targetKindIds: ["file", "directory_snapshot", "commit", "git_diff"],
+    toolIds: [
+      "start_work", "extend_scope", "read", "inspect_directory", "inspect_repository", "check_completion", "abandon_work",
+    ],
     gatePolicyId: "reviewer-v2",
     roleSkillId: "reviewer-v2",
   });
   assert.equal(reviewer.practices[0].definition.id, "review");
   assert.equal(reviewer.practices[0].definition.version, 2);
   assert.equal(reviewer.practices[0].methodology.id, "review-v2");
-  assert.deepEqual(reviewer.targetKinds.map((kind) => kind.id), ["file", "directory_snapshot"]);
+  assert.deepEqual(reviewer.targetKinds.map((kind) => kind.id), ["file", "directory_snapshot", "commit", "git_diff"]);
   assert.match(buildBaseSystemPrompt(reviewer), /static-only review/u);
   assert.match(buildBaseSystemPrompt(reviewer), new RegExp(reviewer.profileDigest, "u"));
 
@@ -91,6 +93,7 @@ test("closed registries deny Reviewer mutation and unknown capability selection"
     "extend_scope",
     "read",
     "inspect_directory",
+    "inspect_repository",
     "check_completion",
     "abandon_work",
   ]);

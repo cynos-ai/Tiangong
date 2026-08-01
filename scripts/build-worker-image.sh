@@ -9,6 +9,8 @@ readonly IMAGE="tiangong-worker:dev"
 readonly REVIEWER_IMAGE="tiangong-worker-reviewer:dev"
 readonly EXPECTED_NODE_VERSION="v22.23.1"
 readonly EXPECTED_PI_VERSION="0.82.0"
+readonly EXPECTED_GIT_VERSION="git version 2.43.0"
+readonly EXPECTED_UTIL_LINUX_VERSION="2.39.3"
 
 command -v docker >/dev/null 2>&1 || {
   printf 'ERROR: docker is required.\n' >&2
@@ -42,9 +44,19 @@ actual_pi_version="$(docker run --rm --entrypoint pi "${IMAGE}" --version)"
   exit 1
 }
 
-actual_flock_version="$(docker run --rm --entrypoint /usr/bin/flock "${IMAGE}" --version)"
-grep -Fq 'flock from util-linux ' <<<"${actual_flock_version}" || {
-  printf 'ERROR: the Worker image lacks the required util-linux kernel flock binding.\n' >&2
+actual_git_version="$(docker run --rm --entrypoint /usr/bin/git "${REVIEWER_IMAGE}" --version)"
+[[ "${actual_git_version}" == "${EXPECTED_GIT_VERSION}" ]] || {
+  printf 'ERROR: expected Git %s, got %s.\n' "${EXPECTED_GIT_VERSION}" "${actual_git_version}" >&2
+  exit 1
+}
+actual_prlimit_version="$(docker run --rm --entrypoint /usr/bin/prlimit "${REVIEWER_IMAGE}" --version | head -n 1)"
+[[ "${actual_prlimit_version}" == "prlimit from util-linux ${EXPECTED_UTIL_LINUX_VERSION}" ]] || {
+  printf 'ERROR: expected prlimit from util-linux %s, got %s.\n' "${EXPECTED_UTIL_LINUX_VERSION}" "${actual_prlimit_version}" >&2
+  exit 1
+}
+actual_flock_version="$(docker run --rm --entrypoint /usr/bin/flock "${IMAGE}" --version | head -n 1)"
+[[ "${actual_flock_version}" == "flock from util-linux ${EXPECTED_UTIL_LINUX_VERSION}" ]] || {
+  printf 'ERROR: expected flock from util-linux %s, got %s.\n' "${EXPECTED_UTIL_LINUX_VERSION}" "${actual_flock_version}" >&2
   exit 1
 }
 
@@ -159,18 +171,18 @@ docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${REVIEWER_IMA
       gate: new ReviewerPracticeGate({ profileBundle }),
       evidence: new EvidenceRecorder({ filePath: "/tmp/tiangong-image-contract/evidence.jsonl" }),
       getInvocation: turns.current,
-      inspectionLockPath: "/tmp/tiangong-image-contract/directory-inspection-lock-target",
+      inspectionLockPath: "/tmp/tiangong-image-contract/review-inspection-lock-target",
     });
-    if (registry.names().join(",") !== "start_work,extend_scope,read,inspect_directory,check_completion,abandon_work") process.exit(1);
+    if (registry.names().join(",") !== "start_work,extend_scope,read,inspect_directory,inspect_repository,check_completion,abandon_work") process.exit(1);
   '
 node -e '
   const [kernel, reviewer] = process.argv.slice(1).map(JSON.parse);
   if (kernel.roleId !== "kernel" || kernel.runtimeReady !== true) process.exit(1);
   if (reviewer.roleId !== "reviewer" || reviewer.runtimeReady !== true) process.exit(1);
-  if (reviewer.schemaVersion !== 2 || reviewer.targetKindIds.join(",") !== "file,directory_snapshot") process.exit(1);
-  if (reviewer.materializedTargetKindIds.join(",") !== "file,directory_snapshot") process.exit(1);
-  if (reviewer.toolIds.join(",") !== "start_work,extend_scope,read,inspect_directory,check_completion,abandon_work") process.exit(1);
-  if (reviewer.materializedToolIds.join(",") !== "start_work,extend_scope,read,inspect_directory,check_completion,abandon_work") process.exit(1);
+  if (reviewer.schemaVersion !== 2 || reviewer.targetKindIds.join(",") !== "file,directory_snapshot,commit,git_diff") process.exit(1);
+  if (reviewer.materializedTargetKindIds.join(",") !== "file,directory_snapshot,commit,git_diff") process.exit(1);
+  if (reviewer.toolIds.join(",") !== "start_work,extend_scope,read,inspect_directory,inspect_repository,check_completion,abandon_work") process.exit(1);
+  if (reviewer.materializedToolIds.join(",") !== "start_work,extend_scope,read,inspect_directory,inspect_repository,check_completion,abandon_work") process.exit(1);
 ' "${kernel_profile}" "${reviewer_profile}"
 
 printf '[Tiangong] Worker image ready: %s (Node.js %s, pi %s, fixed kernel profile)\n' \

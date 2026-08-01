@@ -136,7 +136,7 @@ test("lexical admission is pre-Gate and physical capture is deferred until commi
   for (const [target, code] of [
     [{ kind: "file", path: "../outside" }, "TARGET_OUTSIDE_WORKSPACE"],
     [{ kind: "file", path: ".env" }, "TARGET_SENSITIVE_PATH_DENIED"],
-    [{ kind: "commit", repositoryPath: ".", ref: "HEAD", pathPrefixes: ["."] }, "TARGET_KIND_NOT_MATERIALIZED"],
+    [{ kind: "commit", repositoryPath: ".", ref: "main", pathPrefixes: ["."] }, "GIT_REF_INVALID"],
     [{ kind: "file", path: "a.txt", extra: true }, "INVALID_TARGET"],
   ]) await expectCode(f.service.prepareStart(startParams([target]), invocation(f.bundle, `turn-${code}`, `call-${code}`)), code);
 

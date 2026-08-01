@@ -3,7 +3,7 @@ import { practiceRunFail } from "./errors.mjs";
 const MUTATION_TOOLS = new Set(["write", "edit", "bash"]);
 const COVERAGE_STATUSES = new Set(["complete", "unread", "partial", "blocked"]);
 const BLOCK_REASONS = new Set([
-  "TARGET_CHANGED", "TARGET_UNAVAILABLE", "GIT_OBJECT_UNAVAILABLE", "TARGET_EVIDENCE_LIMIT_EXCEEDED",
+  "TARGET_CHANGED", "TARGET_UNAVAILABLE", "GIT_OBJECT_UNAVAILABLE", "TARGET_ARTIFACT_INVALID", "TARGET_EVIDENCE_LIMIT_EXCEEDED",
 ]);
 
 function fail(message) {

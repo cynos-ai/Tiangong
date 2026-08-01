@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 if (($# != 4)); then
-  printf 'Usage: %s basic|recovery-start|recovery-extend|journey-read|journey-check ROOM_ID WORKER_USER_ID NONCE\n' "$0" >&2
+  printf 'Usage: %s basic|git-basic|recovery-start|recovery-extend|journey-read|journey-check ROOM_ID WORKER_USER_ID NONCE\n' "$0" >&2
   exit 2
 fi
 
@@ -12,6 +12,7 @@ readonly WORKER_USER_ID="$3"
 readonly NONCE="$4"
 readonly MANAGER_CONFIG="${HOME}/openclaw.json"
 readonly BASIC_TARGET="reviewer-basic-${NONCE}"
+readonly GIT_TARGET="reviewer-git-${NONCE}"
 readonly RECOVERY_A="reviewer-recovery-a-${NONCE}"
 readonly RECOVERY_B="reviewer-recovery-b-${NONCE}"
 
@@ -22,6 +23,13 @@ case "${ACTION}" in
     expected_checkpoint="passed"
     expected_revision="1"
     expected_targets="1"
+    ;;
+  git-basic)
+    prompt="Use the Reviewer tools, not prose alone. Call start_work exactly once with practiceId review, objective 'Review the pinned local Git smoke targets', acceptanceCriteria containing exactly 'Confirm every resource in the final target scope contains the expected harmless Git smoke change.', and targets in this exact order: first one commit target with repositoryPath ${GIT_TARGET}, ref refs/heads/head, pathPrefixes exactly ['src']; second one git_diff target with repositoryPath ${GIT_TARGET}, baseRef refs/heads/base, headRef refs/heads/head, pathPrefixes exactly ['src']. From the start result use both runtime targetIds. Call inspect_repository exactly once for the commit target with action list_commit, prefix 'src', offset 0, limit 200. Call read exactly once for complete commit memberPath src/one.txt and exactly once for complete commit memberPath src/two.txt. Call read exactly once for the complete git_diff target without memberPath. Then call check_completion exactly once. Its completionClaim must use criterion-1 as addressed, scope targetIds exactly [commit targetId, git_diff targetId] in that order, outcome accept, a nonempty synopsis, no observations, exactly one STATIC_REVIEW_ONLY limitation with nonempty detail, and no nextActions."
+    expected_state="done"
+    expected_checkpoint="passed"
+    expected_revision="1"
+    expected_targets="2"
     ;;
   recovery-start)
     prompt="Start a Reviewer run and leave it active for a later target extension. Call start_work exactly once with practiceId review, objective 'Review the explicit smoke directory snapshots as targets are appended', acceptanceCriteria containing exactly 'Confirm every resource in the final target scope contains its expected harmless smoke marker.', and targets containing exactly one directory_snapshot with path ${RECOVERY_A}, includePrefixes exactly ['.'], and excludePrefixes exactly ['excluded']. From the start result use its runtime targetId and call read exactly once for complete memberPath one.txt and exactly once for complete memberPath two.txt. Do not call extend_scope, inspect_directory, check_completion, or abandon_work in this turn."
@@ -101,7 +109,7 @@ duplicate_event="$(curl --fail --silent --show-error --max-time 30 \
 }
 printf 'request_event=%s\nduplicate_request_transaction=pass\n' "${request_event}"
 
-# Directory Basic uses six sequential tool calls; keep the Matrix wait bounded but
+# Reviewer Basic scenarios use several sequential tool calls; keep the Matrix wait bounded but
 # above the fixed Harness turn window used by the local AgentTeams stack.
 for _ in $(seq 1 60); do
   since_query="$(printf '%s' "${since}" | jq -sRr @uri)"

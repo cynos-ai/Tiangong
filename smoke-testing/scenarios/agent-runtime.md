@@ -92,7 +92,7 @@
 
 ### R3: Reviewer deterministic slice
 
-- Purpose: Prove the fixed Reviewer v2 profile, exact `file,directory_snapshot` kinds and six-tool surface, immutable-at-admission capture, target-bound reads, bounded directory inspection, Artifact/Evidence projection, completion checkpoint, requester binding, ContextPack v3, and machine status without using model prose as an oracle.
+- Purpose: Prove the fixed Reviewer v2 profile, exact `file,directory_snapshot,commit,git_diff` kinds and seven-tool surface, immutable-at-admission capture, target-bound reads, bounded directory/repository inspection, Artifact/Evidence projection, completion checkpoint, requester binding, ContextPack v3, and machine status without using model prose as an oracle.
 - Required outcomes: no-active/wrong-actor/out-of-target/workspace-escape/symlink/hardlink/binary/invalid-UTF-8/unstable capture fails closed; complete snapshot-version resource coverage passes; list/search alone grants no coverage; partial, mixed, cross-target, ambiguous, or tampered Evidence/Artifact joins fail; `not_addressed` requires `blocked` plus a next action; only `run.completed` advances `done`; successful read/inspection/completion replay does not duplicate state.
 - Verification layer: deterministic Worker tests plus Reviewer image/profile/kind/tool checks. The canonical Matrix Basic, Recovery Full, and non-gating Journey contracts are in [`reviewer-runtime.md`](./reviewer-runtime.md).
 
