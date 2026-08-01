@@ -40,7 +40,7 @@ worker_json() {
 
 purge_smoke_storage() {
   local storage_path="agentteams/agentteams-storage/agents/${WORKER_NAME}/"
-  local mirror_path="/root/hiclaw-fs/agents/${WORKER_NAME}"
+  local mirror_path="/root/agentteams-fs/agents/${WORKER_NAME}"
   docker exec "${CONTROLLER_CONTAINER}" mc rm --recursive --force \
     "${storage_path}" >/dev/null 2>&1
   docker exec "${CONTROLLER_CONTAINER}" rm -rf -- "${mirror_path}"
@@ -276,7 +276,7 @@ printf 'reviewer_image_id=%s\nreviewer_profile_digest=%s\nreviewer_tool_surface=
   "${actual_image_id}" "$(jq -r '.profileDigest' <<<"${profile}")"
 
 worker_user_id="$(docker exec "${CONTAINER_NAME}" jq -r '.channels.matrix.userId // empty' \
-  "/root/hiclaw-fs/agents/${WORKER_NAME}/openclaw.json")"
+  "/root/agentteams-fs/agents/${WORKER_NAME}/openclaw.json")"
 room_id="$(docker exec "${CONTAINER_NAME}" printenv AGENTTEAMS_WORKER_ROOM_ID)"
 [[ -n "${worker_user_id}" && -n "${room_id}" ]] || die "Reviewer Matrix identity is incomplete."
 wait_for_worker_channel 0 || die "Reviewer Matrix channel did not become ready."
@@ -285,7 +285,7 @@ docker cp "${GIT_STATE_ORACLE}" "${CONTAINER_NAME}:${WORKER_GIT_STATE_ORACLE}"
 docker cp "${ORACLE_POLICY}" "${CONTAINER_NAME}:${WORKER_ORACLE_POLICY}"
 
 nonce="$(cat /proc/sys/kernel/random/uuid)"
-agent_root="/root/hiclaw-fs/agents/${WORKER_NAME}"
+agent_root="/root/agentteams-fs/agents/${WORKER_NAME}"
 if [[ "${SMOKE_LEVEL}" == "basic" ]]; then
   target="reviewer-basic-${nonce}"
   target_path="${agent_root}/${target}"
@@ -457,9 +457,9 @@ else
   docker stop "${CONTAINER_NAME}" >/dev/null
   docker exec "${CONTROLLER_CONTAINER}" mc rm --force "${snapshot_remote}" >/dev/null 2>&1
   docker exec "${CONTROLLER_CONTAINER}" rm -f -- \
-    "/root/hiclaw-fs/agents/${WORKER_NAME}/.tiangong/runtime/practice-runs/${session_hash}/snapshot.json"
+    "/root/agentteams-fs/agents/${WORKER_NAME}/.tiangong/runtime/practice-runs/${session_hash}/snapshot.json"
   docker exec "${MANAGER_CONTAINER}" rm -f -- \
-    "/root/hiclaw-fs/agents/${WORKER_NAME}/.tiangong/runtime/practice-runs/${session_hash}/snapshot.json"
+    "/root/agentteams-fs/agents/${WORKER_NAME}/.tiangong/runtime/practice-runs/${session_hash}/snapshot.json"
   if docker exec "${CONTROLLER_CONTAINER}" mc stat "${snapshot_remote}" >/dev/null 2>&1; then
     die "Derived PracticeRun snapshot could not be removed from owned storage before restart."
   fi

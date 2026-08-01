@@ -59,7 +59,7 @@ function workerPaths() {
   const workerName = process.env.AGENTTEAMS_WORKER_NAME;
   if (workerName && !/^[A-Za-z0-9._-]+$/u.test(workerName)) throw new Error("Invalid Worker name");
   const workspaceDir = process.env.TIANGONG_WORKSPACE_DIR ??
-    (workerName ? `/root/hiclaw-fs/agents/${workerName}` : undefined);
+    (workerName ? `/root/agentteams-fs/agents/${workerName}` : undefined);
   const stateDirectory = process.env.TIANGONG_STATE_DIR ??
     (workspaceDir ? join(workspaceDir, ".tiangong", "runtime") : undefined);
   if (!workspaceDir || !stateDirectory) {

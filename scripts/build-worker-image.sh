@@ -7,7 +7,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly REPO_ROOT
 readonly IMAGE="tiangong-worker:dev"
 readonly REVIEWER_IMAGE="tiangong-worker-reviewer:dev"
-readonly EXPECTED_NODE_VERSION="v22.23.1"
+readonly EXPECTED_NODE_VERSION="v22.23.2"
 readonly EXPECTED_PI_VERSION="0.82.0"
 readonly EXPECTED_GIT_VERSION="git version 2.43.0"
 readonly EXPECTED_UTIL_LINUX_VERSION="2.39.3"
@@ -158,7 +158,7 @@ docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${REVIEWER_IMA
     const stateDirectory = "/tmp/tiangong-image-contract-state";
     const service = new PracticeRunService({
       sessionId: "image-contract",
-      workspaceDir: "/root/hiclaw-fs",
+      workspaceDir: "/root/agentteams-fs",
       profileBundle,
       journalPath: "/tmp/tiangong-image-contract/events.jsonl",
       snapshotPath: "/tmp/tiangong-image-contract/snapshot.json",
@@ -166,7 +166,7 @@ docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${REVIEWER_IMA
       artifactStore: new CapturedArtifactStore({ stateDirectory, sessionId: "image-contract" }),
     });
     const registry = createReviewerToolRegistry({
-      workspaceDir: "/root/hiclaw-fs",
+      workspaceDir: "/root/agentteams-fs",
       service,
       gate: new ReviewerPracticeGate({ profileBundle }),
       evidence: new EvidenceRecorder({ filePath: "/tmp/tiangong-image-contract/evidence.jsonl" }),

@@ -1,4 +1,4 @@
-ARG AGENTTEAMS_WORKER_IMAGE=higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-worker@sha256:0e91141495af352660b956de49e0581886ac11b38de7381e46e43424b030fdff
+ARG AGENTTEAMS_WORKER_IMAGE=higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-worker@sha256:daf587ad042f9564abb2347db5c4205ecc25d1b322e09fdd0d58a2a16c2d5c85
 FROM ${AGENTTEAMS_WORKER_IMAGE} AS worker-base
 
 ARG TIANGONG_OTEL_EXPORTER_ENDPOINT=""
@@ -49,7 +49,7 @@ ENV PATH="/opt/tiangong-worker/bin:/opt/tiangong-worker/node_modules/.bin:${PATH
     PI_TELEMETRY=0 \
     TIANGONG_OTEL_EXPORTER_ENDPOINT="${TIANGONG_OTEL_EXPORTER_ENDPOINT}"
 
-WORKDIR /root/hiclaw-fs
+WORKDIR /root/agentteams-fs
 
 FROM worker-base AS kernel
 COPY role-profiles/kernel.json /opt/tiangong-worker/profile.json

@@ -35,7 +35,7 @@ worker_json() {
 
 purge_smoke_storage() {
   local storage_path="agentteams/agentteams-storage/agents/${WORKER_NAME}/"
-  local mirror_path="/root/hiclaw-fs/agents/${WORKER_NAME}"
+  local mirror_path="/root/agentteams-fs/agents/${WORKER_NAME}"
   docker exec "${CONTROLLER_CONTAINER}" mc rm --recursive --force \
     "${storage_path}" >/dev/null 2>&1
   docker exec "${CONTROLLER_CONTAINER}" rm -rf -- "${mirror_path}"
@@ -162,13 +162,13 @@ printf 'node_version=%s\npi_version=%s\n' "${actual_node_version}" "${actual_pi_
 
 worker_user_id="$(docker exec "${CONTAINER_NAME}" jq -r \
   '.channels.matrix.userId // empty' \
-  "/root/hiclaw-fs/agents/${WORKER_NAME}/openclaw.json")"
+  "/root/agentteams-fs/agents/${WORKER_NAME}/openclaw.json")"
 room_id="$(docker exec "${CONTAINER_NAME}" printenv AGENTTEAMS_WORKER_ROOM_ID)"
 [[ -n "${worker_user_id}" && -n "${room_id}" ]] || die "Worker Matrix identity is incomplete."
 wait_for_worker_channel 0 || die "Worker Matrix channel did not become ready."
 docker cp "${MATRIX_ROUNDTRIP}" "${MANAGER_CONTAINER}:${MANAGER_MATRIX_ROUNDTRIP}"
 nonce="$(cat /proc/sys/kernel/random/uuid)"
-agent_root="/root/hiclaw-fs/agents/${WORKER_NAME}"
+agent_root="/root/agentteams-fs/agents/${WORKER_NAME}"
 read_target="matrix-read-probe-${nonce}.txt"
 printf '%s' "${nonce}" | docker exec -i "${CONTAINER_NAME}" \
   sh -c 'umask 077; cat >"$1/$2"' _ "${agent_root}" "${read_target}"
@@ -209,8 +209,8 @@ docker exec "${CONTAINER_NAME}" node --input-type=module -e '
   import { readFile, readdir } from "node:fs/promises";
   import { join } from "node:path";
   const worker = process.env.AGENTTEAMS_WORKER_NAME;
-  const configPath = `/root/hiclaw-fs/agents/${worker}/openclaw.json`;
-  const statePath = `/root/hiclaw-fs/agents/${worker}/.tiangong/runtime`;
+  const configPath = `/root/agentteams-fs/agents/${worker}/openclaw.json`;
+  const statePath = `/root/agentteams-fs/agents/${worker}/.tiangong/runtime`;
   const config = JSON.parse(await readFile(configPath, "utf8"));
   const credential = config.models.providers["agentteams-gateway"].apiKey;
   const runtimeDirectories = (await readdir("/tmp", { withFileTypes: true }))

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { relative, resolve, sep } from "node:path";
 
 const WORKER_PATTERN = /^[A-Za-z0-9._-]+$/u;
-const ENV_SCRIPT = "/opt/hiclaw/scripts/lib/hiclaw-env.sh";
+const ENV_SCRIPT = "/opt/agentteams/scripts/lib/agentteams-env.sh";
 
 function runStorageCommand(script, args) {
   return new Promise((resolvePromise, reject) => {

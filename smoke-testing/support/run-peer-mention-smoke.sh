@@ -76,10 +76,10 @@ reserved_storage_absent() {
     fi
   done
   for mirror_root in \
-    "/root/hiclaw-fs/agents/${LEADER_NAME}" \
-    "/root/hiclaw-fs/agents/${COORDINATOR_NAME}" \
-    "/root/hiclaw-fs/agents/${ENGINEER_NAME}" \
-    "/root/hiclaw-fs/teams/${TEAM_NAME}"; do
+    "/root/agentteams-fs/agents/${LEADER_NAME}" \
+    "/root/agentteams-fs/agents/${COORDINATOR_NAME}" \
+    "/root/agentteams-fs/agents/${ENGINEER_NAME}" \
+    "/root/agentteams-fs/teams/${TEAM_NAME}"; do
     if docker exec "${CONTROLLER_CONTAINER}" test -e "${mirror_root}" || \
        docker exec "${MANAGER_CONTAINER}" test -e "${mirror_root}"; then
       return 1
@@ -98,10 +98,10 @@ purge_reserved_storage() {
       "agentteams/agentteams-storage/${prefix}/" >/dev/null 2>&1 || failed=1
   done
   for mirror_root in \
-    "/root/hiclaw-fs/agents/${LEADER_NAME}" \
-    "/root/hiclaw-fs/agents/${COORDINATOR_NAME}" \
-    "/root/hiclaw-fs/agents/${ENGINEER_NAME}" \
-    "/root/hiclaw-fs/teams/${TEAM_NAME}"; do
+    "/root/agentteams-fs/agents/${LEADER_NAME}" \
+    "/root/agentteams-fs/agents/${COORDINATOR_NAME}" \
+    "/root/agentteams-fs/agents/${ENGINEER_NAME}" \
+    "/root/agentteams-fs/teams/${TEAM_NAME}"; do
     docker exec "${CONTROLLER_CONTAINER}" rm -rf -- "${mirror_root}" >/dev/null 2>&1 || failed=1
     docker exec "${MANAGER_CONTAINER}" rm -rf -- "${mirror_root}" >/dev/null 2>&1 || failed=1
   done
@@ -153,7 +153,7 @@ assert_worker_runtime() {
 
 assert_peer_policy() {
   local container="$1" member="$2" peer_id="$3" leader_id="$4" admin_id="$5"
-  local config="/root/hiclaw-fs/agents/${member}/openclaw.json" status
+  local config="/root/agentteams-fs/agents/${member}/openclaw.json" status
   for _ in $(seq 1 30); do
     if docker exec "${container}" jq -e \
       --arg peer "${peer_id}" \
@@ -186,7 +186,7 @@ assert_peer_policy() {
 
 peer_policy_digest() {
   local container="$1" member="$2"
-  local config="/root/hiclaw-fs/agents/${member}/openclaw.json"
+  local config="/root/agentteams-fs/agents/${member}/openclaw.json"
   docker exec "${container}" jq -cS '
     {
       groupAllowFrom:.channels.matrix.groupAllowFrom,
@@ -287,7 +287,7 @@ assert_harness() {
 
 assert_nonce_persisted() {
   local container="$1" member="$2" nonce="$3" state_root matches
-  state_root="/root/hiclaw-fs/agents/${member}/.tiangong/runtime/sessions"
+  state_root="/root/agentteams-fs/agents/${member}/.tiangong/runtime/sessions"
   matches="$(docker exec "${container}" grep -RlF --include='*.jsonl' \
     "${nonce}" "${state_root}" 2>/dev/null || true)"
   [[ -n "${matches}" ]] || die "Persistent session for ${member} does not contain the probe nonce."
@@ -599,8 +599,8 @@ wait_for_worker_channel "${ENGINEER_CONTAINER}" "${ENGINEER_NAME}" "${team_room_
 printf 'peer_worker_runtime_and_channel_readiness=pass\n'
 docker cp "${ROOM_MEMBERS}" "${COORDINATOR_CONTAINER}:${COORDINATOR_ROOM_MEMBERS}"
 docker cp "${ROOM_MEMBERS}" "${ENGINEER_CONTAINER}:${ENGINEER_ROOM_MEMBERS}"
-coordinator_config="/root/hiclaw-fs/agents/${COORDINATOR_NAME}/openclaw.json"
-engineer_config="/root/hiclaw-fs/agents/${ENGINEER_NAME}/openclaw.json"
+coordinator_config="/root/agentteams-fs/agents/${COORDINATOR_NAME}/openclaw.json"
+engineer_config="/root/agentteams-fs/agents/${ENGINEER_NAME}/openclaw.json"
 docker exec "${COORDINATOR_CONTAINER}" "${COORDINATOR_ROOM_MEMBERS}" members \
   "${coordinator_config}" "${team_room_id}" \
   "${admin_user_id},${leader_user_id},${coordinator_user_id},${engineer_user_id}" \
@@ -649,7 +649,7 @@ if ! peer_output="$(docker exec "${CONTROLLER_CONTAINER}" "${CONTROLLER_PEER_ROU
     fi
     nonce_file_count="$(
       { docker exec "${diagnostic_container}" grep -RlF --include='*.jsonl' \
-          "${nonce}" "/root/hiclaw-fs/agents/${diagnostic_member}/.tiangong/runtime/sessions" \
+          "${nonce}" "/root/agentteams-fs/agents/${diagnostic_member}/.tiangong/runtime/sessions" \
           2>/dev/null || true; } | wc -l | tr -d ' '
     )"
     printf '[Tiangong] Nonce-bearing session files for %s: %s\n' \
