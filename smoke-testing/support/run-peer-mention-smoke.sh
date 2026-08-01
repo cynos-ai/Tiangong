@@ -48,11 +48,11 @@ die() {
 }
 
 team_json() {
-  docker exec "${MANAGER_CONTAINER}" hiclaw get teams "${TEAM_NAME}" -o json 2>/dev/null
+  docker exec "${MANAGER_CONTAINER}" agt get teams "${TEAM_NAME}" -o json 2>/dev/null
 }
 
 member_json() {
-  docker exec "${MANAGER_CONTAINER}" hiclaw get workers "$1" -o json 2>/dev/null
+  docker exec "${MANAGER_CONTAINER}" agt get workers "$1" -o json 2>/dev/null
 }
 
 container_exists() {
@@ -430,7 +430,7 @@ cleanup() {
 
   if ((owned_resources == 1)); then
     log "Deleting temporary Team ${TEAM_NAME}"
-    docker exec "${MANAGER_CONTAINER}" hiclaw delete team "${TEAM_NAME}" >/dev/null 2>&1 || cleanup_failed=1
+    docker exec "${MANAGER_CONTAINER}" agt delete team "${TEAM_NAME}" >/dev/null 2>&1 || cleanup_failed=1
     for _ in $(seq 1 120); do
       if ! team_json >/dev/null 2>&1 && \
          ! member_json "${LEADER_NAME}" >/dev/null 2>&1 && \
@@ -541,7 +541,7 @@ docker cp "${PEER_ROUNDTRIP}" "${CONTROLLER_CONTAINER}:${CONTROLLER_PEER_ROUNDTR
 docker cp "${MANIFEST}" "${MANAGER_CONTAINER}:${MANAGER_MANIFEST}"
 owned_resources=1
 log "Creating temporary AgentTeams Team ${TEAM_NAME}"
-docker exec "${MANAGER_CONTAINER}" hiclaw apply -f "${MANAGER_MANIFEST}" || \
+docker exec "${MANAGER_CONTAINER}" agt apply -f "${MANAGER_MANIFEST}" || \
   die "Peer Team apply failed."
 
 phase=''

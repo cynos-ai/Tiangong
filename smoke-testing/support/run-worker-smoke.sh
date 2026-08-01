@@ -30,7 +30,7 @@ die() {
 }
 
 worker_json() {
-  docker exec "${MANAGER_CONTAINER}" hiclaw get workers "${WORKER_NAME}" -o json 2>/dev/null
+  docker exec "${MANAGER_CONTAINER}" agt get workers "${WORKER_NAME}" -o json 2>/dev/null
 }
 
 purge_smoke_storage() {
@@ -75,7 +75,7 @@ cleanup() {
   fi
   if ((created == 1)); then
     log "Deleting temporary Worker ${WORKER_NAME}"
-    docker exec "${MANAGER_CONTAINER}" hiclaw delete worker "${WORKER_NAME}" >/dev/null 2>&1 || cleanup_failed=1
+    docker exec "${MANAGER_CONTAINER}" agt delete worker "${WORKER_NAME}" >/dev/null 2>&1 || cleanup_failed=1
     for _ in $(seq 1 60); do
       if ! worker_json >/dev/null 2>&1 && \
           ! docker ps -a --format '{{.Names}}' | grep -Fqx "${CONTAINER_NAME}"; then
@@ -131,7 +131,7 @@ purge_smoke_storage
 
 docker cp "${MANIFEST}" "${MANAGER_CONTAINER}:${MANAGER_MANIFEST}"
 log "Creating temporary AgentTeams Worker ${WORKER_NAME}"
-docker exec "${MANAGER_CONTAINER}" hiclaw apply -f "${MANAGER_MANIFEST}"
+docker exec "${MANAGER_CONTAINER}" agt apply -f "${MANAGER_MANIFEST}"
 created=1
 
 phase=""
