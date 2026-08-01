@@ -1,6 +1,6 @@
 # Reviewer typed target 与 immutable snapshot 设计合同
 
-> **状态：** Reviewer v2 的 `file` 与 `directory_snapshot` 部分已实现并通过对应deterministic/image/Matrix/recovery Gate；尚未materialize的git target仍仅为后续合同。
+> **状态：** Reviewer v2 的 `file` 与 `directory_snapshot` 已实现并通过对应deterministic/image/Matrix/recovery Gate；`commit`与`git_diff`的公开窄合同已冻结于 [`reviewer-local-git-targets.md`](./reviewer-local-git-targets.md)，但runtime尚未materialize。
 > **基础：** [`agent-plane-foundation.md`](./agent-plane-foundation.md)、历史 [`reviewer-next-action.md`](./reviewer-next-action.md) 与已实现的 [`captured-artifact-store.md`](./captured-artifact-store.md)。
 > **范围：** Reviewer 已从显式文件 scope clean-cut 演进为 append-only typed targets，并在 target admission 时固化不可变 snapshot identity。
 > **保证不变：** `worker-local / static-review-only`；target、snapshot、Captured Artifact 和 `nextAction` 都不授予权限、不认证模型判断、不执行测试或修改 workspace。
@@ -16,7 +16,7 @@
 
 1. 单独评审 [`CapturedArtifactStore`](./captured-artifact-store.md) 的持久化、配额、Evidence、restart、tamper 和 retention 合同；
 2. 只有目标种类的 admission、consume backend 和固定 profile policy 全部存在时，才 materialize 该 target kind；
-3. directory inspection 使用独立的 [`reviewer-directory-inspection.md`](./reviewer-directory-inspection.md) 合同；local git inspection仍保留独立工具、executor与smoke合同。
+3. directory inspection 使用独立的 [`reviewer-directory-inspection.md`](./reviewer-directory-inspection.md) 合同；local Git target、executor、bounded inspection与smoke使用独立的 [`reviewer-local-git-targets.md`](./reviewer-local-git-targets.md) 合同。
 
 本文定义稳定的 target/state seam，不提前实现这些后续能力。
 
@@ -455,10 +455,14 @@ snapshot facts：
 {
   "facts": {
     "objectFormat": "sha1",
+    "repositoryIdentity": "<sha256>",
+    "gitPolicyVersion": "review-local-git-v1",
+    "gitVersion": "2.43.0",
     "commitOid": "<full oid>",
     "treeOid": "<full oid>",
     "memberCount": 12,
     "totalContentBytes": 45678,
+    "requiredConsumeSegments": 12,
     "selectionDigest": "<sha256>",
     "manifestContentDigest": "<sha256>"
   },
@@ -466,11 +470,11 @@ snapshot facts：
 }
 ```
 
-admission 固化 full commit OID 和 tree OID。ref 后续移动不改变 target。canonical tree manifest 至少包含 selected path、blob OID、canonical content digest/bytes/lines，并按 path bytes 排序。
+admission 固化 full commit OID 和 tree OID。ref 后续移动不改变 target。canonical tree manifest包含selected path、mode、blob OID、canonical content digest/bytes/lines与required segments，并按path UTF-8 bytes排序。repository identity、synthetic Git config、object verification、producer与limits由local-git合同exact冻结。
 
 首版只允许 repository root 与 git directory 都位于授权 workspace 内的普通非 bare repository。linked worktree、外部 git dir、外部 submodule、replace object、promisor/network object retrieval 或不支持的 layout fail closed。selected binary/symlink/submodule/special entry 不得静默当作已评审文本。
 
-后续 consume 只使用 pinned tree/blob identity，不重新解析原 ref。pinned commit/tree/blob object 缺失统一返回 `GIT_OBJECT_UNAVAILABLE`；object bytes 可读取但与 pinned OID、manifest content digest 或 metadata 冲突时返回 `TARGET_ARTIFACT_INVALID`。
+后续 consume 只使用 pinned tree/blob identity，不重新解析原 ref。pinned commit/tree/blob object 缺失统一返回 `GIT_OBJECT_UNAVAILABLE`；object bytes 可读取但与 pinned OID、manifest content digest 或 metadata 冲突时返回 `TARGET_ARTIFACT_INVALID`。完整exact schema与backend合同见 [`reviewer-local-git-targets.md`](./reviewer-local-git-targets.md)。
 
 ### 6.4 `git_diff`
 
@@ -480,18 +484,22 @@ snapshot facts：
 {
   "facts": {
     "objectFormat": "sha1",
+    "repositoryIdentity": "<sha256>",
+    "gitPolicyVersion": "review-local-git-v1",
+    "gitVersion": "2.43.0",
     "baseCommitOid": "<full oid>",
     "headCommitOid": "<full oid>",
     "changedFileCount": 3,
     "diffContentDigest": "<sha256>",
     "diffContentBytes": 9876,
-    "diffContentLines": 220
+    "diffContentLines": 220,
+    "requiredConsumeSegments": 2
   },
   "artifacts": ["<canonical git-diff binding>"]
 }
 ```
 
-base/head ref 在一次 admission 中各解析一次并固化 full commit OID。后续 ref movement 不改变 target。canonical diff 的 argv、environment、rename/context policy、binary handling、ordering、producer 和 transform version 必须由单独 local-git 合同固定。
+base/head ref 在一次 admission 中各解析一次并固化 full commit OID。后续 ref movement 不改变 target。canonical diff 的 argv、environment、rename/context policy、binary handling、ordering、producer 和 transform version由 [`reviewer-local-git-targets.md`](./reviewer-local-git-targets.md) exact固定。
 
 只有 `truncated=false`、完全可规范化为 UTF-8 text patch 的 canonical diff 才可成为 target snapshot。selected binary、submodule 或 unsupported object change 返回 `TARGET_TYPE_UNSUPPORTED`，不得只凭 “binary files differ” marker 宣称完整消费。空 diff 返回 `TARGET_EMPTY`；截断输出只允许成为后续探查结果，不能满足 target admission 或 completion。
 
@@ -677,9 +685,9 @@ kind-owned complete semantics：
 - 每 resource 先按 completed Evidence sequence 升序收集 matching success；超过 128 立即 `blocked/TARGET_EVIDENCE_LIMIT_EXCEEDED`；
 - deterministic interval selection 从 `covered=0` 开始：在 `start <= covered+1` 且 `end > covered` 的候选中选择 `end` 最大者；tie 选择 completed sequence 最小者；按选择顺序追加该 execution 的 startedRef、completedRef，更新 covered；无候选且未到 full lines 则 partial；
 - target selected refs 按 resource order 拼接；全部 target refs 再按 final target order 拼接；若总数超过 2048，coverage projector 以 `EVIDENCE_LIMIT_EXCEEDED` 全局 fail closed，不生成部分 TargetCoverage、ContextPack、nextAction 或 checkpoint，不得换一套非合同算法规避上限；
-- 若 resource 已按上述算法 complete，后到的 source-change consume failure不撤销完成；若仍不完整，最新 target-bound terminal failure code 属于 `TARGET_CHANGED/TARGET_UNAVAILABLE/GIT_OBJECT_UNAVAILABLE` 时投影为 blocked；
+- 若 resource 已按上述算法 complete，后到的 source-change consume failure不撤销完成；若仍不完整，最新 target-bound terminal failure code 属于 `TARGET_CHANGED/TARGET_UNAVAILABLE/GIT_OBJECT_UNAVAILABLE/TARGET_ARTIFACT_INVALID` 时投影为 blocked；Store admission/consume artifact integrity failure仍在coverage前global fail closed，不降级为blocker；
 - manifest/diff artifact tamper、missing store object、ambiguous lifecycle、成功 mutation 或 binding conflict 在 Context/checkpoint 前 fail closed，不降级为 blocked guidance；
-- `blocked` reason 只允许 `TARGET_CHANGED/TARGET_UNAVAILABLE/GIT_OBJECT_UNAVAILABLE/TARGET_EVIDENCE_LIMIT_EXCEEDED`，不包含 raw path/content/error。
+- `blocked` reason 只允许 `TARGET_CHANGED/TARGET_UNAVAILABLE/GIT_OBJECT_UNAVAILABLE/TARGET_ARTIFACT_INVALID/TARGET_EVIDENCE_LIMIT_EXCEEDED`，不包含 raw path/content/error。
 
 ### 10.2 ContextPack v3 `nextAction`
 
@@ -785,7 +793,7 @@ active run 的有界 machine projection：
 - descriptor 每字段、每 selector array 和总 bytes 受 §14 limits；kind summary 只含固定整数/enum/digest/OID；
 - top-level exact keys 为 `activeRun/assuranceLevel/nextAction/profileDigest/roleId/schemaVersion`；activeRun exact keys 与上例一致；scope exact keys 为 `digest/revision/targets`；target summary exact keys 为 `descriptor/kind/snapshotSummary/targetId`；
 - `nextAction` 始终 exact keys `code/reasonCodes/targetRefs`；targetRefs/reasonCodes 有序、唯一、各最多 64/16；无 active run 时 `activeRun=null` 且 nextAction exact 为 `{code:"NONE",targetRefs:[],reasonCodes:[]}`，不扫描 artifact store 或旧 run Evidence；
-- guidance reason code closed set 为 `TARGET_CONSUMPTION_INCOMPLETE/TARGET_CHANGED/TARGET_UNAVAILABLE/GIT_OBJECT_UNAVAILABLE/TARGET_EVIDENCE_LIMIT_EXCEEDED/CRITERIA_COVERAGE_INVALID/CLAIM_SCOPE_MISMATCH/OBSERVATION_TARGET_INVALID/REPORT_OUTCOME_INCONSISTENT/STATIC_LIMITATION_REQUIRED/MUTATION_OBSERVED`；每个 action 只使用 §10.2 对应来源；`EVIDENCE_LIMIT_EXCEEDED` 是 model-loop 前全局错误，不进入 guidance；
+- guidance reason code closed set 为 `TARGET_CONSUMPTION_INCOMPLETE/TARGET_CHANGED/TARGET_UNAVAILABLE/GIT_OBJECT_UNAVAILABLE/TARGET_ARTIFACT_INVALID/TARGET_EVIDENCE_LIMIT_EXCEEDED/CRITERIA_COVERAGE_INVALID/CLAIM_SCOPE_MISMATCH/OBSERVATION_TARGET_INVALID/REPORT_OUTCOME_INCONSISTENT/STATIC_LIMITATION_REQUIRED/MUTATION_OBSERVED`；每个 action 只使用 §10.2 对应来源；`EVIDENCE_LIMIT_EXCEEDED` 是 model-loop 前全局错误，不进入 guidance；
 - `lastCheckpointReasonCodes` 从 lastCheckpoint.results 的固定 checkpoint order 过滤 `satisfied=false` 后取 reasonCode，并按首次出现 stable-unique，最多 8；任何不在上述 checkpoint subset（从 `CRITERIA_COVERAGE_INVALID` 到 `MUTATION_OBSERVED`，含 target consumption/blocker codes）的值使 state/context fail closed，不排序、不复制重复；
 - ContextPack bytes 精确等于固定 code-owned preamble、一个 LF 和 `canonicalJson(pack)` 的 UTF-8 bytes；admission capacity 在 `start_work` / `extend_scope` commit 前用 final materialized pack 计算，overflow 整体失败；
 - `MAX_TARGET_DESCRIPTOR_BYTES` 对完整 `descriptor` wrapper 的 canonical UTF-8 bytes 计算；`MAX_SCOPE_DESCRIPTOR_BYTES` 对 ordered descriptor wrapper array 的 canonical UTF-8 bytes 计算；
@@ -1246,7 +1254,7 @@ artifact store 与 journal 必须分别验证；不能从 transcript/source reca
 | journal target schema / CAS / replay | PracticeRun service/store |
 | artifact bytes / refs / retention | separately reviewed CapturedArtifactStore |
 | filesystem target capture | constrained workspace backend |
-| git target capture | separately reviewed structured local-git backend |
+| git target capture | [`reviewer-local-git-targets.md`](./reviewer-local-git-targets.md) owned structured local-git backend |
 | target-bound consume | Reviewer work operations |
 | target coverage / nextAction | review practice projector |
 | claim/checkpoint | review practice checkpoint |
