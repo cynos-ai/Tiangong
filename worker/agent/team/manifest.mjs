@@ -139,9 +139,13 @@ export function isTaskBinding(value) {
   );
 }
 
-export function verifyBindingDigest(binding) {
-  if (binding === null || typeof binding !== "object") return false;
-  const { contentDigest, ...rest } = binding;
+export function verifyContentDigest(value) {
+  if (value === null || typeof value !== "object") return false;
+  const { contentDigest, ...rest } = value;
   if (typeof contentDigest !== "string" || !DIGEST_PATTERN.test(contentDigest)) return false;
   return sha256(canonicalJson(rest)) === contentDigest;
+}
+
+export function verifyBindingDigest(binding) {
+  return verifyContentDigest(binding);
 }

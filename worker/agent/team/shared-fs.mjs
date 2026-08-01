@@ -61,3 +61,11 @@ export function taskBindingFile(taskId, rootDir) {
 export function taskResultFile(taskId, rootDir) {
   return resolveTeamPath(["tasks", taskId, "result.json"], rootDir);
 }
+
+export function taskDecisionsDir(taskId, rootDir) {
+  return resolveTeamPath(["tasks", taskId, "decisions"], rootDir);
+}
+
+export function taskDecisionFile(taskId, decisionId, rootDir) {
+  return resolveTeamPath(["tasks", taskId, "decisions", `${decisionId}.json`], rootDir);
+}
