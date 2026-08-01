@@ -2,68 +2,63 @@
 
 import assert from "node:assert/strict";
 
-import {
-  expectedReadTargets,
-  validateReadExecutions,
-} from "../smoke-testing/support/reviewer-oracle-policy.mjs";
+import { expectedReadTargets, validateReadExecutions } from "../smoke-testing/support/reviewer-oracle-policy.mjs";
 
-assert.deepEqual(
-  expectedReadTargets({ expectedA: "a.txt", expectedB: "-", readPhase: "all" }),
-  ["a.txt"],
-);
-assert.deepEqual(
-  expectedReadTargets({ expectedA: "a.txt", expectedB: "b.txt", readPhase: "a-only" }),
-  ["a.txt"],
-);
-assert.deepEqual(
-  expectedReadTargets({ expectedA: "a.txt", expectedB: "b.txt", readPhase: "all-at-least-once" }),
-  ["a.txt", "b.txt"],
-);
-assert.throws(
-  () => expectedReadTargets({ expectedA: "", expectedB: "b.txt", readPhase: "all" }),
-  /invalid Reviewer oracle read policy input/u,
-);
+const targets = [
+  {
+    targetId: "target-a",
+    resources: [
+      { memberPath: "one.txt", contentDigest: "digest-a1" },
+      { memberPath: "two.txt", contentDigest: "digest-a2" },
+    ],
+  },
+  {
+    targetId: "target-b",
+    resources: [
+      { memberPath: "one.txt", contentDigest: "digest-b1" },
+      { memberPath: "two.txt", contentDigest: "digest-b2" },
+    ],
+  },
+];
 
-function completeRead(target, digest) {
+assert.deepEqual(expectedReadTargets({ targets, readPhase: "a-only" }).map((target) => target.targetId), ["target-a"]);
+assert.deepEqual(expectedReadTargets({ targets, readPhase: "all" }).map((target) => target.targetId), ["target-a", "target-b"]);
+assert.throws(() => expectedReadTargets({ targets: [], readPhase: "all" }), /invalid Reviewer oracle target policy input/u);
+
+function completeRead(target, resource, sequence = 1) {
   return {
-    operation: { target },
+    status: "success",
+    resource: { targetId: target.targetId, memberPath: resource.memberPath },
     resultMetadata: {
-      fileDigest: digest,
+      fullContentDigest: resource.contentDigest,
       truncated: false,
       returnedLineStart: 1,
       returnedLineEnd: 2,
-      fullFileLines: 2,
+      fullContentLines: 2,
     },
+    completedRef: { sequence },
   };
 }
 
-const a = completeRead("a.txt", "digest-a");
-const b = completeRead("b.txt", "digest-b");
-const policy = {
-  expectedA: "a.txt",
-  expectedDigestA: "digest-a",
-  expectedB: "b.txt",
-  expectedDigestB: "digest-b",
-};
+const reads = targets.flatMap((target, targetIndex) =>
+  target.resources.map((resource, resourceIndex) => completeRead(target, resource, targetIndex * 2 + resourceIndex + 1)));
 assert.deepEqual(
-  validateReadExecutions({ ...policy, readPhase: "all-at-least-once", executions: [a, a, b] }),
-  { expectedTargets: ["a.txt", "b.txt"], readCountA: 2, readCountB: 1 },
+  validateReadExecutions({ targets, readPhase: "all-at-least-once", executions: reads }),
+  { expectedTargetIds: ["target-a", "target-b"], readCountA: 2, readCountB: 2 },
 );
 assert.deepEqual(
-  validateReadExecutions({ ...policy, readPhase: "safe-active", executions: [a, a] }),
-  { expectedTargets: ["a.txt"], readCountA: 2, readCountB: 0 },
+  validateReadExecutions({ targets, readPhase: "safe-active", executions: reads.slice(0, 2) }),
+  { expectedTargetIds: ["target-a"], readCountA: 2, readCountB: 0 },
 );
 assert.throws(
-  () => validateReadExecutions({ ...policy, readPhase: "all-at-least-once", executions: [a, a] }),
-  /complete single-version read proof is invalid for b.txt/u,
+  () => validateReadExecutions({ targets, readPhase: "all", executions: reads.slice(0, 3) }),
+  /complete snapshot-bound read proof is invalid for two.txt/u,
 );
+const changed = structuredClone(reads[2]);
+changed.resultMetadata.fullContentDigest = "wrong";
 assert.throws(
-  () => validateReadExecutions({
-    ...policy,
-    readPhase: "safe-active",
-    executions: [a, completeRead("b.txt", "wrong")],
-  }),
-  /changed fixture version/u,
+  () => validateReadExecutions({ targets, readPhase: "safe-active", executions: [...reads.slice(0, 2), changed] }),
+  /changed or unauthorized fixture version|changed fixture version/u,
 );
 
 process.stdout.write("Reviewer smoke oracle policy contract passed.\n");

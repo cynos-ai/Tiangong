@@ -1,6 +1,6 @@
 # Reviewer directory snapshot 与 workspace inspection 合同
 
-> **状态：** 公开设计合同，尚未实现；本文不描述当前已发布行为。
+> **状态：** 已随Reviewer v2 clean-cut实现，并通过deterministic、image/profile、official Matrix Basic与journal-derived Recovery Full；本合同描述current `directory_snapshot`与structured inspection行为。
 > **基础：** [`reviewer-typed-targets.md`](./reviewer-typed-targets.md)、[`captured-artifact-store.md`](./captured-artifact-store.md) 与 [`agent-plane-foundation.md`](./agent-plane-foundation.md)。
 > **范围：** 冻结 Reviewer 第一个 `directory_snapshot` target、directory manifest、target-bound member read、结构化 list/search、coverage 与 clean-cut activation。
 > **保证不变：** `worker-local / static-review-only`；目录、manifest、search hit、Captured Artifact 和模型 prose 都不认证内容真实性，也不授予权限。
@@ -8,9 +8,7 @@
 
 ## 0. 当前事实与 activation Gate
 
-本文实现前，公开事实仍是 Reviewer profile v1、PracticeRun/journal v1、`scope.files[]`、ContextPack v2 与五工具 surface。CapturedArtifactStore v1 已存在，但没有 current Reviewer consumer。设计 PR 不运行或宣称 directory capability smoke。
-
-实现必须一次 clean-cut 激活以下集合，不能只更新 prompt 或单个 DTO：
+Reviewer v2已一次性clean-cut激活以下集合；它们共同构成current runtime，不能只更新prompt或单个DTO：
 
 - Reviewer profile/role skill/Gate=`reviewer-v2`；
 - `targetKindIds=["file","directory_snapshot"]`；
@@ -21,7 +19,7 @@
 - status 使用 `scopeTargetCount`，OTel 使用 `tiangong.practice.target_count`；
 - CapturedArtifactStore closed registry新增本文两个 producer。
 
-不保留 `files[]`、path-based旧 `read`、ContextPack v2、claim v1、journal v1的双读、迁移或 compatibility shim。v2 runtime 遇到旧 durable PracticeRun 返回 `UNSUPPORTED_STATE_SCHEMA`，不猜测转换；pi transcript不参与转换。实现合入前必须更新当前行为文档和 smoke oracle，不能让 profile 声称 v2 而 runtime仍部分使用v1。
+不保留 `files[]`、path-based旧 `read`、ContextPack v2、claim v1、journal v1的双读、迁移或 compatibility shim。v2 runtime 遇到旧 durable PracticeRun 返回 `UNSUPPORTED_STATE_SCHEMA`，不猜测转换；pi transcript不参与转换。activation已同时更新当前行为文档与smoke oracle，避免profile声称v2而runtime仍部分使用v1。
 
 ---
 
@@ -793,7 +791,7 @@ actor/profile/active run → exact successful invocation replay → exact action
 - list/search Evidence不计coverage；每memberread coverage与zero-byte member；
 - 63/64/65 concurrent inspection lifecycle、inspection output/Store quota、canonical required-segment plan、128/129 per-resource consume segments与global refs；
 - no model-visible Store/list/findByDigest surface；tool surface exact六项；
-- current Reviewer v1 tests replaced byv2 assertions，不保留双schema。
+- current Reviewer v1 tests replaced by v2 assertions，不保留双schema。
 
 ---
 

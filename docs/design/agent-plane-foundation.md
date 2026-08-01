@@ -1,11 +1,11 @@
-# Tiangong Agent Plane 基础设施实现合同：Reviewer v1
+# Tiangong Agent Plane 基础设施历史合同：Reviewer v1
 
-> **状态：** PR1–PR5 硬 Gate 通过；Journey canary 记录为模型 no-progress。
-> **范围：** 在当前单 Worker 受控执行内核上，实现第一个可信专业角色：只读、显式文件范围、Evidence-backed 的 Reviewer。
-> **保证等级：** `worker-local / static-review-only`。
-> **不是：** 已实现能力说明、Team Work、独立 Candidate 验收、测试执行、PR/commit/diff 评审或发布承诺。
-> **已验证增量：** [`reviewer-next-action.md`](./reviewer-next-action.md) 将 Reviewer ContextPack clean-cut 更新为 schema v2，并增加 Evidence-derived advisory `nextAction`；其它 Reviewer v1 能力与保证边界保持不变。
-> **演进边界：** [`reviewer-typed-targets.md`](./reviewer-typed-targets.md) 定义尚待实现的 typed target 与 immutable snapshot clean-cut合同；[`captured-artifact-store.md`](./captured-artifact-store.md) 的独立bytes持久化基础设施已实现，但尚无current Reviewer consumer；[`reviewer-directory-inspection.md`](./reviewer-directory-inspection.md) 进一步定义尚待实现的directory snapshot与结构化inspection。在typed-target runtime实现和验证前，本文的显式`scope.files[]`与能力限制仍是当前事实。
+> **状态：** 已由Reviewer v2 clean-cut取代；本文保留为v1历史设计与已完成验证记录，不描述current runtime。
+> **历史范围：** 第一个只读、显式文件范围、Evidence-backed Reviewer及其ContextPack v2/nextAction。
+> **当前合同：** [`reviewer-typed-targets.md`](./reviewer-typed-targets.md) 与 [`reviewer-directory-inspection.md`](./reviewer-directory-inspection.md) 定义并拥有current `file`/`directory_snapshot` targets、PracticeRun v2、ContextPack v3、target-bound consume和structured inspection；[`captured-artifact-store.md`](./captured-artifact-store.md) 保存其非Evidence bytes。
+> **保证等级不变：** `worker-local / static-review-only`。
+> **迁移边界：** current runtime不读取、迁移或兼容本文的`scope.files[]`、journal v1、claim v1、checkpoint `review-v1`或ContextPack v2；遇到旧durable journal返回`UNSUPPORTED_STATE_SCHEMA`。
+> **不是：** Team Work、独立Candidate验收、测试执行、workspace mutation、PR/commit/diff评审或发布承诺。
 
 ## 0. 如何使用本文
 

@@ -3,7 +3,7 @@
 Tiangong is an evidence-backed AI software engineering team built on [AgentTeams](https://github.com/agentscope-ai/AgentTeams).
 
 > [!NOTE]
-> v0.1.0 is Tiangong's first public source release. It provides the documented local Worker runtime and Reviewer v1 for static review of explicit bounded UTF-8 workspace files. Directory/git/PR review, test execution, workspace repair, Team verification, and the broader multi-role product experience are not implemented. See the [release notes](docs/releases/v0.1.0.md) and [changelog](CHANGELOG.md).
+> v0.1.0 was Tiangong's first public source release with Reviewer v1. The current development line clean-cut upgrades Reviewer to v2 for bounded UTF-8 `file` and `directory_snapshot` targets; git/PR review, test execution, workspace repair, Team verification, and the broader multi-role product experience remain unimplemented. See the [release notes](docs/releases/v0.1.0.md) and [changelog](CHANGELOG.md).
 
 ## Vision
 
@@ -92,7 +92,7 @@ The current runtime is intentionally constrained:
 - the active kernel image loads a strict, digest-bound profile and static methodology from `/opt/tiangong-worker`; environment variables, Worker names, prompts, and tool arguments cannot select or elevate its role;
 - transcript files live only under `sessions/<session-hash>/pi/`; Evidence, idempotency, pending payload, and rollback state use independent per-session roots beneath the synchronized state directory, so transcript reset cannot erase business state;
 - restartable writes persist a digest-bound operation envelope and a separate mode-`600` content payload under that state directory; raw write content never enters Evidence, but is visible to principals with Worker storage administration access and follows explicit operation retention;
-- the image contains non-model CapturedArtifactStore infrastructure for later typed-target consumers, isolated under `captured-artifacts/<session-hash>/`; no current profile invokes it, and any bytes persisted by a future code-owned consumer remain visible to Worker/storage administrators and have no v1 purge or end-to-end-encryption claim;
+- the image contains a non-model CapturedArtifactStore under `captured-artifacts/<session-hash>/`; Reviewer v2 code uses it for directory manifests, target-bound member reads, and bounded list/search outputs, while persisted bytes remain visible to Worker/storage administrators and have no v1 purge or end-to-end-encryption claim;
 - only gated `read` and path-restricted, atomic `write` are active; `write` requires persisted approval from the same authenticated Matrix sender that requested it, ignores upstream owner assertions for authorization, supports restart recovery, and blocks duplicate execution;
 - runtime state, credential-bearing paths, symlink traversal, workspace escape, image input, and `bash` are unavailable.
 
@@ -103,7 +103,7 @@ make build-worker-image
 docker run --rm --entrypoint pi tiangong-worker:dev --version
 ```
 
-The build also produces `tiangong-worker-reviewer:dev` with the fixed Reviewer profile and an exact five-tool surface: `start_work`, `extend_scope`, scoped text `read`, `check_completion`, and `abandon_work`. Reviewer v1 is verified for Worker-local, static-only review of explicit bounded UTF-8 workspace files: deterministic contracts, the official Matrix Basic path, journal-derived Recovery Full, the existing kernel regression, and exact cleanup passed. Its ContextPack v2 now derives a structured advisory `nextAction` from the active run and validated read Evidence; this does not grant authority, execute tools, complete work, or guarantee model progress. In the declared focused qwen3.5-plus canary, the model still safely reread A instead of B, leaving the original run active without false B Evidence or completion.
+The build also produces `tiangong-worker-reviewer:dev` with fixed Reviewer v2 kinds `file,directory_snapshot` and an exact six-tool surface: `start_work`, `extend_scope`, target-bound text `read`, bounded `inspect_directory`, `check_completion`, and `abandon_work`. Reviewer v2 supports Worker-local, static-only review of immutable-at-admission bounded UTF-8 file and directory snapshots. Its append-only target scope, PracticeRun/claim v2, ContextPack v3, checkpoint `review-v2`, Artifact-backed member consumption, and structured list/literal-search inspection are enforced in runtime code and have passed deterministic, image/profile, official Matrix Basic, and journal-derived Recovery Full checks. Directory exploration does not count as member coverage, Artifact references do not grant authority, source changes fail closed, and no v1 `scope.files[]` or journal compatibility shim remains. The capability still does not execute tests, inspect git commits/diffs or remote PRs, mutate the workspace, or guarantee model progress.
 
 ### Interrupted write reconciliation
 
