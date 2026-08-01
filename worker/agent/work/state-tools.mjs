@@ -4,31 +4,40 @@ import { sha256 } from "../canonical-json.mjs";
 import { TiangongToolRegistry } from "../tools/registry.mjs";
 import { createGatedTool } from "../tools/wrapper.mjs";
 
-const FILES = Type.Array(Type.String({ minLength: 1, maxLength: 1024 }), {
-  minItems: 1,
-  maxItems: 64,
-});
+const TARGET = Type.Union([
+  Type.Object({
+    kind: Type.Literal("file"),
+    path: Type.String({ minLength: 1, maxLength: 1024 }),
+  }, { additionalProperties: false }),
+  Type.Object({
+    kind: Type.Literal("directory_snapshot"),
+    path: Type.String({ minLength: 1, maxLength: 1024 }),
+    selection: Type.Object({
+      includePrefixes: Type.Array(Type.String({ minLength: 1, maxLength: 1024 }), { minItems: 1, maxItems: 128 }),
+      excludePrefixes: Type.Array(Type.String({ minLength: 1, maxLength: 1024 }), { maxItems: 128 }),
+    }, { additionalProperties: false }),
+  }, { additionalProperties: false }),
+]);
+
+const TARGETS = Type.Array(TARGET, { minItems: 1, maxItems: 64 });
 
 const DEFINITIONS = Object.freeze({
   start_work: Object.freeze({
     name: "start_work",
     label: "Start review work",
-    description: "Create one durable review run from an explicit objective, criteria, and file list.",
+    description: "Create one durable review run from an objective, criteria, and bounded file/directory targets.",
     parameters: Type.Object({
       practiceId: Type.Literal("review"),
       objective: Type.String({ minLength: 1, maxLength: 4096 }),
-      acceptanceCriteria: Type.Array(Type.String({ minLength: 1, maxLength: 2048 }), {
-        minItems: 1,
-        maxItems: 32,
-      }),
-      files: FILES,
+      acceptanceCriteria: Type.Array(Type.String({ minLength: 1, maxLength: 2048 }), { minItems: 1, maxItems: 32 }),
+      targets: TARGETS,
     }, { additionalProperties: false }),
   }),
   extend_scope: Object.freeze({
     name: "extend_scope",
     label: "Extend review scope",
-    description: "Append new explicit files to the active review run without changing its objective or criteria.",
-    parameters: Type.Object({ files: FILES }, { additionalProperties: false }),
+    description: "Atomically append new immutable file/directory targets without changing the objective or criteria.",
+    parameters: Type.Object({ targets: TARGETS }, { additionalProperties: false }),
   }),
   abandon_work: Object.freeze({
     name: "abandon_work",
@@ -36,11 +45,8 @@ const DEFINITIONS = Object.freeze({
     description: "End the active review run without claiming completion.",
     parameters: Type.Object({
       reasonCode: Type.Union([
-        Type.Literal("superseded_by_new_request"),
-        Type.Literal("unsupported_scope"),
-        Type.Literal("cannot_complete"),
-        Type.Literal("user_cancelled"),
-        Type.Literal("other"),
+        Type.Literal("superseded_by_new_request"), Type.Literal("unsupported_scope"),
+        Type.Literal("cannot_complete"), Type.Literal("user_cancelled"), Type.Literal("other"),
       ]),
       summary: Type.String({ minLength: 1, maxLength: 8192 }),
     }, { additionalProperties: false }),
@@ -66,34 +72,33 @@ function invocationForTool(invocation, toolCallId) {
 
 function toolResult(result) {
   const run = result.run;
-  const details = {
-    replayed: result.replayed === true,
-    stateEventId: result.stateEventId,
-    stateEventHash: result.terminalHash,
-    stateSequence: result.sequence,
-    eventType: result.eventType,
-    runId: run.runId,
-    status: run.status,
-    runRevision: run.revision,
-    scopeRevision: run.scope.revision,
-    scopeFiles: [...run.scope.files],
-    scopeDigest: run.scope.digest,
-  };
+  const targetRefs = run.scope.targets.map((target) => ({ targetId: target.targetId, kind: target.kind }));
   return {
     content: [{
       type: "text",
-      text: `PracticeRun ${run.status}; revision ${run.revision}; scope files ${run.scope.files.length}.`,
+      text: `PracticeRun ${run.status}; revision ${run.revision}; scope targets ${run.scope.targets.length}; runtime target refs ${JSON.stringify(targetRefs)}.`,
     }],
-    details,
+    details: {
+      replayed: result.replayed === true,
+      stateEventId: result.stateEventId,
+      stateEventHash: result.terminalHash,
+      stateSequence: result.sequence,
+      eventType: result.eventType,
+      runId: run.runId,
+      status: run.status,
+      runRevision: run.revision,
+      scopeRevision: run.scope.revision,
+      scopeTargets: run.scope.targets.map((target) => ({
+        targetId: target.targetId,
+        kind: target.kind,
+        snapshotIdentity: target.snapshot.identity,
+      })),
+      scopeDigest: run.scope.digest,
+    },
   };
 }
 
-export function createReviewerStateToolRegistry({
-  service,
-  gate,
-  evidence,
-  getInvocation,
-}) {
+export function createReviewerStateToolRegistry({ service, gate, evidence, getInvocation }) {
   for (const [name, value] of Object.entries({ service, gate, evidence, getInvocation })) {
     if (!value) throw new TypeError(`${name} is required`);
   }
@@ -112,19 +117,19 @@ export function createReviewerStateToolRegistry({
       gate,
       evidence,
       getInvocation,
-      async executeOperation({ toolCallId, operation, actionDigest, invocationKey, invocation }) {
+      async executeOperation({ operation, actionDigest, invocationKey, invocation }) {
         const prepared = preparedByOperation.get(operation);
         preparedByOperation.delete(operation);
-        if (!prepared || sha256(operation) !== actionDigest ||
-            (prepared.replay?.actionDigest ?? prepared.actionDigest) !== actionDigest ||
-            (prepared.replay?.invocationKey ?? prepared.invocationKey) !== invocationKey) {
+        if (!prepared || sha256(operation) !== actionDigest
+            || (prepared.replay?.actionDigest ?? prepared.actionDigest) !== actionDigest
+            || (prepared.replay?.invocationKey ?? prepared.invocationKey) !== invocationKey) {
           throw new Error("Prepared PracticeRun transition does not match its wrapped operation");
         }
         const result = await service[methods.commit](prepared);
         invocation.observability?.checkpoint(methods.phase, {
           "tiangong.practice.id": result.run.practiceId,
           "tiangong.practice.status": result.run.status,
-          "tiangong.practice.scope_count": result.run.scope.files.length,
+          "tiangong.practice.target_count": result.run.scope.targets.length,
           "tiangong.practice.revision": result.run.revision,
           "tiangong.operation.outcome": result.replayed ? "replayed" : "applied",
         });

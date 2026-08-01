@@ -1,15 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { CapturedArtifactStore } from "../agent/artifacts/store.mjs";
 import { loadRoleProfileBundle } from "../agent/config/role-profile.mjs";
-import {
-  buildReviewerContextPack,
-  createReviewerContextExtension,
-} from "../agent/context/reviewer-context.mjs";
 import { evidenceBoundary, projectReviewEvidence } from "../agent/evidence/projection.mjs";
 import { EvidenceRecorder } from "../agent/evidence/recorder.mjs";
 import { ReviewerPracticeGate } from "../agent/gates/reviewer-practice-gate.mjs";
@@ -17,578 +14,369 @@ import { statePathsForSession } from "../agent/persistence/state-paths.mjs";
 import { PracticeRunService } from "../agent/practices/practice-run-service.mjs";
 import { deriveReviewNextAction } from "../agent/practices/review-next-action.mjs";
 import { projectReviewReadCoverage } from "../agent/practices/review-read-coverage.mjs";
-import { TiangongAgentRuntime } from "../agent/runtime.mjs";
-import { createTurnRequest, createTurnResult } from "../agent/turn-contract.mjs";
-import { TurnContextController } from "../agent/turn-context.mjs";
 import { createReviewerToolRegistry } from "../agent/work/reviewer-tools.mjs";
-import {
-  completedReviewFileFacts,
-  escapeMachineStatusMarker,
-  renderCompletedReview,
-  renderWorkStatus,
-  workStatusForRun,
-} from "../agent/work/status.mjs";
+import { completedReviewTargetFacts, renderCompletedReview, workStatusForRun } from "../agent/work/status.mjs";
 
-const WORKER_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const WORKER_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const SESSION = "reviewer-v2-slice";
+const ACTOR = "@reviewer:example.test";
 
-async function fixture(t) {
-  const root = await mkdtemp(join(tmpdir(), "tiangong-reviewer-slice-"));
+async function fixture(t, { evidenceOverride } = {}) {
+  const root = await mkdtemp(join(tmpdir(), "tiangong-reviewer-v2-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const workspace = join(root, "workspace");
-  await writeFile(join(root, "placeholder"), "x");
-  await mkdir(workspace);
-  await writeFile(join(workspace, "a.mjs"), "first\nsecond\nthird");
-  await writeFile(join(workspace, "b.mjs"), "alpha\nbeta");
+  const workspaceDir = join(root, "workspace");
+  const stateDirectory = join(root, "state");
+  await mkdir(join(workspaceDir, "src", "generated"), { recursive: true });
+  await writeFile(join(workspaceDir, "a.txt"), "alpha\nbeta\n");
+  await writeFile(join(workspaceDir, "src", "one.mjs"), "export const one = 1;\n");
+  await writeFile(join(workspaceDir, "src", "two.mjs"), "export const two = 2;\n");
+  await writeFile(join(workspaceDir, "src", "generated", "ignored.mjs"), "ignored\n");
   const profileBundle = await loadRoleProfileBundle({
-    profilePath: join(WORKER_ROOT, "role-profiles", "reviewer.json"),
-    resourceRoot: WORKER_ROOT,
+    profilePath: join(WORKER_ROOT, "role-profiles", "reviewer.json"), resourceRoot: WORKER_ROOT,
   });
-  const practice = join(root, "practice");
-  const service = new PracticeRunService({
-    sessionId: "session-review",
-    workspaceDir: workspace,
+  const paths = statePathsForSession({ stateDirectory, sessionId: SESSION });
+  const artifactStore = new CapturedArtifactStore({ stateDirectory, sessionId: SESSION });
+  const options = {
+    sessionId: SESSION,
+    workspaceDir,
     profileBundle,
-    journalPath: join(practice, "events.jsonl"),
-    snapshotPath: join(practice, "snapshot.json"),
-    protectedDirectory: join(practice, "protected"),
-  });
-  const evidence = new EvidenceRecorder({ filePath: join(root, "evidence", "events.jsonl") });
-  const turns = new TurnContextController();
-  const gate = new ReviewerPracticeGate({ profileBundle });
-  const registry = createReviewerToolRegistry({
-    workspaceDir: workspace,
-    service,
-    gate,
-    evidence,
-    getInvocation: turns.current,
-  });
-  const tools = Object.fromEntries(registry.definitions().map((definition) => [definition.name, definition]));
-  function begin(turnId, prompt = "review these files", actorId = "@reviewer:example.test") {
-    turns.begin({
-      sessionId: "session-review",
-      turnId,
-      actor: { id: actorId, messageId: `$${turnId}` },
-      ingress: { prompt },
-      profileDigest: profileBundle.profileDigest,
-    });
-  }
-  return { root, workspace, practice, profileBundle, service, evidence, turns, registry, tools, begin };
-}
-
-function claim(files = ["a.mjs"], overrides = {}) {
-  return {
-    criteriaResults: [{ criterionId: "criterion-1", status: "addressed", explanation: "Reviewed the complete selected version." }],
-    scope: { files },
-    report: {
-      outcome: "accept",
-      synopsis: "No blocking static-review findings.",
-      observations: [],
-      limitations: [{ code: "STATIC_REVIEW_ONLY", detail: "No tests or runtime commands were executed." }],
-      nextActions: [],
-      ...overrides,
-    },
-  };
-}
-
-async function start(f, files = ["a.mjs"], turn = "turn-start") {
-  f.begin(turn);
-  try {
-    return await f.tools.start_work.execute("call-start", {
-      practiceId: "review",
-      objective: "Review selected files",
-      acceptanceCriteria: ["Identify correctness risks"],
-      files,
-    });
-  } finally {
-    f.turns.end();
-  }
-}
-
-async function readRange(f, params, turn = "turn-read", call = "call-read", actor) {
-  f.begin(turn, "continue review", actor);
-  try {
-    return await f.tools.read.execute(call, params);
-  } finally {
-    f.turns.end();
-  }
-}
-
-async function complete(f, completionClaim, turn = "turn-check", call = "call-check") {
-  f.begin(turn, "finish review");
-  try {
-    return await f.tools.check_completion.execute(call, { completionClaim });
-  } finally {
-    f.turns.end();
-  }
-}
-
-test("Reviewer slice proves complete scoped reads and completes exactly once", async (t) => {
-  const f = await fixture(t);
-  assert.deepEqual(f.registry.names(), ["start_work", "extend_scope", "read", "check_completion", "abandon_work"]);
-  await start(f);
-  const read = await readRange(f, { path: "a.mjs", offset: 1, limit: 10 });
-  assert.equal(read.content[0].text, "first\nsecond\nthird");
-  assert.deepEqual({
-    lines: read.details.fullFileLines,
-    start: read.details.returnedLineStart,
-    end: read.details.returnedLineEnd,
-    truncated: read.details.truncated,
-  }, { lines: 3, start: 1, end: 3, truncated: false });
-
-  const completion = await complete(f, claim());
-  assert.equal(completion.details.checkpointPassed, true);
-  assert.equal(completion.details.status, "done");
-  const run = await f.service.latestForActor("@reviewer:example.test");
-  assert.equal(run.status, "done");
-  assert.equal(run.lastCheckpoint.allSatisfied, true);
-  const projection = await projectReviewEvidence({
-    evidence: f.evidence,
-    boundary: {
-      sequence: run.lastCheckpoint.evidenceTerminalSequence,
-      hash: run.lastCheckpoint.evidenceTerminalHash,
-    },
-    run,
-  });
-  const report = renderCompletedReview({
-    run,
-    claim: await f.service.claimForRun(run),
-    fileFacts: completedReviewFileFacts(run, projection),
-  });
-  assert.match(report, /Machine completion facts/u);
-  assert.match(report, new RegExp(read.details.fileDigest, "u"));
-
-  const journal = (await readFile(join(f.practice, "events.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
-  assert.deepEqual(journal.map((entry) => entry.eventType), ["run.started", "run.completed"]);
-  const evidence = await f.evidence.readAll();
-  const readComplete = evidence.find((entry) => entry.type === "tool.execution.completed" && entry.toolName === "read");
-  assert.equal(readComplete.practiceRunId, run.runId);
-  assert.equal(readComplete.resultMetadata.fileDigest, read.details.fileDigest);
-  assert.equal(JSON.stringify(evidence).includes("first"), false);
-  assert.equal(JSON.stringify(journal).includes("No blocking"), false);
-
-  const replay = await complete(f, claim(), "turn-check", "call-check");
-  assert.equal(replay.details.replayed, true);
-  const journalAfter = (await readFile(join(f.practice, "events.jsonl"), "utf8")).trim().split("\n");
-  assert.equal(journalAfter.length, 2);
-});
-
-test("partial and mixed-version coverage fail closed while a later complete version passes", async (t) => {
-  const f = await fixture(t);
-  await start(f);
-  await readRange(f, { path: "a.mjs", offset: 1, limit: 1 });
-  const failed = await complete(f, claim(), "turn-check-one", "call-check-one");
-  assert.equal(failed.details.checkpointPassed, false);
-  assert.ok(failed.details.checkpointReasonCodes.includes("SCOPE_READ_INCOMPLETE"));
-  assert.equal((await f.service.activeForActor("@reviewer:example.test")).status, "active");
-
-  await readRange(f, { path: "a.mjs", offset: 2, limit: 10 }, "turn-read-old-rest", "call-read-old-rest");
-  await writeFile(join(f.workspace, "a.mjs"), "changed\nsecond\nthird");
-  await readRange(f, { path: "a.mjs", offset: 2, limit: 10 }, "turn-read-two", "call-read-two");
-  const mixed = await complete(f, claim(), "turn-check-two", "call-check-two");
-  assert.ok(mixed.details.checkpointReasonCodes.includes("FILE_VERSION_MIXED"));
-
-  await readRange(f, { path: "a.mjs", offset: 1, limit: 10 }, "turn-read-three", "call-read-three");
-  const done = await complete(f, claim(), "turn-check-three", "call-check-three");
-  assert.equal(done.details.checkpointPassed, true, "a complete current version supersedes incomplete older chunks");
-});
-
-test("Reviewer admission rejects a ContextPack that cannot remain bounded", async (t) => {
-  const f = await fixture(t);
-  f.begin("oversized-context", "large review");
-  await assert.rejects(
-    f.tools.start_work.execute("oversized-context-call", {
-      practiceId: "review",
-      objective: "Review selected files",
-      acceptanceCriteria: Array.from({ length: 32 }, (_, index) => `${index}-${"x".repeat(1800)}`),
-      files: ["a.mjs"],
-    }),
-    (error) => error.code === "CONTEXT_PACK_LIMIT_EXCEEDED",
-  );
-  f.turns.end();
-  assert.equal((await f.service.state()).activeRunId, null);
-});
-
-test("Reviewer read rejects absent work, wrong actor, wrong scope, symlinks, binary, invalid UTF-8, and ranges", async (t) => {
-  const f = await fixture(t);
-  await assert.rejects(readRange(f, { path: "a.mjs" }), (error) => error.code === "ACTIVE_RUN_REQUIRED");
-  await start(f);
-  await assert.rejects(
-    readRange(f, { path: "a.mjs" }, "wrong-actor", "wrong-call", "@other:example.test"),
-    (error) => error.code === "RUN_REQUESTER_MISMATCH",
-  );
-  await assert.rejects(readRange(f, { path: "b.mjs" }, "out", "out-call"), (error) => error.code === "PATH_NOT_IN_PRACTICE_SCOPE");
-  await symlink(join(f.workspace, "a.mjs"), join(f.workspace, "link.mjs"));
-  await assert.rejects(readRange(f, { path: "link.mjs" }, "link", "link-call"), (error) => error.code === "SYMLINK_DENIED");
-  await writeFile(join(f.workspace, "a.mjs"), Buffer.from([0, 1, 2]));
-  await assert.rejects(readRange(f, { path: "a.mjs" }, "binary", "binary-call"), (error) => error.code === "BINARY_FILE_UNSUPPORTED");
-  await writeFile(join(f.workspace, "a.mjs"), Buffer.from([0xff]));
-  await assert.rejects(readRange(f, { path: "a.mjs" }, "utf8", "utf8-call"), (error) => error.code === "INVALID_UTF8");
-  await writeFile(join(f.workspace, "a.mjs"), "one\ntwo");
-  await assert.rejects(readRange(f, { path: "a.mjs", offset: 3 }, "range", "range-call"), (error) => error.code === "READ_RANGE_INVALID");
-});
-
-test("checkpoint enforces criteria, scope, observations, outcome, limitation, and not_addressed semantics", async (t) => {
-  const f = await fixture(t);
-  await start(f);
-  await readRange(f, { path: "a.mjs" });
-
-  await assert.rejects(
-    complete(f, { ...claim(), extra: true }, "invalid", "invalid-call"),
-    (error) => error.code === "CLAIM_SCHEMA_INVALID",
-  );
-  const blockedClaim = claim(["a.mjs"], {
-    outcome: "blocked",
-    nextActions: ["Provide runtime verification."],
-  });
-  blockedClaim.criteriaResults[0].status = "not_addressed";
-  blockedClaim.criteriaResults[0].explanation = "Runtime execution is outside this static review.";
-  const blocked = await complete(f, blockedClaim, "blocked", "blocked-call");
-  assert.equal(blocked.details.checkpointPassed, true);
-  assert.equal((await f.service.latestForActor("@reviewer:example.test")).status, "done");
-});
-
-test("checkpoint fail reasons are deterministic and never advance done", async (t) => {
-  const f = await fixture(t);
-  await start(f);
-  await readRange(f, { path: "a.mjs" });
-  const cases = [
-    ["unknown-criterion", () => {
-      const value = claim();
-      value.criteriaResults[0].criterionId = "criterion-99";
-      return value;
-    }, "CRITERIA_COVERAGE_INVALID"],
-    ["wrong-scope", () => claim(["b.mjs"]), "CLAIM_SCOPE_MISMATCH"],
-    ["bad-target", () => {
-      const value = claim();
-      value.report.observations.push({
-        level: "minor",
-        target: { path: "b.mjs", lineStart: 1, lineEnd: 1 },
-        statement: "Outside scope.",
-        rationale: "Invalid target fixture.",
-        suggestedAction: "None.",
-        confidence: "high",
-      });
-      return value;
-    }, "OBSERVATION_TARGET_INVALID"],
-    ["bad-lines", () => {
-      const value = claim();
-      value.report.observations.push({
-        level: "minor",
-        target: { path: "a.mjs", lineStart: 1, lineEnd: 99 },
-        statement: "Outside lines.",
-        rationale: "Invalid range fixture.",
-        suggestedAction: "None.",
-        confidence: "high",
-      });
-      return value;
-    }, "OBSERVATION_TARGET_INVALID"],
-    ["bad-outcome", () => {
-      const value = claim();
-      value.report.observations.push({
-        level: "major",
-        target: { path: "a.mjs" },
-        statement: "Major issue.",
-        rationale: "Requires changes.",
-        suggestedAction: "Change it.",
-        confidence: "high",
-      });
-      return value;
-    }, "REPORT_OUTCOME_INCONSISTENT"],
-    ["bad-limitation", () => {
-      const value = claim();
-      value.report.limitations[0].code = "TESTED";
-      return value;
-    }, "STATIC_LIMITATION_REQUIRED"],
-    ["not-addressed-accept", () => {
-      const value = claim();
-      value.criteriaResults[0] = {
-        criterionId: "criterion-1",
-        status: "not_addressed",
-        explanation: "Needs execution.",
-      };
-      return value;
-    }, "REPORT_OUTCOME_INCONSISTENT"],
-  ];
-  for (const [name, makeClaim, reason] of cases) {
-    const result = await complete(f, makeClaim(), `turn-${name}`, `call-${name}`);
-    assert.equal(result.details.checkpointPassed, false);
-    assert.ok(result.details.checkpointReasonCodes.includes(reason), name);
-    assert.equal((await f.service.activeForActor("@reviewer:example.test")).status, "active");
-  }
-});
-
-test("final append-only scope requires complete Evidence for every file", async (t) => {
-  const f = await fixture(t);
-  await start(f);
-  f.begin("turn-extend", "add b");
-  try {
-    await f.tools.extend_scope.execute("call-extend", { files: ["b.mjs"] });
-  } finally {
-    f.turns.end();
-  }
-  await readRange(f, { path: "a.mjs" }, "read-a", "call-a");
-  const missing = await complete(f, claim(["a.mjs", "b.mjs"]), "check-missing-b", "call-missing-b");
-  assert.ok(missing.details.checkpointReasonCodes.includes("SCOPE_READ_INCOMPLETE"));
-  await readRange(f, { path: "b.mjs" }, "read-b", "call-b");
-  const done = await complete(f, claim(["a.mjs", "b.mjs"]), "check-both", "call-both");
-  assert.equal(done.details.checkpointPassed, true);
-});
-
-test("Reviewer nextAction rebuilds remaining scope from durable state and Evidence", async (t) => {
-  const f = await fixture(t);
-  await start(f);
-  await readRange(f, { path: "a.mjs" }, "read-a-before-restart", "call-a-before-restart");
-  f.begin("extend-before-restart", "add b");
-  try {
-    await f.tools.extend_scope.execute("extend-call-before-restart", { files: ["b.mjs"] });
-  } finally {
-    f.turns.end();
-  }
-
-  const restartedService = new PracticeRunService({
-    sessionId: "session-review",
-    workspaceDir: f.workspace,
-    profileBundle: f.profileBundle,
-    journalPath: join(f.practice, "events.jsonl"),
-    snapshotPath: join(f.practice, "snapshot.json"),
-    protectedDirectory: join(f.practice, "protected"),
-  });
-  const restartedEvidence = new EvidenceRecorder({ filePath: join(f.root, "evidence", "events.jsonl") });
-  let run = await restartedService.activeForActor("@reviewer:example.test");
-  let boundary = await evidenceBoundary(restartedEvidence);
-  let evidenceProjection = await projectReviewEvidence({ evidence: restartedEvidence, boundary, run });
-  let coverage = projectReviewReadCoverage(run, evidenceProjection);
-  let nextAction = deriveReviewNextAction({ run, coverage, evidenceProjection });
-  assert.deepEqual(nextAction, {
-    code: "READ_REMAINING_SCOPE",
-    targetRefs: ["scope-file-2"],
-    reasonCodes: ["SCOPE_READ_INCOMPLETE"],
-  });
-  let beforeAgentStart;
-  createReviewerContextExtension({
-    service: restartedService,
-    turns: f.turns,
-    evidence: restartedEvidence,
-    profileDigest: f.profileBundle.profileDigest,
-  })({ on(_name, handler) { beforeAgentStart = handler; } });
-  f.begin("context-after-restart", "continue review");
-  const context = await beforeAgentStart({ systemPrompt: "base" });
-  f.turns.end();
-  assert.match(context.systemPrompt, /"code":"READ_REMAINING_SCOPE"/u);
-  assert.match(context.systemPrompt, /"targetRefs":\["scope-file-2"\]/u);
-
-  await readRange(f, { path: "b.mjs" }, "read-b-after-restart", "call-b-after-restart");
-  run = await restartedService.activeForActor("@reviewer:example.test");
-  boundary = await evidenceBoundary(restartedEvidence);
-  evidenceProjection = await projectReviewEvidence({ evidence: restartedEvidence, boundary, run });
-  coverage = projectReviewReadCoverage(run, evidenceProjection);
-  nextAction = deriveReviewNextAction({ run, coverage, evidenceProjection });
-  assert.deepEqual(nextAction, {
-    code: "CHECK_COMPLETION",
-    targetRefs: [],
-    reasonCodes: [],
-  });
-});
-
-test("Reviewer nextAction addresses a failed checkpoint after read coverage becomes complete", async (t) => {
-  const f = await fixture(t);
-  await start(f);
-  await readRange(f, { path: "a.mjs", offset: 1, limit: 1 }, "partial-before-check", "partial-call");
-  const failed = await complete(f, claim(), "failed-before-guidance", "failed-guidance-call");
-  assert.equal(failed.details.checkpointPassed, false);
-  await readRange(f, { path: "a.mjs", offset: 2, limit: 10 }, "complete-after-check", "complete-call");
-
-  const run = await f.service.activeForActor("@reviewer:example.test");
-  const boundary = await evidenceBoundary(f.evidence);
-  const evidenceProjection = await projectReviewEvidence({ evidence: f.evidence, boundary, run });
-  const coverage = projectReviewReadCoverage(run, evidenceProjection);
-  const nextAction = deriveReviewNextAction({ run, coverage, evidenceProjection });
-  assert.deepEqual(nextAction, {
-    code: "ADDRESS_CHECKPOINT_FAILURE",
-    targetRefs: [],
-    reasonCodes: [...new Set(run.lastCheckpoint.results
-      .filter((item) => !item.satisfied)
-      .map((item) => item.reasonCode))],
-  });
-});
-
-test("ambiguous or tampered Evidence fails before a completion state event", async (t) => {
-  const ambiguous = await fixture(t);
-  await start(ambiguous);
-  await readRange(ambiguous, { path: "a.mjs" });
-  const records = await ambiguous.evidence.readAll();
-  const gate = records.find((entry) => entry.type === "gate.decided" && entry.toolName === "read");
-  const { version, sequence, timestamp, previousHash, hash, ...duplicate } = gate;
-  await ambiguous.evidence.append(duplicate);
-  await assert.rejects(
-    complete(ambiguous, claim(), "ambiguous-check", "ambiguous-call"),
-    (error) => error.code === "EVIDENCE_AMBIGUOUS",
-  );
-  assert.deepEqual(
-    (await ambiguous.service.state()).runs[(await ambiguous.service.state()).activeRunId].revision,
-    1,
-  );
-
-  const tampered = await fixture(t);
-  await start(tampered, ["a.mjs"], "tamper-start");
-  await readRange(tampered, { path: "a.mjs" }, "tamper-read", "tamper-read-call");
-  const evidencePath = tampered.evidence.filePath;
-  const lines = (await readFile(evidencePath, "utf8")).trim().split("\n");
-  const last = JSON.parse(lines.at(-1));
-  last.resultMetadata.fullFileLines += 1;
-  lines[lines.length - 1] = JSON.stringify(last);
-  await writeFile(evidencePath, `${lines.join("\n")}\n`);
-  let beforeAgentStart;
-  createReviewerContextExtension({
-    service: tampered.service,
-    turns: tampered.turns,
-    evidence: tampered.evidence,
-    profileDigest: tampered.profileBundle.profileDigest,
-  })({ on(name, handler) {
-    assert.equal(name, "before_agent_start");
-    beforeAgentStart = handler;
-  } });
-  tampered.begin("tamper-context", "continue review");
-  await assert.rejects(
-    beforeAgentStart({ systemPrompt: "base" }),
-    /Evidence hash mismatch/u,
-  );
-  tampered.turns.end();
-  await assert.rejects(
-    complete(tampered, claim(), "tamper-check", "tamper-call"),
-    /Evidence hash mismatch/u,
-  );
-  assert.equal((await tampered.service.activeForActor("@reviewer:example.test")).revision, 1);
-});
-
-test("a committed completion survives wrapper Evidence failure and replays without duplicate state", async (t) => {
-  const f = await fixture(t);
-  await start(f);
-  await readRange(f, { path: "a.mjs" });
-  let failed = false;
-  const failingEvidence = {
-    readAll: () => f.evidence.readAll(),
-    async append(event) {
-      if (!failed && event.type === "tool.execution.completed" && event.toolName === "check_completion") {
-        failed = true;
-        throw new Error("injected completion Evidence failure");
-      }
-      return f.evidence.append(event);
-    },
-  };
-  const failingRegistry = createReviewerToolRegistry({
-    workspaceDir: f.workspace,
-    service: f.service,
-    gate: new ReviewerPracticeGate({ profileBundle: f.profileBundle }),
-    evidence: failingEvidence,
-    getInvocation: f.turns.current,
-  });
-  const failingCheck = failingRegistry.definitions().find((tool) => tool.name === "check_completion");
-  f.begin("crash-check", "finish review");
-  await assert.rejects(
-    failingCheck.execute("crash-call", { completionClaim: claim() }),
-    /injected completion Evidence failure/u,
-  );
-  f.turns.end();
-  assert.equal((await f.service.latestForActor("@reviewer:example.test")).status, "done");
-
-  const normalRegistry = createReviewerToolRegistry({
-    workspaceDir: f.workspace,
-    service: f.service,
-    gate: new ReviewerPracticeGate({ profileBundle: f.profileBundle }),
-    evidence: f.evidence,
-    getInvocation: f.turns.current,
-  });
-  const normalCheck = normalRegistry.definitions().find((tool) => tool.name === "check_completion");
-  f.begin("crash-check", "finish review");
-  const replay = await normalCheck.execute("crash-call", { completionClaim: claim() });
-  f.turns.end();
-  assert.equal(replay.details.replayed, true);
-  const journal = (await readFile(join(f.practice, "events.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
-  assert.equal(journal.filter((entry) => entry.eventType === "run.completed").length, 1);
-});
-
-test("runtime rejects a mismatched requester before entering the model loop without run disclosure", async (t) => {
-  const f = await fixture(t);
-  const configPath = join(f.root, "openclaw.json");
-  await writeFile(configPath, JSON.stringify({
-    models: { providers: { "agentteams-gateway": {
-      api: "openai-completions",
-      baseUrl: "http://127.0.0.1:1/v1",
-      models: [{ id: "model-one", name: "Fixture", contextWindow: 32000, maxTokens: 100, reasoning: false, input: ["text"] }],
-    } } },
-  }));
-  const paths = statePathsForSession({
-    stateDirectory: join(f.workspace, ".tiangong", "runtime"),
-    sessionId: "runtime-session",
-  });
-  const seed = new PracticeRunService({
-    sessionId: "runtime-session",
-    workspaceDir: f.workspace,
-    profileBundle: f.profileBundle,
     journalPath: paths.practiceRunJournalPath,
     snapshotPath: paths.practiceRunSnapshotPath,
     protectedDirectory: paths.practiceRunProtectedDirectory,
+    artifactStore,
+  };
+  const service = new PracticeRunService(options);
+  const evidence = evidenceOverride ?? new EvidenceRecorder({ filePath: paths.evidenceFilePath });
+  const gate = new ReviewerPracticeGate({ profileBundle });
+  let current;
+  const registry = createReviewerToolRegistry({
+    service, gate, evidence, getInvocation: () => current, inspectionLockPath: paths.directoryInspectionLockPath,
   });
-  await seed.start({
+  const tool = (name) => registry.definitions().find((entry) => entry.name === name);
+  function begin(turnId, messageId = "message-1") {
+    current = {
+      sessionId: SESSION,
+      turnId,
+      actor: { id: ACTOR, messageId },
+      ingress: { prompt: "review the exact targets" },
+      profileDigest: profileBundle.profileDigest,
+      turnState: { decisionFor() { return undefined; } },
+    };
+  }
+  return { root, workspaceDir, stateDirectory, profileBundle, paths, artifactStore, options, service, evidence, registry, tool, begin };
+}
+
+function startTargets() {
+  return {
     practiceId: "review",
-    objective: "private objective marker",
-    acceptanceCriteria: ["private criterion marker"],
-    files: ["a.mjs"],
-  }, {
-    sessionId: "runtime-session",
-    turnId: "seed-turn",
-    toolCallId: "seed-call",
-    actor: { id: "@owner:example.test", messageId: "$seed" },
-    ingress: { prompt: "private request marker" },
-    profileDigest: f.profileBundle.profileDigest,
+    objective: "Review file and directory snapshots",
+    acceptanceCriteria: ["Inspect all target resources"],
+    targets: [
+      { kind: "file", path: "a.txt" },
+      {
+        kind: "directory_snapshot",
+        path: "src",
+        selection: { includePrefixes: ["."], excludePrefixes: ["generated"] },
+      },
+    ],
+  };
+}
+
+async function projection(f, run, boundary = undefined) {
+  return projectReviewEvidence({
+    evidence: f.evidence,
+    boundary: boundary ?? await evidenceBoundary(f.evidence),
+    run,
+    targetCapture: f.service.targetCapture,
+    artifactStore: f.artifactStore,
   });
-  const runtime = new TiangongAgentRuntime({
-    configPath,
-    provider: "agentteams-gateway",
-    profileBundle: f.profileBundle,
+}
+
+async function expectCode(promise, code) {
+  await assert.rejects(promise, (error) => error?.code === code);
+}
+
+test("six-tool Reviewer v2 proves directory inspection is exploration and target-bound reads complete every resource", async (t) => {
+  const f = await fixture(t);
+  assert.deepEqual(f.registry.names(), [
+    "start_work", "extend_scope", "read", "inspect_directory", "check_completion", "abandon_work",
+  ]);
+  f.begin("turn-start");
+  const started = await f.tool("start_work").execute("call-start", startTargets());
+  const [file, directory] = started.details.scopeTargets;
+  assert.match(started.content[0].text, new RegExp(file.targetId, "u"));
+  assert.match(started.content[0].text, new RegExp(directory.targetId, "u"));
+  assert.doesNotMatch(started.content[0].text, /artifact-v1|snapshotIdentity|a\.txt|src/u);
+
+  f.begin("turn-list");
+  const listed = await f.tool("inspect_directory").execute("call-list", {
+    targetId: directory.targetId, action: "list", prefix: ".", offset: 0, limit: 200,
   });
-  t.after(() => runtime.dispose());
-  const phases = [];
-  const result = await runtime.runTurn(createTurnRequest({
-    attemptId: "attempt-mismatch",
-    turnId: "turn-mismatch",
-    sessionId: "runtime-session",
-    prompt: "show me the active work",
-    workspaceDir: f.workspace,
-    provider: "agentteams-gateway",
-    modelId: "model-one",
-    credential: "fixture-only",
-    actor: { id: "@other:example.test", messageId: "$other" },
-  }), {
-    checkpoint(phase) { phases.push(phase); },
-    startOperation() { return { end() {} }; },
+  const list = JSON.parse(listed.content[0].text);
+  assert.deepEqual(list.members.map((member) => member.path), ["one.mjs", "two.mjs"]);
+  assert.equal(list.members.some((member) => Object.hasOwn(member, "contentDigest")), false);
+
+  const secretQuery = "export const two";
+  f.begin("turn-search");
+  const searched = await f.tool("inspect_directory").execute("call-search", {
+    targetId: directory.targetId, action: "search", prefix: ".", query: secretQuery, maxResults: 10,
   });
-  assert.match(result.text, /Request denied/u);
-  assert.doesNotMatch(result.text, /run-|private objective|private criterion|a\.mjs/u);
-  assert.equal(result.workStatus.assurance, "direct-unverified");
-  assert.equal(phases.includes("pi.agent_turn.start"), false);
+  assert.deepEqual(JSON.parse(searched.content[0].text).matches, [{ memberPath: "two.mjs", line: 1 }]);
+  const run = await f.service.activeForActor(ACTOR);
+  let projected = await projection(f, run);
+  let coverage = projectReviewReadCoverage(run, projected);
+  assert.deepEqual(coverage.targets.map((entry) => entry.status), ["unread", "unread"]);
+  assert.equal(projected.executions.filter((entry) => entry.toolName === "inspect_directory").length, 2);
+  const inspectionEvidenceWire = JSON.stringify(await f.evidence.readAll());
+  assert.equal(inspectionEvidenceWire.includes(secretQuery), false);
+  assert.equal(inspectionEvidenceWire.includes("two.mjs"), false);
+  assert.equal(inspectionEvidenceWire.includes("artifact-v1/"), false);
+
+  f.begin("turn-file");
+  await f.tool("read").execute("call-file", { targetId: file.targetId, offset: 1, limit: 2000 });
+  for (const memberPath of ["one.mjs", "two.mjs"]) {
+    f.begin(`turn-${memberPath}`);
+    await f.tool("read").execute(`call-${memberPath}`, {
+      targetId: directory.targetId, memberPath, offset: 1, limit: 2000,
+    });
+  }
+  projected = await projection(f, run);
+  coverage = projectReviewReadCoverage(run, projected);
+  assert.equal(coverage.satisfied, true);
+  assert.equal(coverage.selectedEventRefs.length, 6);
+  assert.equal(deriveReviewNextAction({ run, coverage, evidenceProjection: projected }).code, "CHECK_COMPLETION");
+
+  f.begin("turn-complete");
+  const completed = await f.tool("check_completion").execute("call-complete", {
+    completionClaim: {
+      criteriaResults: [{ criterionId: "criterion-1", status: "addressed", explanation: "All resources were read." }],
+      scope: { targetIds: [file.targetId, directory.targetId] },
+      report: {
+        outcome: "accept",
+        synopsis: "Static review completed.",
+        observations: [{
+          level: "note",
+          target: { targetId: directory.targetId, memberPath: "two.mjs", lineStart: 1, lineEnd: 1 },
+          statement: "The second module is present.", rationale: "Snapshot-matching text was consumed.",
+          suggestedAction: "Keep it reviewed.", confidence: "high",
+        }],
+        limitations: [{ code: "STATIC_REVIEW_ONLY", detail: "No tests or runtime commands were executed." }],
+        nextActions: [],
+      },
+    },
+  });
+  assert.equal(completed.details.checkpointPassed, true);
+  const done = await f.service.latestForActor(ACTOR);
+  assert.equal(done.status, "done");
+  const reportProjection = await projection(f, done, {
+    sequence: done.lastCheckpoint.evidenceTerminalSequence,
+    hash: done.lastCheckpoint.evidenceTerminalHash,
+  });
+  const report = renderCompletedReview({
+    run: done,
+    claim: await f.service.claimForRun(done),
+    targetFacts: completedReviewTargetFacts(done, reportProjection),
+  });
+  assert.match(report, new RegExp(directory.targetId, "u"));
+  assert.doesNotMatch(report, /artifact-v1|directory_manifest/u);
+  assert.equal(workStatusForRun(done).scopeTargetCount, 2);
 });
 
-test("ContextPack and status rendering are bounded machine projections", async (t) => {
+test("directory admission enforces exclusion, sensitive, symlink, hardlink, binary, UTF-8, and atomic array boundaries", async (t) => {
   const f = await fixture(t);
-  await start(f);
-  const run = await f.service.activeForActor("@reviewer:example.test");
-  const boundary = await evidenceBoundary(f.evidence);
-  const evidenceProjection = await projectReviewEvidence({ evidence: f.evidence, boundary, run });
-  const coverage = projectReviewReadCoverage(run, evidenceProjection);
-  const nextAction = deriveReviewNextAction({ run, coverage, evidenceProjection });
-  const pack = buildReviewerContextPack({ profileDigest: f.profileBundle.profileDigest, run, nextAction });
-  assert.match(pack, new RegExp(run.runId, "u"));
-  assert.match(pack, /"schemaVersion":2/u);
-  assert.match(pack, /"code":"READ_REMAINING_SCOPE"/u);
-  assert.match(pack, /"targetRefs":\["scope-file-1"\]/u);
-  assert.doesNotMatch(pack, /review these files/u);
-  const status = workStatusForRun(run);
-  assert.match(renderWorkStatus(status), /assurance: worker-local/u);
-  assert.equal(escapeMachineStatusMarker("Tiangong machine status"), "Tiangong model-provided status text");
-  const request = { replyTarget: null, authorizedPeerTargets: [] };
-  const result = createTurnResult(request, { text: "answer", workStatus: status });
-  assert.equal(result.workStatus.runId, run.runId);
-  assert.throws(() => createTurnResult(request, { text: "bad", workStatus: { ...status, assurance: "team-verified" } }), /workStatus/u);
+  await writeFile(join(f.workspaceDir, "src", ".env"), "secret\n");
+  f.begin("excluded");
+  const safe = await f.tool("start_work").execute("call-excluded", {
+    ...startTargets(),
+    targets: [{
+      kind: "directory_snapshot", path: "src",
+      selection: { includePrefixes: ["."], excludePrefixes: [".env", "generated"] },
+    }],
+  });
+  assert.equal(safe.details.scopeTargets.length, 1);
+  f.begin("abandon");
+  await f.tool("abandon_work").execute("call-abandon", { reasonCode: "other", summary: "next cases" });
+  await rm(join(f.workspaceDir, "src", ".env"));
+
+  const cases = [];
+  await symlink("one.mjs", join(f.workspaceDir, "src", "link.mjs"));
+  cases.push(["TARGET_SYMLINK_DENIED", "link"]);
+  await rm(join(f.workspaceDir, "src", "link.mjs"));
+  await link(join(f.workspaceDir, "src", "one.mjs"), join(f.workspaceDir, "src", "hard.mjs"));
+  cases.push(["TARGET_TYPE_UNSUPPORTED", "hard"]);
+  await rm(join(f.workspaceDir, "src", "hard.mjs"));
+  await writeFile(join(f.workspaceDir, "src", "binary"), Buffer.from([0, 1]));
+  cases.push(["TARGET_TYPE_UNSUPPORTED", "binary"]);
+  await rm(join(f.workspaceDir, "src", "binary"));
+  await writeFile(join(f.workspaceDir, "src", "invalid"), Buffer.from([0xff]));
+  cases.push(["TARGET_TYPE_UNSUPPORTED", "invalid"]);
+  await rm(join(f.workspaceDir, "src", "invalid"));
+  cases.push(["TARGET_SENSITIVE_PATH_DENIED", "sensitive"]);
+
+  for (const [code, name] of cases) {
+    if (name === "link") await symlink("one.mjs", join(f.workspaceDir, "src", "link.mjs"));
+    if (name === "hard") await link(join(f.workspaceDir, "src", "one.mjs"), join(f.workspaceDir, "src", "hard.mjs"));
+    if (name === "binary") await writeFile(join(f.workspaceDir, "src", "binary"), Buffer.from([0]));
+    if (name === "invalid") await writeFile(join(f.workspaceDir, "src", "invalid"), Buffer.from([0xff]));
+    if (name === "sensitive") await writeFile(join(f.workspaceDir, "src", ".env"), "secret\n");
+    f.begin(`case-${name}`);
+    await expectCode(f.tool("start_work").execute(`call-${name}`, {
+      ...startTargets(), targets: [{ kind: "directory_snapshot", path: "src", selection: { includePrefixes: ["."], excludePrefixes: ["generated"] } }],
+    }), code);
+    await rm(join(f.workspaceDir, "src", name === "link" ? "link.mjs" : name === "hard" ? "hard.mjs" : name === "sensitive" ? ".env" : name));
+  }
+  assert.equal((await f.service.state()).sequence, 2);
+
+  f.begin("atomic");
+  await expectCode(f.tool("start_work").execute("call-atomic", {
+    ...startTargets(), targets: [{ kind: "directory_snapshot", path: "src", selection: { includePrefixes: ["one.mjs"], excludePrefixes: [] } }, { kind: "file", path: "missing" }],
+  }), "TARGET_NOT_FOUND");
+  assert.equal((await f.service.state()).activeRunId, null);
+});
+
+test("consume and inspection selectors use their stable range and grammar errors", async (t) => {
+  const f = await fixture(t);
+  f.begin("start");
+  const started = await f.tool("start_work").execute("call-start", startTargets());
+  const [file, directory] = started.details.scopeTargets;
+  f.begin("bad-range");
+  await expectCode(f.tool("read").execute("call-bad-range", {
+    targetId: file.targetId, offset: 0, limit: 1,
+  }), "TARGET_RANGE_INVALID");
+  f.begin("bad-member");
+  await expectCode(f.tool("read").execute("call-bad-member", {
+    targetId: directory.targetId, memberPath: "a".repeat(1025), offset: 1, limit: 1,
+  }), "TARGET_SELECTOR_INVALID");
+  f.begin("bad-prefix");
+  await expectCode(f.tool("inspect_directory").execute("call-bad-prefix", {
+    targetId: directory.targetId, action: "list", prefix: "a".repeat(1025), offset: 0, limit: 1,
+  }), "TARGET_SELECTOR_INVALID");
+});
+
+test("source change blocks an incomplete target but cannot revoke historical complete Evidence", async (t) => {
+  const f = await fixture(t);
+  f.begin("start");
+  const started = await f.tool("start_work").execute("call-start", {
+    ...startTargets(), targets: [{ kind: "file", path: "a.txt" }, { kind: "file", path: "src/one.mjs" }],
+  });
+  const [complete, incomplete] = started.details.scopeTargets;
+  f.begin("read-complete");
+  await f.tool("read").execute("call-read-complete", { targetId: complete.targetId, offset: 1, limit: 2000 });
+  await writeFile(join(f.workspaceDir, "a.txt"), "changed\n");
+  f.begin("read-complete-again");
+  await expectCode(f.tool("read").execute("call-read-complete-again", { targetId: complete.targetId, offset: 1, limit: 2000 }), "TARGET_CHANGED");
+  await rm(join(f.workspaceDir, "src", "one.mjs"));
+  f.begin("read-missing");
+  await expectCode(f.tool("read").execute("call-read-missing", { targetId: incomplete.targetId, offset: 1, limit: 2000 }), "TARGET_UNAVAILABLE");
+  await writeFile(join(f.workspaceDir, "src", "one.mjs"), Buffer.alloc(2 * 1024 * 1024 + 1, 0x61));
+  f.begin("read-oversized");
+  await expectCode(f.tool("read").execute("call-read-oversized", {
+    targetId: incomplete.targetId, offset: 1, limit: 2000,
+  }), "TARGET_CHANGED");
+  const run = await f.service.activeForActor(ACTOR);
+  const coverage = projectReviewReadCoverage(run, await projection(f, run));
+  assert.deepEqual(coverage.targets.map((entry) => [entry.status, entry.reasonCode]), [
+    ["complete", null], ["blocked", "TARGET_CHANGED"],
+  ]);
+  assert.equal(deriveReviewNextAction({ run, coverage, evidenceProjection: await projection(f, run) }).code, "RESOLVE_TARGET_BLOCKER");
+});
+
+test("an exact failed read invocation may retry once and later durable replay its successful Artifact", async (t) => {
+  const f = await fixture(t);
+  f.begin("start");
+  const started = await f.tool("start_work").execute("call-start", {
+    ...startTargets(), targets: [{ kind: "file", path: "a.txt" }],
+  });
+  const targetId = started.details.scopeTargets[0].targetId;
+  await writeFile(join(f.workspaceDir, "a.txt"), "changed\n");
+  f.begin("retry-read");
+  await expectCode(f.tool("read").execute("call-read", {
+    targetId, offset: 1, limit: 2000,
+  }), "TARGET_CHANGED");
+  await writeFile(join(f.workspaceDir, "a.txt"), "alpha\nbeta\n");
+  f.begin("retry-read");
+  const successful = await f.tool("read").execute("call-read", {
+    targetId, offset: 1, limit: 2000,
+  });
+  const run = await f.service.activeForActor(ACTOR);
+  const projected = await projection(f, run);
+  assert.equal(projected.executions.length, 1);
+  assert.equal(projected.executions[0].status, "success");
+  assert.equal(projectReviewReadCoverage(run, projected).satisfied, true);
+  await rm(join(f.workspaceDir, "a.txt"));
+  f.begin("retry-read");
+  const replayed = await f.tool("read").execute("call-read", {
+    targetId, offset: 1, limit: 2000,
+  });
+  assert.deepEqual(replayed, successful);
+});
+
+test("restart rebuilds journal targets and manifest authority without transcript or live recapture", async (t) => {
+  const f = await fixture(t);
+  f.begin("start");
+  const started = await f.tool("start_work").execute("call-start", startTargets());
+  const before = await f.service.activeForActor(ACTOR);
+  await rm(f.paths.practiceRunSnapshotPath, { force: true });
+  await rm(join(f.workspaceDir, "src", "one.mjs"));
+  const restarted = new PracticeRunService(f.options);
+  const recovered = await restarted.activeForActor(ACTOR);
+  assert.deepEqual(recovered.scope.targets, before.scope.targets);
+  assert.equal(recovered.scope.digest, before.scope.digest);
+  const manifest = await restarted.targetCapture.readDirectoryManifest(recovered.scope.targets[1]);
+  assert.deepEqual(manifest.members.map((member) => member.path), ["one.mjs", "two.mjs"]);
+  assert.equal(started.details.scopeTargets[1].targetId, recovered.scope.targets[1].targetId);
+});
+
+test("manifest or consumed Artifact tamper fails before Context/coverage and never recaptures", async (t) => {
+  const f = await fixture(t);
+  f.begin("start");
+  await f.tool("start_work").execute("call-start", startTargets());
+  const run = await f.service.activeForActor(ACTOR);
+  const manifestBinding = run.scope.targets[1].snapshot.artifacts[0];
+  await writeFile(join(f.paths.capturedArtifactObjectsDirectory, manifestBinding.artifactKey, "content"), "{}", { mode: 0o600 });
+  await expectCode(f.service.targetCapture.readDirectoryManifest(run.scope.targets[1]), "TARGET_ARTIFACT_INVALID");
+  await expectCode(projection(f, run), "TARGET_ARTIFACT_INVALID");
+});
+
+test("successful read and inspection replay exact Store bytes after run completion without live source access", async (t) => {
+  const f = await fixture(t);
+  f.begin("start");
+  const started = await f.tool("start_work").execute("call-start", {
+    ...startTargets(), targets: [{ kind: "file", path: "a.txt" }],
+  });
+  const targetId = started.details.scopeTargets[0].targetId;
+  f.begin("read");
+  const first = await f.tool("read").execute("call-read", { targetId, offset: 1, limit: 2000 });
+  f.begin("complete");
+  await f.tool("check_completion").execute("call-complete", {
+    completionClaim: {
+      criteriaResults: [{ criterionId: "criterion-1", status: "addressed", explanation: "read" }],
+      scope: { targetIds: [targetId] },
+      report: { outcome: "accept", synopsis: "done", observations: [], limitations: [{ code: "STATIC_REVIEW_ONLY", detail: "static" }], nextActions: [] },
+    },
+  });
+  await rm(join(f.workspaceDir, "a.txt"));
+  f.begin("read");
+  const replay = await f.tool("read").execute("call-read", { targetId, offset: 1, limit: 2000 });
+  assert.equal(replay.content[0].text, first.content[0].text);
+  assert.deepEqual(replay, first);
+  const replayEvents = (await f.evidence.readAll()).filter((record) => record.type === "tool.execution.replayed" && record.toolName === "read");
+  assert.equal(replayEvents.length, 1);
+});
+
+test("inspection lifecycle cap is durable and the 65th target inspection writes no successful artifact Evidence", async (t) => {
+  const f = await fixture(t);
+  f.begin("start");
+  const started = await f.tool("start_work").execute("call-start", {
+    ...startTargets(), targets: [{ kind: "directory_snapshot", path: "src", selection: { includePrefixes: ["one.mjs"], excludePrefixes: [] } }],
+  });
+  const targetId = started.details.scopeTargets[0].targetId;
+  for (let index = 0; index < 64; index += 1) {
+    f.begin(`inspect-${index}`);
+    await f.tool("inspect_directory").execute(`call-${index}`, { targetId, action: "list", prefix: ".", offset: 0, limit: 1 });
+  }
+  f.begin("inspect-65");
+  await expectCode(f.tool("inspect_directory").execute("call-65", { targetId, action: "list", prefix: ".", offset: 0, limit: 1 }), "DIRECTORY_INSPECTION_LIMIT_EXCEEDED");
+  const records = await f.evidence.readAll();
+  assert.equal(records.filter((record) => record.status === "success" && record.metadata?.reviewDirectoryInspection).length, 64);
 });

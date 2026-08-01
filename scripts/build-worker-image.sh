@@ -125,6 +125,7 @@ reviewer_profile="$(docker run --rm --entrypoint node "${REVIEWER_IMAGE}" \
 docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${REVIEWER_IMAGE}" \
   --input-type=module -e '
     const [
+      { CapturedArtifactStore },
       { loadFixedRoleProfileBundle },
       { EvidenceRecorder },
       { ReviewerPracticeGate },
@@ -132,6 +133,7 @@ docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${REVIEWER_IMA
       { TurnContextController },
       { createReviewerToolRegistry },
     ] = await Promise.all([
+      import("./agent/artifacts/store.mjs"),
       import("./agent/config/role-profile.mjs"),
       import("./agent/evidence/recorder.mjs"),
       import("./agent/gates/reviewer-practice-gate.mjs"),
@@ -141,6 +143,7 @@ docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${REVIEWER_IMA
     ]);
     const profileBundle = await loadFixedRoleProfileBundle();
     const turns = new TurnContextController();
+    const stateDirectory = "/tmp/tiangong-image-contract-state";
     const service = new PracticeRunService({
       sessionId: "image-contract",
       workspaceDir: "/root/hiclaw-fs",
@@ -148,6 +151,7 @@ docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${REVIEWER_IMA
       journalPath: "/tmp/tiangong-image-contract/events.jsonl",
       snapshotPath: "/tmp/tiangong-image-contract/snapshot.json",
       protectedDirectory: "/tmp/tiangong-image-contract/protected",
+      artifactStore: new CapturedArtifactStore({ stateDirectory, sessionId: "image-contract" }),
     });
     const registry = createReviewerToolRegistry({
       workspaceDir: "/root/hiclaw-fs",
@@ -155,15 +159,18 @@ docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${REVIEWER_IMA
       gate: new ReviewerPracticeGate({ profileBundle }),
       evidence: new EvidenceRecorder({ filePath: "/tmp/tiangong-image-contract/evidence.jsonl" }),
       getInvocation: turns.current,
+      inspectionLockPath: "/tmp/tiangong-image-contract/directory-inspection-lock-target",
     });
-    if (registry.names().join(",") !== "start_work,extend_scope,read,check_completion,abandon_work") process.exit(1);
+    if (registry.names().join(",") !== "start_work,extend_scope,read,inspect_directory,check_completion,abandon_work") process.exit(1);
   '
 node -e '
   const [kernel, reviewer] = process.argv.slice(1).map(JSON.parse);
   if (kernel.roleId !== "kernel" || kernel.runtimeReady !== true) process.exit(1);
   if (reviewer.roleId !== "reviewer" || reviewer.runtimeReady !== true) process.exit(1);
-  if (reviewer.toolIds.join(",") !== "start_work,extend_scope,read,check_completion,abandon_work") process.exit(1);
-  if (reviewer.materializedToolIds.join(",") !== "start_work,extend_scope,read,check_completion,abandon_work") process.exit(1);
+  if (reviewer.schemaVersion !== 2 || reviewer.targetKindIds.join(",") !== "file,directory_snapshot") process.exit(1);
+  if (reviewer.materializedTargetKindIds.join(",") !== "file,directory_snapshot") process.exit(1);
+  if (reviewer.toolIds.join(",") !== "start_work,extend_scope,read,inspect_directory,check_completion,abandon_work") process.exit(1);
+  if (reviewer.materializedToolIds.join(",") !== "start_work,extend_scope,read,inspect_directory,check_completion,abandon_work") process.exit(1);
 ' "${kernel_profile}" "${reviewer_profile}"
 
 printf '[Tiangong] Worker image ready: %s (Node.js %s, pi %s, fixed kernel profile)\n' \

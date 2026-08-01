@@ -64,7 +64,7 @@ const ATTRIBUTE_KEYS = new Set([
   "tiangong.phase",
   "tiangong.practice.id",
   "tiangong.practice.revision",
-  "tiangong.practice.scope_count",
+  "tiangong.practice.target_count",
   "tiangong.practice.status",
   "tiangong.retry.attempt",
   "tiangong.retry.max_attempts",

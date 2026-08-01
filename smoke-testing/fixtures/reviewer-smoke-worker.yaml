@@ -9,4 +9,4 @@ spec:
   state: Running
   identity: |
     Name: Tiangong Reviewer Smoke Worker
-    Purpose: Local Reviewer v1 integration verification only.
+    Purpose: Local Reviewer v2 file and directory target integration verification only.

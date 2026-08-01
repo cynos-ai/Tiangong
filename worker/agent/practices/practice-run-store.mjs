@@ -4,9 +4,10 @@ import { dirname } from "node:path";
 
 import { canonicalJson, idempotencyKey, sha256 } from "../canonical-json.mjs";
 import { withFileLock } from "../persistence/file-lock.mjs";
+import { validateReviewScope, reviewScopeDigest } from "./review-targets.mjs";
 import { PracticeRunError, practiceRunFail } from "./errors.mjs";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const GENESIS_HASH = "0".repeat(64);
 const MAX_JOURNAL_RECORD_BYTES = 1024 * 1024;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
@@ -17,42 +18,27 @@ const CHECKPOINT_IDS = [
   "claim-schema-valid",
   "criteria-covered",
   "scope-matches-final",
-  "scope-fully-read",
+  "targets-fully-consumed",
   "observation-targets-valid",
   "outcome-consistent",
   "static-review-limitation-recorded",
   "no-mutation-observed",
 ];
 const ABANDON_REASON_CODES = new Set([
-  "superseded_by_new_request",
-  "unsupported_scope",
-  "cannot_complete",
-  "user_cancelled",
-  "other",
+  "superseded_by_new_request", "unsupported_scope", "cannot_complete", "user_cancelled", "other",
 ]);
 const RECORD_KEYS = [
-  "actionDigest",
-  "actorId",
-  "eventType",
-  "hash",
-  "inputDigest",
-  "invocationIdentity",
-  "invocationKey",
-  "operation",
-  "payload",
-  "payloadDigest",
-  "previousHash",
-  "requestDigest",
-  "runId",
-  "runRevision",
-  "schemaVersion",
-  "sequence",
-  "sourceMessageId",
-  "stateEventId",
-  "timestamp",
-  "toolCallId",
-  "turnId",
+  "actionDigest", "actorId", "eventType", "hash", "inputDigest", "invocationIdentity", "invocationKey",
+  "operation", "payload", "payloadDigest", "previousHash", "requestDigest", "runId", "runRevision",
+  "schemaVersion", "sequence", "sourceMessageId", "stateEventId", "timestamp", "toolCallId", "turnId",
 ];
+const EFFECTS = Object.freeze({
+  localRead: true,
+  workspaceMutation: false,
+  networkEgress: false,
+  modelInference: false,
+  costBearing: false,
+});
 
 function emptyState() {
   return {
@@ -78,132 +64,144 @@ function assertDigest(value, name) {
 }
 
 function assertExactKeys(value, keys, name) {
-  if (!value || typeof value !== "object" || Array.isArray(value) ||
-      Object.keys(value).sort().join(",") !== [...keys].sort().join(",")) {
+  if (!value || typeof value !== "object" || Array.isArray(value)
+      || Object.keys(value).sort().join(",") !== [...keys].sort().join(",")) {
     practiceRunFail("STATE_CORRUPTED", `${name} has an invalid schema`);
   }
 }
 
 function assertTimestamp(value) {
-  if (typeof value !== "string" || !Number.isFinite(Date.parse(value)) ||
-      new Date(value).toISOString() !== value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value)
+      || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString() !== value) {
     practiceRunFail("STATE_CORRUPTED", "PracticeRun journal timestamp is invalid");
   }
 }
 
 function assertReference(value, directory) {
-  if (typeof value !== "string" ||
-      !new RegExp(`^${directory}/[a-f0-9]{64}\\.json$`, "u").test(value)) {
+  if (typeof value !== "string" || !new RegExp(`^${directory}/[a-f0-9]{64}\\.json$`, "u").test(value)) {
     practiceRunFail("STATE_CORRUPTED", "PracticeRun protected payload reference is invalid");
   }
 }
 
-function assertScope(scope) {
-  assertExactKeys(scope, ["digest", "files", "revision", "source"], "PracticeRun scope");
-  if (!Number.isSafeInteger(scope.revision) || scope.revision <= 0 || scope.source !== "model_normalized" ||
-      !Array.isArray(scope.files) || scope.files.length === 0 ||
-      scope.files.some((file) => typeof file !== "string" || file === "") ||
-      new Set(scope.files).size !== scope.files.length) {
-    practiceRunFail("STATE_CORRUPTED", "PracticeRun scope is invalid");
-  }
-  assertDigest(scope.digest, "scope digest");
-  if (scope.digest !== sha256(scope.files)) practiceRunFail("STATE_CORRUPTED", "PracticeRun scope digest mismatch");
+function assertEffects(value) {
+  assertExactKeys(value, Object.keys(EFFECTS), "operation effects");
+  if (canonicalJson(value) !== canonicalJson(EFFECTS)) practiceRunFail("STATE_CORRUPTED", "Operation effects are invalid");
 }
 
 function validateOperation(record, expected) {
-  const operationKeys = [
-    "category",
-    "input",
-    "origin",
-    "policyVersion",
-    "practiceId",
-    "practiceVersion",
-    "profileDigest",
-    "roleId",
-    "toolName",
-  ];
-  if (expected.run) operationKeys.push("state");
-  assertExactKeys(record.operation, operationKeys, "PracticeRun operation");
+  assertExactKeys(record.operation, [
+    "category", "effects", "input", "origin", "policyVersion", "practiceId", "practiceVersion",
+    "profileDigest", "roleId", "state", "toolName", "workspaceScope",
+  ], "PracticeRun operation");
   assertExactKeys(record.operation.origin, ["actorId", "requestDigest", "sourceMessageId"], "operation origin");
-  if (record.operation.policyVersion !== "practice-run-v1" ||
-      record.operation.category !== "state-transition" || record.operation.toolName !== expected.toolName ||
-      record.operation.roleId !== expected.roleId || record.operation.profileDigest !== expected.profileDigest ||
-      record.operation.practiceId !== expected.practiceId ||
-      record.operation.practiceVersion !== expected.practiceVersion ||
-      record.operation.origin.actorId !== record.actorId ||
-      record.operation.origin.sourceMessageId !== record.sourceMessageId ||
-      record.operation.origin.requestDigest !== record.requestDigest) {
+  assertEffects(record.operation.effects);
+  assertDigest(record.operation.workspaceScope, "workspace scope");
+  if (record.operation.policyVersion !== "practice-run-v2" || record.operation.category !== "state-transition"
+      || record.operation.toolName !== expected.toolName || record.operation.roleId !== expected.roleId
+      || record.operation.profileDigest !== expected.profileDigest || record.operation.practiceId !== expected.practiceId
+      || record.operation.practiceVersion !== 2 || record.operation.origin.actorId !== record.actorId
+      || record.operation.origin.sourceMessageId !== record.sourceMessageId
+      || record.operation.origin.requestDigest !== record.requestDigest) {
     practiceRunFail("STATE_CORRUPTED", "PracticeRun operation metadata conflicts with its event");
   }
   if (expected.run) {
     assertExactKeys(record.operation.state, ["expectedRunRevision", "runId"], "operation state");
-    if (record.operation.state.runId !== expected.run.runId ||
-        record.operation.state.expectedRunRevision !== expected.run.revision) {
+    if (record.operation.state.runId !== expected.run.runId
+        || record.operation.state.expectedRunRevision !== expected.run.revision) {
       practiceRunFail("STATE_CORRUPTED", "PracticeRun operation state binding is invalid");
+    }
+  } else if (record.operation.state !== null) {
+    practiceRunFail("STATE_CORRUPTED", "start_work operation state must be null");
+  }
+}
+
+function validateCriteriaMetadata(value) {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 32) return false;
+  return value.every((criterion) => {
+    try {
+      assertExactKeys(criterion, ["bytes", "digest"], "criterion operation metadata");
+      assertDigest(criterion.digest, "criterion digest");
+      return Number.isSafeInteger(criterion.bytes) && criterion.bytes > 0;
+    } catch {
+      return false;
+    }
+  });
+}
+
+function assertCapturedByRecord(targets, record) {
+  for (const target of targets) {
+    for (const artifact of target.snapshot.artifacts) {
+      if (artifact.storeBinding.invocationIdentity !== record.invocationIdentity
+          || artifact.storeBinding.sourceOperationDigest !== record.actionDigest) {
+        practiceRunFail("STATE_CORRUPTED", "Target artifact capture binding conflicts with its admission event");
+      }
     }
   }
 }
 
-function validateStartPayload(record, state) {
+function requestsMatchTargets(requests, targets) {
+  return canonicalJson(requests) === canonicalJson(targets.map((target) => ({
+    kind: target.kind,
+    ...target.descriptor.value,
+  })));
+}
+
+function assertPolicyInput(input) {
+  if (input.capturePolicyVersion !== "review-target-capture-v1"
+      || input.workspacePolicyVersion !== "workspace-target-policy-v1"
+      || input.textPolicyVersion !== "review-text-lines-v1"
+      || !Array.isArray(input.targetRequests) || input.targetRequests.length === 0
+      || input.targetRequestsDigest !== sha256(canonicalJson({
+        schemaId: "tiangong.target-requests.v1", targets: input.targetRequests,
+      }))) {
+    practiceRunFail("STATE_CORRUPTED", "Target admission policy input is invalid");
+  }
+}
+
+function validateStartPayload(record, state, sessionId) {
   const payload = record.payload;
-  assertExactKeys(
-    payload,
-    ["origin", "practiceId", "practiceVersion", "profileDigest", "roleId", "scope", "spec"],
-    "run.started payload",
-  );
-  assertExactKeys(
-    payload.origin,
-    ["actorId", "messageId", "requestDigest", "requestPayloadRef"],
-    "run origin",
-  );
+  assertExactKeys(payload, [
+    "origin", "practiceId", "practiceVersion", "profileDigest", "roleId", "scope", "spec",
+    "targetCapturePolicyVersion", "targetKindRegistryVersion",
+  ], "run.started payload");
+  assertExactKeys(payload.origin, ["actorId", "messageId", "requestDigest", "requestPayloadRef"], "run origin");
   assertExactKeys(payload.spec, ["digest", "payloadRef"], "run spec reference");
-  if (!ID_PATTERN.test(payload.roleId) || !ID_PATTERN.test(payload.practiceId) ||
-      !Number.isSafeInteger(payload.practiceVersion) || payload.practiceVersion <= 0) {
-    practiceRunFail("STATE_CORRUPTED", "run.started role or practice metadata is invalid");
+  if (!ID_PATTERN.test(payload.roleId) || !ID_PATTERN.test(payload.practiceId) || payload.practiceVersion !== 2
+      || payload.targetCapturePolicyVersion !== "review-target-capture-v1"
+      || payload.targetKindRegistryVersion !== "review-target-kinds-v1") {
+    practiceRunFail("STATE_CORRUPTED", "run.started role, practice, or target policy metadata is invalid");
   }
   assertDigest(payload.profileDigest, "profile digest");
   assertDigest(payload.origin.requestDigest, "request digest");
   assertReference(payload.origin.requestPayloadRef, "requests");
   assertDigest(payload.spec.digest, "run spec digest");
   assertReference(payload.spec.payloadRef, "specs");
-  assertScope(payload.scope);
-  validateOperation(record, {
-    toolName: "start_work",
-    roleId: payload.roleId,
-    profileDigest: payload.profileDigest,
-    practiceId: payload.practiceId,
-    practiceVersion: payload.practiceVersion,
+  validateReviewScope(payload.scope, {
+    sessionHash: sha256(sessionId), actorId: record.actorId, runId: record.runId,
   });
-  assertExactKeys(
-    record.operation.input,
-    ["criteria", "objectiveBytes", "objectiveDigest", "scopeDigest", "scopeFiles"],
-    "start_work operation input",
-  );
+  validateOperation(record, {
+    toolName: "start_work", roleId: payload.roleId, profileDigest: payload.profileDigest,
+    practiceId: payload.practiceId,
+  });
+  assertExactKeys(record.operation.input, [
+    "capturePolicyVersion", "criteria", "objectiveBytes", "objectiveDigest", "targetRequests",
+    "targetRequestsDigest", "textPolicyVersion", "workspacePolicyVersion",
+  ], "start_work operation input");
   assertDigest(record.operation.input.objectiveDigest, "objective digest");
-  if (!Number.isSafeInteger(record.operation.input.objectiveBytes) || record.operation.input.objectiveBytes <= 0 ||
-      !Array.isArray(record.operation.input.criteria) || record.operation.input.criteria.length === 0 ||
-      record.operation.input.criteria.some((criterion) => {
-        try {
-          assertExactKeys(criterion, ["bytes", "digest"], "criterion operation metadata");
-          assertDigest(criterion.digest, "criterion digest");
-          return !Number.isSafeInteger(criterion.bytes) || criterion.bytes <= 0;
-        } catch {
-          return true;
-        }
-      }) || canonicalJson(record.operation.input.scopeFiles) !== canonicalJson(payload.scope.files) ||
-      record.operation.input.scopeDigest !== payload.scope.digest) {
-    practiceRunFail("STATE_CORRUPTED", "start_work operation input conflicts with its event");
-  }
-  if (record.runRevision !== 1 || payload.scope.revision !== 1 ||
-      payload.origin.actorId !== record.actorId || payload.origin.messageId !== record.sourceMessageId ||
-      payload.origin.requestDigest !== record.requestDigest || state.activeRunId !== null ||
-      state.runs[record.runId]) {
+  assertPolicyInput(record.operation.input);
+  assertCapturedByRecord(payload.scope.targets, record);
+  if (!Number.isSafeInteger(record.operation.input.objectiveBytes) || record.operation.input.objectiveBytes <= 0
+      || !validateCriteriaMetadata(record.operation.input.criteria)
+      || !requestsMatchTargets(record.operation.input.targetRequests, payload.scope.targets) || record.runRevision !== 1
+      || payload.scope.revision !== 1 || payload.origin.actorId !== record.actorId
+      || payload.origin.messageId !== record.sourceMessageId || payload.origin.requestDigest !== record.requestDigest
+      || state.activeRunId !== null || state.runs[record.runId]) {
     practiceRunFail("STATE_CORRUPTED", "Invalid run.started transition");
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     runId: record.runId,
-    sessionId: null,
+    sessionId,
     roleId: payload.roleId,
     profileDigest: payload.profileDigest,
     practiceId: payload.practiceId,
@@ -220,63 +218,67 @@ function validateStartPayload(record, state) {
   };
 }
 
-function validateScopePayload(record, run) {
+function validateScopePayload(record, run, sessionId) {
   const payload = record.payload;
   validateOperation(record, {
-    toolName: "extend_scope",
-    roleId: run.roleId,
-    profileDigest: run.profileDigest,
-    practiceId: run.practiceId,
-    practiceVersion: run.practiceVersion,
-    run,
+    toolName: "extend_scope", roleId: run.roleId, profileDigest: run.profileDigest,
+    practiceId: run.practiceId, run,
   });
-  assertExactKeys(
-    payload,
-    [
-      "addedFiles",
-      "newScopeDigest",
-      "previousScopeDigest",
-      "source",
-      "sourceRequestDigest",
-      "sourceRequestPayloadRef",
-    ],
-    "scope.revised payload",
-  );
-  if (payload.source !== "model_normalized" || !Array.isArray(payload.addedFiles) ||
-      payload.addedFiles.length === 0 || new Set(payload.addedFiles).size !== payload.addedFiles.length ||
-      payload.addedFiles.some((file) => typeof file !== "string" || file === "")) {
-    practiceRunFail("STATE_CORRUPTED", "scope.revised files are invalid");
-  }
+  assertExactKeys(payload, [
+    "addedTargets", "expectedRunRevision", "newScopeDigest", "previousScopeDigest",
+    "sourceRequestDigest", "sourceRequestPayloadRef",
+  ], "scope.revised payload");
+  assertExactKeys(record.operation.input, [
+    "capturePolicyVersion", "previousScopeDigest", "targetRequests", "targetRequestsDigest",
+    "textPolicyVersion", "workspacePolicyVersion",
+  ], "extend_scope operation input");
+  assertPolicyInput(record.operation.input);
   assertDigest(payload.previousScopeDigest, "previous scope digest");
   assertDigest(payload.newScopeDigest, "new scope digest");
   assertDigest(payload.sourceRequestDigest, "scope source request digest");
-  assertExactKeys(
-    record.operation.input,
-    ["addedFiles", "newScopeDigest", "previousScopeDigest"],
-    "extend_scope operation input",
-  );
   assertReference(payload.sourceRequestPayloadRef, "requests");
-  const previous = new Set(run.scope.files);
-  if (payload.addedFiles.some((file) => previous.has(file)) ||
-      canonicalJson(record.operation.input.addedFiles) !== canonicalJson(payload.addedFiles) ||
-      record.operation.input.previousScopeDigest !== payload.previousScopeDigest ||
-      record.operation.input.newScopeDigest !== payload.newScopeDigest ||
-      payload.previousScopeDigest !== run.scope.digest ||
-      payload.sourceRequestDigest !== record.requestDigest ||
-      payload.newScopeDigest !== sha256([...run.scope.files, ...payload.addedFiles]) ||
-      record.runRevision !== run.revision + 1) {
+  if (!Array.isArray(payload.addedTargets) || payload.addedTargets.length === 0
+      || payload.expectedRunRevision !== run.revision || payload.previousScopeDigest !== run.scope.digest
+      || record.operation.input.previousScopeDigest !== run.scope.digest
+      || payload.sourceRequestDigest !== record.requestDigest || record.runRevision !== run.revision + 1) {
     practiceRunFail("STATE_CORRUPTED", "Invalid scope.revised transition");
   }
+  assertCapturedByRecord(payload.addedTargets, record);
+  if (!requestsMatchTargets(record.operation.input.targetRequests, payload.addedTargets)) {
+    practiceRunFail("STATE_CORRUPTED", "scope.revised target requests conflict with added targets");
+  }
+  const finalTargets = [...run.scope.targets, ...payload.addedTargets];
+  const scope = { revision: run.scope.revision + 1, targets: finalTargets, digest: payload.newScopeDigest };
+  validateReviewScope(scope, { sessionHash: sha256(sessionId), actorId: run.origin.actorId, runId: run.runId });
+  if (payload.newScopeDigest !== reviewScopeDigest(finalTargets)) {
+    practiceRunFail("STATE_CORRUPTED", "scope.revised digest is invalid");
+  }
+  const existingIds = new Set(run.scope.targets.map((target) => target.targetId));
+  if (payload.addedTargets.some((target) => existingIds.has(target.targetId))) {
+    practiceRunFail("STATE_CORRUPTED", "scope.revised target IDs are not append-only");
+  }
+  return scope;
+}
+
+function validateEventRef(ref, run, boundary, identities) {
+  assertExactKeys(ref, ["eventHash", "sequence", "sessionId", "toolCallId", "turnId"], "Evidence event ref");
+  assertDigest(ref.eventHash, "Evidence event hash");
+  const identity = `${ref.sequence}:${ref.eventHash}`;
+  if (ref.sessionId !== run.sessionId || !Number.isSafeInteger(ref.sequence) || ref.sequence <= 0
+      || ref.sequence > boundary || identities.has(identity)
+      || [ref.turnId, ref.toolCallId].some((entry) => typeof entry !== "string" || entry === "")) {
+    practiceRunFail("STATE_CORRUPTED", "Checkpoint Evidence event ref is invalid or duplicated");
+  }
+  identities.add(identity);
 }
 
 function validateCheckpointResult(value, record, run, allSatisfied) {
-  assertExactKeys(
-    value,
-    ["allSatisfied", "claimDigest", "evaluatedAt", "evidenceTerminalHash", "results", "runId", "runRevision", "schemaVersion"],
-    "checkpoint result",
-  );
-  if (value.schemaVersion !== 1 || value.runId !== run.runId || value.runRevision !== run.revision ||
-      value.allSatisfied !== allSatisfied || !Array.isArray(value.results) || value.results.length !== 8) {
+  assertExactKeys(value, [
+    "allSatisfied", "claimDigest", "evaluatedAt", "evidenceTerminalHash", "results", "runId",
+    "runRevision", "schemaVersion",
+  ], "checkpoint result");
+  if (value.schemaVersion !== 2 || value.runId !== run.runId || value.runRevision !== run.revision
+      || value.allSatisfied !== allSatisfied || !Array.isArray(value.results) || value.results.length !== 8) {
     practiceRunFail("STATE_CORRUPTED", "Checkpoint result identity is invalid");
   }
   assertDigest(value.claimDigest, "checkpoint claim digest");
@@ -288,41 +290,30 @@ function validateCheckpointResult(value, record, run, allSatisfied) {
     if (item.satisfied === false) keys.push("reasonCode");
     if (Object.hasOwn(item, "selectedEventRefs")) keys.push("selectedEventRefs");
     assertExactKeys(item, keys, "checkpoint item");
-    if (!ID_PATTERN.test(item.checkpointId) || typeof item.satisfied !== "boolean" || ids.has(item.checkpointId) ||
-        (item.satisfied === false && (typeof item.reasonCode !== "string" || item.reasonCode === "")) ||
-        (item.satisfied === true && Object.hasOwn(item, "reasonCode"))) {
+    if (!ID_PATTERN.test(item.checkpointId) || typeof item.satisfied !== "boolean" || ids.has(item.checkpointId)
+        || (item.satisfied === false && (typeof item.reasonCode !== "string" || item.reasonCode === ""))
+        || (item.satisfied === true && Object.hasOwn(item, "reasonCode"))) {
       practiceRunFail("STATE_CORRUPTED", "Checkpoint item is invalid");
     }
     ids.add(item.checkpointId);
-    if (item.selectedEventRefs) {
-      if (!Array.isArray(item.selectedEventRefs) || item.selectedEventRefs.length > 2048) {
-        practiceRunFail("STATE_CORRUPTED", "Checkpoint selected Evidence refs are invalid");
-      }
-      for (const ref of item.selectedEventRefs) {
-        assertExactKeys(ref, ["eventHash", "sequence", "sessionId", "toolCallId", "turnId"], "Evidence event ref");
-        assertDigest(ref.eventHash, "Evidence event hash");
-        if (!Number.isSafeInteger(ref.sequence) || ref.sequence <= 0 ||
-            [ref.sessionId, ref.turnId, ref.toolCallId].some((entry) => typeof entry !== "string" || entry === "")) {
-          practiceRunFail("STATE_CORRUPTED", "Checkpoint Evidence event ref is invalid");
-        }
-      }
+    if (item.selectedEventRefs && (!Array.isArray(item.selectedEventRefs) || item.selectedEventRefs.length > 2048)) {
+      practiceRunFail("STATE_CORRUPTED", "Checkpoint selected Evidence refs are invalid");
     }
   }
-  if (value.results.map((item) => item.checkpointId).join(",") !== CHECKPOINT_IDS.join(",") ||
-      value.results.every((item) => item.satisfied) !== value.allSatisfied ||
-      value.claimDigest !== record.payload.claim.digest ||
-      value.evidenceTerminalHash !== record.payload.evidenceBoundary.hash) {
+  if (value.results.map((item) => item.checkpointId).join(",") !== CHECKPOINT_IDS.join(",")
+      || value.results.every((item) => item.satisfied) !== value.allSatisfied
+      || value.claimDigest !== record.payload.claim.digest
+      || value.evidenceTerminalHash !== record.payload.evidenceBoundary.hash) {
     practiceRunFail("STATE_CORRUPTED", "Checkpoint result conflicts with its journal payload");
   }
 }
 
 function validateCheckpointPayload(record, run, completed) {
   const payload = record.payload;
-  assertExactKeys(
-    payload,
-    ["checkpointResult", "claim", "evidenceBoundary", "selectedEventRefs", "sourceRequestDigest", "sourceRequestPayloadRef"],
-    "checkpoint payload",
-  );
+  assertExactKeys(payload, [
+    "checkpointResult", "claim", "evidenceBoundary", "selectedEventRefs", "sourceRequestDigest",
+    "sourceRequestPayloadRef",
+  ], "checkpoint payload");
   assertExactKeys(payload.claim, ["digest", "payloadRef"], "checkpoint claim reference");
   assertExactKeys(payload.evidenceBoundary, ["hash", "sequence"], "checkpoint Evidence boundary");
   assertDigest(payload.claim.digest, "checkpoint claim digest");
@@ -330,46 +321,32 @@ function validateCheckpointPayload(record, run, completed) {
   assertDigest(payload.evidenceBoundary.hash, "checkpoint Evidence terminal hash");
   assertDigest(payload.sourceRequestDigest, "checkpoint source request digest");
   assertReference(payload.sourceRequestPayloadRef, "requests");
-  if (!Number.isSafeInteger(payload.evidenceBoundary.sequence) || payload.evidenceBoundary.sequence < 0 ||
-      !Array.isArray(payload.selectedEventRefs) || payload.selectedEventRefs.length > 2048) {
+  if (!Number.isSafeInteger(payload.evidenceBoundary.sequence) || payload.evidenceBoundary.sequence < 0
+      || !Array.isArray(payload.selectedEventRefs) || payload.selectedEventRefs.length > 2048) {
     practiceRunFail("STATE_CORRUPTED", "Checkpoint Evidence boundary or refs are invalid");
   }
   const expectedRefs = payload.checkpointResult.results.flatMap((item) => item.selectedEventRefs ?? []);
   if (canonicalJson(expectedRefs) !== canonicalJson(payload.selectedEventRefs)) {
     practiceRunFail("STATE_CORRUPTED", "Checkpoint selected Evidence refs conflict with its results");
   }
-  const refIdentities = new Set();
-  for (const ref of payload.selectedEventRefs) {
-    assertExactKeys(ref, ["eventHash", "sequence", "sessionId", "toolCallId", "turnId"], "selected Evidence event ref");
-    assertDigest(ref.eventHash, "selected Evidence event hash");
-    const identity = `${ref.sequence}:${ref.eventHash}`;
-    if (ref.sessionId !== run.sessionId || !Number.isSafeInteger(ref.sequence) || ref.sequence <= 0 ||
-        ref.sequence > payload.evidenceBoundary.sequence || refIdentities.has(identity)) {
-      practiceRunFail("STATE_CORRUPTED", "Checkpoint selected Evidence ref is invalid or duplicated");
-    }
-    refIdentities.add(identity);
-  }
+  const identities = new Set();
+  for (const ref of payload.selectedEventRefs) validateEventRef(ref, run, payload.evidenceBoundary.sequence, identities);
   validateOperation(record, {
-    toolName: "check_completion",
-    roleId: run.roleId,
-    profileDigest: run.profileDigest,
-    practiceId: run.practiceId,
-    practiceVersion: run.practiceVersion,
-    run,
+    toolName: "check_completion", roleId: run.roleId, profileDigest: run.profileDigest,
+    practiceId: run.practiceId, run,
   });
-  assertExactKeys(
-    record.operation.input,
-    ["checkpointSetId", "checkpointSetVersion", "claimDigest", "completionSchemaId", "completionSchemaVersion", "evidenceTerminalHash", "evidenceTerminalSequence"],
-    "check_completion operation input",
-  );
-  if (record.operation.input.checkpointSetId !== "review-v1" ||
-      record.operation.input.checkpointSetVersion !== 1 ||
-      record.operation.input.completionSchemaId !== "review-claim-v1" ||
-      record.operation.input.completionSchemaVersion !== 1 ||
-      record.operation.input.claimDigest !== payload.claim.digest ||
-      record.operation.input.evidenceTerminalHash !== payload.evidenceBoundary.hash ||
-      record.operation.input.evidenceTerminalSequence !== payload.evidenceBoundary.sequence ||
-      payload.sourceRequestDigest !== record.requestDigest || record.runRevision !== run.revision + 1) {
+  assertExactKeys(record.operation.input, [
+    "checkpointSetId", "checkpointSetVersion", "claimDigest", "completionSchemaId",
+    "completionSchemaVersion", "evidenceTerminalHash", "evidenceTerminalSequence", "finalScopeDigest",
+  ], "check_completion operation input");
+  if (record.operation.input.checkpointSetId !== "review-v2" || record.operation.input.checkpointSetVersion !== 2
+      || record.operation.input.completionSchemaId !== "review-claim-v2"
+      || record.operation.input.completionSchemaVersion !== 2
+      || record.operation.input.claimDigest !== payload.claim.digest
+      || record.operation.input.finalScopeDigest !== run.scope.digest
+      || record.operation.input.evidenceTerminalHash !== payload.evidenceBoundary.hash
+      || record.operation.input.evidenceTerminalSequence !== payload.evidenceBoundary.sequence
+      || payload.sourceRequestDigest !== record.requestDigest || record.runRevision !== run.revision + 1) {
     practiceRunFail("STATE_CORRUPTED", "Invalid check_completion transition");
   }
   validateCheckpointResult(payload.checkpointResult, record, run, completed);
@@ -378,76 +355,53 @@ function validateCheckpointPayload(record, run, completed) {
 function validateAbandonPayload(record, run) {
   const payload = record.payload;
   validateOperation(record, {
-    toolName: "abandon_work",
-    roleId: run.roleId,
-    profileDigest: run.profileDigest,
-    practiceId: run.practiceId,
-    practiceVersion: run.practiceVersion,
-    run,
+    toolName: "abandon_work", roleId: run.roleId, profileDigest: run.profileDigest,
+    practiceId: run.practiceId, run,
   });
-  assertExactKeys(
-    payload,
-    ["reasonCode", "sourceRequestDigest", "sourceRequestPayloadRef", "summaryDigest", "summaryPayloadRef"],
-    "run.abandoned payload",
-  );
-  assertExactKeys(
-    record.operation.input,
-    ["reasonCode", "summaryBytes", "summaryDigest"],
-    "abandon_work operation input",
-  );
-  assertDigest(record.operation.input.summaryDigest, "abandonment summary content digest");
-  if (!ABANDON_REASON_CODES.has(payload.reasonCode) ||
-      record.operation.input.reasonCode !== payload.reasonCode ||
-      !Number.isSafeInteger(record.operation.input.summaryBytes) || record.operation.input.summaryBytes <= 0) {
-    practiceRunFail("STATE_CORRUPTED", "run.abandoned reason code is invalid");
-  }
-  for (const [name, value] of [
-    ["source request digest", payload.sourceRequestDigest],
-    ["summary digest", payload.summaryDigest],
-  ]) assertDigest(value, name);
+  assertExactKeys(payload, [
+    "reasonCode", "sourceRequestDigest", "sourceRequestPayloadRef", "summaryDigest", "summaryPayloadRef",
+  ], "run.abandoned payload");
+  assertExactKeys(record.operation.input, ["reasonCode", "summaryBytes", "summaryDigest"], "abandon_work operation input");
+  assertDigest(record.operation.input.summaryDigest, "abandonment summary digest");
+  assertDigest(payload.sourceRequestDigest, "source request digest");
+  assertDigest(payload.summaryDigest, "summary digest");
   assertReference(payload.sourceRequestPayloadRef, "requests");
   assertReference(payload.summaryPayloadRef, "notes");
-  if (record.runRevision !== run.revision + 1 || payload.sourceRequestDigest !== record.requestDigest) {
-    practiceRunFail("STATE_CORRUPTED", "Invalid run.abandoned revision or source binding");
+  if (!ABANDON_REASON_CODES.has(payload.reasonCode) || record.operation.input.reasonCode !== payload.reasonCode
+      || !Number.isSafeInteger(record.operation.input.summaryBytes) || record.operation.input.summaryBytes <= 0
+      || record.runRevision !== run.revision + 1 || payload.sourceRequestDigest !== record.requestDigest) {
+    practiceRunFail("STATE_CORRUPTED", "Invalid run.abandoned transition");
   }
 }
 
 function applyRecord(state, record, sessionId) {
   assertExactKeys(record, RECORD_KEYS, "PracticeRun journal record");
+  if (record.schemaVersion !== SCHEMA_VERSION) {
+    practiceRunFail("UNSUPPORTED_STATE_SCHEMA", "PracticeRun journal schema is not supported by this runtime");
+  }
   const { hash, ...unsigned } = record;
-  if (record.schemaVersion !== SCHEMA_VERSION || record.sequence !== state.sequence + 1 ||
-      record.previousHash !== state.previousHash || hash !== sha256(unsigned)) {
+  if (record.sequence !== state.sequence + 1 || record.previousHash !== state.previousHash || hash !== sha256(unsigned)) {
     practiceRunFail("STATE_CORRUPTED", `Invalid PracticeRun journal at sequence ${state.sequence + 1}`);
   }
-  if (!RUN_ID_PATTERN.test(record.runId) || !EVENT_ID_PATTERN.test(record.stateEventId) ||
-      !Number.isSafeInteger(record.runRevision) || record.runRevision <= 0 ||
-      typeof record.actorId !== "string" || record.actorId === "" || record.actorId.length > 512 ||
-      typeof record.sourceMessageId !== "string" || record.sourceMessageId === "" ||
-      record.sourceMessageId.length > 512 || typeof record.turnId !== "string" || record.turnId === "" ||
-      typeof record.toolCallId !== "string" || record.toolCallId === "") {
+  if (!RUN_ID_PATTERN.test(record.runId) || !EVENT_ID_PATTERN.test(record.stateEventId)
+      || !Number.isSafeInteger(record.runRevision) || record.runRevision <= 0
+      || typeof record.actorId !== "string" || record.actorId === "" || Buffer.byteLength(record.actorId) > 512
+      || typeof record.sourceMessageId !== "string" || record.sourceMessageId === "" || record.sourceMessageId.length > 512
+      || typeof record.turnId !== "string" || record.turnId === ""
+      || typeof record.toolCallId !== "string" || record.toolCallId === "") {
     practiceRunFail("STATE_CORRUPTED", "PracticeRun journal identity fields are invalid");
   }
   for (const [name, value] of [
-    ["action digest", record.actionDigest],
-    ["input digest", record.inputDigest],
-    ["invocation identity", record.invocationIdentity],
-    ["invocation key", record.invocationKey],
-    ["payload digest", record.payloadDigest],
-    ["request digest", record.requestDigest],
-    ["previous hash", record.previousHash],
-    ["record hash", record.hash],
+    ["action digest", record.actionDigest], ["input digest", record.inputDigest],
+    ["invocation identity", record.invocationIdentity], ["invocation key", record.invocationKey],
+    ["payload digest", record.payloadDigest], ["request digest", record.requestDigest],
+    ["previous hash", record.previousHash], ["record hash", record.hash],
   ]) assertDigest(value, name);
   if (record.invocationIdentity !== practiceInvocationIdentity({
-    sessionId,
-    turnId: record.turnId,
-    toolCallId: record.toolCallId,
+    sessionId, turnId: record.turnId, toolCallId: record.toolCallId,
   }) || record.invocationKey !== idempotencyKey({
-    sessionId,
-    turnId: record.turnId,
-    toolCallId: record.toolCallId,
-    operationDigest: record.actionDigest,
-  }) || record.actionDigest !== sha256(record.operation) ||
-      record.payloadDigest !== sha256(record.payload)) {
+    sessionId, turnId: record.turnId, toolCallId: record.toolCallId, operationDigest: record.actionDigest,
+  }) || record.actionDigest !== sha256(record.operation) || record.payloadDigest !== sha256(record.payload)) {
     practiceRunFail("STATE_CORRUPTED", "PracticeRun invocation, operation, or payload digest mismatch");
   }
   assertTimestamp(record.timestamp);
@@ -456,24 +410,16 @@ function applyRecord(state, record, sessionId) {
   }
 
   if (record.eventType === "run.started") {
-    const run = validateStartPayload(record, state);
-    run.sessionId = sessionId;
+    const run = validateStartPayload(record, state, sessionId);
     state.runs[run.runId] = run;
     state.activeRunId = run.runId;
   } else {
     const run = state.runs[record.runId];
-    if (!run || state.activeRunId !== run.runId || run.status !== "active" ||
-        run.origin.actorId !== record.actorId) {
+    if (!run || state.activeRunId !== run.runId || run.status !== "active" || run.origin.actorId !== record.actorId) {
       practiceRunFail("STATE_CORRUPTED", "PracticeRun journal targets a non-active or mismatched run");
     }
     if (record.eventType === "scope.revised") {
-      validateScopePayload(record, run);
-      run.scope = {
-        revision: run.scope.revision + 1,
-        files: [...run.scope.files, ...record.payload.addedFiles],
-        digest: record.payload.newScopeDigest,
-        source: "model_normalized",
-      };
+      run.scope = validateScopePayload(record, run, sessionId);
       run.revision = record.runRevision;
       run.updatedAt = record.timestamp;
     } else if (record.eventType === "checkpoint.evaluated" || record.eventType === "run.completed") {
@@ -539,33 +485,22 @@ function snapshotFor(state) {
 async function ensurePrivateDirectory(path) {
   await mkdir(path, { recursive: true, mode: 0o700 });
   let entry = await lstat(path);
-  if (!entry.isDirectory() || entry.isSymbolicLink()) {
-    practiceRunFail("STATE_CORRUPTED", "PracticeRun state directory is invalid");
-  }
+  if (!entry.isDirectory() || entry.isSymbolicLink()) practiceRunFail("STATE_CORRUPTED", "PracticeRun state directory is invalid");
   if ((entry.mode & 0o077) !== 0) {
     await chmod(path, 0o700);
     entry = await lstat(path);
-    if ((entry.mode & 0o077) !== 0) {
-      practiceRunFail("STATE_CORRUPTED", "PracticeRun state directory permissions cannot be restricted");
-    }
+    if ((entry.mode & 0o077) !== 0) practiceRunFail("STATE_CORRUPTED", "PracticeRun state permissions cannot be restricted");
   }
 }
 
 async function syncDirectory(path) {
   const handle = await open(path, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
+  try { await handle.sync(); } finally { await handle.close(); }
 }
 
 function safeState(state) {
   return structuredClone({
-    sequence: state.sequence,
-    terminalHash: state.previousHash,
-    activeRunId: state.activeRunId,
-    runs: state.runs,
+    sequence: state.sequence, terminalHash: state.previousHash, activeRunId: state.activeRunId, runs: state.runs,
   });
 }
 
@@ -623,9 +558,7 @@ export class PracticeRunStore {
       if ((entry.mode & 0o077) !== 0) {
         await handle.chmod(0o600);
         entry = await handle.stat();
-        if ((entry.mode & 0o077) !== 0) {
-          practiceRunFail("STATE_CORRUPTED", "PracticeRun journal permissions cannot be restricted");
-        }
+        if ((entry.mode & 0o077) !== 0) practiceRunFail("STATE_CORRUPTED", "PracticeRun journal permissions cannot be restricted");
       }
       const bytes = await handle.readFile();
       text = bytes.toString("utf8");
@@ -637,14 +570,11 @@ export class PracticeRunStore {
     if (text !== "" && !text.endsWith("\n")) practiceRunFail("STATE_CORRUPTED", "PracticeRun journal has a partial record");
     for (const line of text.split("\n")) {
       if (line === "") continue;
-      if (Buffer.byteLength(line) > MAX_JOURNAL_RECORD_BYTES) {
-        practiceRunFail("STATE_CORRUPTED", "PracticeRun journal record exceeds its size limit");
-      }
+      if (Buffer.byteLength(line) > MAX_JOURNAL_RECORD_BYTES) practiceRunFail("STATE_CORRUPTED", "PracticeRun journal record is oversized");
       let record;
-      try {
-        record = JSON.parse(line);
-      } catch {
-        practiceRunFail("STATE_CORRUPTED", "PracticeRun journal contains invalid JSON");
+      try { record = JSON.parse(line); } catch { practiceRunFail("STATE_CORRUPTED", "PracticeRun journal contains invalid JSON"); }
+      if (record?.schemaVersion !== SCHEMA_VERSION) {
+        practiceRunFail("UNSUPPORTED_STATE_SCHEMA", "PracticeRun journal schema is not supported by this runtime");
       }
       applyRecord(state, record, this.#sessionId);
     }
@@ -660,9 +590,7 @@ export class PracticeRunStore {
     try {
       await handle.writeFile(`${canonicalJson(snapshot)}\n`);
       await handle.sync();
-    } finally {
-      await handle.close();
-    }
+    } finally { await handle.close(); }
     try {
       await rename(temporary, this.#snapshotPath);
       await syncDirectory(directory);
@@ -676,32 +604,18 @@ export class PracticeRunStore {
     const expected = canonicalJson(snapshotFor(state));
     let valid = false;
     let handle;
-    try {
-      handle = await open(this.#snapshotPath, constants.O_RDONLY | constants.O_NOFOLLOW);
-    } catch (error) {
-      if (!["ENOENT", "ELOOP"].includes(error?.code)) throw error;
-    }
+    try { handle = await open(this.#snapshotPath, constants.O_RDONLY | constants.O_NOFOLLOW); }
+    catch (error) { if (!["ENOENT", "ELOOP"].includes(error?.code)) throw error; }
     if (handle) {
       try {
         let entry = await handle.stat();
         if (entry.isFile()) {
-          if ((entry.mode & 0o077) !== 0) {
-            await handle.chmod(0o600);
-            entry = await handle.stat();
-          }
-          if ((entry.mode & 0o077) !== 0) {
-            practiceRunFail("STATE_CORRUPTED", "PracticeRun snapshot permissions cannot be restricted");
-          }
-          try {
-            const actual = JSON.parse(await handle.readFile("utf8"));
-            valid = canonicalJson(actual) === expected;
-          } catch (error) {
-            if (!(error instanceof SyntaxError)) throw error;
-          }
+          if ((entry.mode & 0o077) !== 0) { await handle.chmod(0o600); entry = await handle.stat(); }
+          if ((entry.mode & 0o077) !== 0) practiceRunFail("STATE_CORRUPTED", "PracticeRun snapshot permissions cannot be restricted");
+          try { valid = canonicalJson(JSON.parse(await handle.readFile("utf8"))) === expected; }
+          catch (error) { if (!(error instanceof SyntaxError)) throw error; }
         }
-      } finally {
-        await handle.close();
-      }
+      } finally { await handle.close(); }
     }
     if (!valid) await this.#writeSnapshot(state);
   }
@@ -732,40 +646,27 @@ export class PracticeRunStore {
     };
     const record = { ...unsigned, hash: sha256(unsigned) };
     const line = `${canonicalJson(record)}\n`;
-    if (Buffer.byteLength(line) > MAX_JOURNAL_RECORD_BYTES) {
-      practiceRunFail("SCOPE_LIMIT_EXCEEDED", "PracticeRun journal record exceeds its size limit");
-    }
+    if (Buffer.byteLength(line) > MAX_JOURNAL_RECORD_BYTES) practiceRunFail("TARGET_LIMIT_EXCEEDED", "PracticeRun journal record is oversized");
     const validatedState = structuredClone(state);
     applyRecord(validatedState, record, this.#sessionId);
     const directory = dirname(this.#filePath);
     await ensurePrivateDirectory(directory);
     const creating = state.journalIdentity === null;
-    const handle = await open(
-      this.#filePath,
-      constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY | constants.O_NOFOLLOW,
-      0o600,
-    );
+    const handle = await open(this.#filePath, constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
     let metadata;
     try {
       metadata = await handle.stat();
       const identity = `${metadata.dev}:${metadata.ino}`;
-      if (!metadata.isFile() || metadata.size !== state.journalBytes ||
-          (state.journalIdentity !== null && identity !== state.journalIdentity)) {
+      if (!metadata.isFile() || metadata.size !== state.journalBytes
+          || (state.journalIdentity !== null && identity !== state.journalIdentity)) {
         practiceRunFail("STATE_CORRUPTED", "PracticeRun journal changed during append");
       }
-      if ((metadata.mode & 0o077) !== 0) {
-        await handle.chmod(0o600);
-        metadata = await handle.stat();
-        if ((metadata.mode & 0o077) !== 0) {
-          practiceRunFail("STATE_CORRUPTED", "PracticeRun journal permissions cannot be restricted");
-        }
-      }
+      if ((metadata.mode & 0o077) !== 0) { await handle.chmod(0o600); metadata = await handle.stat(); }
+      if ((metadata.mode & 0o077) !== 0) practiceRunFail("STATE_CORRUPTED", "PracticeRun journal permissions cannot be restricted");
       await handle.writeFile(line);
       await handle.sync();
       metadata = await handle.stat();
-    } finally {
-      await handle.close();
-    }
+    } finally { await handle.close(); }
     if (creating) await syncDirectory(directory);
     Object.assign(state, validatedState);
     state.journalBytes = metadata.size;
@@ -792,15 +693,12 @@ export class PracticeRunStore {
   #replayOrConflict(state, input, { requireAction = true } = {}) {
     const existing = state.invocations[input.invocationIdentity];
     if (!existing) return undefined;
-    if (existing.actorId !== input.actorId) {
-      practiceRunFail("RUN_REQUESTER_MISMATCH", "The authenticated requester does not own the PracticeRun invocation");
+    if (existing.actorId !== input.actorId) practiceRunFail("RUN_REQUESTER_MISMATCH", "Requester does not own this invocation");
+    if (existing.sourceMessageId !== input.sourceMessageId || existing.requestDigest !== input.requestDigest
+        || existing.inputDigest !== input.inputDigest || (requireAction
+          && (existing.actionDigest !== input.actionDigest || existing.invocationKey !== input.invocationKey))) {
+      practiceRunFail("INVOCATION_CONFLICT", "PracticeRun invocation changed its action");
     }
-    const mismatch = existing.sourceMessageId !== input.sourceMessageId ||
-      existing.requestDigest !== input.requestDigest ||
-      existing.inputDigest !== input.inputDigest ||
-      (requireAction && (existing.actionDigest !== input.actionDigest ||
-        existing.invocationKey !== input.invocationKey));
-    if (mismatch) practiceRunFail("INVOCATION_CONFLICT", "PracticeRun invocation changed its action");
     return {
       replayed: true,
       stateEventId: existing.stateEventId,
@@ -814,13 +712,8 @@ export class PracticeRunStore {
     };
   }
 
-  async state() {
-    return this.#withState((state) => safeState(state));
-  }
-
-  async replay(input) {
-    return this.#withState((state) => this.#replayOrConflict(state, input, { requireAction: false }));
-  }
+  async state() { return this.#withState((state) => safeState(state)); }
+  async replay(input) { return this.#withState((state) => this.#replayOrConflict(state, input, { requireAction: false })); }
 
   async activeForActor(actorId, { required = true } = {}) {
     requiredString(actorId, "actorId");
@@ -830,9 +723,7 @@ export class PracticeRunStore {
         if (required) practiceRunFail("ACTIVE_RUN_REQUIRED", "An active PracticeRun is required");
         return undefined;
       }
-      if (run.origin.actorId !== actorId) {
-        practiceRunFail("RUN_REQUESTER_MISMATCH", "The authenticated requester does not own the active PracticeRun");
-      }
+      if (run.origin.actorId !== actorId) practiceRunFail("RUN_REQUESTER_MISMATCH", "Requester does not own the active PracticeRun");
       return structuredClone(run);
     });
   }
@@ -843,101 +734,42 @@ export class PracticeRunStore {
       if (replay) return replay;
       const active = state.activeRunId ? state.runs[state.activeRunId] : undefined;
       if (active) {
-        if (active.origin.actorId !== input.actorId) {
-          practiceRunFail("RUN_REQUESTER_MISMATCH", "The authenticated requester does not own the active PracticeRun");
-        }
+        if (active.origin.actorId !== input.actorId) practiceRunFail("RUN_REQUESTER_MISMATCH", "Requester does not own the active run");
         practiceRunFail("ACTIVE_RUN_EXISTS", "An active PracticeRun already exists");
       }
       const record = await this.#append(state, input);
-      return {
-        replayed: false,
-        stateEventId: record.stateEventId,
-        eventType: record.eventType,
-        run: structuredClone(state.runs[record.runId]),
-        sequence: record.sequence,
-        terminalHash: record.hash,
-      };
+      return this.#result(state, record);
     });
   }
 
-  async extend(input) {
+  async extend(input) { return this.#transition(input, "scope extension"); }
+  async checkpoint(input) { return this.#transition(input, "checkpoint evaluation"); }
+  async abandon(input) { return this.#transition(input, "abandonment"); }
+
+  async #transition(input, name) {
     return this.#withState(async (state) => {
       const replay = this.#replayOrConflict(state, input);
       if (replay) return replay;
       const run = state.activeRunId ? state.runs[state.activeRunId] : undefined;
       if (!run) practiceRunFail("ACTIVE_RUN_REQUIRED", "An active PracticeRun is required");
-      if (run.origin.actorId !== input.actorId) {
-        practiceRunFail("RUN_REQUESTER_MISMATCH", "The authenticated requester does not own the active PracticeRun");
-      }
-      if (input.runId !== run.runId || run.status !== "active") {
-        practiceRunFail("RUN_NOT_ACTIVE", "The selected PracticeRun is not active");
-      }
+      if (run.origin.actorId !== input.actorId) practiceRunFail("RUN_REQUESTER_MISMATCH", "Requester does not own the active run");
+      if (input.runId !== run.runId || run.status !== "active") practiceRunFail("RUN_NOT_ACTIVE", "Selected PracticeRun is not active");
       if (input.expectedRunRevision !== run.revision || input.runRevision !== run.revision + 1) {
-        practiceRunFail("STALE_RUN_REVISION", "PracticeRun revision changed before scope extension");
+        practiceRunFail("STALE_RUN_REVISION", `PracticeRun revision changed before ${name}`);
       }
       const record = await this.#append(state, input);
-      return {
-        replayed: false,
-        stateEventId: record.stateEventId,
-        eventType: record.eventType,
-        run: structuredClone(state.runs[record.runId]),
-        sequence: record.sequence,
-        terminalHash: record.hash,
-      };
+      return this.#result(state, record);
     });
   }
 
-  async checkpoint(input) {
-    return this.#withState(async (state) => {
-      const replay = this.#replayOrConflict(state, input);
-      if (replay) return replay;
-      const run = state.activeRunId ? state.runs[state.activeRunId] : undefined;
-      if (!run) practiceRunFail("ACTIVE_RUN_REQUIRED", "An active PracticeRun is required");
-      if (run.origin.actorId !== input.actorId) {
-        practiceRunFail("RUN_REQUESTER_MISMATCH", "The authenticated requester does not own the active PracticeRun");
-      }
-      if (input.runId !== run.runId || run.status !== "active") {
-        practiceRunFail("RUN_NOT_ACTIVE", "The selected PracticeRun is not active");
-      }
-      if (input.expectedRunRevision !== run.revision || input.runRevision !== run.revision + 1) {
-        practiceRunFail("STALE_RUN_REVISION", "PracticeRun revision changed before checkpoint evaluation");
-      }
-      const record = await this.#append(state, input);
-      return {
-        replayed: false,
-        stateEventId: record.stateEventId,
-        eventType: record.eventType,
-        run: structuredClone(state.runs[record.runId]),
-        sequence: record.sequence,
-        terminalHash: record.hash,
-      };
-    });
-  }
-
-  async abandon(input) {
-    return this.#withState(async (state) => {
-      const replay = this.#replayOrConflict(state, input);
-      if (replay) return replay;
-      const run = state.activeRunId ? state.runs[state.activeRunId] : undefined;
-      if (!run) practiceRunFail("ACTIVE_RUN_REQUIRED", "An active PracticeRun is required");
-      if (run.origin.actorId !== input.actorId) {
-        practiceRunFail("RUN_REQUESTER_MISMATCH", "The authenticated requester does not own the active PracticeRun");
-      }
-      if (input.runId !== run.runId || run.status !== "active") {
-        practiceRunFail("RUN_NOT_ACTIVE", "The selected PracticeRun is not active");
-      }
-      if (input.expectedRunRevision !== run.revision || input.runRevision !== run.revision + 1) {
-        practiceRunFail("STALE_RUN_REVISION", "PracticeRun revision changed before abandonment");
-      }
-      const record = await this.#append(state, input);
-      return {
-        replayed: false,
-        stateEventId: record.stateEventId,
-        eventType: record.eventType,
-        run: structuredClone(state.runs[record.runId]),
-        sequence: record.sequence,
-        terminalHash: record.hash,
-      };
-    });
+  #result(state, record) {
+    return {
+      replayed: false,
+      stateEventId: record.stateEventId,
+      eventType: record.eventType,
+      run: structuredClone(state.runs[record.runId]),
+      sequence: record.sequence,
+      terminalHash: record.hash,
+    };
   }
 }

@@ -1,7 +1,7 @@
 # CapturedArtifactStore 持久化与 Evidence 合同
 
-> **状态：** v1 持久化基础设施已实现并通过 deterministic tests；尚无 current Reviewer consumer 或 model-visible artifact tool。
-> **基础：** [`agent-plane-foundation.md`](./agent-plane-foundation.md) 与待实现的 [`reviewer-typed-targets.md`](./reviewer-typed-targets.md)。
+> **状态：** v1持久化基础设施及Reviewer v2 directory capture/inspection consumers已实现；Store仍不是model-visible artifact tool。
+> **基础：** 历史 [`agent-plane-foundation.md`](./agent-plane-foundation.md) 与已实现部分的 [`reviewer-typed-targets.md`](./reviewer-typed-targets.md)。
 > **范围：** 定义第一个 target-bound CapturedArtifactStore：保存 backend 规范化并实际可交给模型的有界 bytes，同时保持与 PracticeRun Machine State、Machine Evidence、claim 和 transcript 分离。
 > **保证不变：** artifact 不授予权限、不认证内容真实性、不推进 checkpoint；`worker-local / static-review-only` 不因持久化 bytes 提升。
 > **不是：** 第二条 Evidence chain、通用 blob service、模型可枚举文件库、目录/git/search/vision 能力实现、远程 PR、workspace mutation、自动 retention、通用 bash 或兼容迁移。
@@ -12,8 +12,8 @@
 
 当前实现边界：
 
-- Worker image已有concrete CapturedArtifactStore模块和独立state root，但没有current profile/tool调用它；现有 Reviewer read output 仍只受当前 Evidence metadata合同约束；
-- typed target、directory manifest、canonical git diff、search/fetch 或 vision仍未实现，不得把Store基础设施描述为对应capability已可用；
+- Worker image已有concrete CapturedArtifactStore模块和独立state root；Reviewer v2 runtime由代码调用它保存directory manifest、member consume及bounded list/search output，Store本身不在model tool registry；
+- typed `file`/`directory_snapshot`与directory manifest已实现；canonical git diff、network search/fetch或vision仍未实现，不得把Store基础设施描述为这些capability已可用；
 - 不得把 artifact bytes 塞入 Evidence、PracticeRun journal、OTel、transcript、自定义 prompt message、错误或 filename 来绕过 Store；
 - 不得以 protected payload store、pending write payload 或 workspace 临时文件冒充 artifact store；
 - 不加入旧路径扫描、迁移、双写或 compatibility shim。

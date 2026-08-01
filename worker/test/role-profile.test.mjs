@@ -52,16 +52,19 @@ test("valid fixed profiles load frozen code-owned role context", async () => {
   assert.equal(Object.isFrozen(reviewer.tools), true);
   assert.deepEqual(kernel.profile.toolIds, ["read", "write"]);
   assert.deepEqual(reviewer.profile, {
-    schemaVersion: 1,
+    schemaVersion: 2,
     roleId: "reviewer",
     title: "Reviewer",
     practiceIds: ["review"],
-    toolIds: ["start_work", "extend_scope", "read", "check_completion", "abandon_work"],
-    gatePolicyId: "reviewer-v1",
-    roleSkillId: "reviewer-v1",
+    targetKindIds: ["file", "directory_snapshot"],
+    toolIds: ["start_work", "extend_scope", "read", "inspect_directory", "check_completion", "abandon_work"],
+    gatePolicyId: "reviewer-v2",
+    roleSkillId: "reviewer-v2",
   });
   assert.equal(reviewer.practices[0].definition.id, "review");
-  assert.equal(reviewer.practices[0].methodology.id, "review-v1");
+  assert.equal(reviewer.practices[0].definition.version, 2);
+  assert.equal(reviewer.practices[0].methodology.id, "review-v2");
+  assert.deepEqual(reviewer.targetKinds.map((kind) => kind.id), ["file", "directory_snapshot"]);
   assert.match(buildBaseSystemPrompt(reviewer), /static-only review/u);
   assert.match(buildBaseSystemPrompt(reviewer), new RegExp(reviewer.profileDigest, "u"));
 
@@ -81,18 +84,19 @@ test("closed registries deny Reviewer mutation and unknown capability selection"
   const registries = roleRegistrySnapshot();
   assert.equal(Object.isFrozen(registries), true);
   const reviewer = await loadSourceProfile("reviewer");
-  assert.notEqual(reviewer.gatePolicy, registries.gatePolicies["reviewer-v1"]);
+  assert.notEqual(reviewer.gatePolicy, registries.gatePolicies["reviewer-v2"]);
   assert.notEqual(reviewer.tools[0], registries.tools.start_work);
   assert.deepEqual(registries.roles.reviewer.toolIds, [
     "start_work",
     "extend_scope",
     "read",
+    "inspect_directory",
     "check_completion",
     "abandon_work",
   ]);
   for (const toolId of ["write", "edit", "bash"]) {
     assert.equal(registries.roles.reviewer.toolIds.includes(toolId), false);
-    assert.equal(registries.gatePolicies["reviewer-v1"].toolIds.includes(toolId), false);
+    assert.equal(registries.gatePolicies["reviewer-v2"].toolIds.includes(toolId), false);
   }
   assert.equal(Object.hasOwn(registries.tools, "unknown"), false);
   assert.deepEqual(registries.tools.read.materializedRoleIds, ["kernel", "reviewer"]);
@@ -105,7 +109,8 @@ test("profile schema, IDs, duplicates, and digest spoofing fail closed", async (
   const variants = [
     { ...original, unexpected: true },
     Object.fromEntries(Object.entries(original).filter(([key]) => key !== "roleSkillId")),
-    { ...original, schemaVersion: 2 },
+    { ...original, schemaVersion: 1 },
+    Object.fromEntries(Object.entries(original).filter(([key]) => key !== "targetKindIds")),
     { ...original, roleId: "unknown" },
     { ...original, toolIds: [...original.toolIds, "read"] },
     { ...original, toolIds: [...original.toolIds.slice(0, -1), "write"] },

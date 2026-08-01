@@ -1,15 +1,16 @@
 import { practiceRunFail } from "./errors.mjs";
 
 const MUTATION_TOOLS = new Set(["write", "edit", "bash"]);
-const COVERAGE_STATUSES = new Set(["complete", "unread", "partial", "mixed_version"]);
+const COVERAGE_STATUSES = new Set(["complete", "unread", "partial", "blocked"]);
+const BLOCK_REASONS = new Set([
+  "TARGET_CHANGED", "TARGET_UNAVAILABLE", "GIT_OBJECT_UNAVAILABLE", "TARGET_EVIDENCE_LIMIT_EXCEEDED",
+]);
 
 function fail(message) {
   practiceRunFail("REVIEW_GUIDANCE_INVARIANT_VIOLATION", message);
 }
 
-function stableUnique(values) {
-  return [...new Set(values)];
-}
+function stableUnique(values) { return [...new Set(values)]; }
 
 function action(code, targetRefs = [], reasonCodes = []) {
   return Object.freeze({
@@ -20,69 +21,70 @@ function action(code, targetRefs = [], reasonCodes = []) {
 }
 
 function assertCoverage(run, coverage) {
-  if (!coverage || !Array.isArray(coverage.files) || coverage.files.length !== run.scope.files.length) {
-    fail("Review coverage does not match the final scope");
+  if (!coverage || !Array.isArray(coverage.targets) || coverage.targets.length !== run.scope.targets.length) {
+    fail("Review coverage does not match the final target scope");
   }
-  for (const [index, file] of coverage.files.entries()) {
-    const expectedReason = file?.status === "complete"
-      ? null
-      : file?.status === "mixed_version"
-        ? "FILE_VERSION_MIXED"
-        : "SCOPE_READ_INCOMPLETE";
-    if (!file || file.path !== run.scope.files[index] || file.targetRef !== `scope-file-${index + 1}` ||
-        !COVERAGE_STATUSES.has(file.status) || file.reasonCode !== expectedReason) {
-      fail("Review coverage contains an invalid file projection");
+  for (const [index, target] of coverage.targets.entries()) {
+    const expected = run.scope.targets[index];
+    if (!target || target.targetId !== expected.targetId || target.kind !== expected.kind
+        || target.snapshotIdentity !== expected.snapshot.identity || !COVERAGE_STATUSES.has(target.status)
+        || (target.status === "complete" && target.reasonCode !== null)
+        || (["unread", "partial"].includes(target.status) && target.reasonCode !== "TARGET_CONSUMPTION_INCOMPLETE")
+        || (target.status === "blocked" && !BLOCK_REASONS.has(target.reasonCode))) {
+      fail("Review coverage contains an invalid target projection");
     }
   }
-  const firstIncomplete = coverage.files.find((file) => file.status !== "complete");
-  const allComplete = firstIncomplete === undefined;
-  if (coverage.satisfied !== allComplete || coverage.reason !== (firstIncomplete?.reasonCode ?? null)) {
-    fail("Review coverage summary conflicts with its file projections");
+  const firstIncomplete = coverage.targets.find((target) => target.status !== "complete");
+  if (coverage.satisfied !== (firstIncomplete === undefined)
+      || coverage.reason !== (firstIncomplete?.reasonCode ?? null)) {
+    fail("Review coverage summary conflicts with target projections");
   }
 }
 
 function failedCheckpointReasons(run) {
   if (!run.lastCheckpoint) return [];
   if (run.lastCheckpoint.allSatisfied === true || !Array.isArray(run.lastCheckpoint.results)) {
-    fail("An active review run has an invalid checkpoint state");
+    fail("An active review run has invalid checkpoint state");
   }
   const reasons = [];
   for (const item of run.lastCheckpoint.results) {
     if (!item || typeof item.satisfied !== "boolean") fail("Review checkpoint state is invalid");
     if (!item.satisfied) {
-      if (typeof item.reasonCode !== "string" || item.reasonCode === "") {
-        fail("A failed review checkpoint is missing its reason code");
-      }
+      if (typeof item.reasonCode !== "string" || item.reasonCode === "") fail("Failed checkpoint reason is missing");
       reasons.push(item.reasonCode);
     }
   }
-  if (reasons.length === 0) fail("An active failed checkpoint has no failed result");
+  if (reasons.length === 0) fail("Active failed checkpoint has no failed result");
   return stableUnique(reasons);
 }
 
 export function deriveReviewNextAction({ run, coverage, evidenceProjection } = {}) {
   if (run === undefined || run === null) return action("NONE");
-  if (run.status !== "active" || !Array.isArray(run.scope?.files) || run.scope.files.length === 0) {
-    fail("Review guidance requires a valid active run");
+  if (run.status !== "active" || !Array.isArray(run.scope?.targets) || run.scope.targets.length === 0) {
+    fail("Review guidance requires a valid active target run");
   }
-  if (!Array.isArray(evidenceProjection?.executions)) {
-    fail("Review guidance requires a validated Evidence projection");
+  if (!Array.isArray(evidenceProjection?.executions)) fail("Review guidance requires validated Evidence");
+  if (evidenceProjection.executions.some((entry) => MUTATION_TOOLS.has(entry.toolName) && entry.status === "success")) {
+    fail("Reviewer run contains successful mutation Evidence");
   }
-  if (evidenceProjection.executions.some((entry) => MUTATION_TOOLS.has(entry.toolName))) {
-    fail("A Reviewer run contains a successful mutation execution");
-  }
-
   assertCoverage(run, coverage);
-  const remaining = coverage.files.filter((file) => file.status !== "complete");
-  if (remaining.length > 0) {
+  const blocked = coverage.targets.filter((target) => target.status === "blocked");
+  if (blocked.length > 0) {
     return action(
-      "READ_REMAINING_SCOPE",
-      remaining.map((file) => file.targetRef),
-      stableUnique(remaining.map((file) => file.reasonCode)),
+      "RESOLVE_TARGET_BLOCKER",
+      blocked.map((target) => target.targetId),
+      stableUnique(blocked.map((target) => target.reasonCode)),
     );
   }
-
-  const failedReasons = failedCheckpointReasons(run);
-  if (failedReasons.length > 0) return action("ADDRESS_CHECKPOINT_FAILURE", [], failedReasons);
+  const incomplete = coverage.targets.filter((target) => target.status !== "complete");
+  if (incomplete.length > 0) {
+    return action(
+      "CONSUME_REMAINING_TARGETS",
+      incomplete.map((target) => target.targetId),
+      ["TARGET_CONSUMPTION_INCOMPLETE"],
+    );
+  }
+  const failed = failedCheckpointReasons(run);
+  if (failed.length > 0) return action("ADDRESS_CHECKPOINT_FAILURE", [], failed);
   return action("CHECK_COMPLETION");
 }

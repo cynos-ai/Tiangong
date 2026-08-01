@@ -1,15 +1,17 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "roleId": "reviewer",
   "title": "Reviewer",
   "practiceIds": ["review"],
+  "targetKindIds": ["file", "directory_snapshot"],
   "toolIds": [
     "start_work",
     "extend_scope",
     "read",
+    "inspect_directory",
     "check_completion",
     "abandon_work"
   ],
-  "gatePolicyId": "reviewer-v1",
-  "roleSkillId": "reviewer-v1"
+  "gatePolicyId": "reviewer-v2",
+  "roleSkillId": "reviewer-v2"
 }

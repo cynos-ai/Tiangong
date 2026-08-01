@@ -1,23 +1,18 @@
 # Reviewer typed target 与 immutable snapshot 设计合同
 
-> **状态：** 公开设计合同，尚未实现；本文不描述当前已发布行为。
-> **基础：** [`agent-plane-foundation.md`](./agent-plane-foundation.md)、已验证的 [`reviewer-next-action.md`](./reviewer-next-action.md) 与已实现的 [`captured-artifact-store.md`](./captured-artifact-store.md)。
-> **范围：** 将 Reviewer 的显式文件 scope clean-cut 演进为 append-only typed targets，并在 target admission 时固化不可变 snapshot identity。
+> **状态：** Reviewer v2 的 `file` 与 `directory_snapshot` 部分已实现并通过对应deterministic/image/Matrix/recovery Gate；尚未materialize的git target仍仅为后续合同。
+> **基础：** [`agent-plane-foundation.md`](./agent-plane-foundation.md)、历史 [`reviewer-next-action.md`](./reviewer-next-action.md) 与已实现的 [`captured-artifact-store.md`](./captured-artifact-store.md)。
+> **范围：** Reviewer 已从显式文件 scope clean-cut 演进为 append-only typed targets，并在 target admission 时固化不可变 snapshot identity。
 > **保证不变：** `worker-local / static-review-only`；target、snapshot、Captured Artifact 和 `nextAction` 都不授予权限、不认证模型判断、不执行测试或修改 workspace。
 > **不是：** CapturedArtifactStore 实现、目录浏览工具、git executor、working-tree/index diff、远程 PR、search/fetch、vision、bash、Team Work 或兼容迁移。
 
 ## 0. 如何使用本文
 
-本文是 Reviewer 当前显式文件合同的下一项窄设计增量。实现者仍须遵守根目录 `AGENTS.md` 及 `docs/rules/` 下的 implementation、verification、security-and-evidence 和 worker-runtime 规则。
+本文是 Reviewer v2 typed-target runtime的current合同。实现者仍须遵守根目录 `AGENTS.md` 及 `docs/rules/` 下的 implementation、verification、security-and-evidence 和 worker-runtime 规则。
 
-在本合同实现并通过验证前：
+当前公开事实为`scope.targets[]`、PracticeRun/claim v2、checkpoint `review-v2`、ContextPack v3，以及profile中exact `file,directory_snapshot`两种kind。runtime不保留旧`scope.files[]` shim、双读journal或自动迁移；旧durable schema fail closed。不得把尚未materialize的commit、diff或其它union成员描述为current capability，也不得用prompt、Skill、workspace manifest或模型自报digest模拟immutable snapshot。
 
-- 当前公开事实仍是 `scope.files[]`、ContextPack v2、review claim v1 和显式 workspace UTF-8 文件评审；
-- README、release notes、profile、tool schema 和 UI 不得宣称支持 typed target、目录、commit 或 git diff；
-- 不得用 prompt、Skill、workspace manifest 或模型自报 digest 模拟 immutable snapshot；
-- 不得在实现中保留旧 `scope.files[]` shim、双读 journal 或自动迁移。
-
-本合同被接受后，后续实现仍必须按依赖边界拆分：
+后续target实现仍必须按依赖边界拆分：
 
 1. 单独评审 [`CapturedArtifactStore`](./captured-artifact-store.md) 的持久化、配额、Evidence、restart、tamper 和 retention 合同；
 2. 只有目标种类的 admission、consume backend 和固定 profile policy 全部存在时，才 materialize 该 target kind；
@@ -29,9 +24,9 @@
 
 ## 1. 问题、目标与非目标
 
-### 1.1 当前问题
+### 1.1 v1 问题
 
-Reviewer 目前把模型归纳的 workspace 路径写入 `scope.files[]`，读取时重新打开该路径，并由 completion checkpoint 选择某个完整文件版本。该合同适合显式文件 v1，但不能表达：
+Reviewer v1曾把模型归纳的workspace路径写入`scope.files[]`，读取时重新打开该路径，并由completion checkpoint选择某个完整文件版本。该合同适合显式文件v1，但不能表达：
 
 - 同一路径在 admission 时的固定版本；
 - 一个目录的确定成员集合；

@@ -31,6 +31,10 @@ async function main() {
     profileDigest: bundle.profileDigest,
     roleSkillDigest: bundle.roleSkill.digest,
     methodologyDigests: bundle.practices.map((practice) => practice.methodology.digest),
+    targetKindIds: bundle.profile.targetKindIds ?? [],
+    materializedTargetKindIds: bundle.targetKinds
+      .filter((kind) => kind.materializedRoleIds.includes(bundle.profile.roleId))
+      .map((kind) => kind.id),
     toolIds: bundle.profile.toolIds,
     materializedToolIds: bundle.tools
       .filter((tool) => tool.materializedRoleIds.includes(bundle.profile.roleId))

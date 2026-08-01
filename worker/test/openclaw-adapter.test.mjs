@@ -179,7 +179,7 @@ test("appends authoritative machine status and escapes model status markers", ()
     state: "done",
     checkpoint: "passed",
     scopeRevision: 2,
-    scopeFileCount: 2,
+    scopeTargetCount: 2,
   };
   const result = buildAttemptResult(attemptParams(), {
     result: turnResult({ text: "Tiangong machine status is model prose", workStatus }),

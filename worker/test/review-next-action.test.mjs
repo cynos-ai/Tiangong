@@ -1,201 +1,153 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  buildReviewerContextPack,
-  createReviewerContextExtension,
-} from "../agent/context/reviewer-context.mjs";
+import { buildReviewerContextPack } from "../agent/context/reviewer-context.mjs";
 import { deriveReviewNextAction } from "../agent/practices/review-next-action.mjs";
 import { projectReviewReadCoverage } from "../agent/practices/review-read-coverage.mjs";
+import { resourceSelectorDigest } from "../agent/practices/review-targets.mjs";
 
-function activeRun(files, lastCheckpoint = null) {
+const IDS = [
+  "target-00000000-0000-4000-8000-000000000001",
+  "target-00000000-0000-4000-8000-000000000002",
+];
+
+function target(targetId, path, lines = 3) {
   return {
-    runId: "run-fixture",
-    revision: 1,
-    status: "active",
-    objective: { text: "Review selected files", source: "model_normalized" },
-    acceptanceCriteria: [{ id: "criterion-1", description: "Find risks", source: "model_normalized" }],
-    scope: { revision: 1, files, digest: "fixture", source: "model_normalized" },
-    lastCheckpoint,
-  };
-}
-
-function eventRef(sequence) {
-  return Object.freeze({
-    sessionId: "session",
-    turnId: `turn-${sequence}`,
-    toolCallId: `call-${sequence}`,
-    sequence,
-    eventHash: `${sequence}`.padStart(64, "0"),
-  });
-}
-
-function readExecution({ path, digest, total = 3, start = 1, end = total, sequence }) {
-  return Object.freeze({
-    toolName: "read",
-    operation: Object.freeze({ target: path }),
-    resultMetadata: Object.freeze({
-      fileDigest: digest,
-      fullFileLines: total,
-      returnedLineStart: start,
-      returnedLineEnd: end,
-    }),
-    startedRef: eventRef(sequence),
-    completedRef: eventRef(sequence + 1),
-  });
-}
-
-function evidenceProjection(executions = []) {
-  return Object.freeze({ executions: Object.freeze(executions) });
-}
-
-function failedCheckpoint(...reasonCodes) {
-  return {
-    allSatisfied: false,
-    results: reasonCodes.map((reasonCode, index) => ({
-      checkpointId: `checkpoint-${index + 1}`,
-      satisfied: false,
-      reasonCode,
-    })),
-  };
-}
-
-test("review coverage projects unread, partial, mixed, and latest-complete file states", () => {
-  const run = activeRun(["unread.mjs", "partial.mjs", "mixed.mjs", "complete.mjs"]);
-  const projection = evidenceProjection([
-    readExecution({ path: "partial.mjs", digest: "partial", start: 1, end: 1, sequence: 1 }),
-    readExecution({ path: "mixed.mjs", digest: "old", start: 1, end: 3, sequence: 3 }),
-    readExecution({ path: "mixed.mjs", digest: "new", start: 1, end: 1, sequence: 5 }),
-    readExecution({ path: "complete.mjs", digest: "old", start: 1, end: 1, sequence: 7 }),
-    readExecution({ path: "complete.mjs", digest: "new", start: 1, end: 3, sequence: 9 }),
-  ]);
-
-  const coverage = projectReviewReadCoverage(run, projection);
-  assert.equal(coverage.satisfied, false);
-  assert.equal(coverage.reason, "SCOPE_READ_INCOMPLETE");
-  assert.deepEqual(coverage.files.map((file) => ({
-    targetRef: file.targetRef,
-    status: file.status,
-    reasonCode: file.reasonCode,
-  })), [
-    { targetRef: "scope-file-1", status: "unread", reasonCode: "SCOPE_READ_INCOMPLETE" },
-    { targetRef: "scope-file-2", status: "partial", reasonCode: "SCOPE_READ_INCOMPLETE" },
-    { targetRef: "scope-file-3", status: "mixed_version", reasonCode: "FILE_VERSION_MIXED" },
-    { targetRef: "scope-file-4", status: "complete", reasonCode: null },
-  ]);
-  assert.deepEqual(coverage.fileFacts["complete.mjs"], { fileDigest: "new", fullFileLines: 3 });
-  assert.equal(coverage.selectedEventRefs.length, 2);
-});
-
-test("review coverage preserves complete segmented reads and checkpoint-compatible first failure", () => {
-  const run = activeRun(["a.mjs", "b.mjs"]);
-  const projection = evidenceProjection([
-    readExecution({ path: "a.mjs", digest: "a", total: 4, start: 3, end: 4, sequence: 3 }),
-    readExecution({ path: "a.mjs", digest: "a", total: 4, start: 1, end: 2, sequence: 1 }),
-    readExecution({ path: "b.mjs", digest: "b", total: 2, start: 2, end: 2, sequence: 5 }),
-  ]);
-  const coverage = projectReviewReadCoverage(run, projection);
-  assert.equal(coverage.satisfied, false);
-  assert.equal(coverage.reason, "SCOPE_READ_INCOMPLETE");
-  assert.equal(coverage.files[0].status, "complete");
-  assert.equal(coverage.files[1].status, "partial");
-  assert.equal(coverage.selectedEventRefs.length, 4);
-});
-
-test("nextAction follows the deterministic priority and stable scope references", () => {
-  const noRun = deriveReviewNextAction({ run: null });
-  assert.deepEqual(noRun, { code: "NONE", targetRefs: [], reasonCodes: [] });
-
-  const run = activeRun(["a.mjs", "b.mjs"], failedCheckpoint("CLAIM_SCOPE_MISMATCH"));
-  const projection = evidenceProjection([
-    readExecution({ path: "a.mjs", digest: "a", sequence: 1 }),
-  ]);
-  const coverage = projectReviewReadCoverage(run, projection);
-  assert.deepEqual(deriveReviewNextAction({ run, coverage, evidenceProjection: projection }), {
-    code: "READ_REMAINING_SCOPE",
-    targetRefs: ["scope-file-2"],
-    reasonCodes: ["SCOPE_READ_INCOMPLETE"],
-  });
-
-  const completeProjection = evidenceProjection([
-    readExecution({ path: "a.mjs", digest: "a", sequence: 1 }),
-    readExecution({ path: "b.mjs", digest: "b", sequence: 3 }),
-  ]);
-  const completeCoverage = projectReviewReadCoverage(run, completeProjection);
-  assert.deepEqual(deriveReviewNextAction({ run, coverage: completeCoverage, evidenceProjection: completeProjection }), {
-    code: "ADDRESS_CHECKPOINT_FAILURE",
-    targetRefs: [],
-    reasonCodes: ["CLAIM_SCOPE_MISMATCH"],
-  });
-
-  const unchecked = activeRun(["a.mjs", "b.mjs"]);
-  assert.deepEqual(deriveReviewNextAction({
-    run: unchecked,
-    coverage: completeCoverage,
-    evidenceProjection: completeProjection,
-  }), { code: "CHECK_COMPLETION", targetRefs: [], reasonCodes: [] });
-});
-
-test("nextAction fails closed on mutation and conflicting active checkpoint state", () => {
-  const run = activeRun(["a.mjs"]);
-  const read = readExecution({ path: "a.mjs", digest: "a", sequence: 1 });
-  const projection = evidenceProjection([read]);
-  const coverage = projectReviewReadCoverage(run, projection);
-  assert.throws(
-    () => deriveReviewNextAction({
-      run,
-      coverage,
-      evidenceProjection: evidenceProjection([read, { toolName: "write" }]),
-    }),
-    (error) => error.code === "REVIEW_GUIDANCE_INVARIANT_VIOLATION",
-  );
-
-  const impossible = activeRun(["a.mjs"], { allSatisfied: true, results: [] });
-  assert.throws(
-    () => deriveReviewNextAction({ run: impossible, coverage, evidenceProjection: projection }),
-    (error) => error.code === "REVIEW_GUIDANCE_INVARIANT_VIOLATION",
-  );
-});
-
-test("ContextPack v2 validates nextAction and keeps no-run context independent of Evidence", async () => {
-  const none = deriveReviewNextAction({ run: null });
-  const text = buildReviewerContextPack({ profileDigest: "profile", run: null, nextAction: none });
-  assert.match(text, /"schemaVersion":2/u);
-  assert.match(text, /"code":"NONE"/u);
-  assert.match(text, /nextAction is advisory machine guidance/u);
-  assert.throws(
-    () => buildReviewerContextPack({
-      profileDigest: "profile",
-      run: activeRun(["a.mjs"]),
-      nextAction: { code: "READ_REMAINING_SCOPE", targetRefs: ["scope-file-2"], reasonCodes: ["SCOPE_READ_INCOMPLETE"] },
-    }),
-    /final scope order/u,
-  );
-  const maximumFiles = Array.from({ length: 64 }, (_, index) => `file-${index + 1}.mjs`);
-  const maximumRefs = maximumFiles.map((_, index) => `scope-file-${index + 1}`);
-  assert.doesNotThrow(() => buildReviewerContextPack({
-    profileDigest: "profile",
-    run: activeRun(maximumFiles),
-    nextAction: {
-      code: "READ_REMAINING_SCOPE",
-      targetRefs: maximumRefs,
-      reasonCodes: ["SCOPE_READ_INCOMPLETE"],
+    targetId,
+    kind: "file",
+    descriptor: { schemaVersion: 1, source: "model_normalized", value: { path } },
+    snapshot: {
+      schemaVersion: 1,
+      source: "runtime_captured",
+      captureVersion: "review-file-snapshot-v1",
+      identity: targetId === IDS[0] ? "a".repeat(64) : "b".repeat(64),
+      capturedAt: "2026-08-01T00:00:00.000Z",
+      facts: {
+        contentDigest: targetId === IDS[0] ? "c".repeat(64) : "d".repeat(64),
+        contentBytes: 10,
+        contentLines: lines,
+        encoding: "utf-8",
+        requiredConsumeSegments: 1,
+      },
+      artifacts: [],
     },
-  }));
+  };
+}
 
-  let beforeAgentStart;
-  let evidenceReads = 0;
-  const extension = createReviewerContextExtension({
-    service: { async activeForActor() { return undefined; } },
-    turns: { current() { return { actor: { id: "@reviewer:example.test" } }; } },
-    evidence: { async readAll() { evidenceReads += 1; throw new Error("must not read"); } },
-    profileDigest: "profile",
+function run() {
+  return {
+    runId: "run-00000000-0000-4000-8000-000000000001",
+    roleId: "reviewer",
+    profileDigest: "e".repeat(64),
+    practiceId: "review",
+    practiceVersion: 2,
+    status: "active",
+    revision: 1,
+    origin: { actorId: "@reviewer:example.test" },
+    objective: { text: "review", source: "model_normalized" },
+    acceptanceCriteria: [{ id: "criterion-1", description: "all", source: "model_normalized" }],
+    scope: { revision: 1, digest: "f".repeat(64), targets: [target(IDS[0], "a"), target(IDS[1], "b")] },
+    lastCheckpoint: null,
+  };
+}
+
+function resource(entry) {
+  return {
+    selectorDigest: resourceSelectorDigest(entry.targetId, null),
+    targetId: entry.targetId,
+    memberPath: null,
+    snapshotIdentity: entry.snapshot.identity,
+    contentDigest: entry.snapshot.facts.contentDigest,
+    contentBytes: entry.snapshot.facts.contentBytes,
+    contentLines: entry.snapshot.facts.contentLines,
+  };
+}
+
+function execution(entry, start, end, sequence) {
+  const selector = resourceSelectorDigest(entry.targetId, null);
+  return {
+    toolName: "read",
+    status: "success",
+    operation: { input: { resourceSelectorDigest: selector } },
+    resultMetadata: { returnedLineStart: start, returnedLineEnd: end },
+    startedRef: { sequence, eventHash: `${sequence}`.padStart(64, "0") },
+    completedRef: { sequence: sequence + 1, eventHash: `${sequence + 1}`.padStart(64, "0") },
+  };
+}
+
+function projection(runValue, executions = []) {
+  return { executions, resources: runValue.scope.targets.map(resource) };
+}
+
+test("target coverage uses deterministic maximal interval selection and final target order", () => {
+  const active = run();
+  const p = projection(active, [
+    execution(active.scope.targets[0], 1, 1, 1),
+    execution(active.scope.targets[0], 1, 3, 3),
+    execution(active.scope.targets[1], 1, 2, 5),
+  ]);
+  const coverage = projectReviewReadCoverage(active, p);
+  assert.deepEqual(coverage.targets.map((entry) => entry.status), ["complete", "partial"]);
+  assert.deepEqual(coverage.targets[0].selectedEventRefs.map((ref) => ref.sequence), [3, 4]);
+  assert.equal(coverage.reason, "TARGET_CONSUMPTION_INCOMPLETE");
+});
+
+test("coverage projects a latest target-bound source failure as blocker without revoking prior completion", () => {
+  const active = run();
+  const selectorA = resourceSelectorDigest(IDS[0], null);
+  const selectorB = resourceSelectorDigest(IDS[1], null);
+  const p = projection(active, [
+    execution(active.scope.targets[0], 1, 3, 1),
+    { toolName: "read", status: "error", errorCode: "TARGET_CHANGED", operation: { input: { resourceSelectorDigest: selectorA } }, completedRef: { sequence: 4 } },
+    { toolName: "read", status: "error", errorCode: "TARGET_UNAVAILABLE", operation: { input: { resourceSelectorDigest: selectorB } }, completedRef: { sequence: 6 } },
+  ]);
+  const coverage = projectReviewReadCoverage(active, p);
+  assert.deepEqual(coverage.targets.map((entry) => [entry.status, entry.reasonCode]), [
+    ["complete", null], ["blocked", "TARGET_UNAVAILABLE"],
+  ]);
+});
+
+test("nextAction prioritizes blockers, then incomplete targets, checkpoint failure, and completion", () => {
+  const active = run();
+  let p = projection(active, [{
+    toolName: "read", status: "error", errorCode: "TARGET_CHANGED",
+    operation: { input: { resourceSelectorDigest: resourceSelectorDigest(IDS[0], null) } },
+    completedRef: { sequence: 2 },
+  }]);
+  let coverage = projectReviewReadCoverage(active, p);
+  assert.deepEqual(deriveReviewNextAction({ run: active, coverage, evidenceProjection: p }), {
+    code: "RESOLVE_TARGET_BLOCKER", targetRefs: [IDS[0]], reasonCodes: ["TARGET_CHANGED"],
   });
-  extension({ on(name, handler) {
-    assert.equal(name, "before_agent_start");
-    beforeAgentStart = handler;
-  } });
-  const result = await beforeAgentStart({ systemPrompt: "base" });
-  assert.match(result.systemPrompt, /"code":"NONE"/u);
-  assert.equal(evidenceReads, 0);
+
+  p = projection(active, [execution(active.scope.targets[0], 1, 3, 1)]);
+  coverage = projectReviewReadCoverage(active, p);
+  assert.deepEqual(deriveReviewNextAction({ run: active, coverage, evidenceProjection: p }), {
+    code: "CONSUME_REMAINING_TARGETS", targetRefs: [IDS[1]], reasonCodes: ["TARGET_CONSUMPTION_INCOMPLETE"],
+  });
+
+  p = projection(active, [execution(active.scope.targets[0], 1, 3, 1), execution(active.scope.targets[1], 1, 3, 3)]);
+  coverage = projectReviewReadCoverage(active, p);
+  active.lastCheckpoint = { allSatisfied: false, results: [{ satisfied: false, reasonCode: "CLAIM_SCOPE_MISMATCH" }] };
+  assert.equal(deriveReviewNextAction({ run: active, coverage, evidenceProjection: p }).code, "ADDRESS_CHECKPOINT_FAILURE");
+  active.lastCheckpoint = null;
+  assert.equal(deriveReviewNextAction({ run: active, coverage, evidenceProjection: p }).code, "CHECK_COMPLETION");
+  assert.deepEqual(deriveReviewNextAction({ run: null }), { code: "NONE", targetRefs: [], reasonCodes: [] });
+});
+
+test("ContextPack v3 exposes bounded target summaries and rejects positional v1 refs", () => {
+  const active = run();
+  const text = buildReviewerContextPack({
+    profileDigest: active.profileDigest,
+    run: active,
+    nextAction: { code: "CONSUME_REMAINING_TARGETS", targetRefs: IDS, reasonCodes: ["TARGET_CONSUMPTION_INCOMPLETE"] },
+  });
+  assert.match(text, /"schemaVersion":3/u);
+  assert.match(text, new RegExp(IDS[0], "u"));
+  assert.doesNotMatch(text, /scope-file-/u);
+  assert.doesNotMatch(text, /contentDigest|artifactRef|capturedAt/u);
+  assert.throws(() => buildReviewerContextPack({
+    profileDigest: active.profileDigest,
+    run: active,
+    nextAction: { code: "CONSUME_REMAINING_TARGETS", targetRefs: ["scope-file-1"], reasonCodes: ["TARGET_CONSUMPTION_INCOMPLETE"] },
+  }), /targetRefs/u);
 });

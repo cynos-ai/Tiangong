@@ -9,6 +9,7 @@ import {
   loadFixedRoleProfileBundle,
 } from "./config/role-profile.mjs";
 import { buildBaseSystemPrompt } from "./context/base-system-prompt.mjs";
+import { CapturedArtifactStore } from "./artifacts/store.mjs";
 import { createReviewerContextExtension } from "./context/reviewer-context.mjs";
 import { projectReviewEvidence } from "./evidence/projection.mjs";
 import { EvidenceRecorder } from "./evidence/recorder.mjs";
@@ -34,7 +35,7 @@ import {
 } from "./session-store.mjs";
 import { createCoreToolRegistry } from "./tools/registry.mjs";
 import { createReviewerToolRegistry } from "./work/reviewer-tools.mjs";
-import { completedReviewFileFacts, renderCompletedReview, workStatusForRun } from "./work/status.mjs";
+import { completedReviewTargetFacts, renderCompletedReview, workStatusForRun } from "./work/status.mjs";
 import { createTurnResult } from "./turn-contract.mjs";
 import { TurnContextController } from "./turn-context.mjs";
 import { createPiSessionTraceObserver } from "../observability/pi-session-tracing.mjs";
@@ -151,6 +152,10 @@ export class TiangongAgentRuntime {
     let gate;
     let registry;
     if (profileBundle.profile.roleId === "reviewer") {
+      const artifactStore = new CapturedArtifactStore({
+        stateDirectory,
+        sessionId: request.sessionId,
+      });
       practiceService = new PracticeRunService({
         sessionId: request.sessionId,
         workspaceDir: request.workspaceDir,
@@ -158,6 +163,7 @@ export class TiangongAgentRuntime {
         journalPath: persisted.paths.practiceRunJournalPath,
         snapshotPath: persisted.paths.practiceRunSnapshotPath,
         protectedDirectory: persisted.paths.practiceRunProtectedDirectory,
+        artifactStore,
       });
       gate = new ReviewerPracticeGate({ profileBundle });
       registry = createReviewerToolRegistry({
@@ -166,6 +172,7 @@ export class TiangongAgentRuntime {
         gate,
         evidence,
         getInvocation: turns.current,
+        inspectionLockPath: persisted.paths.directoryInspectionLockPath,
       });
     } else {
       gate = new PolicyGate({ idempotencyStore });
@@ -514,11 +521,13 @@ export class TiangongAgentRuntime {
           hash: runAfter.lastCheckpoint.evidenceTerminalHash,
         },
         run: runAfter,
+        targetCapture: state.practiceService.targetCapture,
+        artifactStore: state.practiceService.artifactStore,
       });
       text = renderCompletedReview({
         run: runAfter,
         claim,
-        fileFacts: completedReviewFileFacts(runAfter, projection),
+        targetFacts: completedReviewTargetFacts(runAfter, projection),
       });
     }
     if (text === "") throw new Error(state.session.agent.state.errorMessage || "pi returned no assistant text");

@@ -1,168 +1,176 @@
-import { constants } from "node:fs";
-import { open, realpath } from "node:fs/promises";
-import { TextDecoder } from "node:util";
-
 import { Type } from "typebox";
 
+import { evidenceMetadataFromReceipt } from "../artifacts/schema.mjs";
 import { sha256 } from "../canonical-json.mjs";
 import { practiceRunFail } from "../practices/errors.mjs";
-import { resolveWorkspacePath } from "../tools/operations.mjs";
+import { practiceInvocationIdentity } from "../practices/practice-run-store.mjs";
+import {
+  TARGET_ID_PATTERN,
+  findTarget,
+  maximalChunk,
+  normalizeMemberPath,
+  resourceSelectorDigest,
+} from "../practices/review-targets.mjs";
 
-const MAX_FILE_BYTES = 2 * 1024 * 1024;
-const MAX_FILE_LINES = 100_000;
-const MAX_RETURNED_BYTES = 50 * 1024;
-const MAX_READ_LINES = 2_000;
-const UTF8 = new TextDecoder("utf-8", { fatal: true });
-
-function mapPathError(error) {
-  if (error?.code === "ENOENT") practiceRunFail("PATH_NOT_REGULAR_FILE", "Read target is not a regular file");
-  if (error?.code === "ELOOP" || /symbolic link/iu.test(error?.message ?? "")) {
-    practiceRunFail("SYMLINK_DENIED", "Symbolic links are not allowed for Reviewer reads");
-  }
-  if (/outside the authorized workspace/iu.test(error?.message ?? "")) {
-    practiceRunFail("PATH_OUTSIDE_WORKSPACE", "Read target is outside the authorized workspace");
-  }
-  if (/credential-bearing|runtime state directory/iu.test(error?.message ?? "")) {
-    practiceRunFail("SENSITIVE_PATH_DENIED", "Sensitive paths are not accessible to Reviewer reads");
-  }
-  if (error?.name === "PracticeRunError") throw error;
-  practiceRunFail("READ_FAILED", "Reviewer read could not validate or capture the requested file");
-}
-
-async function openedFilePath(handle) {
-  try {
-    return await realpath(`/proc/self/fd/${handle.fd}`);
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
-    return realpath(`/dev/fd/${handle.fd}`);
-  }
-}
-
-function range(params, lineCount, lines) {
-  const offset = params.offset ?? 1;
-  const requestedLimit = params.limit ?? MAX_READ_LINES;
-  if (!Number.isSafeInteger(offset) || offset < 1 || !Number.isSafeInteger(requestedLimit) ||
-      requestedLimit < 1 || requestedLimit > MAX_READ_LINES || offset > lineCount) {
-    practiceRunFail("READ_RANGE_INVALID", "Read offset or limit is outside the supported line range");
-  }
-  const maximumEnd = Math.min(lineCount, offset + requestedLimit - 1);
-  let end = offset - 1;
-  let bytes = 0;
-  for (let line = offset; line <= maximumEnd; line += 1) {
-    const addition = Buffer.byteLength(lines[line - 1]) + (line === offset ? 0 : 1);
-    if (bytes + addition > MAX_RETURNED_BYTES) break;
-    bytes += addition;
-    end = line;
-  }
-  if (end < offset) practiceRunFail("FILE_LIMIT_EXCEEDED", "A single text line exceeds the read output limit");
-  return { offset, end, bytes };
-}
+const MAX_READ_LINES = 2000;
+const EFFECTS = Object.freeze({
+  localRead: true,
+  workspaceMutation: false,
+  networkEgress: false,
+  modelInference: false,
+  costBearing: false,
+});
 
 export const REVIEWER_READ_DEFINITION = Object.freeze({
   name: "read",
-  label: "Tiangong scoped review read",
-  description: "Read only an explicit UTF-8 text file in the active review scope, by bounded line range.",
+  label: "Tiangong target-bound review read",
+  description: "Consume a bounded line chunk from an immutable file target or an exact directory-manifest member.",
   parameters: Type.Object({
-    path: Type.String({ minLength: 1, maxLength: 1024 }),
-    offset: Type.Optional(Type.Integer({ minimum: 1 })),
-    limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_READ_LINES })),
+    targetId: Type.String({ minLength: 43, maxLength: 43 }),
+    memberPath: Type.Optional(Type.String({ minLength: 1, maxLength: 1024 })),
+    offset: Type.Integer({ minimum: 1 }),
+    limit: Type.Integer({ minimum: 1, maximum: MAX_READ_LINES }),
   }, { additionalProperties: false }),
 });
 
-export async function prepareReviewerRead({ workspaceDir, service, params, invocation }) {
+function exact(value, keys) {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    && Object.keys(value).sort().join(",") === [...keys].sort().join(",");
+}
+
+function mapArtifactError(error) {
+  if (error?.name !== "CapturedArtifactError") throw error;
+  if (["ARTIFACT_LIMIT_EXCEEDED", "ARTIFACT_PRODUCER_NOT_ALLOWED", "ARTIFACT_METADATA_INVALID"].includes(error.code)) {
+    practiceRunFail("TARGET_LIMIT_EXCEEDED", "Consumed target artifact violates its producer limit");
+  }
+  if (error.code === "ARTIFACT_QUOTA_EXCEEDED") {
+    practiceRunFail("CAPTURE_LIMIT_EXCEEDED", "Consumed target artifacts exceed aggregate quota");
+  }
+  practiceRunFail("TARGET_UNAVAILABLE", "Consumed target artifact storage is unavailable");
+}
+
+export async function prepareReviewerRead({ service, params, invocation }) {
+  if (!exact(params, ["limit", "offset", "targetId"])
+      && !exact(params, ["limit", "memberPath", "offset", "targetId"])) {
+    practiceRunFail("INVALID_TARGET", "read input has missing or unknown fields");
+  }
+  if (!TARGET_ID_PATTERN.test(params.targetId)
+      || (Object.hasOwn(params, "memberPath") && typeof params.memberPath !== "string")) {
+    practiceRunFail("INVALID_TARGET", "read input identity shape is invalid");
+  }
+  if (!Number.isSafeInteger(params.offset) || params.offset < 1
+      || !Number.isSafeInteger(params.limit) || params.limit < 1 || params.limit > MAX_READ_LINES) {
+    practiceRunFail("TARGET_RANGE_INVALID", "Target consume range is invalid");
+  }
+  const memberPath = Object.hasOwn(params, "memberPath") ? normalizeMemberPath(params.memberPath) : null;
   const actorId = invocation.actor?.id;
   const run = await service.activeForActor(actorId);
-  let target;
-  try {
-    target = await resolveWorkspacePath(workspaceDir, params.path);
-  } catch (error) {
-    mapPathError(error);
-  }
-  if (!run.scope.files.includes(target.relativePath)) {
-    practiceRunFail("PATH_NOT_IN_PRACTICE_SCOPE", "Read target is not in the final PracticeRun scope");
-  }
-  const operation = {
-    policyVersion: "review-read-v1",
+  await service.targetCapture.initialize();
+  const selectorDigest = resourceSelectorDigest(params.targetId, memberPath);
+  const operation = Object.freeze({
+    policyVersion: "review-target-consume-v2",
     category: "read-only",
     toolName: "read",
-    workspaceScope: target.workspaceScope,
+    effects: EFFECTS,
+    workspaceScope: service.targetCapture.workspaceScope,
     roleId: run.roleId,
     profileDigest: run.profileDigest,
     practiceId: run.practiceId,
-    practiceVersion: run.practiceVersion,
-    state: { runId: run.runId, expectedRunRevision: run.revision },
-    target: target.relativePath,
-    input: { offset: params.offset ?? 1, limit: params.limit ?? MAX_READ_LINES },
-  };
-  return Object.freeze({ operation: Object.freeze(operation), target, run });
+    practiceVersion: 2,
+    state: { runId: run.runId, expectedRunRevision: run.revision, targetId: params.targetId },
+    input: {
+      resourceSelectorDigest: selectorDigest,
+      offset: params.offset,
+      limit: params.limit,
+      consumePolicyVersion: "review-target-consume-v1",
+    },
+  });
+  return Object.freeze({
+    operation,
+    memberPath,
+    selectorDigest,
+    actorId,
+    run,
+    invocationIdentity: practiceInvocationIdentity({
+      sessionId: invocation.sessionId,
+      turnId: invocation.turnId,
+      toolCallId: invocation.toolCallId,
+    }),
+  });
 }
 
-export async function executeReviewerRead(prepared) {
-  let handle;
-  try {
-    handle = await open(prepared.target.absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-    const before = await handle.stat();
-    const openedPath = await openedFilePath(handle);
-    if (openedPath !== prepared.target.absolutePath) {
-      practiceRunFail("PATH_OUTSIDE_WORKSPACE", "Opened read target changed after path authorization");
-    }
-    if (!before.isFile()) practiceRunFail("PATH_NOT_REGULAR_FILE", "Read target is not a regular file");
-    if (before.size > MAX_FILE_BYTES) practiceRunFail("FILE_LIMIT_EXCEEDED", "Read target exceeds the file size limit");
-    const buffer = await handle.readFile();
-    const after = await handle.stat();
-    if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size ||
-        buffer.byteLength !== before.size) {
-      practiceRunFail("FILE_CHANGED_DURING_READ", "Read target changed while it was being captured");
-    }
-    if (buffer.some((byte) => (byte < 32 && ![9, 10, 13].includes(byte)) || byte === 127)) {
-      practiceRunFail("BINARY_FILE_UNSUPPORTED", "Binary files are not supported by Reviewer v1");
-    }
-    let text;
-    try {
-      text = UTF8.decode(buffer);
-    } catch {
-      practiceRunFail("INVALID_UTF8", "Reviewer v1 requires valid UTF-8 text");
-    }
-    const lines = text.split("\n");
-    if (lines.length > MAX_FILE_LINES) practiceRunFail("FILE_LIMIT_EXCEEDED", "Read target exceeds the line limit");
-    const selected = range(prepared.operation.input, lines.length, lines);
-    const returnedText = lines.slice(selected.offset - 1, selected.end).join("\n");
-    const metadata = {
-      fileDigest: sha256(buffer),
-      fullFileBytes: buffer.byteLength,
-      fullFileLines: lines.length,
-      returnedLineStart: selected.offset,
-      returnedLineEnd: selected.end,
-      returnedBytes: Buffer.byteLength(returnedText),
-      returnedLines: selected.end - selected.offset + 1,
-      truncated: selected.end < lines.length,
-    };
-    const displayText = metadata.truncated
-      ? `${returnedText}\n\n[Showing lines ${metadata.returnedLineStart}-${metadata.returnedLineEnd} of ${metadata.fullFileLines}. Continue with offset=${metadata.returnedLineEnd + 1}.]`
-      : returnedText;
-    return {
-      content: [{ type: "text", text: displayText }],
-      details: { ...metadata, path: prepared.target.relativePath, runId: prepared.run.runId },
-    };
-  } catch (error) {
-    mapPathError(error);
-  } finally {
-    await handle?.close();
+export async function executeReviewerRead(prepared, { service, actionDigest }) {
+  const current = await service.activeForActor(prepared.actorId);
+  if (current.runId !== prepared.run.runId || current.revision !== prepared.run.revision) {
+    practiceRunFail("STALE_RUN_REVISION", "PracticeRun revision changed before target consume");
   }
+  const target = findTarget(current, prepared.operation.state.targetId);
+  if ((target.kind === "file" && prepared.memberPath !== null)
+      || (target.kind === "directory_snapshot" && prepared.memberPath === null)) {
+    practiceRunFail("TARGET_KIND_MISMATCH", "read memberPath shape conflicts with target kind");
+  }
+  if (resourceSelectorDigest(target.targetId, prepared.memberPath) !== prepared.selectorDigest) {
+    practiceRunFail("INVALID_TARGET", "read resource selector binding changed");
+  }
+  const resource = await service.targetCapture.captureResource(target, prepared.memberPath);
+  const chunk = maximalChunk(resource.lines, prepared.operation.input.offset, prepared.operation.input.limit);
+  const canonicalBytes = Buffer.from(chunk.text, "utf8");
+  let receipt;
+  try {
+    receipt = await service.artifactStore.put({
+      binding: {
+        kind: "practice_target",
+        sessionHash: service.artifactStore.sessionHash,
+        actorId: prepared.actorId,
+        practiceRunId: current.runId,
+        targetId: target.targetId,
+        invocationIdentity: prepared.invocationIdentity,
+        sourceOperationDigest: actionDigest,
+      },
+      purpose: "review_target_chunk",
+      ordinal: 0,
+      mediaType: "text/plain;charset=utf-8",
+      encoding: "utf-8",
+      truncated: chunk.truncated,
+      producerId: "review-target-consume",
+      producerVersion: 1,
+      transformVersion: 1,
+      canonicalBytes,
+    });
+  } catch (error) {
+    mapArtifactError(error);
+  }
+  const artifact = evidenceMetadataFromReceipt(receipt);
+  const reviewTargetConsume = Object.freeze({
+    targetId: target.targetId,
+    snapshotIdentity: target.snapshot.identity,
+    resourceSelectorDigest: prepared.selectorDigest,
+    fullContentDigest: resource.contentDigest,
+    fullContentBytes: resource.contentBytes,
+    fullContentLines: resource.contentLines,
+    encoding: "utf-8",
+    requestedOffset: prepared.operation.input.offset,
+    requestedLimit: prepared.operation.input.limit,
+    returnedLineStart: chunk.lineStart,
+    returnedLineEnd: chunk.lineEnd,
+    truncated: chunk.truncated,
+    artifact,
+  });
+  return {
+    content: [{ type: "text", text: chunk.text }],
+    details: {
+      targetId: target.targetId,
+      memberPath: prepared.memberPath,
+      returnedLineStart: chunk.lineStart,
+      returnedLineEnd: chunk.lineEnd,
+      fullContentBytes: resource.contentBytes,
+      fullContentLines: resource.contentLines,
+      truncated: chunk.truncated,
+    },
+    reviewTargetConsume,
+  };
 }
 
 export function reviewerReadEvidenceMetadata(result) {
-  const details = result?.details;
-  return {
-    resultMetadata: {
-      fileDigest: details.fileDigest,
-      fullFileBytes: details.fullFileBytes,
-      fullFileLines: details.fullFileLines,
-      returnedLineStart: details.returnedLineStart,
-      returnedLineEnd: details.returnedLineEnd,
-      returnedBytes: details.returnedBytes,
-      returnedLines: details.returnedLines,
-      truncated: details.truncated,
-    },
-  };
+  return { metadata: { reviewTargetConsume: result.reviewTargetConsume } };
 }

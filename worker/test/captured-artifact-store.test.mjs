@@ -248,6 +248,36 @@ test("binding, producer, metadata, byte, UTF-8 and text-policy validation follow
     f.store.put(putInput(f.store, { canonicalBytes: Buffer.from([0x61, 0x00]) })),
     "ARTIFACT_METADATA_INVALID",
   );
+  const manifestInput = {
+    ...putInput(f.store),
+    purpose: "directory_manifest",
+    mediaType: "application/vnd.tiangong.directory-manifest+json;version=1",
+    producerId: "review-directory-capture",
+    canonicalBytes: Buffer.from(canonicalJson({
+      schemaVersion: 1,
+      kind: "directory-manifest",
+      rootPath: ".",
+      selectionDigest: sha256("selection"),
+      members: [{
+        path: "one.txt",
+        contentDigest: sha256("one"),
+        contentBytes: 3,
+        contentLines: 1,
+        encoding: "utf-8",
+        requiredConsumeSegments: 1,
+      }],
+    }), "utf8"),
+  };
+  await expectCode(
+    f.store.put({ ...manifestInput, canonicalBytes: Buffer.from("{}", "utf8") }),
+    "ARTIFACT_METADATA_INVALID",
+  );
+  await expectCode(
+    f.store.put({ ...manifestInput, canonicalBytes: Buffer.concat([Buffer.from(" "), manifestInput.canonicalBytes]) }),
+    "ARTIFACT_METADATA_INVALID",
+  );
+  const manifest = await f.store.put(manifestInput);
+  assert.equal((await f.store.readFromEvidence(evidenceRead(manifest))).bytes.equals(manifestInput.canonicalBytes), true);
   const empty = await f.store.put(putInput(f.store, {
     ordinal: 1,
     canonicalBytes: Buffer.alloc(0),
