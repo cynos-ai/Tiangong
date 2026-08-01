@@ -156,7 +156,7 @@ actual_image="$(docker inspect "${CONTAINER_NAME}" --format '{{.Config.Image}}')
 
 actual_node_version="$(docker exec "${CONTAINER_NAME}" node --version)"
 actual_pi_version="$(docker exec "${CONTAINER_NAME}" pi --version)"
-[[ "${actual_node_version}" == "v22.23.1" ]] || die "Unexpected Node.js version: ${actual_node_version}."
+[[ "${actual_node_version}" == "v22.23.2" ]] || die "Unexpected Node.js version: ${actual_node_version}."
 [[ "${actual_pi_version}" == "0.82.0" ]] || die "Unexpected pi version: ${actual_pi_version}."
 printf 'node_version=%s\npi_version=%s\n' "${actual_node_version}" "${actual_pi_version}"
 
@@ -200,7 +200,7 @@ printf 'read_tool_event=pass\nfinal_response=pass\n'
 harness_evidence="$(docker exec "${CONTAINER_NAME}" cat /tmp/tiangong-pi-harness.last-run)"
 grep -Fqx 'harness=tiangong-pi' <<<"${harness_evidence}" || die "Tiangong pi harness was not selected."
 grep -Fqx 'provider=agentteams-gateway' <<<"${harness_evidence}" || die "Unexpected pi harness provider."
-grep -Fqx 'model=qwen3.5-plus' <<<"${harness_evidence}" || die "Unexpected pi harness model."
+grep -Fqx 'model=deepseek-v4-flash' <<<"${harness_evidence}" || die "Unexpected pi harness model."
 grep -Fqx 'status=pass' <<<"${harness_evidence}" || die "Pi harness did not complete successfully."
 printf 'pi_harness_selection=pass\n'
 
