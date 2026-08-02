@@ -19,6 +19,7 @@ import { buildProjectBinding, buildTaskBinding } from "../playbook/resolver.mjs"
 import { assertResultCurrent, assertTransitionAllowed } from "../playbook/transition-policy.mjs";
 import { readProjectBinding, readTaskBinding, readTaskResult } from "../team/manifest-store.mjs";
 import { projectChain } from "../team/project-chain.mjs";
+import { loadWorkerIdentity } from "../team/team-context.mjs";
 import {
   checkResult,
   createProject,
@@ -39,15 +40,14 @@ const DECISION = Type.Union(
 const DISPOSITION = Type.Union(
   [Type.Literal("delivered"), Type.Literal("failed_safe"), Type.Literal("recovery_required")],
 );
-const ROLE_BINDINGS = Type.Object(
+const ROLE_BINDINGS_INPUT = Type.Object(
   {
-    team_leader: ID,
     designer: ID,
     implementor: ID,
     assessor: ID,
     operator: ID,
   },
-  { additionalProperties: false },
+  { additionalProperties: false, description: "Professional role slots. team_leader is bound to the authenticated Leader, not model input." },
 );
 
 function nowISO(deps) {
@@ -80,14 +80,15 @@ export function createLeaderToolRegistry({ playbook, deps }) {
     name: "team_create_project",
     label: "Tiangong team create project",
     description:
-      "Bind a new software-change-delivery project to the closed playbook and write its immutable roleBindings. Only the team_leader may call this.",
-    parameters: Type.Object({ projectId: ID, roleBindings: ROLE_BINDINGS }, { additionalProperties: false }),
+      "Bind a new software-change-delivery project to the closed playbook and write its immutable roleBindings. The team_leader slot is bound to the authenticated Leader identity (not model input); only the four professional slots are provided. Only the team_leader may call this.",
+    parameters: Type.Object({ projectId: ID, roleBindings: ROLE_BINDINGS_INPUT }, { additionalProperties: false }),
     executionMode: "sequential",
     async execute(_toolCallId, params) {
+      const identity = loadWorkerIdentity(deps);
       const project = buildProjectBinding({
         playbook,
         projectId: params.projectId,
-        roleBindings: params.roleBindings,
+        roleBindings: { ...params.roleBindings, team_leader: identity.workerName },
         createdAt: nowISO(deps),
       });
       const { projectBinding, manifestPath } = await createProject(project, deps);
