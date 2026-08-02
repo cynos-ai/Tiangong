@@ -38,7 +38,7 @@ import { createReviewerToolRegistry } from "./work/reviewer-tools.mjs";
 import { getPlaybook } from "./playbook/registry.mjs";
 import { defaultTiangongRoot } from "./team/shared-fs.mjs";
 import { createTeamChannel } from "./team/channel-adapter.mjs";
-import { createLeaderSync } from "./team/sync-adapter.mjs";
+import { createTeamSync } from "./team/sync-adapter.mjs";
 import { createLeaderToolRegistry } from "./work/leader-tools.mjs";
 import { createMemberToolRegistry } from "./work/member-tools.mjs";
 import { completedReviewTargetFacts, renderCompletedReview, workStatusForRun } from "./work/status.mjs";
@@ -188,7 +188,7 @@ export class TiangongAgentRuntime {
         rootDir: defaultTiangongRoot(),
         env: process.env,
         channel: createTeamChannel({ evidence }),
-        sync: createLeaderSync(),
+        sync: createTeamSync(),
         evidence,
         getInvocation: turns.current,
       };
@@ -199,7 +199,7 @@ export class TiangongAgentRuntime {
         rootDir: defaultTiangongRoot(),
         env: process.env,
         channel: createTeamChannel({ evidence }),
-        sync: createLeaderSync(),
+        sync: createTeamSync(),
         evidence,
         getInvocation: turns.current,
       };

@@ -117,6 +117,7 @@ export async function createProject(projectBinding, deps) {
   const identity = loadWorkerIdentity(deps);
   assertLeaderForProject(identity, projectBinding);
   const manifestPath = await writeProjectBinding(projectBinding, deps);
+  await deps?.sync?.afterWrite?.();
   await recordEvidence(deps, "team.project.created", {
     projectId: projectBinding.projectId,
     playbookDigest: projectBinding.playbookDigest,
@@ -131,6 +132,7 @@ export async function dispatchTask(taskBinding, deps) {
   assertLeaderForProject(identity, project);
   try {
     await writeTaskBinding(taskBinding, deps);
+    await deps?.sync?.afterWrite?.();
   } catch (error) {
     if (await isEEXIST(error)) {
       const existing = await readTaskBinding(taskBinding.taskId, deps);
@@ -169,6 +171,7 @@ export async function submitResult(result, deps) {
   }
   try {
     await writeTaskResult(result, deps);
+    await deps?.sync?.afterWrite?.();
   } catch (error) {
     if (await isEEXIST(error)) {
       const existing = await readTaskResult(result.taskId, deps);
@@ -219,6 +222,7 @@ export async function recordTaskDecision(decision, deps) {
   let manifestPath;
   try {
     manifestPath = await appendTaskDecision(decision, deps);
+    await deps?.sync?.afterWrite?.();
   } catch (error) {
     if (await isEEXIST(error)) {
       await recordEvidence(deps, "team.task.decision.replay", {

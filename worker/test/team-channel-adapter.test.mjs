@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createTeamChannel } from "../agent/team/channel-adapter.mjs";
-import { createLeaderSync } from "../agent/team/sync-adapter.mjs";
+import { createTeamSync } from "../agent/team/sync-adapter.mjs";
 
 test("createTeamChannel records queued mentions and report as Evidence (no false delivery)", () => {
   const events = [];
@@ -28,7 +28,19 @@ test("createTeamChannel tolerates a missing evidence recorder", () => {
   assert.equal(channel.queued.length, 1);
 });
 
-test("createLeaderSync.beforeRead is a tolerant no-op on the Leader write path", async () => {
-  const sync = createLeaderSync();
-  await assert.doesNotReject(() => sync.beforeRead());
+test("createTeamSync beforeRead pulls and afterWrite pushes via the injected runner", async () => {
+  const calls = [];
+  const run = async (cmd) => { calls.push(cmd); return { stdout: "", stderr: "" }; };
+  const sync = createTeamSync({ run, now: () => "2026-08-01T12:00:00Z" });
+  await sync.beforeRead();
+  await sync.afterWrite();
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0], "agentteams-sync");
+  assert.match(calls[1], /mc mirror .*shared\/ .*--overwrite/);
+});
+
+test("createTeamSync surfaces runner failures", async () => {
+  const run = async () => { throw new Error("mc unavailable"); };
+  const sync = createTeamSync({ run });
+  await assert.rejects(() => sync.beforeRead(), /mc unavailable/);
 });
