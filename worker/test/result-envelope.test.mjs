@@ -38,11 +38,17 @@ test("createChangeRevisionRef seals and digests the reference", () => {
   assert.match(ref.contentDigest, /^[0-9a-f]{64}$/);
 });
 
-test("createChangeRevisionRef rejects a non-64-hex digest", () => {
+test("createChangeRevisionRef rejects unsafe paths and a non-64-hex digest", () => {
   assert.throws(
     () => createChangeRevisionRef({ producerTaskId: "t", artifactPath: "p", artifactDigest: "nothex", revision: 0 }),
     /64-hex digest/,
   );
+  for (const artifactPath of ["/absolute", "../escape", "safe/../escape", "safe//file"]) {
+    assert.throws(
+      () => createChangeRevisionRef({ producerTaskId: "t", artifactPath, artifactDigest: DIGEST, revision: 0 }),
+      /artifactPath/,
+    );
+  }
 });
 
 test("a design result envelope carries a claim without a revision ref", () => {
@@ -137,6 +143,12 @@ test("a revision request is only allowed on an assessor result", () => {
     sourceRole: "assessor",
     completionContractDigest: CONTRACT,
     claim: "revision needed",
+    changeRevisionRef: {
+      producerTaskId: "t-implement-0",
+      artifactPath: "objects/revision-0",
+      artifactDigest: DIGEST,
+      revision: 0,
+    },
     revisionRequest: { summary: "tests missing for edge case" },
     createdAt: AT,
   });

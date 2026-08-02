@@ -77,6 +77,9 @@ export function wrapTeamTool(definition, { gate, evidence, getInvocation, catego
         runnerPolicyDigest: runner?.policyDigest ?? null,
         runnerContainerConfigDigest: runner?.containerConfigDigest ?? null,
         runnerFixtureDigest: runner?.fixtureDigest ?? null,
+        runnerChangeRevisionRefDigest: result?.details?.changeRevisionRef?.contentDigest ?? null,
+        runnerChangeArtifactDigest: result?.details?.changeRevisionRef?.artifactDigest ?? null,
+        runnerChangeProducerTaskId: result?.details?.changeRevisionRef?.producerTaskId ?? null,
       };
     },
     executeOperation({ toolCallId, params, signal, onUpdate, ctx, invocation }) {

@@ -215,6 +215,66 @@ test("a blocker ResultEnvelope cannot be accepted or advance the Task", async ()
   });
 });
 
+test("Assessor Results must bind the exact accepted Implementor ChangeRevision", async () => {
+  await withRoot(async (root) => {
+    const project = projectBinding();
+    await createProject(project, depsFor(LEADER, root));
+    const implementTask = taskBinding({
+      taskId: "task-implement-0",
+      taskKind: "implement",
+      assignee: IMPL,
+      sourceSkillId: "implementor-v1",
+    });
+    await dispatchTask(implementTask, depsFor(LEADER, root));
+    const revision = {
+      producerTaskId: implementTask.taskId,
+      artifactPath: "objects/task-implement-0/revision",
+      artifactDigest: sha256("revision-0"),
+      revision: 0,
+    };
+    const implementation = resultEnvelope(implementTask, {
+      sourceRole: "implementor",
+      sourceSkillId: "implementor-v1",
+      claim: "implementation complete",
+      changeRevisionRef: revision,
+    });
+    await submitResult(implementation, depsFor(IMPL, root));
+    await recordTaskDecision(createTaskDecision({
+      taskId: implementTask.taskId,
+      projectId: project.projectId,
+      playbookDigest: project.playbookDigest,
+      decision: "accept",
+      revisionIndex: 0,
+      decidedBy: LEADER,
+      resultDigest: implementation.contentDigest,
+      createdAt: T2,
+    }), depsFor(LEADER, root));
+
+    const assessTask = taskBinding({
+      taskId: "task-assess-0",
+      taskKind: "assess",
+      assignee: ASSESSOR,
+      sourceSkillId: "assessor-v1",
+    });
+    await dispatchTask(assessTask, depsFor(LEADER, root));
+    const assessmentInput = {
+      sourceRole: "assessor",
+      sourceSkillId: "assessor-v1",
+      claim: "assessment complete",
+    };
+    const forged = resultEnvelope(assessTask, {
+      ...assessmentInput,
+      changeRevisionRef: { ...revision, artifactDigest: sha256("forged") },
+    });
+    await assert.rejects(
+      () => submitResult(forged, depsFor(ASSESSOR, root)),
+      /not the accepted Implementor artifact/u,
+    );
+    const assessment = resultEnvelope(assessTask, { ...assessmentInput, changeRevisionRef: revision });
+    assert.equal((await submitResult(assessment, depsFor(ASSESSOR, root))).result.contentDigest, assessment.contentDigest);
+  });
+});
+
 test("immutable operation replay re-syncs and re-drives the idempotent notification boundary", async () => {
   await withRoot(async (root) => {
     const project = projectBinding();

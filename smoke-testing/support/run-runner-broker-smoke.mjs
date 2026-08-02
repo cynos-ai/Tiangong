@@ -14,17 +14,22 @@ const root = path.resolve(directory, "../..");
 const fixture = path.join(root, "smoke-testing/fixtures/runner-isolation");
 const brokerImage = process.env.TIANGONG_RUNNER_BROKER_IMAGE ?? "tiangong-runner-broker:dev";
 const workerImage = process.env.TIANGONG_RUNNER_IMAGE ?? "tiangong-worker-implementor:dev";
+const assessorImage = process.env.TIANGONG_ASSESSOR_IMAGE ?? "tiangong-worker-assessor:dev";
 const dockerPath = process.env.TIANGONG_DOCKER_PATH ?? "/usr/bin/docker";
 const runDocker = createDockerCommandRunner({ dockerPath });
 const nonce = randomUUID();
 const suffix = nonce.replaceAll("-", "").slice(0, 16);
 const runId = `run-${nonce}`;
+const assessorRunId = `run-${randomUUID()}`;
 const smokeStartedAt = Math.floor(Date.now() / 1000) - 1;
 const taskId = `task-runner-${suffix}`;
+const assessorTaskId = `task-assess-${suffix}`;
 const workerName = `tiangong-runner-${suffix}`;
+const assessorWorkerName = `tiangong-assessor-${suffix}`;
 const network = `tiangong-runner-broker-${suffix}`;
 const broker = `tiangong-runner-broker-${suffix}`;
 const client = `tiangong-runner-client-${suffix}`;
+const assessorClient = `tiangong-assessor-client-${suffix}`;
 const intruder = `tiangong-runner-intruder-${suffix}`;
 const stateVolume = `tiangong-runner-broker-state-${suffix}`;
 const ownerLabel = `io.tiangong.broker-run=${runId}`;
@@ -88,8 +93,8 @@ const [{ createRunnerBrokerExecutor }, { RunnerJournal }, policy, { runCommand }
 ]);
 const request = {
   runId: process.env.TEST_RUN_ID,
-  command: ["node", "/workspace/fixture/probe.mjs"],
-  cwd: "fixture",
+  command: ["node", "--input-type=module", "-e", "await import('./probe.mjs'); const fs = await import('node:fs/promises'); await fs.appendFile('input.txt', 'sealed-change\\n');"],
+  cwd: "scratch/revision",
   timeoutMs: 30000,
   outputLimitBytes: 65536,
 };
@@ -103,7 +108,13 @@ const first = await runCommand(request, {
   journal: new RunnerJournal({ filePath: "/tmp/client-first.jsonl" }),
   env,
 });
-if (first.outcome !== "completed" || first.exitCode !== 0 || first.stdout.trim() !== "runner_probe=pass") process.exit(21);
+if (first.outcome !== "completed" || first.exitCode !== 0 || first.stdout.trim() !== "runner_probe=pass" ||
+    !first.changeRevisionRef || first.changeRevisionRef.producerTaskId !== process.env.TEST_TASK_ID) {
+  console.error("runner_client_failure outcome=" + first.outcome + " exit=" + first.exitCode +
+    " stdout_match=" + (first.stdout?.trim() === "runner_probe=pass") +
+    " revision_present=" + Boolean(first.changeRevisionRef) + " reason=" + (first.reason ?? "none"));
+  process.exit(21);
+}
 const brokerReplay = await runCommand(request, {
   executor,
   journal: new RunnerJournal({ filePath: "/tmp/client-second.jsonl" }),
@@ -112,7 +123,35 @@ const brokerReplay = await runCommand(request, {
 if (brokerReplay.outcome !== "completed" || brokerReplay.invocationKey !== first.invocationKey) process.exit(22);
 console.log("runner_broker_client=pass");
 console.log("runner_broker_evidence=pass invocation_key=" + first.invocationKey + " policy_digest=" + first.runnerEvidence.policyDigest);
+console.log("runner_broker_revision_sealed=pass artifact_digest=" + first.changeRevisionRef.artifactDigest);
 console.log("runner_broker_replay=pass");
+`;
+
+const assessorProgram = String.raw`
+const [{ createRunnerBrokerExecutor }, { RunnerJournal }, { runCommand }] = await Promise.all([
+  import("/opt/tiangong-worker/agent/runner/broker-client.mjs"),
+  import("/opt/tiangong-worker/agent/runner/journal.mjs"),
+  import("/opt/tiangong-worker/agent/runner/runner-port.mjs"),
+]);
+const request = {
+  runId: process.env.TEST_RUN_ID,
+  command: ["node", "--input-type=module", "-e", "const fs = await import('node:fs/promises'); const value = await fs.readFile('input.txt', 'utf8'); if (!value.endsWith('sealed-change\\n')) process.exit(41); try { await fs.appendFile('input.txt', 'forbidden'); process.exit(42); } catch (error) { if (!['EACCES', 'EROFS'].includes(error.code)) throw error; } console.log('assessor_revision_readonly=pass');"],
+  cwd: "fixture",
+  timeoutMs: 30000,
+  outputLimitBytes: 65536,
+};
+const executor = createRunnerBrokerExecutor({ endpoint: process.env.TEST_BROKER_ENDPOINT, taskId: process.env.TEST_TASK_ID });
+const result = await runCommand(request, {
+  executor,
+  journal: new RunnerJournal({ filePath: "/tmp/assessor.jsonl" }),
+  env: {},
+});
+if (result.outcome !== "completed" || result.exitCode !== 0 ||
+    result.stdout.trim() !== "assessor_revision_readonly=pass" || !result.changeRevisionRef ||
+    result.changeRevisionRef.producerTaskId !== process.env.TEST_PRODUCER_TASK_ID ||
+    result.runnerEvidence.fixtureDigest !== result.changeRevisionRef.artifactDigest) process.exit(43);
+console.log("runner_broker_assessor_materialization=pass artifact_digest=" + result.changeRevisionRef.artifactDigest);
+console.log("runner_broker_assessor_readonly=pass");
 `;
 
 const intruderProgram = String.raw`
@@ -134,10 +173,13 @@ console.log("runner_broker_unauthorized_peer=pass");
 
 try {
   for (const [kind, name] of [
-    ["network", network], ["container", broker], ["container", client], ["container", intruder], ["volume", stateVolume],
+    ["network", network], ["container", broker], ["container", client], ["container", assessorClient],
+    ["container", intruder], ["volume", stateVolume],
   ]) await assertAbsent(kind, name);
 
-  const [workerImageId, brokerImageId] = await Promise.all([inspectId(workerImage), inspectId(brokerImage)]);
+  const [workerImageId, assessorImageId, brokerImageId] = await Promise.all([
+    inspectId(workerImage), inspectId(assessorImage), inspectId(brokerImage),
+  ]);
   await writeFile(configPath, `${JSON.stringify({
     schemaVersion: 1,
     network,
@@ -150,7 +192,20 @@ try {
       taskId,
       runId,
       runnerImageId: workerImageId,
+      revisionIndex: 0,
       fixtureId: "isolation",
+      inputRevisionTaskId: null,
+    }, {
+      workerName: assessorWorkerName,
+      containerName: assessorClient,
+      workerImageId: assessorImageId,
+      role: "assessor",
+      taskId: assessorTaskId,
+      runId: assessorRunId,
+      runnerImageId: assessorImageId,
+      revisionIndex: 0,
+      fixtureId: null,
+      inputRevisionTaskId: taskId,
     }],
   })}\n`, { mode: 0o444 });
   await chmod(configPath, 0o444);
@@ -202,12 +257,12 @@ try {
     "--cpus", "1",
     "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=16m",
     "--env", `TEST_BROKER_ENDPOINT=http://${broker}:18090/v1/execute`,
-    "--env", `TEST_TASK_ID=${taskId}`,
-    "--env", `TEST_RUN_ID=${runId}`,
   ];
   const clientResult = await docker([
     "container", "run", "--name", client, "--label", ownerLabel,
     ...commonClientArgs,
+    "--env", `TEST_TASK_ID=${taskId}`,
+    "--env", `TEST_RUN_ID=${runId}`,
     "--env", `AGENTTEAMS_WORKER_NAME=${workerName}`,
     "--entrypoint", "/usr/bin/node", workerImageId,
     "--input-type=module", "-e", clientProgram,
@@ -216,11 +271,32 @@ try {
       !clientResult.stdout.includes("runner_broker_client=pass") ||
       !clientResult.stdout.includes("runner_broker_replay=pass")) {
     const brokerLogs = await docker(["container", "logs", broker]);
-    const diagnostic = `${clientResult.stdout}\n${clientResult.stderr}\n${brokerLogs.stdout}\n${brokerLogs.stderr}`
+    const diagnostic = `client_exit=${clientResult.exitCode} timed_out=${clientResult.timedOut}\n${clientResult.stderr}\n${brokerLogs.stderr}\n${clientResult.stdout}\n${brokerLogs.stdout}`
       .trim().slice(0, 2048).replaceAll(tempRoot, "<temp>");
     throw new Error(`authorized broker client failed: ${diagnostic || "no bounded logs"}`);
   }
   process.stdout.write(clientResult.stdout);
+
+  const assessorResult = await docker([
+    "container", "run", "--name", assessorClient, "--label", ownerLabel,
+    ...commonClientArgs,
+    "--env", `TEST_TASK_ID=${assessorTaskId}`,
+    "--env", `TEST_PRODUCER_TASK_ID=${taskId}`,
+    "--env", `TEST_RUN_ID=${assessorRunId}`,
+    "--env", `AGENTTEAMS_WORKER_NAME=${assessorWorkerName}`,
+    "--entrypoint", "/usr/bin/node", assessorImageId,
+    "--input-type=module", "-e", assessorProgram,
+  ], { timeoutMs: 120_000 });
+  if (assessorResult.timedOut || assessorResult.exitCode !== 0 ||
+      !assessorResult.stdout.includes("runner_broker_assessor_materialization=pass") ||
+      !assessorResult.stdout.includes("runner_broker_assessor_readonly=pass")) {
+    const brokerLogs = await docker(["container", "logs", broker]);
+    const diagnostic = `assessor_exit=${assessorResult.exitCode} timed_out=${assessorResult.timedOut}\n${assessorResult.stderr}\n${brokerLogs.stderr}`
+      .trim().slice(0, 2048).replaceAll(tempRoot, "<temp>");
+    throw new Error(`assessor materialization failed: ${diagnostic || "no bounded logs"}`);
+  }
+  process.stdout.write(assessorResult.stdout);
+
   const createEvents = await requireDocker([
     "events",
     "--since", String(smokeStartedAt),
@@ -241,6 +317,8 @@ try {
   const intruderResult = await docker([
     "container", "run", "--name", intruder, "--label", ownerLabel,
     ...commonClientArgs,
+    "--env", `TEST_TASK_ID=${taskId}`,
+    "--env", `TEST_RUN_ID=${runId}`,
     "--env", "AGENTTEAMS_WORKER_NAME=tiangong-intruder",
     "--entrypoint", "/usr/bin/node", workerImageId,
     "--input-type=module", "-e", intruderProgram,
@@ -252,14 +330,14 @@ try {
   process.stdout.write(intruderResult.stdout);
 
   const socketProbe = await requireDocker([
-    "container", "inspect", "--format", "{{json .Mounts}}", client,
+    "container", "inspect", "--format", "{{json .Mounts}}", client, assessorClient,
   ], "client mount inspect failed");
-  if (socketProbe.stdout.includes("docker.sock")) throw new Error("client received the Docker socket");
+  if (socketProbe.stdout.includes("docker.sock")) throw new Error("professional Worker received the Docker socket");
   process.stdout.write("runner_broker_worker_socket_absent=pass\n");
 } catch (error) {
   fail(error instanceof Error ? error.message : "runner broker smoke failed");
 } finally {
-  for (const name of [intruder, client, broker]) await removeOwned("container", name);
+  for (const name of [intruder, assessorClient, client, broker]) await removeOwned("container", name);
   await removeOwned("volume", stateVolume);
   await removeOwned("network", network);
   try {

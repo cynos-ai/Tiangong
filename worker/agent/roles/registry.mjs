@@ -270,11 +270,11 @@ const registries = deepFreeze({
     },
     "implementor-v1": {
       id: "implementor-v1", supportedRoleIds: ["implementor"], relativePath: "roles/implementor/role.md",
-      digest: "8e6a8d9c0840a9856d8c0d69fc9491910549e0f269e4d3fe7be6aa5dfcb129f2", maxBytes: 16 * 1024,
+      digest: "3099bfc6e6d6c1cb8d215b025f54e4d1028e2e8b419e5e9aba20483e7d3c6561", maxBytes: 16 * 1024,
     },
     "assessor-v1": {
       id: "assessor-v1", supportedRoleIds: ["assessor"], relativePath: "roles/assessor/role.md",
-      digest: "5cb4e5e8b1972e5a74f40843e5c82723bb802e49739aa6825de91bd9e6adef47", maxBytes: 16 * 1024,
+      digest: "09eb73c76073e0668c790f1be89cc2a23786825455c0e77d417ccf5a5a53f8d3", maxBytes: 16 * 1024,
     },
     "operator-v1": {
       id: "operator-v1", supportedRoleIds: ["operator"], relativePath: "roles/operator/role.md",

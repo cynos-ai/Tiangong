@@ -7,7 +7,8 @@
   "required": [
     "kind", "schemaVersion", "taskId", "projectId", "producer", "taskKind",
     "revisionIndex", "sourceRole", "playbookDigest", "taskBindingDigest",
-    "completionContractDigest", "artifactRefs", "evidenceRefs", "createdAt", "contentDigest"
+    "completionContractDigest", "sourceProfileDigest", "sourceSkillId", "skillDigest",
+    "artifactRefs", "evidenceRefs", "createdAt", "contentDigest"
   ],
   "properties": {
     "kind": { "const": "tiangong.result-envelope" },
@@ -36,7 +37,10 @@
         "kind": { "const": "tiangong.change-revision-ref" },
         "schemaVersion": { "const": 1 },
         "producerTaskId": { "$ref": "#/$defs/id" },
-        "artifactPath": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "artifactPath": {
+          "type": "string", "minLength": 1, "maxLength": 1024,
+          "pattern": "^(?!(?:\\.{1,2})(?:/|$))(?!.*\\/(?:\\.{1,2})(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
+        },
         "artifactDigest": { "$ref": "#/$defs/digest" },
         "revision": { "type": "integer", "minimum": 0 },
         "contentDigest": { "$ref": "#/$defs/digest" }
@@ -57,7 +61,7 @@
   ],
   "allOf": [
     {
-      "if": { "properties": { "taskKind": { "enum": ["implement", "release"] } }, "required": ["taskKind"] },
+      "if": { "properties": { "taskKind": { "enum": ["implement", "assess", "release"] } }, "required": ["taskKind"] },
       "then": {
         "if": { "not": { "required": ["blocker"] } },
         "then": { "required": ["changeRevisionRef"] }

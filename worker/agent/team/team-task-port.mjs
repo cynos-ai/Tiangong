@@ -145,7 +145,7 @@ async function readOptionalResult(taskId, deps) {
   }
 }
 
-function validateResultBinding({ result, task, project, identity }) {
+async function validateResultBinding({ result, task, project, identity, deps }) {
   if (!isResultEnvelope(result) || !verifyContentDigest(result)) {
     throw new Error("Task result must be a schema-valid ResultEnvelope");
   }
@@ -166,6 +166,27 @@ function validateResultBinding({ result, task, project, identity }) {
   ];
   for (const [actual, expected, field] of checks) {
     if (actual !== expected) throw new Error(`Result ${field} does not match the assigned task binding`);
+  }
+  if (result.blocker || !["implement", "assess", "release"].includes(task.taskKind)) return;
+  if (result.changeRevisionRef?.revision !== task.revisionIndex) {
+    throw new Error("Result ChangeRevision does not match the Task revision");
+  }
+  if (task.taskKind === "implement") {
+    if (result.changeRevisionRef.producerTaskId !== task.taskId) {
+      throw new Error("Implementor Result must seal a ChangeRevision produced by its own Task");
+    }
+    return;
+  }
+  const producerTask = await readTaskBinding(result.changeRevisionRef.producerTaskId, deps);
+  const producerResult = await readTaskResult(result.changeRevisionRef.producerTaskId, deps);
+  const producerDecisions = await readTaskDecisions(result.changeRevisionRef.producerTaskId, deps);
+  if (producerTask.projectId !== task.projectId || producerTask.taskKind !== "implement" ||
+      producerTask.revisionIndex !== task.revisionIndex || !isResultEnvelope(producerResult) ||
+      canonicalJson(producerResult.changeRevisionRef) !== canonicalJson(result.changeRevisionRef) ||
+      producerDecisions.length !== 1 || !isTaskDecision(producerDecisions[0]) ||
+      producerDecisions[0].decision !== "accept" ||
+      producerDecisions[0].resultDigest !== producerResult.contentDigest) {
+    throw new Error("Result ChangeRevision is not the accepted Implementor artifact for this revision");
   }
 }
 
@@ -255,7 +276,7 @@ export async function submitResult(result, deps) {
   const taskBinding = await readTaskBinding(result.taskId, deps);
   assertAssignee(identity, taskBinding);
   const project = await readProjectBinding(taskBinding.projectId, deps);
-  validateResultBinding({ result, task: taskBinding, project, identity });
+  await validateResultBinding({ result, task: taskBinding, project, identity, deps });
   let stored = result;
   let replayed = false;
   try {
@@ -297,7 +318,7 @@ export async function checkResult(taskId, deps) {
   const project = await readProjectBinding(taskBinding.projectId, deps);
   assertLeaderForProject(identity, project);
   const result = await readTaskResult(taskId, deps);
-  validateResultBinding({ result, task: taskBinding, project, identity: { workerName: taskBinding.assignee } });
+  await validateResultBinding({ result, task: taskBinding, project, identity: { workerName: taskBinding.assignee }, deps });
   const decisions = await readTaskDecisions(taskId, deps);
   if (!decisions.every(isTaskDecision)) throw new Error("Task has a malformed transition decision");
   if (decisions.length > 1) throw new Error("Task has conflicting terminal decisions");
@@ -322,7 +343,7 @@ export async function recordTaskDecision(decision, deps) {
   }
   const result = await readOptionalResult(decision.taskId, deps);
   if (result) {
-    validateResultBinding({ result, task: taskBinding, project, identity: { workerName: taskBinding.assignee } });
+    await validateResultBinding({ result, task: taskBinding, project, identity: { workerName: taskBinding.assignee }, deps });
   }
   assertDecisionResultCompatible({ decision, taskBinding, result });
   const existing = await readTaskDecisions(decision.taskId, deps);

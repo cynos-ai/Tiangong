@@ -14,11 +14,11 @@ Artifact, and Approval kept as distinct facts:
   contract, and submits them as the `design` Result.
 - **Implementor** modifies code within scope and seals a
   `ChangeRevisionRef`; the `implement` Result carries it.
-- **Assessor** independently verifies the sealed revision against the
-  acceptance contract and returns `accept`, `revision`, or `blocked` as the
-  `assess` decision.
-- **Operator** builds, requests approval, deploys, post-verifies, and rolls
-  back if needed as the `release` step.
+- **Assessor** independently verifies a read-only materialization of the sealed
+  revision against the acceptance contract; its Result carries the exact same
+  `ChangeRevisionRef` and supports `accept`, `revision`, or `blocked`.
+- **Operator** consumes that same accepted revision, builds, requests approval,
+  deploys, post-verifies, and rolls back if needed as the `release` step.
 
 ## Coordination contract
 

@@ -9,11 +9,18 @@ import {
   validateBrokerConfig,
 } from "../agent/runner/broker-server.mjs";
 import { runCommand, runnerInvocationIdentity } from "../agent/runner/runner-port.mjs";
+import { createChangeRevisionRef } from "../agent/work/change-revision-ref.mjs";
 
 const RUN_ID = "run-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const TASK_ID = "task-implement-a";
 const IMAGE_ID = `sha256:${"a".repeat(64)}`;
 const WORKER_IMAGE_ID = `sha256:${"b".repeat(64)}`;
+const REVISION_REF = createChangeRevisionRef({
+  producerTaskId: TASK_ID,
+  artifactPath: "objects/task-implement-a/revision",
+  artifactDigest: "f".repeat(64),
+  revision: 0,
+});
 const EVIDENCE = Object.freeze({
   schemaVersion: 1,
   runId: RUN_ID,
@@ -37,7 +44,9 @@ function configInput() {
       taskId: TASK_ID,
       runId: RUN_ID,
       runnerImageId: IMAGE_ID,
+      revisionIndex: 0,
       fixtureId: "software-change-fixture",
+      inputRevisionTaskId: null,
     }],
   };
 }
@@ -59,7 +68,7 @@ function request() {
   return {
     runId: RUN_ID,
     command: ["node", "test.mjs"],
-    cwd: "fixture",
+    cwd: "scratch/revision",
     timeoutMs: 1000,
     outputLimitBytes: 1024,
   };
@@ -85,6 +94,7 @@ test("broker client reaches only the bound Task and returns invocation-bound run
         stderr: "",
         durationMs: 8,
         runnerEvidence: { ...EVIDENCE, invocationKey: identity.invocationKey },
+        changeRevisionRef: REVISION_REF,
       };
     },
   });
@@ -95,6 +105,7 @@ test("broker client reaches only the bound Task and returns invocation-bound run
     assert.equal(result.outcome, "completed");
     assert.equal(result.stdout, "tests passed\n");
     assert.equal(result.runnerEvidence.imageId, IMAGE_ID);
+    assert.equal(result.changeRevisionRef.contentDigest, REVISION_REF.contentDigest);
     assert.equal(executions, 1);
   } finally {
     await server.close();
@@ -165,6 +176,7 @@ test("Docker peer authentication binds source IP, exact container, Worker name, 
       return {
         exitCode: 0,
         stdout: JSON.stringify([{
+          Name: config.network,
           Containers: {
             abc: { Name: binding.containerName, IPv4Address: "172.30.0.5/16" },
           },
@@ -214,8 +226,24 @@ test("broker config and client endpoint are closed, bounded contracts", () => {
     /missing or unknown/u,
   );
   const duplicate = configInput();
-  duplicate.bindings.push({ ...duplicate.bindings[0], role: "assessor" });
+  duplicate.bindings.push({ ...duplicate.bindings[0] });
   assert.throws(() => validateBrokerConfig(duplicate), /unique Worker/u);
+  const paired = configInput();
+  paired.bindings.push({
+    workerName: "tiangong-assessor",
+    containerName: "agentteams-worker-tiangong-assessor",
+    workerImageId: WORKER_IMAGE_ID,
+    role: "assessor",
+    taskId: "task-assess-a",
+    runId: "run-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    runnerImageId: IMAGE_ID,
+    revisionIndex: 0,
+    fixtureId: null,
+    inputRevisionTaskId: TASK_ID,
+  });
+  assert.equal(validateBrokerConfig(paired).bindings.length, 2);
+  paired.bindings[1].revisionIndex = 1;
+  assert.throws(() => validateBrokerConfig(paired), /same revision/u);
   assert.throws(
     () => createRunnerBrokerExecutor({ endpoint: "http://user:secret@broker/v1/execute", taskId: TASK_ID }),
     /credential-free/u,

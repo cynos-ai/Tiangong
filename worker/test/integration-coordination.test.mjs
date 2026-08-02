@@ -112,12 +112,19 @@ async function runStep({ pb, project, root, chain, taskKind, revisionIndex, assi
     skillDigest: task.sourceSkillDigest,
     createdAt: T(2),
   };
-  if (taskKind === "implement" || taskKind === "release") {
-    envelopeInput.changeRevisionRef = { producerTaskId: taskId, artifactPath: `artifacts/${taskId}.tar`, artifactDigest: pb.contentDigest, revision: revisionIndex };
-    envelopeInput.claim = `sealed revision ${revisionIndex}`;
-  } else if (taskKind === "assess" && decide === "revision") {
-    envelopeInput.claim = "needs revision";
-    envelopeInput.revisionRequest = { summary: "edge case uncovered" };
+  if (["implement", "assess", "release"].includes(taskKind)) {
+    const producerTaskId = `task-implement-${revisionIndex}-${IMPL}`;
+    envelopeInput.changeRevisionRef = {
+      producerTaskId,
+      artifactPath: `artifacts/${producerTaskId}.tar`,
+      artifactDigest: pb.contentDigest,
+      revision: revisionIndex,
+    };
+    envelopeInput.claim = taskKind === "implement" ? `sealed revision ${revisionIndex}` : `${taskKind} complete`;
+    if (taskKind === "assess" && decide === "revision") {
+      envelopeInput.claim = "needs revision";
+      envelopeInput.revisionRequest = { summary: "edge case uncovered" };
+    }
   } else {
     envelopeInput.claim = `${taskKind} complete`;
   }

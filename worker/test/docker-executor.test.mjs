@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { createDisposableDockerExecutor } from "../agent/runner/docker-executor.mjs";
 import { runCommand } from "../agent/runner/runner-port.mjs";
+import { createChangeRevisionRef } from "../agent/work/change-revision-ref.mjs";
 
 const RUN_ID = "run-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const IMAGE_ID = `sha256:${"b".repeat(64)}`;
@@ -124,12 +125,16 @@ function successfulDockerFake({ mutateRunner } = {}) {
           PublishAllPorts: false,
           Tmpfs: tmpfsFrom(args),
           RestartPolicy: { Name: "no", MaximumRetryCount: 0 },
+          LogConfig: {
+            Type: option(args, "--log-driver") ?? "",
+            Config: Object.fromEntries(options(args, "--log-opt").map((value) => value.split("=", 2))),
+          },
           PidsLimit: Number(option(args, "--pids-limit") ?? 0),
           Memory: Number(option(args, "--memory") ?? 0),
           NanoCpus: option(args, "--cpus") === "1" ? 1_000_000_000 : 0,
         },
         Mounts: options(args, "--mount").map(mountFrom),
-        State: { ExitCode: isSeed ? 0 : 7 },
+        State: { ExitCode: isSeed ? 0 : 7, Running: false },
         command: args.slice(imageIndex + 1),
       };
       if (!isSeed) mutateRunner?.(container);
@@ -139,9 +144,17 @@ function successfulDockerFake({ mutateRunner } = {}) {
     if (kind === "container" && action === "cp") return result();
     if (kind === "container" && action === "start") {
       const name = args.at(-1);
+      if (!name.includes("-seed-") && !args.includes("--attach")) {
+        containers.get(name).State.Running = true;
+        return result({ stdout: `${name}\n` });
+      }
       return result(name.includes("-seed-")
         ? { stdout: `${containers.get(name).Config.Labels["io.tiangong.fixture-digest"]}\n` }
         : { stdout: "bounded output\n" });
+    }
+    if (kind === "container" && action === "top") return result({ stdout: "PID\n123\n" });
+    if (kind === "container" && action === "logs") {
+      return result({ stdout: "captured output\nTIANGONG_RUNNER_COMMAND_COMPLETE {\"exitCode\":0}\n" });
     }
     if (kind === "container" && action === "rm") {
       containers.delete(args.at(-1));
@@ -206,6 +219,46 @@ test("disposable Docker executor uses the immutable image and exact isolation po
     }]);
     assert.equal(tmpfsFrom(runnerCreate)["/workspace/scratch"], "rw,noexec,nosuid,nodev,size=64m,mode=0777");
     assert.ok(options(runnerCreate, "--env").includes("NODE_ENV=test"));
+  });
+});
+
+test("Implementor capture mode seals a bounded writable copy before cleanup", async () => {
+  await withFixture(async (fixtureSource) => {
+    const fake = successfulDockerFake();
+    const revisionRef = createChangeRevisionRef({
+      producerTaskId: "task-implement",
+      artifactPath: "objects/task-implement/revision",
+      artifactDigest: "4".repeat(64),
+      revision: 0,
+    });
+    let captured;
+    const executor = createDisposableDockerExecutor({
+      imageId: IMAGE_ID,
+      fixtureSource,
+      executionMode: "capture-revision",
+      captureRevision: async (input) => { captured = input; return revisionRef; },
+      runDocker: fake.runDocker,
+    });
+    const response = await runCommand({
+      runId: RUN_ID,
+      command: ["node", "edit.mjs"],
+      cwd: "scratch/revision",
+      timeoutMs: 1000,
+      outputLimitBytes: 1024,
+    }, { executor, env: {} });
+    assert.equal(response.outcome, "completed");
+    assert.equal(response.stdout, "captured output\n");
+    assert.equal(response.changeRevisionRef.contentDigest, revisionRef.contentDigest);
+    assert.match(captured.containerName, /^tiangong-runner-/u);
+    assert.match(captured.invocationKey, /^[0-9a-f]{64}$/u);
+    const create = fake.calls.find((args) => args[0] === "container" && args[1] === "create" &&
+      !option(args, "--name").includes("-seed-"));
+    assert.equal(option(create, "--workdir"), "/workspace/fixture");
+    assert.equal(option(create, "--entrypoint"), "/usr/bin/node");
+    assert.equal(option(create, "--log-driver"), "local");
+    assert.deepEqual(options(create, "--log-opt"), ["max-size=1m", "max-file=1", "compress=false"]);
+    assert.equal(fake.containers.size, 0);
+    assert.equal(fake.volumes.size, 0);
   });
 });
 

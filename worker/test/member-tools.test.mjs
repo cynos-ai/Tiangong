@@ -9,6 +9,7 @@ import { RunnerJournal } from "../agent/runner/journal.mjs";
 import { createProjectBinding, createTaskBinding } from "../agent/team/manifest.mjs";
 import { TeamCoordinationGate } from "../agent/team/tool-wrapper.mjs";
 import { createProject, dispatchTask } from "../agent/team/team-task-port.mjs";
+import { createChangeRevisionRef } from "../agent/work/change-revision-ref.mjs";
 import { createMemberToolRegistry } from "../agent/work/member-tools.mjs";
 
 const LEADER = "tiangong-leader";
@@ -196,6 +197,12 @@ test("Implementor command runs only through the Task-bound broker and projects m
     deps.sourceSkillId = "implementor-v1";
     deps.runnerBrokerEndpoint = "http://runner-broker:18090/v1/execute";
     deps.runnerJournal = new RunnerJournal({ filePath: join(root, "runner.jsonl") });
+    const revisionRef = createChangeRevisionRef({
+      producerTaskId: task.taskId,
+      artifactPath: "objects/implement/revision",
+      artifactDigest: "d".repeat(64),
+      revision: 0,
+    });
     let brokerCalls = 0;
     deps.runnerFetch = async (_url, options) => {
       brokerCalls += 1;
@@ -215,8 +222,9 @@ test("Implementor command runs only through the Task-bound broker and projects m
           imageId: `sha256:${"a".repeat(64)}`,
           policyDigest: "b".repeat(64),
           containerConfigDigest: "c".repeat(64),
-          fixtureDigest: "d".repeat(64),
+          fixtureDigest: "0".repeat(64),
         },
+        changeRevisionRef: revisionRef,
       }), { status: 200 });
     };
     const command = createMemberToolRegistry({ deps }).definitions()
@@ -225,6 +233,22 @@ test("Implementor command runs only through the Task-bound broker and projects m
     const first = await command.execute("run-1", params);
     assert.equal(details(first).stdout, "tests pass\n");
     assert.equal(details(first).replayed, false);
+    assert.equal(details(first).changeRevisionRef.contentDigest, revisionRef.contentDigest);
+    const submit = createMemberToolRegistry({ deps }).definitions().find((tool) => tool.name === "team_submit_result");
+    await assert.rejects(
+      () => submit.execute("submit-forged", {
+        taskId: task.taskId,
+        claim: "forged revision",
+        changeRevisionRef: createChangeRevisionRef({ ...revisionRef, artifactDigest: "e".repeat(64) }),
+      }),
+      /not bound to a completed Runner invocation/u,
+    );
+    const submitted = await submit.execute("submit-implement", {
+      taskId: task.taskId,
+      claim: "implementation complete",
+      changeRevisionRef: revisionRef,
+    });
+    assert.match(details(submitted).resultDigest, /^[0-9a-f]{64}$/u);
     const replay = await command.execute("run-2", params);
     assert.equal(details(replay).replayed, true);
     assert.equal(brokerCalls, 1);
@@ -232,6 +256,8 @@ test("Implementor command runs only through the Task-bound broker and projects m
       event.type === "tool.execution.completed" && event.executionCategory === "isolated-execution");
     assert.equal(completion.runnerImageId, `sha256:${"a".repeat(64)}`);
     assert.equal(completion.runnerPolicyDigest, "b".repeat(64));
+    assert.equal(completion.runnerChangeRevisionRefDigest, revisionRef.contentDigest);
+    assert.equal(completion.runnerChangeArtifactDigest, revisionRef.artifactDigest);
     assert.equal(Object.hasOwn(completion, "stdout"), false);
   });
 });
@@ -251,6 +277,12 @@ test("Assessor test command is independently bound to an assess Task", async () 
     deps.sourceSkillId = "assessor-v1";
     deps.runnerBrokerEndpoint = "http://runner-broker:18090/v1/execute";
     deps.runnerJournal = new RunnerJournal({ filePath: join(root, "assessor-runner.jsonl") });
+    const assessedRevision = createChangeRevisionRef({
+      producerTaskId: "task-implement-source",
+      artifactPath: "objects/implement/source",
+      artifactDigest: "d".repeat(64),
+      revision: 0,
+    });
     deps.runnerFetch = async (_url, options) => {
       const request = JSON.parse(options.body);
       return new Response(JSON.stringify({
@@ -268,6 +300,7 @@ test("Assessor test command is independently bound to an assess Task", async () 
           containerConfigDigest: "c".repeat(64),
           fixtureDigest: "d".repeat(64),
         },
+        changeRevisionRef: assessedRevision,
       }), { status: 200 });
     };
     const result = await createMemberToolRegistry({ deps }).definitions()
@@ -275,6 +308,7 @@ test("Assessor test command is independently bound to an assess Task", async () 
       .execute("assess-run", { taskId: task.taskId, command: ["node", "test.mjs"], timeoutMs: 1000 });
     assert.equal(details(result).exitCode, 1);
     assert.equal(details(result).stderr, "test failed\n");
+    assert.equal(details(result).changeRevisionRef.contentDigest, assessedRevision.contentDigest);
   });
 });
 

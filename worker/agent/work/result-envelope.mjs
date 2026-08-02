@@ -22,7 +22,7 @@ const TASK_KIND_ROLE = Object.freeze({
 const CLAIM_MAX = 8192;
 const SUMMARY_MAX = 4096;
 // taskKinds whose Result must seal a ChangeRevisionRef.
-const REQUIRES_REVISION_REF = new Set(["implement", "release"]);
+const REQUIRES_REVISION_REF = new Set(["implement", "assess", "release"]);
 
 function demandString(value, name) {
   if (typeof value !== "string" || value === "") throw new TypeError(`${name} must be a non-empty string`);

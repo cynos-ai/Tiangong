@@ -51,23 +51,28 @@
 ### B3: Closed Runner broker keeps daemon authority outside the Worker
 
 - Purpose: prove the supported socket topology: only a controlled broker receives Docker authority, while an exact Worker-image client reaches it through a task-bound HTTP adapter.
-- Setup: build `tiangong-runner-broker:dev` and `tiangong-worker-implementor:dev`; run `make test-runner-broker` on a fresh, uniquely labeled network, broker state volume, broker container, and client identities.
+- Setup: build `tiangong-runner-broker:dev`, `tiangong-worker-implementor:dev`, and `tiangong-worker-assessor:dev`; run `make test-runner-broker` on a fresh, uniquely labeled network, broker state volume, broker container, and client identities.
 - Prompt: none.
 - Expected observations:
   - the broker authenticates the request source by exact Docker network IP, container name, running state, immutable Worker image ID, and `AGENTTEAMS_WORKER_NAME` runtime fact;
   - request Task, derived run ID, invocation key, command bounds, and sanitized environment match the immutable broker registration;
   - only the broker has the Docker socket; the Worker-image client and disposable command runner do not;
-  - one authorized request executes the isolation probe, while a fresh client journal re-request is replayed by the broker journal with exactly one seed and one command-container create event total;
+  - one authorized Implementor request executes the isolation probe and modifies only its bounded writable copy; after command-process quiescence the broker exports a bounded archive, independently validates it, and seals one immutable ChangeRevisionRef;
+  - a fresh Implementor client journal re-request is replayed by the broker journal with exactly one seed and one command-container create event total;
+  - the bound Assessor receives a separately seeded read-only copy whose fixture digest equals the sealed artifact digest, and cannot modify that copy;
+  - a changed Implementor invocation cannot replace the sealed revision; an Assessor dependency or revision mismatch is rejected before execution;
   - an adjacent container on the same network is rejected before execution;
   - all exactly owned containers, volume, network, and temporary config are removed and absence is verified.
 - Required evidence:
   - `runner_broker_ready=pass`;
   - `runner_broker_client=pass` and invocation-bound `runner_broker_evidence=pass`;
+  - `runner_broker_revision_sealed=pass`;
   - `runner_broker_replay=pass` and `runner_broker_single_execution=pass`;
+  - `runner_broker_assessor_materialization=pass` and `runner_broker_assessor_readonly=pass`;
   - `runner_broker_unauthorized_peer=pass`;
   - `runner_broker_worker_socket_absent=pass`;
   - `runner_broker_cleanup=pass`.
-- Skip/block rules: block if Docker, either immutable local image, or socket access for the controlled broker is unavailable. This proves the closed container identity and execution topology, not an official AgentTeams/Matrix Worker turn.
+- Skip/block rules: block if Docker, any required immutable local image, or socket access for the controlled broker is unavailable. This proves the closed container identity, execution, and local revision-materialization topology, not an official AgentTeams/Matrix Worker turn.
 
 ## Full smoke
 

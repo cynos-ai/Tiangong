@@ -7,11 +7,13 @@ import { sha256 } from "../canonical-json.mjs";
 import { createDisposableDockerExecutor, createDockerCommandRunner } from "./docker-executor.mjs";
 import { RunnerJournal } from "./journal.mjs";
 import { assertNoForbiddenEnv, validateCommandRequest } from "./runner-policy.mjs";
+import { ChangeRevisionStore } from "./revision-store.mjs";
 import { runCommand, runnerInvocationIdentity } from "./runner-port.mjs";
 
 const CONFIG_PATH = "/run/tiangong-runner-broker/config.json";
 const FIXTURE_ROOT = "/opt/tiangong-runner-fixtures";
 const STATE_ROOT = "/var/lib/tiangong-runner-broker";
+const REVISION_ROOT_NAME = "change-revisions";
 const DOCKER_PATH = "/usr/local/bin/docker";
 const MAX_CONFIG_BYTES = 64 * 1024;
 const MAX_REQUEST_BYTES = 128 * 1024;
@@ -26,7 +28,8 @@ const REQUEST_KEYS = [
 ];
 const CONFIG_KEYS = ["bindings", "listenPort", "network", "schemaVersion"];
 const BINDING_KEYS = [
-  "containerName", "fixtureId", "role", "runId", "runnerImageId", "taskId", "workerImageId", "workerName",
+  "containerName", "fixtureId", "inputRevisionTaskId", "revisionIndex", "role", "runId", "runnerImageId",
+  "taskId", "workerImageId", "workerName",
 ];
 
 function exactKeys(value, keys, label) {
@@ -78,8 +81,18 @@ export function validateBrokerConfig(value) {
       taskId: demand(entry.taskId, ID, "taskId"),
       runId: demand(entry.runId, RUN_ID, "runId"),
       runnerImageId: demand(entry.runnerImageId, IMAGE, "runnerImageId"),
-      fixtureId: demand(entry.fixtureId, RESOURCE, "fixtureId"),
+      revisionIndex: Number.isInteger(entry.revisionIndex) && entry.revisionIndex >= 0
+        ? entry.revisionIndex
+        : (() => { throw new Error("Runner broker revisionIndex is invalid"); })(),
+      fixtureId: entry.fixtureId === null ? null : demand(entry.fixtureId, RESOURCE, "fixtureId"),
+      inputRevisionTaskId: entry.inputRevisionTaskId === null
+        ? null
+        : demand(entry.inputRevisionTaskId, ID, "inputRevisionTaskId"),
     });
+    if ((binding.role === "implementor" && (binding.fixtureId === null || binding.inputRevisionTaskId !== null)) ||
+        (binding.role === "assessor" && (binding.fixtureId !== null || binding.inputRevisionTaskId === null))) {
+      throw new Error("Runner broker fixture binding does not match the professional role");
+    }
     if (workers.has(binding.workerName) || containers.has(binding.containerName) || tasks.has(binding.taskId)) {
       throw new Error("Runner broker bindings must have unique Worker, container, and Task identities");
     }
@@ -88,6 +101,15 @@ export function validateBrokerConfig(value) {
     tasks.add(binding.taskId);
     return binding;
   });
+  const byTask = new Map(bindings.map((binding) => [binding.taskId, binding]));
+  for (const binding of bindings) {
+    if (binding.role === "assessor") {
+      const input = byTask.get(binding.inputRevisionTaskId);
+      if (!input || input.role !== "implementor" || input.revisionIndex !== binding.revisionIndex) {
+        throw new Error("Assessor input must reference the Implementor Task for the same revision");
+      }
+    }
+  }
   return Object.freeze({
     schemaVersion: 1,
     network: value.network,
@@ -118,7 +140,11 @@ export function createDockerPeerAuthenticator({ config, runDocker }) {
     if (inspected.timedOut || inspected.exitCode !== 0) throw new Error("RUNNER_BROKER_NETWORK_INSPECT_FAILED");
     let network;
     try {
-      [network] = JSON.parse(inspected.stdout);
+      const parsed = JSON.parse(inspected.stdout);
+      if (!Array.isArray(parsed) || parsed.length !== 1 || parsed[0]?.Name !== config.network) {
+        throw new Error("invalid network inspect response");
+      }
+      [network] = parsed;
     } catch {
       throw new Error("RUNNER_BROKER_NETWORK_INSPECT_INVALID");
     }
@@ -136,7 +162,9 @@ export function createDockerPeerAuthenticator({ config, runDocker }) {
     }
     let container;
     try {
-      [container] = JSON.parse(containerResult.stdout);
+      const parsed = JSON.parse(containerResult.stdout);
+      if (!Array.isArray(parsed) || parsed.length !== 1) throw new Error("invalid container inspect response");
+      [container] = parsed;
     } catch {
       throw new Error("RUNNER_BROKER_PEER_INSPECT_INVALID");
     }
@@ -159,6 +187,8 @@ function requestFromBody(value, binding) {
   }
   assertNoForbiddenEnv(value.env);
   const validated = validateCommandRequest(value);
+  const expectedCwd = binding.role === "implementor" ? "scratch/revision" : "fixture";
+  if (validated.cwd !== expectedCwd) throw new Error("RUNNER_BROKER_WORKDIR_MISMATCH");
   const identity = runnerInvocationIdentity(validated);
   if (value.invocationKey !== identity.invocationKey) throw new Error("RUNNER_BROKER_INVOCATION_MISMATCH");
   return { ...validated, env: value.env, invocationKey: identity.invocationKey };
@@ -194,15 +224,19 @@ export function createRunnerBrokerHandler({ authenticatePeer, execute }) {
     throw new TypeError("Runner broker requires peer authentication and execution adapters");
   }
   return async function handle(request, response) {
+    let stage = "route";
     try {
       if (request.method !== "POST" || request.url !== "/v1/execute" ||
           request.headers["content-type"] !== "application/json") {
         send(response, 404, { error: "RUNNER_BROKER_ROUTE_NOT_FOUND" });
         return;
       }
+      stage = "authenticate";
       const binding = await authenticatePeer(request.socket.remoteAddress);
+      stage = "request";
       const body = await readRequestBody(request);
       const command = requestFromBody(body, binding);
+      stage = "execute";
       const result = await execute(binding, command);
       if (result.outcome === "completed") {
         send(response, 200, {
@@ -212,11 +246,21 @@ export function createRunnerBrokerHandler({ authenticatePeer, execute }) {
           stderr: result.stderr,
           durationMs: result.durationMs,
           runnerEvidence: result.runnerEvidence,
+          ...(result.changeRevisionRef ? { changeRevisionRef: result.changeRevisionRef } : {}),
         });
       } else {
-        send(response, 200, { status: "interrupted" });
+        const reason = typeof result.reason === "string" && /^[A-Z][A-Z0-9_]{0,63}$/u.test(result.reason)
+          ? result.reason
+          : "UNKNOWN";
+        process.stderr.write(`runner_broker_execution_uncertain reason=${reason}\n`);
+        if (reason === "RUNNER_COMMAND_INTERRUPTED") send(response, 200, { status: "interrupted" });
+        else send(response, 503, { error: "RUNNER_BROKER_OUTCOME_UNCERTAIN" });
       }
-    } catch {
+    } catch (error) {
+      const code = typeof error?.code === "string" && /^RUNNER_[A-Z0-9_]{1,63}$/u.test(error.code)
+        ? error.code
+        : "RUNNER_BROKER_REQUEST_REJECTED";
+      process.stderr.write(`runner_broker_request_failed stage=${stage} code=${code}\n`);
       if (!response.headersSent) send(response, 403, { error: "RUNNER_BROKER_REQUEST_REJECTED" });
       else response.destroy();
     }
@@ -226,28 +270,49 @@ export function createRunnerBrokerHandler({ authenticatePeer, execute }) {
 export function createBrokerExecutionAdapter({ fixtureRoot, stateRoot, runDocker }) {
   const fixtures = resolve(fixtureRoot);
   const state = resolve(stateRoot);
-  const executors = new Map();
   const journals = new Map();
+  const revisionStore = new ChangeRevisionStore({ rootDir: join(state, REVISION_ROOT_NAME), runDocker });
   return async function execute(binding, request) {
-    const fixtureDirectory = resolve(fixtures, binding.fixtureId);
-    if (fixtureDirectory !== join(fixtures, binding.fixtureId) ||
-        (!fixtureDirectory.startsWith(`${fixtures}${sep}`))) {
-      throw new Error("RUNNER_BROKER_FIXTURE_ESCAPE");
-    }
     const id = bindingId(binding);
-    let executor = executors.get(id);
-    if (!executor) {
+    let journal = journals.get(id);
+    if (!journal) {
+      journal = new RunnerJournal({ filePath: join(state, "journals", `${id}.jsonl`) });
+      journals.set(id, journal);
+    }
+
+    let fixtureDirectory;
+    let executor;
+    if (binding.role === "implementor") {
+      fixtureDirectory = resolve(fixtures, binding.fixtureId);
+      if (fixtureDirectory !== join(fixtures, binding.fixtureId) ||
+          (!fixtureDirectory.startsWith(`${fixtures}${sep}`))) {
+        throw new Error("RUNNER_BROKER_FIXTURE_ESCAPE");
+      }
+      await revisionStore.assertAvailable(binding.taskId, request.invocationKey);
       executor = createDisposableDockerExecutor({
         imageId: binding.runnerImageId,
         fixtureSource: fixtureDirectory,
+        executionMode: "capture-revision",
+        captureRevision: ({ containerName, invocationKey }) => revisionStore.capture({
+          containerName,
+          producerTaskId: binding.taskId,
+          revision: binding.revisionIndex,
+          invocationKey,
+        }),
         runDocker,
       });
-      executors.set(id, executor);
-    }
-    let journal = journals.get(id);
-    if (!journal) {
-      journal = new RunnerJournal({ filePath: join(state, `${id}.jsonl`) });
-      journals.set(id, journal);
+    } else {
+      const materialized = await revisionStore.lookup(binding.inputRevisionTaskId);
+      if (!materialized || materialized.ref.revision !== binding.revisionIndex) {
+        throw new Error("RUNNER_BROKER_REVISION_UNAVAILABLE");
+      }
+      fixtureDirectory = materialized.directory;
+      executor = createDisposableDockerExecutor({
+        imageId: binding.runnerImageId,
+        fixtureSource: fixtureDirectory,
+        inputChangeRevisionRef: materialized.ref,
+        runDocker,
+      });
     }
     return runCommand(request, { executor, journal, env: request.env });
   };

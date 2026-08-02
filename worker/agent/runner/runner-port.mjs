@@ -1,4 +1,5 @@
 import { sha256 } from "../canonical-json.mjs";
+import { isChangeRevisionRef } from "../work/change-revision-ref.mjs";
 import { assertNoForbiddenEnv, validateCommandRequest } from "./runner-policy.mjs";
 
 // RunnerPort: run a validated command in the run-owned disposable runner,
@@ -145,6 +146,12 @@ export async function runCommand(request, deps) {
     return { outcome: "outcome_uncertain", invocationKey: key, reason };
   }
 
+  if (raw.changeRevisionRef !== undefined && !isChangeRevisionRef(raw.changeRevisionRef)) {
+    const reason = "RUNNER_REVISION_REF_INVALID";
+    if (journal) await journal.recordUncertain(key, requestDigest, reason);
+    return { outcome: "outcome_uncertain", invocationKey: key, reason };
+  }
+
   const result = {
     outcome: "completed",
     invocationKey: key,
@@ -153,6 +160,7 @@ export async function runCommand(request, deps) {
     stderr: truncate(raw.stderr, validated.outputLimitBytes),
     durationMs: raw.durationMs ?? null,
     ...(runnerEvidence ? { runnerEvidence } : {}),
+    ...(raw.changeRevisionRef ? { changeRevisionRef: raw.changeRevisionRef } : {}),
   };
   if (journal) {
     try {

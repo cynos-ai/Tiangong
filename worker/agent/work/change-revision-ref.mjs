@@ -7,7 +7,7 @@ import { canonicalJson, sha256 } from "../canonical-json.mjs";
 
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/u;
-const PATH_PATTERN = /^[^\n\r]{1,1024}$/u;
+const PATH_PATTERN = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/u;
 
 function demandString(value, name) {
   if (typeof value !== "string" || value === "") throw new TypeError(`${name} must be a non-empty string`);
@@ -31,16 +31,24 @@ export function createChangeRevisionRef(input) {
   });
   if (!ID_PATTERN.test(base.producerTaskId)) throw new Error("producerTaskId has an invalid format");
   if (!DIGEST_PATTERN.test(base.artifactDigest)) throw new Error("artifactDigest must be a 64-hex digest");
-  if (!PATH_PATTERN.test(base.artifactPath)) throw new Error("artifactPath has an invalid format");
+  if (base.artifactPath.length > 1024 || !PATH_PATTERN.test(base.artifactPath) ||
+      base.artifactPath.split("/").some((segment) => segment === "." || segment === "..")) {
+    throw new Error("artifactPath has an invalid format");
+  }
   return Object.freeze({ ...base, contentDigest: sha256(canonicalJson(base)) });
 }
 
 export function isChangeRevisionRef(value) {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    value.kind === "tiangong.change-revision-ref" &&
-    typeof value.contentDigest === "string" &&
-    DIGEST_PATTERN.test(value.contentDigest)
-  );
+  try {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+    const recreated = createChangeRevisionRef({
+      producerTaskId: value.producerTaskId,
+      artifactPath: value.artifactPath,
+      artifactDigest: value.artifactDigest,
+      revision: value.revision,
+    });
+    return canonicalJson(recreated) === canonicalJson(value);
+  } catch {
+    return false;
+  }
 }

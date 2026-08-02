@@ -4,14 +4,14 @@
     {
       "playbookId": "software-change-delivery",
       "version": "1.0.0",
-      "contentDigest": "c87cc2026a17291ed43dab4e4f9bc761e7608f3aaedde26509a561e56474ad03",
+      "contentDigest": "2699bd1e23e72ea44d3748d5ab6e64519f1d4ff0fe4e5e4f94541a2272bfcd5b",
       "transitionPolicyId": "software-change-delivery-transition-v1",
       "transitionPolicyDigest": "bd8bb7ea24e37b735279e623b6b4aa14ddf14de1f5c5221535fd6143a116a51d",
       "fileDigests": {
-        "PLAYBOOK.md": "1b2405c4ee027b84059566591272024c81c523b0f39444541e85b86a17199398",
+        "PLAYBOOK.md": "5ccd5fec10226b18eda88e7cde03c6051fe4c059c89460a8c3cd0d5347fb29fc",
         "schemas/project-binding.schema.json": "91e4c87aa6794f92943c8131df4415879a443e62c175544214e41bbc762a57e5",
         "schemas/task-binding.schema.json": "7fbc5f0d91c5f2b02198da477a737bb7e14cf7bb6957621f6942ed4e81d8cad8",
-        "schemas/result-envelope.schema.json": "23569cb4f16fb63cde9d811ab711af058d7ea505745eb183e4410b8b3344efd3",
+        "schemas/result-envelope.schema.json": "6e5ef7ae62d1c57e42be83246e9deb2b2eaab94300d8b8f87d953cb9584f98bf",
         "schemas/transition-decision.schema.json": "dddc9c23b85c000fb8da465a7d1bb3fd179e9f462439b2bf1184c7eabaeda61e",
         "transition-policy.mjs": "bd8bb7ea24e37b735279e623b6b4aa14ddf14de1f5c5221535fd6143a116a51d",
         "tests/transition-truth-table.json": "dfe0cd7a9aaf588d525dfac0814c5c7e5c87f9a02374f7ffd4e7884ccd53ef02"
@@ -19,7 +19,7 @@
       "schemaDigests": {
         "projectBinding": "8c76ec7721dcb57cd95f34ed8b1547f0e257d6e734eb6e6ea664f4ce297e387d",
         "taskBinding": "e33fb41f3f141b7784bdc01e3ad9ae4b715944d29664aecac449a35b8854c3c1",
-        "resultEnvelope": "076cf155204526f20bce113e4fc1e08079a6adbd61bce1bc7563a3d086a483ad",
+        "resultEnvelope": "67aff48b2ebc4114d59b805ea6186c0846cadf9b2c376e642ae02e959558b03a",
         "transitionDecision": "b2e5de496ad9f691a0fe68971a372a683c1d82d3b0a22f39b0797bbdbe27b040"
       },
       "compatibleRoleProfileDigests": {
@@ -32,8 +32,8 @@
       "compatibleRoleSkillDigests": {
         "leader-v1": "9a1f92ec43d344c49ceca8fa5c8048157bfb4ab153a1f8d1e2bd98ec66951f84",
         "designer-v1": "360ff77f2da57456ff9510720176e61db03a0b36de3eeb0f9b1338f28296a3f9",
-        "implementor-v1": "8e6a8d9c0840a9856d8c0d69fc9491910549e0f269e4d3fe7be6aa5dfcb129f2",
-        "assessor-v1": "5cb4e5e8b1972e5a74f40843e5c82723bb802e49739aa6825de91bd9e6adef47",
+        "implementor-v1": "3099bfc6e6d6c1cb8d215b025f54e4d1028e2e8b419e5e9aba20483e7d3c6561",
+        "assessor-v1": "09eb73c76073e0668c790f1be89cc2a23786825455c0e77d417ccf5a5a53f8d3",
         "operator-v1": "c47469c440ad86994082d8413d9fd004ae6b8c9a7c0e3290850e12d00430767e"
       },
       "agentTeamsVersion": "v1.2.0",

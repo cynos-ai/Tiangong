@@ -1,5 +1,6 @@
 import { Type } from "typebox";
 
+import { canonicalJson } from "../canonical-json.mjs";
 import { findRoleForWorker } from "../playbook/transition-policy.mjs";
 import { TiangongToolRegistry } from "../tools/registry.mjs";
 import { createRunnerBrokerExecutor } from "../runner/broker-client.mjs";
@@ -8,19 +9,26 @@ import { readProjectBinding } from "../team/manifest-store.mjs";
 import { assertProjectLeaderActor, loadWorkerIdentity } from "../team/team-context.mjs";
 import { wrapTeamTool } from "../team/tool-wrapper.mjs";
 import { resolveAssignedTask, submitResult } from "../team/team-task-port.mjs";
+import { createChangeRevisionRef } from "./change-revision-ref.mjs";
 import { createResultEnvelope } from "./result-envelope.mjs";
 
 const ID = Type.String({ pattern: "^[A-Za-z0-9._:-]{1,128}$" });
 const DIGEST = Type.String({ pattern: "^[0-9a-f]{64}$" });
 const PROFESSIONAL_ROLES = new Set(["designer", "implementor", "assessor", "operator"]);
 const RUNNER_COMMAND = Type.Array(Type.String({ minLength: 1, maxLength: 8192 }), { minItems: 1, maxItems: 64 });
-const RUNNER_CWD = Type.String({ pattern: "^[A-Za-z0-9._][A-Za-z0-9._/-]{0,254}$" });
 const RUNNER_OUTPUT_MAX = 64 * 1024;
 const CHANGE_REVISION_REF = Type.Object({
+  kind: Type.Literal("tiangong.change-revision-ref"),
+  schemaVersion: Type.Literal(1),
   producerTaskId: ID,
-  artifactPath: Type.String({ minLength: 1, maxLength: 1024 }),
+  artifactPath: Type.String({
+    minLength: 1,
+    maxLength: 1024,
+    pattern: "^(?!(?:\\.{1,2})(?:/|$))(?!.*\\/(?:\\.{1,2})(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$",
+  }),
   artifactDigest: DIGEST,
   revision: Type.Integer({ minimum: 0 }),
+  contentDigest: DIGEST,
 }, { additionalProperties: false });
 
 function nowISO(deps) {
@@ -43,6 +51,28 @@ async function assertLeaderInvocation(taskBinding, invocation, deps) {
   return project;
 }
 
+async function assertRunnerProducedRevision(taskBinding, params, deps) {
+  if (!["implement", "assess"].includes(taskBinding.taskKind) || params.blocker) return;
+  if (!params.changeRevisionRef || !deps.runnerJournal?.completedChangeRevision) {
+    throw new Error("Task result requires a ChangeRevision proven by this Worker's Runner journal");
+  }
+  const ref = createChangeRevisionRef(params.changeRevisionRef);
+  if (canonicalJson(ref) !== canonicalJson(params.changeRevisionRef)) {
+    throw new Error("ChangeRevision schema or content digest is invalid");
+  }
+  if (ref.revision !== taskBinding.revisionIndex ||
+      (taskBinding.taskKind === "implement" && ref.producerTaskId !== taskBinding.taskId)) {
+    throw new Error("ChangeRevision does not match the current Task and revision");
+  }
+  const completed = await deps.runnerJournal.completedChangeRevision(ref.contentDigest);
+  if (!completed || canonicalJson(completed.changeRevisionRef) !== canonicalJson(ref)) {
+    throw new Error("ChangeRevision is not bound to a completed Runner invocation");
+  }
+  if (taskBinding.taskKind === "assess" && completed.runnerEvidence?.fixtureDigest !== ref.artifactDigest) {
+    throw new Error("Assessment Runner did not materialize the submitted ChangeRevision digest");
+  }
+}
+
 function registerRunnerTool(registry, deps) {
   const role = deps.professionalRole;
   if (!new Set(["implementor", "assessor"]).has(role)) return;
@@ -55,7 +85,6 @@ function registerRunnerTool(registry, deps) {
     parameters: Type.Object({
       taskId: ID,
       command: RUNNER_COMMAND,
-      cwd: Type.Optional(RUNNER_CWD),
       timeoutMs: Type.Integer({ minimum: 1, maximum: 5 * 60 * 1000 }),
       outputLimitBytes: Type.Optional(Type.Integer({ minimum: 1, maximum: RUNNER_OUTPUT_MAX })),
     }, { additionalProperties: false }),
@@ -75,7 +104,7 @@ function registerRunnerTool(registry, deps) {
       const result = await runCommand({
         runId: runnerRunIdForTask(taskBinding),
         command: params.command,
-        cwd: params.cwd ?? "fixture",
+        cwd: role === "implementor" ? "scratch/revision" : "fixture",
         timeoutMs: params.timeoutMs,
         outputLimitBytes: params.outputLimitBytes ?? RUNNER_OUTPUT_MAX,
       }, { executor, journal: deps.runnerJournal, env: {} });
@@ -94,6 +123,7 @@ function registerRunnerTool(registry, deps) {
         stderr: result.stderr,
         durationMs: result.durationMs,
         runnerEvidence: result.runnerEvidence,
+        changeRevisionRef: result.changeRevisionRef,
       });
     },
   });
@@ -160,6 +190,7 @@ export function createMemberToolRegistry({ deps }) {
       if (sourceRole !== deps.professionalRole) {
         throw new Error("Loaded professional RoleProfile does not match the Project role binding");
       }
+      await assertRunnerProducedRevision(taskBinding, params, deps);
       const result = createResultEnvelope({
         taskId: taskBinding.taskId,
         projectId: taskBinding.projectId,

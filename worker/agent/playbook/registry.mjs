@@ -23,7 +23,7 @@ const registries = deepFreeze({
       playbookId: "software-change-delivery",
       version: "1.0.0",
       packageDir: PLAYBOOK_PACKAGE_DIR,
-      contentDigest: "c87cc2026a17291ed43dab4e4f9bc761e7608f3aaedde26509a561e56474ad03",
+      contentDigest: "2699bd1e23e72ea44d3748d5ab6e64519f1d4ff0fe4e5e4f94541a2272bfcd5b",
       roleSlots: ["team_leader", "designer", "implementor", "assessor", "operator"],
       taskKinds: ["design", "implement", "assess", "release"],
       taskKindRoles: {
@@ -34,7 +34,7 @@ const registries = deepFreeze({
       },
       maxRevisionWaves: 2,
       completionSchemaId: "software-change-delivery-result-v1",
-      completionSchemaDigest: "076cf155204526f20bce113e4fc1e08079a6adbd61bce1bc7563a3d086a483ad",
+      completionSchemaDigest: "67aff48b2ebc4114d59b805ea6186c0846cadf9b2c376e642ae02e959558b03a",
       transitionPolicyId: "software-change-delivery-transition-v1",
     },
   },

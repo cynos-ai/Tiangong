@@ -37,18 +37,18 @@ This run does not mount the Docker socket into an AgentTeams Worker and does not
 
 ## Machine observations
 
-Focused RunnerPort, journal, and Docker executor tests: **21 passed**.
+Focused RunnerPort, journal, and Docker executor tests: **22 passed**.
 
 The real Docker run used the locally built Implementor image resolved to immutable ID:
 
-`sha256:5f018354d18ff66ff7c53ff42ffdaf83a54c8b847ce2fed37abcaf77228f8431`
+`sha256:f2897becff4a10266a8f46d87b181eeb38e3d2eceecff349b78804ca91e3ad17`
 
 Observed markers:
 
 - `runner_executor_daemon_policy=pass`
 - `runner_probe=pass`
 - `runner_executor_machine_evidence=pass`
-- runner policy digest `d0832894dcf742a969446dd7f765a4fe86c05c9b94d78c58f662a9781ffb3e0e`
+- runner policy digest `d08931365e2730f966df7744fce5fcad7d3164b2514eab29063e69d97e753ee0`
 - copied fixture digest `a1d02f2718b45e2a8013119646d76d5c7bbb7789bfcd60d3207029bd970b2d5f`
 - `runner_executor_journal=pass`
 - `runner_executor_timeout_uncertain=pass`
@@ -74,4 +74,4 @@ Every daemon resource name is derived from the validated run UUID and invocation
 
 ## Honest limit and next step
 
-The Docker executor and append-only, hash-chained runner journal are real and machine-tested. A later focused run implements and proves the closed container-identity broker and materializes the Implementor/Assessor command tools. Full runner completion remains blocked on an official AgentTeams/Matrix professional-role turn and ChangeRevision materialization. Directly mounting the Docker socket into each model-facing Worker remains forbidden: the stock Worker CRD cannot express that mount, and changing an upstream-managed container out of band would weaken ownership and reconciliation.
+The Docker executor and append-only, hash-chained runner journal are real and machine-tested. The later B3 focused run now proves the closed container-identity broker, Implementor ChangeRevision sealing, and exact-digest read-only Assessor materialization. Full runner completion remains blocked on an official AgentTeams/Matrix professional-role turn. Directly mounting the Docker socket into each model-facing Worker remains forbidden: the stock Worker CRD cannot express that mount, and changing an upstream-managed container out of band would weaken ownership and reconciliation.

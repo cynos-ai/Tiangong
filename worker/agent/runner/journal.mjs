@@ -160,6 +160,11 @@ export class RunnerJournal {
         if (existing.requestDigest !== digest) throw new Error("Runner invocation request digest conflict");
         return { execute: false, entry: structuredClone(existing) };
       }
+      const unresolved = [...state.entries.values()].find((entry) =>
+        entry.status === "executing" || entry.status === "outcome_uncertain");
+      if (unresolved) {
+        throw new Error("Runner journal has an unresolved invocation and cannot start a different command");
+      }
       const entry = {
         invocationKey,
         requestDigest: digest,
@@ -224,6 +229,16 @@ export class RunnerJournal {
     return this.#locked((state) => {
       const entry = state.entries.get(invocationKey);
       return entry ? structuredClone(entry) : undefined;
+    });
+  }
+
+  async completedChangeRevision(contentDigest) {
+    const digest = assertDigest(contentDigest, "ChangeRevision contentDigest");
+    return this.#locked((state) => {
+      const matches = [...state.entries.values()].filter((entry) =>
+        entry.status === "completed" && entry.result?.changeRevisionRef?.contentDigest === digest);
+      if (matches.length > 1) throw new Error("Runner journal has ambiguous ChangeRevision results");
+      return matches.length === 1 ? structuredClone(matches[0].result) : undefined;
     });
   }
 }

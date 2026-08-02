@@ -39,9 +39,10 @@ test("runner journal durably records executing before completion and replays ter
     assert.equal(saved.status, "completed");
     assert.deepEqual(saved.result, RESULT);
     assert.equal((await reopened.begin(KEY, REQUEST)).execute, false);
+    assert.equal((await reopened.begin("c".repeat(64), "d".repeat(64))).execute, true);
 
     const records = (await readFile(filePath, "utf8")).trim().split("\n").map(JSON.parse);
-    assert.equal(records.length, 2);
+    assert.equal(records.length, 3);
     assert.equal(records[1].previousHash, records[0].hash);
     assert.equal(records[1].sequence, 2);
   });
@@ -62,6 +63,10 @@ test("runner journal preserves outcome uncertainty and rejects conflicting trans
     await assert.rejects(
       () => journal.begin(KEY, "c".repeat(64)),
       /request digest conflict/u,
+    );
+    await assert.rejects(
+      () => journal.begin("c".repeat(64), "d".repeat(64)),
+      /unresolved invocation/u,
     );
   });
 });

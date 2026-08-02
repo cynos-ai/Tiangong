@@ -1,4 +1,5 @@
 import { canonicalJson } from "../canonical-json.mjs";
+import { isChangeRevisionRef } from "../work/change-revision-ref.mjs";
 import { MAX_OUTPUT_BYTES, assertNoForbiddenEnv, validateCommandRequest } from "./runner-policy.mjs";
 
 const ID = /^[A-Za-z0-9._:-]{1,128}$/u;
@@ -44,7 +45,7 @@ function validateResponse(value) {
     throw new Error("RUNNER_BROKER_RESPONSE_INVALID");
   }
   const allowed = value.status === "completed"
-    ? new Set(["status", "exitCode", "stdout", "stderr", "durationMs", "runnerEvidence"])
+    ? new Set(["status", "exitCode", "stdout", "stderr", "durationMs", "runnerEvidence", "changeRevisionRef"])
     : new Set(["status"]);
   if ([...Object.keys(value)].some((key) => !allowed.has(key)) ||
       !["completed", "interrupted"].includes(value.status) ||
@@ -52,7 +53,8 @@ function validateResponse(value) {
         !Number.isInteger(value.exitCode) || value.exitCode < 0 || value.exitCode > 255 ||
         typeof value.stdout !== "string" || typeof value.stderr !== "string" ||
         !Number.isSafeInteger(value.durationMs) || value.durationMs < 0 ||
-        !value.runnerEvidence || typeof value.runnerEvidence !== "object" || Array.isArray(value.runnerEvidence)
+        !value.runnerEvidence || typeof value.runnerEvidence !== "object" || Array.isArray(value.runnerEvidence) ||
+        (value.changeRevisionRef !== undefined && !isChangeRevisionRef(value.changeRevisionRef))
       ))) {
     throw new Error("RUNNER_BROKER_RESPONSE_INVALID");
   }
