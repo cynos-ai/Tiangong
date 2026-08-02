@@ -1,6 +1,6 @@
 # Focused run — AgentTeams v1.2.0 Leader oracle
 
-> Status: PARTIAL — dynamic structured-file oracle pending
+> Status: BLOCKED — dynamic stock Leader produced no Project/Task records
 > Date: 2026-08-01
 > Branch: `feat/43-agentteams-v1.2-and-leader-spike`
 > Scope: capture the real v1.2.0 team-collaboration contract so TeamTaskPort
@@ -52,22 +52,38 @@ sync**, not a structured Project/Task RPC:
 - `/opt/openclaw/skills/taskflow` exists in the image but is **not** deployed
   to the leader.
 
-## Dynamic closure still required
+## Follow-up dynamic oracle — BLOCKED
 
-This oracle is not complete until a fresh stock v1.2.0 `team_leader`, prompted
-through its supported model in a real disposable Team, creates a Project and
-Task without Tiangong pre-creating their platform files. The run must capture
-from Team remote storage:
+A fresh disposable Team used the stock v1.2.0 Worker image pinned at digest
+`sha256:daf587ad042f9564abb2347db5c4205ecc25d1b322e09fdd0d58a2a16c2d5c85`
+and the configured supported `deepseek-v4-flash` model. It contained one
+stock `team_leader` and one stock Worker; both became Running and the Team
+became Active. Tiangong did not pre-create any Project or Task record.
 
-1. the stock Leader-created Project `meta.json` and `plan.md`;
-2. the delegated Task `meta.json` and `spec.md`;
-3. the assigned Worker-created `result.md` and its Matrix completion mention;
-4. the stock Leader consuming that result and updating the platform records;
-5. exact cleanup or an explicit failed-cleanup verdict.
+The stock Leader received an ordinary project request over its authenticated
+Matrix room. Its deployed workspace contained `project-management`,
+`task-management`, `team-coordination`, `project-participation`, and
+`task-progress`, but no `config/mcporter.json` and no configured MCP servers.
+The Leader returned `STOCK_ORACLE_BLOCKED`: its deployed coordination Skills
+required `projectflow`/`taskflow` actions and prohibited replacing them with
+manual writes, while those actions were unavailable.
 
-Until those artifacts exist, report the deployed formats as **static-oracle
-backed, dynamically unproven**. The Tiangong product-Leader smoke cannot close
-this stock-Leader oracle.
+The machine storage oracle agreed with the blocked result. Team remote storage
+contained only `.agentteams-keep` plus the three `.keep` files under
+`knowledge/`, `projects/`, and `tasks/`; neither Worker had any Project/Task
+record locally. No `meta.json`, `plan.md`, `spec.md`, `result.md`, or legacy
+progress record was produced.
+
+`agt delete team` returned success but left the Team, both Worker resources,
+and both containers present. The run therefore has an explicit failed-cleanup
+verdict. A subsequent confirmed reset of the dedicated stack removed all
+owned resources; that reset does not make the run pass.
+
+**Conclusion:** the Manager image's scripts remain a valid static file-format
+oracle, but v1.2.0 stock Leader behavior is dynamically blocked and does not
+prove that the platform drives those formats. Report them as
+**static-oracle backed, dynamically unproven**. The Tiangong product-Leader
+smoke cannot close this stock-Leader oracle.
 
 ## Gaps vs design docs (step 6)
 
