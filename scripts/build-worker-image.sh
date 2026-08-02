@@ -253,7 +253,7 @@ node -e '
     designer: "team_resolve_task,team_submit_result",
     implementor: "team_resolve_task,run_command,team_submit_result",
     assessor: "team_resolve_task,run_test_command,team_submit_result",
-    operator: "team_resolve_task,team_submit_result",
+    operator: "team_resolve_task,deploy_release,team_submit_result",
   };
   if (professionals.some((profile) => profile.runtimeReady !== true || profile.toolIds.join(",") !== expectedProfessionalTools[profile.roleId])) process.exit(1);
   if (reviewer.schemaVersion !== 2 || reviewer.targetKindIds.join(",") !== "file,directory_snapshot,commit,git_diff") process.exit(1);

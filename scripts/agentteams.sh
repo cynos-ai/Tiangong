@@ -321,6 +321,21 @@ validate_stack_ownership() {
   fi
 }
 
+run_installer_sanitized() {
+  # The pinned upstream installer prints generated credentials in its success
+  # banner. Stream only non-sensitive progress; never persist or echo the raw
+  # installer output. Credentials remain solely in the owner-only env file.
+  bash "$@" 2>&1 | awk '
+    BEGIN { IGNORECASE = 1 }
+    /密码|password|credential|api[ _-]*key|access[ _-]*token|secret/ {
+      if (!redacted) print "[Tiangong] Upstream installer credential output redacted."
+      redacted = 1
+      next
+    }
+    { print }
+  '
+}
+
 up() {
   require_command docker
   load_config
@@ -332,7 +347,7 @@ up() {
   local installer
   installer="$(download_installer | tail -n 1)"
   log "Installing AgentTeams ${AGENTTEAMS_VERSION} from a checksum-verified upstream script"
-  bash "${installer}"
+  run_installer_sanitized "${installer}"
   [[ -f "${AGENTTEAMS_ENV_FILE}" ]] && chmod 600 "${AGENTTEAMS_ENV_FILE}"
   wait_for_readiness
   log "AgentTeams installation completed"
@@ -560,7 +575,7 @@ EOF
   export AGENTTEAMS_NON_INTERACTIVE=1
   local installer remaining
   installer="$(download_installer | tail -n 1)"
-  bash "${installer}" uninstall
+  run_installer_sanitized "${installer}" uninstall
 
   remaining="$(container_names)"
   [[ -z "${remaining}" ]] || die "Uninstall left AgentTeams containers behind: ${remaining//$'\n'/, }"
