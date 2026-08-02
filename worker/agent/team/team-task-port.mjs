@@ -50,8 +50,8 @@ function now(deps) {
   const value = deps?.now?.();
   return typeof value === "string" ? value : new Date().toISOString();
 }
-function recordEvidence(deps, type, body) {
-  deps?.evidence?.record?.({ type, ...body, at: now(deps) });
+async function recordEvidence(deps, type, body) {
+  deps?.evidence?.append?.({ type, ...body, at: now(deps) });
 }
 async function isEEXIST(error) {
   return error?.code === "EEXIST";
@@ -117,7 +117,7 @@ export async function createProject(projectBinding, deps) {
   const identity = loadWorkerIdentity(deps);
   assertLeaderForProject(identity, projectBinding);
   const manifestPath = await writeProjectBinding(projectBinding, deps);
-  recordEvidence(deps, "team.project.created", {
+  await recordEvidence(deps, "team.project.created", {
     projectId: projectBinding.projectId,
     playbookDigest: projectBinding.playbookDigest,
     manifestDigest: projectBinding.contentDigest,
@@ -134,7 +134,7 @@ export async function dispatchTask(taskBinding, deps) {
   } catch (error) {
     if (await isEEXIST(error)) {
       const existing = await readTaskBinding(taskBinding.taskId, deps);
-      recordEvidence(deps, "team.task.dispatch.replay", {
+      await recordEvidence(deps, "team.task.dispatch.replay", {
         taskId: taskBinding.taskId,
         manifestDigest: existing.contentDigest,
       });
@@ -143,7 +143,7 @@ export async function dispatchTask(taskBinding, deps) {
     throw error;
   }
   await deps?.channel?.notifyAssignee?.(taskBinding.assignee, taskBinding.taskId, taskBinding.contentDigest);
-  recordEvidence(deps, "team.task.dispatched", {
+  await recordEvidence(deps, "team.task.dispatched", {
     taskId: taskBinding.taskId,
     assignee: taskBinding.assignee,
     manifestDigest: taskBinding.contentDigest,
@@ -172,7 +172,7 @@ export async function submitResult(result, deps) {
   } catch (error) {
     if (await isEEXIST(error)) {
       const existing = await readTaskResult(result.taskId, deps);
-      recordEvidence(deps, "team.result.submit.replay", {
+      await recordEvidence(deps, "team.result.submit.replay", {
         taskId: result.taskId,
         resultDigest: existing.contentDigest,
       });
@@ -181,7 +181,7 @@ export async function submitResult(result, deps) {
     throw error;
   }
   await deps?.channel?.notifyLeader?.(taskBinding.taskId, result.contentDigest);
-  recordEvidence(deps, "team.result.submitted", {
+  await recordEvidence(deps, "team.result.submitted", {
     taskId: result.taskId,
     producer: result.producer,
     resultDigest: result.contentDigest,
@@ -221,7 +221,7 @@ export async function recordTaskDecision(decision, deps) {
     manifestPath = await appendTaskDecision(decision, deps);
   } catch (error) {
     if (await isEEXIST(error)) {
-      recordEvidence(deps, "team.task.decision.replay", {
+      await recordEvidence(deps, "team.task.decision.replay", {
         taskId: decision.taskId,
         decisionId: decision.decisionId,
       });
@@ -229,7 +229,7 @@ export async function recordTaskDecision(decision, deps) {
     }
     throw error;
   }
-  recordEvidence(deps, "team.task.decision", {
+  await recordEvidence(deps, "team.task.decision", {
     taskId: decision.taskId,
     decision: decision.decision,
     decidedBy: decision.decidedBy,

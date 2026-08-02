@@ -23,7 +23,7 @@ export function createLeaderChannel({ evidence, now } = {}) {
     queued,
     notifyAssignee(assignee, taskId, digest) {
       queued.push({ kind: "notifyAssignee", assignee, taskId, digest });
-      evidence?.record?.({
+      evidence?.append?.({
         type: "team.mention.queued",
         target: assignee,
         taskId,
@@ -33,7 +33,7 @@ export function createLeaderChannel({ evidence, now } = {}) {
     },
     notifyLeader(taskId, digest) {
       queued.push({ kind: "notifyLeader", taskId, digest });
-      evidence?.record?.({
+      evidence?.append?.({
         type: "team.mention.queued",
         target: "team_leader",
         taskId,
@@ -43,7 +43,7 @@ export function createLeaderChannel({ evidence, now } = {}) {
     },
     reportToRequester(projectId, summary, disposition) {
       queued.push({ kind: "reportToRequester", projectId, disposition });
-      evidence?.record?.({
+      evidence?.append?.({
         type: "team.report.queued",
         projectId,
         disposition,
