@@ -1,0 +1,12 @@
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-leader-smoke
+spec:
+  model: deepseek-v4-flash
+  runtime: openclaw
+  image: tiangong-worker-leader:dev
+  state: Running
+  identity: |
+    Name: Tiangong Leader Smoke
+    Purpose: Gate 3 leader-half roundtrip verification only.
