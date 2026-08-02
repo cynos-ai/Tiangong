@@ -206,7 +206,7 @@ docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${REVIEWER_IMA
     if (registry.names().join(",") !== "start_work,extend_scope,read,inspect_directory,inspect_repository,check_completion,abandon_work") process.exit(1);
   '
 node -e '
-  const [kernel, reviewer, leader] = process.argv.slice(1).map(JSON.parse);
+  const [kernel, reviewer, leader, member] = process.argv.slice(1).map(JSON.parse);
   if (kernel.roleId !== "kernel" || kernel.runtimeReady !== true) process.exit(1);
   if (reviewer.roleId !== "reviewer" || reviewer.runtimeReady !== true) process.exit(1);
   if (leader.roleId !== "leader" || leader.runtimeReady !== true) process.exit(1);

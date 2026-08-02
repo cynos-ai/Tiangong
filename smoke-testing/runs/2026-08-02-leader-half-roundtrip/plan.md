@@ -1,6 +1,11 @@
 # Focused run — Gate 3 Leader-half roundtrip
 
-> Status: PASS (reproducible)
+> Status: PARTIAL — leader-half only (create + dispatch), reproducible via `make test-leader-image-basic`.
+> NOT architecture Gate 3: a subsequent review found that the port layer does
+> not enforce producer/digest/decidedBy, tools bypass the unified wrapper, the
+> channel does not actually send to Matrix, and the upstream Project/Task is
+> not driven (a second Tiangong state namespace was created). Treat as partial
+> evidence, not a passed gate.
 > Date: 2026-08-02
 > Branch: `feat/43-agentteams-v1.2-and-leader-spike`
 > Reproduce: `make test-leader-image-basic`

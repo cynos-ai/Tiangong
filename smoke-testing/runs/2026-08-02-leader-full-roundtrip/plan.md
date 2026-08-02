@@ -1,6 +1,14 @@
 # Focused run — Gate 3 full task roundtrip
 
-> Status: PASS
+> Status: REVOKED — this is NOT architecture Gate 3.
+> A review found the claim did not hold: two standalone Workers (no Team),
+> each turn operator-driven (not Leader mention waking the Worker), no real
+> requester report, no reproducible one-command run, residual Workers left in
+> place, and the port layer does not enforce producer/digest/decidedBy binding
+> (deterministic negatives ALLOWED). The upstream Project/Task is not driven;
+> a second Tiangong coordination-state namespace was created, conflicting with
+> the baseline. The dispatch->submit->accept mechanics were observed live, but
+> they do not satisfy the contract. Treat as partial evidence only.
 > Date: 2026-08-02
 > Branch: `feat/43-agentteams-v1.2-and-leader-spike`
 
