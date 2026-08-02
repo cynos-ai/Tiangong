@@ -102,6 +102,10 @@ jobs:
           test ! -e worker/node_modules/@earendil-works/pi-coding-agent/node_modules/brace-expansion
       - name: Build Worker image
         run: ./scripts/build-worker-image.sh
+      - name: Test disposable Runner executor and closed broker
+        run: |
+          make test-runner-executor
+          make test-runner-broker
 
   dco:
     name: DCO
