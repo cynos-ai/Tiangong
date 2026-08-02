@@ -37,6 +37,8 @@ jobs:
         run: ./scripts/test-agentteams.sh
       - name: Test Worker peer mention smoke contract
         run: make test-peer-mention-smoke-contract
+      - name: Test Leader smoke oracle contract
+        run: make test-leader-smoke-contract
       - name: Test Reviewer smoke oracle contract
         run: make test-reviewer-smoke-contract
       - name: Validate project Agent Skills

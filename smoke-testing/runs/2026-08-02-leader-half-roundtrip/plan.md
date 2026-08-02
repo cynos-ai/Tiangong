@@ -155,3 +155,16 @@ make the run's cleanup pass.
   operations are not yet available.
 - Requester terminal reporting, `DELIVERED`, revision waves, rollback, and
   `FAILED_SAFE` remain unproven live.
+
+## Later oracle correction
+
+A later requester-report regression run found that heredoc-backed `docker exec`
+commands in this driver omitted `-i`. Consequently, the shell bodies for the
+roster and peer-policy readiness helpers did not execute in these historical
+runs; their apparent successful return is not readiness evidence. The product
+roundtrip still exercised `createProject`/`dispatchTask`, whose Matrix channel
+independently enforces the authenticated Team roster, and real Matrix events
+still drove the recorded handoffs. The invalid helper observations are revoked,
+not used to upgrade this historical partial result. The driver and CI contract
+now require `docker exec -i`; see
+`../2026-08-02-requester-report-roundtrip/plan.md`.

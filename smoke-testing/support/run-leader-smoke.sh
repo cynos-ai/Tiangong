@@ -17,10 +17,12 @@ readonly CONTROLLER_CONTAINER="agentteams-controller"
 readonly WORKERS_MANIFEST="${REPO_ROOT}/smoke-testing/fixtures/leader-smoke-workers.yaml"
 readonly MANIFEST="${REPO_ROOT}/smoke-testing/fixtures/leader-smoke-team.yaml"
 readonly TURN_HELPER="${SCRIPT_DIR}/leader-coordination-turn.sh"
+readonly REPORT_HELPER="${SCRIPT_DIR}/requester-report-check.sh"
 readonly BUILD_SCRIPT="${REPO_ROOT}/scripts/build-worker-image.sh"
 readonly MANAGER_WORKERS_MANIFEST="/tmp/tiangong-leader-smoke-workers.yaml"
 readonly MANAGER_MANIFEST="/tmp/tiangong-leader-smoke-team.yaml"
 readonly MANAGER_TURN="/tmp/tiangong-leader-coordination-turn.sh"
+readonly MANAGER_REPORT_CHECK="/tmp/tiangong-requester-report-check.sh"
 PROJECT_ID="leader-smoke-$(head -c 8 /proc/sys/kernel/random/uuid)"
 TASK_ID="${PROJECT_ID}-design-0"
 owned=0
@@ -30,9 +32,54 @@ die() { printf '[Tiangong] ERROR: %s\n' "$*" >&2; exit 1; }
 container_exists() { docker inspect "$1" >/dev/null 2>&1; }
 team_exists() { docker exec "${MANAGER_CONTAINER}" agt get teams "${TEAM_NAME}" -o json >/dev/null 2>&1; }
 worker_exists() { docker exec "${MANAGER_CONTAINER}" agt get workers "$1" -o json >/dev/null 2>&1; }
+project_task_ids() {
+  local task_kind=${1:-}
+  docker exec -i "${CONTROLLER_CONTAINER}" sh -s -- "${PROJECT_ID}" "${task_kind}" <<'SH'
+set -eu
+project_id=$1
+task_kind=$2
+mc find agentteams/agentteams-storage/shared/tasks --name task-binding.json </dev/null 2>/dev/null |
+while IFS= read -r binding_path; do
+  mc cat "${binding_path}" </dev/null | jq -r --arg project_id "${project_id}" --arg task_kind "${task_kind}" '
+    if .projectId == $project_id and ($task_kind == "" or .taskKind == $task_kind)
+    then .taskId
+    else empty
+    end
+  '
+done
+SH
+}
+requester_report_evidence_ready() {
+  docker exec -i "agentteams-worker-${LEADER_NAME}" node --input-type=module - "${PROJECT_ID}" <<'JS'
+import { readdir } from "node:fs/promises";
+import { join } from "node:path";
+import { EvidenceRecorder } from "/opt/tiangong-worker/agent/evidence/recorder.mjs";
+
+const projectId = process.argv[2];
+const root = `/root/agentteams-fs/agents/${process.env.AGENTTEAMS_WORKER_NAME}/.tiangong/runtime/evidence`;
+let sessions;
+try {
+  sessions = await readdir(root, { withFileTypes: true });
+} catch (error) {
+  if (error?.code === "ENOENT") process.exit(1);
+  throw error;
+}
+const matches = [];
+for (const session of sessions) {
+  if (!session.isDirectory()) continue;
+  const recorder = new EvidenceRecorder({ filePath: join(root, session.name, "events.jsonl") });
+  for (const event of await recorder.readAll()) {
+    if (event.type === "team.requester.report.delivered" && event.projectId === projectId) matches.push(event);
+  }
+}
+if (matches.length !== 1 || matches[0].disposition !== "RECOVERY_REQUIRED" || matches[0].delivered !== true) {
+  process.exit(1);
+}
+JS
+}
 team_roster_ready() {
   local room_id=$1
-  docker exec "agentteams-worker-${LEADER_NAME}" sh -s -- "${room_id}" "${MEMBERS[@]}" <<'SH'
+  docker exec -i "agentteams-worker-${LEADER_NAME}" sh -s -- "${room_id}" "${MEMBERS[@]}" <<'SH'
 set -eu
 room_id=$1
 shift
@@ -61,7 +108,7 @@ SH
 team_peer_policy_ready() {
   local member
   for member in "${MEMBERS[@]}"; do
-    docker exec "agentteams-worker-${member}" sh -s -- "${MEMBERS[@]}" <<'SH'
+    docker exec -i "agentteams-worker-${member}" sh -s -- "${MEMBERS[@]}" <<'SH'
 set -eu
 config="/root/agentteams-fs/agents/${AGENTTEAMS_WORKER_NAME}/openclaw.json"
 [ "$(jq -r '.channels.matrix.groupPolicy' "${config}")" = allowlist ]
@@ -84,10 +131,16 @@ team_peer_policy_loaded() {
 }
 
 cleanup() {
-  local status=$? failed=0 member container
+  local status=$? failed=0 member container task_id discovered_id
+  local -a project_tasks=("${TASK_ID}")
   trap - EXIT INT TERM
   set +e
-  docker exec "${MANAGER_CONTAINER}" rm -f "${MANAGER_WORKERS_MANIFEST}" "${MANAGER_MANIFEST}" "${MANAGER_TURN}" >/dev/null 2>&1 || failed=1
+  while IFS= read -r discovered_id; do
+    [[ "${discovered_id}" =~ ^[A-Za-z0-9._:-]{1,128}$ ]] || continue
+    [[ " ${project_tasks[*]} " == *" ${discovered_id} "* ]] || project_tasks+=("${discovered_id}")
+  done < <(project_task_ids 2>/dev/null)
+  docker exec "${MANAGER_CONTAINER}" rm -f "${MANAGER_WORKERS_MANIFEST}" "${MANAGER_MANIFEST}" \
+    "${MANAGER_TURN}" "${MANAGER_REPORT_CHECK}" >/dev/null 2>&1 || failed=1
   if ((owned == 1)); then
     if team_exists; then
       docker exec "${MANAGER_CONTAINER}" agt delete team "${TEAM_NAME}" >/dev/null 2>&1 || failed=1
@@ -121,13 +174,18 @@ cleanup() {
         "agentteams/agentteams-storage/teams/${TEAM_NAME}/" >/dev/null 2>&1 || failed=1
       docker exec "${CONTROLLER_CONTAINER}" mc rm --recursive --force \
         "agentteams/agentteams-storage/shared/projects/${PROJECT_ID}/" >/dev/null 2>&1 || failed=1
-      docker exec "${CONTROLLER_CONTAINER}" mc rm --recursive --force \
-        "agentteams/agentteams-storage/shared/tasks/${TASK_ID}/" >/dev/null 2>&1 || failed=1
+      for task_id in "${project_tasks[@]}"; do
+        docker exec "${CONTROLLER_CONTAINER}" mc rm --recursive --force \
+          "agentteams/agentteams-storage/shared/tasks/${task_id}/" >/dev/null 2>&1 || failed=1
+      done
       for host in "${CONTROLLER_CONTAINER}" "${MANAGER_CONTAINER}"; do
         docker exec "${host}" rm -rf -- "/root/agentteams-fs/teams/${TEAM_NAME}" \
-          "/root/agentteams-fs/shared/projects/${PROJECT_ID}" "/root/agentteams-fs/shared/tasks/${TASK_ID}" >/dev/null 2>&1 || failed=1
+          "/root/agentteams-fs/shared/projects/${PROJECT_ID}" >/dev/null 2>&1 || failed=1
         docker exec "${host}" test ! -e "/root/agentteams-fs/shared/projects/${PROJECT_ID}" || failed=1
-        docker exec "${host}" test ! -e "/root/agentteams-fs/shared/tasks/${TASK_ID}" || failed=1
+        for task_id in "${project_tasks[@]}"; do
+          docker exec "${host}" rm -rf -- "/root/agentteams-fs/shared/tasks/${task_id}" >/dev/null 2>&1 || failed=1
+          docker exec "${host}" test ! -e "/root/agentteams-fs/shared/tasks/${task_id}" || failed=1
+        done
       done
     fi
     if ((failed == 0)); then printf 'leader_smoke_cleanup=pass\n'; fi
@@ -139,8 +197,8 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-for cmd in docker jq grep sha256sum; do command -v "${cmd}" >/dev/null 2>&1 || die "Missing command: ${cmd}"; done
-for path in "${WORKERS_MANIFEST}" "${MANIFEST}" "${TURN_HELPER}" "${BUILD_SCRIPT}"; do
+for cmd in awk docker jq grep sha256sum; do command -v "${cmd}" >/dev/null 2>&1 || die "Missing command: ${cmd}"; done
+for path in "${WORKERS_MANIFEST}" "${MANIFEST}" "${TURN_HELPER}" "${REPORT_HELPER}" "${BUILD_SCRIPT}"; do
   [[ -f "${path}" && ! -L "${path}" ]] || die "Missing or symlinked smoke asset: ${path}"
 done
 for host in "${MANAGER_CONTAINER}" "${CONTROLLER_CONTAINER}"; do
@@ -158,11 +216,18 @@ done
 ! docker exec "${CONTROLLER_CONTAINER}" mc ls --recursive \
   "agentteams/agentteams-storage/teams/${TEAM_NAME}/" 2>/dev/null | grep -q . || \
   die "Reserved Team storage is not empty: ${TEAM_NAME}"
+! docker exec "${CONTROLLER_CONTAINER}" mc ls --recursive \
+  "agentteams/agentteams-storage/shared/projects/${PROJECT_ID}/" 2>/dev/null | grep -q . || \
+  die "Reserved Project storage is not empty: ${PROJECT_ID}"
+! docker exec "${CONTROLLER_CONTAINER}" mc ls --recursive \
+  "agentteams/agentteams-storage/shared/tasks/${TASK_ID}/" 2>/dev/null | grep -q . || \
+  die "Reserved Task storage is not empty: ${TASK_ID}"
 
 "${BUILD_SCRIPT}"
 docker cp "${WORKERS_MANIFEST}" "${MANAGER_CONTAINER}:${MANAGER_WORKERS_MANIFEST}"
 docker cp "${MANIFEST}" "${MANAGER_CONTAINER}:${MANAGER_MANIFEST}"
 docker cp "${TURN_HELPER}" "${MANAGER_CONTAINER}:${MANAGER_TURN}"
+docker cp "${REPORT_HELPER}" "${MANAGER_CONTAINER}:${MANAGER_REPORT_CHECK}"
 owned=1
 log "Creating disposable Workers before binding the Team"
 docker exec "${MANAGER_CONTAINER}" agt apply -f "${MANAGER_WORKERS_MANIFEST}" >/dev/null
@@ -260,4 +325,62 @@ task="$(docker exec "${CONTROLLER_CONTAINER}" mc cat "${prefix}/tiangong/task-bi
 [[ "$(jq -r '.resultDigest' <<<"${decision}")" == "$(jq -r '.contentDigest' <<<"${result}")" ]] || die "Decision does not bind the current result"
 printf 'leader_smoke_design_roundtrip=pass\n'
 printf 'leader_smoke_matrix_handoff=pass\n'
-printf 'leader_smoke_gate3=partial_requester_report_not_proven\n'
+
+implement_task_id=""
+for _ in $(seq 1 120); do
+  mapfile -t implement_ids < <(project_task_ids implement 2>/dev/null)
+  if ((${#implement_ids[@]} > 1)); then
+    die "Project created more than one implement Task"
+  fi
+  if ((${#implement_ids[@]} == 1)); then
+    implement_task_id="${implement_ids[0]}"
+    break
+  fi
+  sleep 3
+done
+[[ "${implement_task_id}" =~ ^[A-Za-z0-9._:-]{1,128}$ ]] || die "No valid Implementor Task arrived"
+implement_prefix="agentteams/agentteams-storage/shared/tasks/${implement_task_id}"
+implement_decision=""
+for _ in $(seq 1 120); do
+  implement_decision="$(docker exec "${CONTROLLER_CONTAINER}" sh -lc \
+    'f=$(mc find "'"${implement_prefix}"'/tiangong/decisions/" --name "*.json" 2>/dev/null | head -n1); [ -n "$f" ] && mc cat "$f"' 2>/dev/null || true)"
+  [[ -n "${implement_decision}" ]] && break
+  sleep 3
+done
+[[ -n "${implement_decision}" ]] || die "No Leader decision arrived for the Implementor result"
+implement_result="$(docker exec "${CONTROLLER_CONTAINER}" mc cat "${implement_prefix}/tiangong/result-envelope.json")"
+implement_task="$(docker exec "${CONTROLLER_CONTAINER}" mc cat "${implement_prefix}/tiangong/task-binding.json")"
+[[ "$(jq -r '.decision' <<<"${implement_decision}")" == blocked ]] || die "Implementor blocker was not decided as blocked"
+[[ "$(jq -r '.decidedBy' <<<"${implement_decision}")" == "${LEADER_NAME}" ]] || die "Implementor decision identity is not the authenticated Leader"
+[[ "$(jq -r '.producer' <<<"${implement_result}")" == "${IMPLEMENTOR_NAME}" ]] || die "Implementor result producer is wrong"
+[[ "$(jq -r '.sourceRole' <<<"${implement_result}")" == implementor ]] || die "Implementor result role is wrong"
+[[ -n "$(jq -r '.blocker // empty' <<<"${implement_result}")" ]] || die "Implementor result did not fail closed with a blocker"
+[[ "$(jq -r '.sourceProfileDigest' <<<"${implement_result}")" == "$(jq -r '.sourceProfileDigest' <<<"${implement_task}")" ]] || die "Implementor result profile is not bound to the Task"
+[[ "$(jq -r '.skillDigest' <<<"${implement_result}")" == "$(jq -r '.sourceSkillDigest' <<<"${implement_task}")" ]] || die "Implementor Result Skill is not bound to the Task"
+[[ "$(jq -r '.resultDigest' <<<"${implement_decision}")" == "$(jq -r '.contentDigest' <<<"${implement_result}")" ]] || die "Blocked decision does not bind the Implementor result"
+printf 'leader_smoke_implementor_blocker=pass\n'
+
+report_path="agentteams/agentteams-storage/shared/projects/${PROJECT_ID}/tiangong/terminal-report.json"
+report=""
+for _ in $(seq 1 120); do
+  report="$(docker exec "${CONTROLLER_CONTAINER}" mc cat "${report_path}" 2>/dev/null || true)"
+  [[ -n "${report}" ]] && break
+  sleep 3
+done
+[[ -n "${report}" ]] || die "Leader did not create the requester terminal report"
+project="$(docker exec "${CONTROLLER_CONTAINER}" mc cat \
+  "agentteams/agentteams-storage/shared/projects/${PROJECT_ID}/tiangong/project-binding.json")"
+[[ "$(jq -r '.disposition' <<<"${report}")" == RECOVERY_REQUIRED ]] || die "Blocker report disposition is not RECOVERY_REQUIRED"
+[[ "$(jq -r '.reportedBy' <<<"${report}")" == "${LEADER_NAME}" ]] || die "Terminal report identity is not the authenticated Leader"
+[[ "$(jq -r '.requester' <<<"${report}")" == "$(jq -r '.requester' <<<"${project}")" ]] || die "Terminal report is not bound to the authenticated requester"
+report_unsigned="$(jq -cS 'del(.contentDigest)' <<<"${report}")"
+report_digest="$(printf '%s' "${report_unsigned}" | sha256sum | awk '{print $1}')"
+[[ "${report_digest}" == "$(jq -r '.contentDigest' <<<"${report}")" ]] || die "Terminal report digest is invalid"
+
+docker exec "${MANAGER_CONTAINER}" "${MANAGER_REPORT_CHECK}" \
+  "${leader_room}" "${leader_uid}" "${PROJECT_ID}" RECOVERY_REQUIRED
+requester_report_evidence_ready || die "Durable requester-report Evidence is missing or invalid"
+mapfile -t assess_ids < <(project_task_ids assess 2>/dev/null)
+((${#assess_ids[@]} == 0)) || die "A blocked Project incorrectly created an Assess Task"
+printf 'leader_smoke_requester_report=pass\n'
+printf 'leader_smoke_gate3=partial_blocked_terminal_only\n'

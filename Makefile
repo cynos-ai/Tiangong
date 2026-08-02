@@ -5,6 +5,7 @@ AGENTTEAMS := ./scripts/agentteams.sh
 WORKER_IMAGE_BUILD := ./scripts/build-worker-image.sh
 WORKER_IMAGE_TEST := ./smoke-testing/support/run-worker-smoke.sh
 LEADER_SMOKE := ./smoke-testing/support/run-leader-smoke.sh
+LEADER_SMOKE_TEST := ./scripts/test-leader-smoke.sh
 REVIEWER_IMAGE_TEST := ./smoke-testing/support/run-reviewer-smoke.sh
 PEER_MENTION_SMOKE := ./smoke-testing/support/run-peer-mention-smoke.sh
 PEER_MENTION_SMOKE_TEST := ./scripts/test-peer-mention-smoke.sh
@@ -12,7 +13,7 @@ RUNNER_ISOLATION_SPIKE := ./smoke-testing/support/run-runner-isolation-spike.sh
 SKILL_CHECK := node ./scripts/check-skills.mjs
 REVIEWER_SMOKE_CONTRACT := node ./scripts/test-reviewer-smoke-oracle.mjs
 
-.PHONY: help init up start stop down status verify config logs login uninstall check-skills build-worker-image test-worker-image-basic test-worker-image test-leader-image-basic test-runner-isolation test-reviewer-smoke-contract test-reviewer-image-basic test-reviewer-image-git test-reviewer-image test-reviewer-journey-canary test-peer-mention-smoke-contract test-peer-mention-smoke
+.PHONY: help init up start stop down status verify config logs login uninstall check-skills build-worker-image test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-runner-isolation test-reviewer-smoke-contract test-reviewer-image-basic test-reviewer-image-git test-reviewer-image test-reviewer-journey-canary test-peer-mention-smoke-contract test-peer-mention-smoke
 
 help: ## Show available commands
 	@printf '%s\n' 'Tiangong local development commands:'
@@ -59,7 +60,10 @@ test-worker-image-basic: ## Run the fast Matrix-to-pi Worker smoke and clean up
 test-worker-image: ## Run the full Gate/approval/recovery Worker smoke and clean up
 	@TIANGONG_WORKER_SMOKE_LEVEL=full $(WORKER_IMAGE_TEST)
 
-test-leader-image-basic: ## Run the Leader Matrix coordination (gate 3 leader-half) smoke and clean up
+test-leader-smoke-contract: ## Validate Leader smoke requester-report and in-container oracle semantics
+	@$(LEADER_SMOKE_TEST)
+
+test-leader-image-basic: ## Run the Leader Matrix coordination (blocked terminal partial) smoke and clean up
 	@$(LEADER_SMOKE)
 
 test-runner-isolation: ## Prove the disposable RunnerPort isolation contract and clean up
