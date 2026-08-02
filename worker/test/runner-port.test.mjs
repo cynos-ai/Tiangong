@@ -15,21 +15,28 @@ function validRequest(overrides = {}) {
 }
 
 function memoryJournal() {
-  const records = new Map();
-  const uncertain = new Map();
+  const entries = new Map();
   return {
-    records,
-    uncertain,
-    lookup: async (key) => {
-      if (records.has(key)) return { status: "completed", result: records.get(key) };
-      if (uncertain.has(key)) return { status: "outcome_uncertain", reason: uncertain.get(key).reason };
-      return undefined;
+    entries,
+    async begin(key, requestDigest) {
+      const entry = entries.get(key);
+      if (entry) {
+        if (entry.requestDigest !== requestDigest) throw new Error("request conflict");
+        return { execute: false, entry };
+      }
+      const started = { status: "executing", invocationKey: key, requestDigest };
+      entries.set(key, started);
+      return { execute: true, entry: started };
     },
-    record: async (key, result) => {
-      records.set(key, result);
+    async complete(key, requestDigest, result) {
+      const entry = entries.get(key);
+      if (entry?.status !== "executing" || entry.requestDigest !== requestDigest) throw new Error("not executing");
+      entries.set(key, { ...entry, status: "completed", result });
     },
-    recordUncertain: async (key, reason) => {
-      uncertain.set(key, { reason });
+    async recordUncertain(key, requestDigest, reason) {
+      const entry = entries.get(key);
+      if (entry?.status !== "executing" || entry.requestDigest !== requestDigest) throw new Error("not executing");
+      entries.set(key, { ...entry, status: "outcome_uncertain", reason });
     },
   };
 }
@@ -95,7 +102,45 @@ test("an interrupted command is outcome_uncertain and is never retried", async (
   const again = await runCommand(validRequest(), { executor, journal, env: {} });
   assert.equal(again.outcome, "outcome_uncertain");
   assert.equal(calls, 1);
-  assert.equal(journal.uncertain.size, 1);
+  assert.equal([...journal.entries.values()].filter((entry) => entry.status === "outcome_uncertain").length, 1);
+});
+
+test("an executing journal record blocks automatic retry after interruption", async () => {
+  let calls = 0;
+  const journal = memoryJournal();
+  const request = validRequest();
+  const first = await runCommand(request, {
+    executor: async () => {
+      calls += 1;
+      throw new Error("simulated process death");
+    },
+    journal,
+    env: {},
+  });
+  assert.equal(first.reason, "RUNNER_EXECUTOR_FAILED");
+  // Simulate a process that died after begin but before it could record uncertainty.
+  const entry = [...journal.entries.values()][0];
+  entry.status = "executing";
+  delete entry.reason;
+  const replay = await runCommand(request, {
+    executor: async () => { calls += 1; },
+    journal,
+    env: {},
+  });
+  assert.equal(replay.reason, "RUNNER_EXECUTION_IN_PROGRESS_OR_INTERRUPTED");
+  assert.equal(calls, 1);
+});
+
+test("timeout and output bounds participate in invocation identity", async () => {
+  let calls = 0;
+  const journal = memoryJournal();
+  const executor = async () => ({ status: "completed", exitCode: calls++, stdout: "", stderr: "" });
+  const first = await runCommand(validRequest(), { executor, journal, env: {} });
+  const second = await runCommand(validRequest({ timeoutMs: 2000 }), { executor, journal, env: {} });
+  const third = await runCommand(validRequest({ outputLimitBytes: 1000 }), { executor, journal, env: {} });
+  assert.notEqual(first.invocationKey, second.invocationKey);
+  assert.notEqual(first.invocationKey, third.invocationKey);
+  assert.equal(calls, 3);
 });
 
 test("an executor throw is treated as outcome_uncertain", async () => {

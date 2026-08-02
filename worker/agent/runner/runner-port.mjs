@@ -13,12 +13,31 @@ function truncate(value, limit) {
   return `${trimmed}\n[truncated at ${limit} bytes]`;
 }
 
-function invocationKey(validated) {
-  return sha256({
+function invocationIdentity(validated) {
+  return {
+    contractVersion: "runner-command-v1",
     runId: validated.runId,
     command: validated.command,
     cwd: validated.cwd,
-  });
+    timeoutMs: validated.timeoutMs,
+    outputLimitBytes: validated.outputLimitBytes,
+  };
+}
+
+function replayFromJournal(entry, key) {
+  if (entry.status === "completed") return { ...entry.result, replayed: true };
+  if (entry.status === "outcome_uncertain") {
+    return { outcome: "outcome_uncertain", invocationKey: key, reason: entry.reason, replayed: true };
+  }
+  if (entry.status === "executing") {
+    return {
+      outcome: "outcome_uncertain",
+      invocationKey: key,
+      reason: "RUNNER_EXECUTION_IN_PROGRESS_OR_INTERRUPTED",
+      replayed: true,
+    };
+  }
+  throw new Error("RUNNER_JOURNAL_ENTRY_INVALID");
 }
 
 function validateRunnerEvidence(value, validated, key) {
@@ -46,18 +65,10 @@ function validateRunnerEvidence(value, validated, key) {
 
 export async function runCommand(request, deps) {
   const validated = validateCommandRequest(request);
-  const key = invocationKey(validated);
+  const identity = invocationIdentity(validated);
+  const key = sha256(identity);
+  const requestDigest = sha256({ ...identity, invocationKey: key });
   const journal = deps?.journal;
-
-  if (journal) {
-    const saved = await journal.lookup(key);
-    if (saved?.status === "completed") {
-      return { ...saved.result, replayed: true };
-    }
-    if (saved?.status === "outcome_uncertain") {
-      return { outcome: "outcome_uncertain", invocationKey: key, reason: saved.reason, replayed: true };
-    }
-  }
 
   if (typeof deps?.executor !== "function") {
     const error = new Error("RunnerPort has no validated disposable executor");
@@ -69,6 +80,15 @@ export async function runCommand(request, deps) {
   }
   assertNoForbiddenEnv(deps.env);
 
+  if (journal) {
+    if (typeof journal.begin !== "function" || typeof journal.complete !== "function" ||
+        typeof journal.recordUncertain !== "function") {
+      throw new TypeError("RunnerPort journal does not implement the durable execution contract");
+    }
+    const begun = await journal.begin(key, requestDigest);
+    if (begun?.execute !== true) return replayFromJournal(begun?.entry, key);
+  }
+
   let raw;
   try {
     raw = await deps.executor({
@@ -78,18 +98,19 @@ export async function runCommand(request, deps) {
     });
   } catch {
     const reason = "RUNNER_EXECUTOR_FAILED";
-    if (journal) await journal.recordUncertain(key, reason);
+    if (journal) await journal.recordUncertain(key, requestDigest, reason);
     return { outcome: "outcome_uncertain", invocationKey: key, reason };
   }
 
   if (raw?.status === "interrupted") {
-    if (journal) await journal.recordUncertain(key, "command interrupted");
-    return { outcome: "outcome_uncertain", invocationKey: key, reason: "command interrupted" };
+    const reason = "RUNNER_COMMAND_INTERRUPTED";
+    if (journal) await journal.recordUncertain(key, requestDigest, reason);
+    return { outcome: "outcome_uncertain", invocationKey: key, reason };
   }
 
   if (raw?.status !== "completed" || !Number.isInteger(raw.exitCode) || raw.exitCode < 0 || raw.exitCode > 255) {
     const reason = "RUNNER_RESULT_INVALID";
-    if (journal) await journal.recordUncertain(key, reason);
+    if (journal) await journal.recordUncertain(key, requestDigest, reason);
     return { outcome: "outcome_uncertain", invocationKey: key, reason };
   }
 
@@ -98,7 +119,7 @@ export async function runCommand(request, deps) {
     runnerEvidence = validateRunnerEvidence(raw.runnerEvidence, validated, key);
   } catch {
     const reason = "RUNNER_EVIDENCE_INVALID";
-    if (journal) await journal.recordUncertain(key, reason);
+    if (journal) await journal.recordUncertain(key, requestDigest, reason);
     return { outcome: "outcome_uncertain", invocationKey: key, reason };
   }
 
@@ -111,6 +132,18 @@ export async function runCommand(request, deps) {
     durationMs: raw.durationMs ?? null,
     ...(runnerEvidence ? { runnerEvidence } : {}),
   };
-  if (journal) await journal.record(key, result);
+  if (journal) {
+    try {
+      await journal.complete(key, requestDigest, result);
+    } catch {
+      const reason = "RUNNER_JOURNAL_COMPLETION_FAILED";
+      try {
+        await journal.recordUncertain(key, requestDigest, reason);
+      } catch {
+        // The executing record remains authoritative and blocks automatic replay.
+      }
+      return { outcome: "outcome_uncertain", invocationKey: key, reason };
+    }
+  }
   return { ...result, replayed: false };
 }

@@ -19,6 +19,7 @@ export function stateRootPaths(stateDirectory) {
     capturedArtifactsRoot: join(root, "captured-artifacts"),
     localGitRoot: join(root, "local-git"),
     idempotencyRoot: join(root, "idempotency"),
+    runnerJournalsRoot: join(root, "runner-journals"),
     pendingOperationsRoot: join(root, "pending-operations"),
     rollbacksRoot: join(root, "rollbacks"),
   });
@@ -55,6 +56,7 @@ export function statePathsForSessionHash({ stateDirectory, sessionHash }) {
     capturedArtifactLockPath: join(capturedArtifactDirectory, "store-lock-target"),
     idempotencyDirectory,
     idempotencyFilePath: join(idempotencyDirectory, "idempotency.jsonl"),
+    runnerJournalFilePath: join(roots.runnerJournalsRoot, sessionHash, "runner.jsonl"),
     pendingOperationDirectory: join(roots.pendingOperationsRoot, sessionHash),
     rollbackDirectory: join(roots.rollbacksRoot, sessionHash),
   });

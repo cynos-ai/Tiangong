@@ -36,12 +36,14 @@
   - it copies only the validated fixture tree, independently revalidates and digest-binds the copied volume before command start, rejects links and unsupported entries, and never replaces a pre-existing resource;
   - the command container matches the B1 network, root filesystem, capability, privilege, resource, user, tmpfs, mount, workdir, and environment boundaries before it starts;
   - RunnerPort receives invocation-bound image, policy, copied-fixture, and container-configuration digests;
-  - a timed-out command becomes `outcome_uncertain` rather than being reported complete;
+  - the append-only hash-chained runner journal records `executing` before command start, replays a completed result, and blocks replay of an interrupted command;
+  - a timed-out command becomes durably `outcome_uncertain` rather than being reported complete;
   - both completed and interrupted invocations remove their exactly owned containers and fixture volume and verify absence.
 - Required evidence:
   - `runner_executor_daemon_policy=pass`;
   - `runner_probe=pass`;
   - `runner_executor_machine_evidence=pass` with run ID, immutable image ID, policy digest, copied-fixture digest, and configuration digest;
+  - `runner_executor_journal=pass`;
   - `runner_executor_timeout_uncertain=pass`;
   - `runner_executor_cleanup=pass`.
 - Skip/block rules: block if Docker, the immutable image, or the fixture is unavailable. This proves the executor module on the local Docker boundary; it does not prove an authenticated Worker-to-executor adapter or make the tools model-accessible.

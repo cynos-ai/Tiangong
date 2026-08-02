@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,6 +14,7 @@ import {
   FORBIDDEN_ENV_KEYS,
   FORBIDDEN_NETWORK_TARGETS,
 } from "../../worker/agent/runner/runner-policy.mjs";
+import { RunnerJournal } from "../../worker/agent/runner/journal.mjs";
 import { runCommand } from "../../worker/agent/runner/runner-port.mjs";
 
 const supportDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -21,6 +24,8 @@ const image = process.env.TIANGONG_RUNNER_IMAGE ?? "tiangong-worker-implementor:
 const dockerPath = process.env.TIANGONG_DOCKER_PATH ?? "/usr/bin/docker";
 const runId = `run-${randomUUID()}`;
 const runDocker = createDockerCommandRunner({ dockerPath });
+const journalRoot = await mkdtemp(path.join(tmpdir(), "tiangong-runner-executor-smoke-"));
+const journal = new RunnerJournal({ filePath: path.join(journalRoot, "runner.jsonl") });
 
 function fail(message) {
   process.stderr.write(`[Tiangong] ERROR: ${message}\n`);
@@ -46,6 +51,7 @@ try {
     outputLimitBytes: 64 * 1024,
   }, {
     executor,
+    journal,
     env: {
       TIANGONG_FORBIDDEN_ENV_NAMES: FORBIDDEN_ENV_KEYS.join(","),
       TIANGONG_FORBIDDEN_NETWORK_TARGETS: FORBIDDEN_NETWORK_TARGETS.join(","),
@@ -57,6 +63,24 @@ try {
   if (result.stdout.trim() !== "runner_probe=pass") throw new Error("runner probe marker is missing");
   if (result.runnerEvidence?.imageId !== imageId || result.runnerEvidence.runId !== runId) {
     throw new Error("runner machine Evidence is not bound to the invocation");
+  }
+  const replay = await runCommand({
+    runId,
+    command: ["node", "/workspace/fixture/probe.mjs"],
+    cwd: "fixture",
+    timeoutMs: 30_000,
+    outputLimitBytes: 64 * 1024,
+  }, {
+    executor,
+    journal,
+    env: {
+      TIANGONG_FORBIDDEN_ENV_NAMES: FORBIDDEN_ENV_KEYS.join(","),
+      TIANGONG_FORBIDDEN_NETWORK_TARGETS: FORBIDDEN_NETWORK_TARGETS.join(","),
+    },
+  });
+  if (replay.replayed !== true || replay.invocationKey !== result.invocationKey ||
+      (await journal.lookup(result.invocationKey))?.status !== "completed") {
+    throw new Error("completed runner invocation did not replay from the durable journal");
   }
 
   process.stdout.write("runner_executor_daemon_policy=pass\n");
@@ -75,10 +99,22 @@ try {
     cwd: "fixture",
     timeoutMs: 100,
     outputLimitBytes: 1024,
-  }, { executor, env: {} });
-  if (timeoutResult.outcome !== "outcome_uncertain") {
-    throw new Error("interrupted runner invocation was not outcome-uncertain");
+  }, { executor, journal, env: {} });
+  if (timeoutResult.outcome !== "outcome_uncertain" ||
+      (await journal.lookup(timeoutResult.invocationKey))?.status !== "outcome_uncertain") {
+    throw new Error("interrupted runner invocation was not durably outcome-uncertain");
   }
+  const timeoutReplay = await runCommand({
+    runId: timeoutRunId,
+    command: ["node", "-e", "setTimeout(() => {}, 5000)"],
+    cwd: "fixture",
+    timeoutMs: 100,
+    outputLimitBytes: 1024,
+  }, { executor, journal, env: {} });
+  if (timeoutReplay.replayed !== true || timeoutReplay.outcome !== "outcome_uncertain") {
+    throw new Error("outcome-uncertain runner invocation was retried");
+  }
+  process.stdout.write("runner_executor_journal=pass\n");
   process.stdout.write("runner_executor_timeout_uncertain=pass\n");
 
   for (const ownedRunId of [runId, timeoutRunId]) {
@@ -94,4 +130,10 @@ try {
   process.stdout.write("runner_executor_cleanup=pass\n");
 } catch (error) {
   fail(error instanceof Error ? error.message : "runner executor smoke failed");
+} finally {
+  try {
+    await rm(journalRoot, { recursive: true });
+  } catch {
+    fail("runner executor journal cleanup failed");
+  }
 }

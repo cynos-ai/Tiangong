@@ -16,6 +16,7 @@ This run does not mount the Docker socket into an AgentTeams Worker and does not
 
 - `worker/agent/runner/docker-executor.mjs`
 - `worker/agent/runner/runner-port.mjs`
+- `worker/agent/runner/journal.mjs`
 - `worker/agent/runner/runner-policy.mjs`
 - `smoke-testing/support/run-runner-executor-smoke.mjs`
 - `smoke-testing/fixtures/runner-isolation/`
@@ -24,19 +25,19 @@ This run does not mount the Docker socket into an AgentTeams Worker and does not
 
 | Case | Expected Docker side effect | Expected RunnerPort outcome |
 |---|---|---|
-| Valid fixture, immutable image, matching daemon config | One exact invocation's seed/runner containers and fixture volume; bounded scratch tmpfs; owned resources removed | `completed` with invocation-bound runner Evidence |
+| Valid fixture, immutable image, matching daemon config | One exact invocation's seed/runner containers and fixture volume; bounded scratch tmpfs; owned resources removed | Durable `executing` → `completed`; exact replay returns the saved result without another container |
 | Mutable image tag | None | Constructor rejects before execution |
 | Fixture root or entry is a symbolic link | None | Executor throws; RunnerPort fails closed |
 | Exact resource name already belongs to another owner | Foreign resource is preserved; no replacement or removal | `outcome_uncertain` |
 | Daemon reports a reachable control-plane network instead of `none` | Runner command is never started; owned setup resources are removed | `outcome_uncertain` |
 | Image/daemon injects an unexpected environment key | Runner command is never started; owned setup resources are removed | `outcome_uncertain` |
 | Executor Evidence uses another invocation key | No additional execution | `outcome_uncertain` with `RUNNER_EVIDENCE_INVALID` |
-| Command exceeds its timeout | Runner container is force-removed with exact ownership checks | `outcome_uncertain`; no automatic retry |
+| Command exceeds its timeout | Runner container is force-removed with exact ownership checks | Durable `outcome_uncertain`; exact replay does not execute |
 | Completed invocation is replayed from the journal | No second executor call | Saved completed result with `replayed=true` |
 
 ## Machine observations
 
-Focused deterministic tests: **14 passed**.
+Focused RunnerPort, journal, and Docker executor tests: **20 passed**.
 
 The real Docker run used the locally built Implementor image resolved to immutable ID:
 
@@ -49,6 +50,7 @@ Observed markers:
 - `runner_executor_machine_evidence=pass`
 - runner policy digest `06a3250627ba86dd2d8af05d1b023d07198dffb6a18dfe5274926e99e74e2b26`
 - copied fixture digest `a1d02f2718b45e2a8013119646d76d5c7bbb7789bfcd60d3207029bd970b2d5f`
+- `runner_executor_journal=pass`
 - `runner_executor_timeout_uncertain=pass`
 - `runner_executor_cleanup=pass`
 
@@ -72,4 +74,4 @@ Every daemon resource name is derived from the validated run UUID and invocation
 
 ## Honest limit and next step
 
-The Docker executor itself is now real and machine-tested. Full runner completion remains blocked on a closed Worker-to-executor adapter, professional role tools, durable invocation Evidence append, and ChangeRevision materialization. Directly mounting the Docker socket into each model-facing Worker is not accepted merely for convenience: the stock Worker CRD cannot express that mount, and changing an upstream-managed container out of band would weaken ownership and reconciliation.
+The Docker executor and append-only, hash-chained runner journal are now real and machine-tested. Full runner completion remains blocked on a closed Worker-to-executor adapter, professional role tools, durable Runner Evidence projection into the Worker Evidence chain, and ChangeRevision materialization. Directly mounting the Docker socket into each model-facing Worker is not accepted merely for convenience: the stock Worker CRD cannot express that mount, and changing an upstream-managed container out of band would weaken ownership and reconciliation.
