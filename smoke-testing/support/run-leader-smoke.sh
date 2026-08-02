@@ -170,11 +170,17 @@ done
 [[ "$(jq -r '.leaderReady' <<<"${team_json}")" == true ]] || die "Leader is not ready"
 team_room="$(jq -r '.teamRoomID // empty' <<<"${team_json}")"
 [[ -n "${team_room}" ]] || die "Team room is unavailable"
+stable_roster_checks=0
 for _ in $(seq 1 120); do
-  team_roster_ready "${team_room}" >/dev/null 2>&1 && break
+  if team_roster_ready "${team_room}" >/dev/null 2>&1; then
+    stable_roster_checks=$((stable_roster_checks + 1))
+    ((stable_roster_checks >= 3)) && break
+  else
+    stable_roster_checks=0
+  fi
   sleep 2
 done
-team_roster_ready "${team_room}" >/dev/null 2>&1 || die "Matrix Team roster did not become ready"
+((stable_roster_checks >= 3)) || die "Matrix Team roster did not become stably ready"
 
 leader_json="$(docker exec "${MANAGER_CONTAINER}" agt get workers "${LEADER_NAME}" -o json)"
 leader_uid="$(jq -r '.matrixUserID // empty' <<<"${leader_json}")"

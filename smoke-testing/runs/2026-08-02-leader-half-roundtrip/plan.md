@@ -103,9 +103,19 @@ the Implementor again truthfully submitted a blocker, and this time the Leader
 recorded a digest-bound `blocked` decision. No Assessor Task was created. This
 proves the specific fail-closed product fix, but it does not promote the smoke:
 the initial request still exposed a `/joined_rooms` propagation race and the
-run-owned Team again failed exact deletion. The durable readiness oracle now
-reproduces the channel adapter's joined-room candidate calculation; that test
-driver change still requires a fresh one-command rerun.
+run-owned Team again failed exact deletion.
+
+The next fresh one-command attempt exposed two additional test-driver races,
+not a passing product run. One successful joined-room sample was not stable
+enough during Team propagation, and the Matrix helper captured its initial
+sync cursor after sending the prompt, so a fast Leader response could be
+skipped. No Project/Task files were created in that attempt. The driver now
+requires three consecutive successful executions of the channel-equivalent
+roster oracle and captures the Matrix cursor before sending. Both corrections
+worked on an exact manual retry after propagation, but still require a fresh
+one-command rerun; the attempt's Team deletion again failed and a later
+confirmed dedicated-stack reset removed the residue without changing its
+failed cleanup verdict.
 
 `agt delete team` again returned success while retaining the Team, all five
 Worker resources, and their containers. The run's cleanup verdict is failed. A later confirmed

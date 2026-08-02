@@ -19,12 +19,12 @@ Reply with LEADER_DONE and a one-line summary."
 FORMATTED="<a href=\"https://matrix.to/#/${LEADER_UID}\">${localpart}</a> ${PROMPT#"${localpart}" }"
 body="$(jq -cn --arg b "${PROMPT}" --arg fb "${FORMATTED}" --arg u "${LEADER_UID}" \
   '{msgtype:"m.text",body:$b,format:"org.matrix.custom.html",formatted_body:$fb,"m.mentions":{user_ids:[$u]}}')"
+since="$(curl --fail --silent --show-error --max-time 30 -H "Authorization: Bearer ${token}" \
+  "${homeserver}/_matrix/client/v3/sync?timeout=0" | jq -r '.next_batch')"
 curl --fail --silent --show-error --max-time 30 -X PUT -H "Authorization: Bearer ${token}" \
   -H 'Content-Type: application/json' --data-binary "${body}" \
   "${homeserver}/_matrix/client/v3/rooms/${room_path}/send/m.room.message/tiangong-leader-${NONCE}" >/dev/null
 printf 'leader_prompt_sent=%s\n' "${PROJECT_ID}"
-since="$(curl --fail --silent --show-error --max-time 30 -H "Authorization: Bearer ${token}" \
-  "${homeserver}/_matrix/client/v3/sync?timeout=0" | jq -r '.next_batch')"
 for i in $(seq 1 40); do
   q="$(printf '%s' "${since}" | jq -sRr @uri)"
   resp="$(curl --fail --silent --show-error --max-time 45 -H "Authorization: Bearer ${token}" \
