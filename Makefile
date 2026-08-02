@@ -8,10 +8,11 @@ LEADER_SMOKE := ./smoke-testing/support/run-leader-smoke.sh
 REVIEWER_IMAGE_TEST := ./smoke-testing/support/run-reviewer-smoke.sh
 PEER_MENTION_SMOKE := ./smoke-testing/support/run-peer-mention-smoke.sh
 PEER_MENTION_SMOKE_TEST := ./scripts/test-peer-mention-smoke.sh
+RUNNER_ISOLATION_SPIKE := ./smoke-testing/support/run-runner-isolation-spike.sh
 SKILL_CHECK := node ./scripts/check-skills.mjs
 REVIEWER_SMOKE_CONTRACT := node ./scripts/test-reviewer-smoke-oracle.mjs
 
-.PHONY: help init up start stop down status verify config logs login uninstall check-skills build-worker-image test-worker-image-basic test-worker-image test-leader-image-basic test-reviewer-smoke-contract test-reviewer-image-basic test-reviewer-image-git test-reviewer-image test-reviewer-journey-canary test-peer-mention-smoke-contract test-peer-mention-smoke
+.PHONY: help init up start stop down status verify config logs login uninstall check-skills build-worker-image test-worker-image-basic test-worker-image test-leader-image-basic test-runner-isolation test-reviewer-smoke-contract test-reviewer-image-basic test-reviewer-image-git test-reviewer-image test-reviewer-journey-canary test-peer-mention-smoke-contract test-peer-mention-smoke
 
 help: ## Show available commands
 	@printf '%s\n' 'Tiangong local development commands:'
@@ -60,6 +61,9 @@ test-worker-image: ## Run the full Gate/approval/recovery Worker smoke and clean
 
 test-leader-image-basic: ## Run the Leader Matrix coordination (gate 3 leader-half) smoke and clean up
 	@$(LEADER_SMOKE)
+
+test-runner-isolation: ## Prove the disposable RunnerPort isolation contract and clean up
+	@$(RUNNER_ISOLATION_SPIKE)
 
 test-reviewer-smoke-contract: ## Validate Reviewer smoke oracle phase semantics
 	@$(REVIEWER_SMOKE_CONTRACT)
