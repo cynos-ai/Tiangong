@@ -8,6 +8,7 @@ import {
   taskBindingFile,
   projectDir,
   taskDir,
+  tasksRoot,
   taskResultFile,
   taskDecisionsDir,
   taskDecisionFile,
@@ -132,4 +133,32 @@ export async function removeProjectTree(projectId, { rootDir } = {}) {
 
 export async function removeTaskTree(taskId, { rootDir } = {}) {
   await rm(taskDir(taskId, rootDir), { recursive: true, force: true });
+}
+
+// Enumerate the task bindings that belong to a project. Tasks are stored flat
+// under tasks/{taskId}/, so this scans the tasks root and filters by projectId,
+// re-verifying each binding digest. Returns bindings sorted by createdAt.
+export async function listTaskBindingsForProject(projectId, { rootDir } = {}) {
+  const dir = tasksRoot(rootDir);
+  let entries;
+  try {
+    entries = await readdir(dir);
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+  const matches = [];
+  for (const name of entries) {
+    const filePath = taskBindingFile(name, rootDir);
+    let parsed;
+    try {
+      parsed = await readVerified(filePath, "task binding");
+    } catch (error) {
+      if (error.code === "ENOENT") continue; // not a task directory
+      throw error;
+    }
+    if (parsed.projectId === projectId) matches.push(parsed);
+  }
+  matches.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
+  return matches;
 }

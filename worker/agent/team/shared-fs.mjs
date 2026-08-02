@@ -54,6 +54,10 @@ export function taskDir(taskId, rootDir) {
   return resolveTeamPath(["tasks", taskId], rootDir);
 }
 
+export function tasksRoot(rootDir) {
+  return resolveTeamPath(["tasks"], rootDir);
+}
+
 export function taskBindingFile(taskId, rootDir) {
   return resolveTeamPath(["tasks", taskId, "task-binding.json"], rootDir);
 }
