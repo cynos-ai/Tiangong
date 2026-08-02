@@ -13,7 +13,9 @@ const TASK_KIND_INDEX = new Map(TASK_KINDS.map((kind, index) => [kind, index]));
 export const MAX_REVISION_WAVES = 2;
 export const DECISIONS = Object.freeze(["accept", "revision", "blocked"]);
 
-export function nextTaskKindAfter({ taskKind, decision, revisionIndex }) {
+// maxRevisionWaves is driven by the bound playbook; it defaults to the
+// built-in limit so the pure step logic stays usable without a playbook.
+export function nextTaskKindAfter({ taskKind, decision, revisionIndex, maxRevisionWaves = MAX_REVISION_WAVES }) {
   if (!TASK_KIND_INDEX.has(taskKind)) throw new Error(`Unknown task kind: ${taskKind}`);
   if (!Number.isInteger(revisionIndex) || revisionIndex < 0) {
     throw new TypeError("revisionIndex must be a non-negative integer");
@@ -33,7 +35,7 @@ export function nextTaskKindAfter({ taskKind, decision, revisionIndex }) {
         return { status: "next", taskKind: "release", revisionIndex };
       }
       if (decision === "revision") {
-        if (revisionIndex + 1 >= MAX_REVISION_WAVES) return { status: "blocked" };
+        if (revisionIndex + 1 >= maxRevisionWaves) return { status: "blocked" };
         return { status: "next", taskKind: "implement", revisionIndex: revisionIndex + 1 };
       }
       return { status: "blocked" };
@@ -63,7 +65,7 @@ export function dispositionForRelease({ postVerify, rollback, verifyPrevious }) 
 
 // Reduce a chain of task decisions to the current chain head + whether the
 // design→...→assess sequence is blocked or awaiting release.
-export function reduceTaskChain(decisions) {
+export function reduceTaskChain(decisions, { maxRevisionWaves = MAX_REVISION_WAVES } = {}) {
   if (!Array.isArray(decisions)) throw new TypeError("decisions must be an array");
   let revisionIndex = 0;
   let lastKind = "design";
@@ -76,6 +78,7 @@ export function reduceTaskChain(decisions) {
       taskKind: entry.taskKind,
       decision: entry.decision,
       revisionIndex: entry.revisionIndex,
+      maxRevisionWaves,
     });
     if (step.status === "blocked") {
       return { status: "blocked", at: entry };
@@ -90,4 +93,101 @@ export function reduceTaskChain(decisions) {
     }
   }
   return { status: "awaiting_task", nextTaskKind: lastKind, revisionIndex, lastDecision };
+}
+
+// ---- Binding-aware policy (architecture §7 / §17 gate 5) -------------------
+//
+// The pure step logic above is wrapped with the immutable Project/Task
+// binding so the policy can reject an illegal role for a step, a step out of
+// order, and a decision that reuses an expired (prior-revision) result. These
+// take explicit maps (roleBindings, taskKindRoles) so the module stays free
+// of runtime/Practice imports; the closed TeamPlaybook resolver wires them.
+
+export const DEFAULT_TASK_KIND_ROLES = Object.freeze({
+  design: "designer",
+  implement: "implementor",
+  assess: "assessor",
+  release: "operator",
+});
+
+export function findRoleForWorker(roleBindings, workerName) {
+  if (roleBindings === null || typeof roleBindings !== "object") return undefined;
+  for (const [role, name] of Object.entries(roleBindings)) {
+    if (name === workerName) return role;
+  }
+  return undefined;
+}
+
+// Reject a task whose assignee does not own its taskKind role.
+export function assertTaskKindRole({ taskBinding, roleBindings, taskKindRoles = DEFAULT_TASK_KIND_ROLES }) {
+  const role = findRoleForWorker(roleBindings, taskBinding.assignee);
+  if (!role) {
+    throw new Error(`Assignee ${taskBinding.assignee} is not in roleBindings`);
+  }
+  const expected = taskKindRoles[taskBinding.taskKind];
+  if (!expected) throw new Error(`Unknown taskKind role for ${taskBinding.taskKind}`);
+  if (role !== expected) {
+    throw new Error(
+      `taskKind ${taskBinding.taskKind} must be owned by ${expected}, not ${role}`,
+    );
+  }
+  return role;
+}
+
+// Reject a task that is not the deterministic next step for the chain.
+export function assertNextTask({ taskBinding, chain = [], maxRevisionWaves = MAX_REVISION_WAVES }) {
+  const reduced = reduceTaskChain(chain, { maxRevisionWaves });
+  if (reduced.status === "blocked") {
+    throw new Error("Project is BLOCKED; no further task is allowed");
+  }
+  if (reduced.status === "awaiting_deploy") {
+    throw new Error("Project is awaiting deploy; no further task step is allowed");
+  }
+  if (reduced.nextTaskKind !== taskBinding.taskKind) {
+    throw new Error(
+      `Expected next task ${reduced.nextTaskKind}, got ${taskBinding.taskKind}`,
+    );
+  }
+  if (reduced.revisionIndex !== taskBinding.revisionIndex) {
+    throw new Error(
+      `Expected revisionIndex ${reduced.revisionIndex}, got ${taskBinding.revisionIndex}`,
+    );
+  }
+  return reduced;
+}
+
+// Combined gate for creating a task against a project binding + the chain so
+// far. Runs role authorization + step order; the decision-side result check
+// (assertResultCurrent) is applied when a decision is recorded.
+export function assertTransitionAllowed({
+  projectBinding,
+  taskBinding,
+  chain = [],
+  taskKindRoles = DEFAULT_TASK_KIND_ROLES,
+  maxRevisionWaves = MAX_REVISION_WAVES,
+}) {
+  if (!projectBinding?.roleBindings) throw new Error("project binding is missing roleBindings");
+  assertTaskKindRole({ taskBinding, roleBindings: projectBinding.roleBindings, taskKindRoles });
+  return assertNextTask({ taskBinding, chain, maxRevisionWaves });
+}
+
+// Reject a decision that reuses an expired result. An accept must reference
+// the latest submitted result digest and the task's current revision; a
+// decision cannot be recorded against a prior revision's result.
+export function assertResultCurrent({ decision, taskBinding, latestResultDigest }) {
+  if (decision.taskId !== taskBinding.taskId) {
+    throw new Error("Decision taskId does not match the task");
+  }
+  if (decision.revisionIndex !== taskBinding.revisionIndex) {
+    throw new Error(
+      `Decision targets revision ${decision.revisionIndex} but the task is at revision ${taskBinding.revisionIndex}`,
+    );
+  }
+  if (decision.decision === "accept") {
+    if (!latestResultDigest) throw new Error("Cannot accept without a submitted result");
+    if (decision.resultDigest && decision.resultDigest !== latestResultDigest) {
+      throw new Error("Accept references an expired result digest");
+    }
+  }
+  return decision;
 }

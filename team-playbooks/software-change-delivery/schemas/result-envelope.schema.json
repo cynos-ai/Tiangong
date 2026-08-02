@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tiangong.invalid/schemas/software-change-delivery-result-v1.json",
+  "title": "software-change-delivery-result-v1",
+  "description": "ResultEnvelope shape a Worker submits for a software-change-delivery Task. The authoritative producer of each field is the role that owns the taskKind; the Leader records accept/revision/blocked decisions, never a Worker.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["taskKind", "revisionIndex", "claim", "artifactRefs"],
+  "properties": {
+    "taskKind": {
+      "enum": ["design", "implement", "assess", "release"]
+    },
+    "revisionIndex": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "changeRevisionRef": {
+      "description": "Required for implement and release tasks: the sealed artifact reference the Assessor verifies and the Operator deploys.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["producerTaskId", "artifactPath", "artifactDigest", "revision"],
+      "properties": {
+        "producerTaskId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "artifactPath": { "type": "string", "minLength": 1 },
+        "artifactDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "revision": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "claim": {
+      "description": "Professional claim text. A claim is never Evidence by itself.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
+    "completionContractDigest": {
+      "description": "Echo of the Task binding's completion contract; must match for the Result to count.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "artifactRefs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1, "maxLength": 128 },
+      "uniqueItems": true
+    },
+    "blocker": {
+      "description": "Set only when the Worker cannot proceed; forces a BLOCKED transition.",
+      "type": ["string", "null"],
+      "maxLength": 4096
+    }
+  }
+}

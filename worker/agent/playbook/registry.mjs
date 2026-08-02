@@ -1,0 +1,56 @@
+// Closed TeamPlaybook registry (architecture §5 / §7).
+//
+// Like roles/registry.mjs, this is a code-owned, deep-frozen closed registry.
+// The contentDigest is the canonical digest of the package manifest.json (see
+// resolver.mjs#loadPlaybook); loading the package verifies the on-disk file
+// against this entry, so the model cannot substitute a playbook by editing a
+// file. A new playbook or version is a code change here, never a runtime input.
+
+function deepFreeze(value) {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+const PLAYBOOK_PACKAGE_DIR = "software-change-delivery";
+
+const registries = deepFreeze({
+  playbooks: {
+    "software-change-delivery@1.0.0": {
+      versionedId: "software-change-delivery@1.0.0",
+      playbookId: "software-change-delivery",
+      version: "1.0.0",
+      packageDir: PLAYBOOK_PACKAGE_DIR,
+      contentDigest: "0898d0c3604fdcce9318071a9c916ed4f1e574545dddbcf1f43792dfc046c63a",
+      roleSlots: ["team_leader", "designer", "implementor", "assessor", "operator"],
+      taskKinds: ["design", "implement", "assess", "release"],
+      taskKindRoles: {
+        design: "designer",
+        implement: "implementor",
+        assess: "assessor",
+        release: "operator",
+      },
+      maxRevisionWaves: 2,
+      completionSchemaId: "software-change-delivery-result-v1",
+      completionSchemaDigest: "7362150ad945acb38648ebaa6a93503698808c46fd36e6733c5aaecb8a25cf3f",
+      transitionPolicyId: "software-change-delivery-transition-v1",
+    },
+  },
+});
+
+export function closedPlaybookRegistries() {
+  return registries;
+}
+
+export function playbookRegistryEntry(versionedId) {
+  return registries.playbooks[versionedId];
+}
+
+export function findPlaybook(playbookId, version) {
+  return Object.values(registries.playbooks).find((entry) => {
+    if (entry.playbookId !== playbookId) return false;
+    return version === undefined || entry.version === version;
+  });
+}

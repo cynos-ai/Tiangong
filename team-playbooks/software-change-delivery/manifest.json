@@ -1,0 +1,17 @@
+{
+  "playbookId": "software-change-delivery",
+  "version": "1.0.0",
+  "title": "Software Change Delivery",
+  "summary": "Leader-coordinated, evidence-based delivery of a single software change across design, implement, assess, and release. Each step is a Task bound to one professional role; revisions open a new Implementor/Assessor wave rather than mutating a closed Task.",
+  "roleSlots": ["team_leader", "designer", "implementor", "assessor", "operator"],
+  "taskKinds": ["design", "implement", "assess", "release"],
+  "taskKindRoles": {
+    "design": "designer",
+    "implement": "implementor",
+    "assess": "assessor",
+    "release": "operator"
+  },
+  "maxRevisionWaves": 2,
+  "completionSchemaId": "software-change-delivery-result-v1",
+  "transitionPolicyId": "software-change-delivery-transition-v1"
+}
