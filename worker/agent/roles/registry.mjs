@@ -239,7 +239,7 @@ const registries = deepFreeze({
       id: "leader-v1",
       supportedRoleIds: ["leader"],
       relativePath: "roles/leader/role.md",
-      digest: "fda132c9d4449008f81f3295ddc85f81ead5d7f8a39c3f16e1dec30fa62212b6",
+      digest: "9a1f92ec43d344c49ceca8fa5c8048157bfb4ab153a1f8d1e2bd98ec66951f84",
       maxBytes: 16 * 1024,
     },
     "designer-v1": {

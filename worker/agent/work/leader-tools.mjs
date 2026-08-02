@@ -188,7 +188,7 @@ export function createLeaderToolRegistry({ playbook, deps }) {
     name: "team_decide_task",
     label: "Tiangong team decide task",
     description:
-      "Record the Leader decision (accept | revision | blocked) for a Task. An accept must reference the task's current submitted result; a prior-revision or stale result is rejected.",
+      "Record the Leader decision (accept | revision | blocked) for a Task. An accept must reference the task's current submitted result; a prior-revision or stale result is rejected. After a blocked decision, immediately call team_report with RECOVERY_REQUIRED in this same turn.",
     parameters: Type.Object(
       {
         taskId: ID,
@@ -226,6 +226,8 @@ export function createLeaderToolRegistry({ playbook, deps }) {
         decision: decision.decision,
         revisionIndex: decision.revisionIndex,
         replayed: recorded.replayed,
+        requiredNextTool: decision.decision === "blocked" ? "team_report" : null,
+        terminalDisposition: decision.decision === "blocked" ? "RECOVERY_REQUIRED" : null,
       });
     },
   });

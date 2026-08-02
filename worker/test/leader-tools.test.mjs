@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { TurnGateState } from "../agent/gates/turn-state.mjs";
 import { readPlaybookManifest } from "../agent/playbook/resolver.mjs";
+import { projectDisposition } from "../agent/team/project-chain.mjs";
 import { TeamCoordinationGate } from "../agent/team/tool-wrapper.mjs";
 import { submitResult } from "../agent/team/team-task-port.mjs";
 import { createLeaderToolRegistry } from "../agent/work/leader-tools.mjs";
@@ -182,6 +183,55 @@ test("accept binds the current schema-valid ResultEnvelope", async () => {
       decision: "accept",
     });
     assert.equal(details(accepted).decision, "accept");
+  });
+});
+
+test("a blocked immutable task chain authorizes a RECOVERY_REQUIRED report", async () => {
+  await withRoot(async (root) => {
+    const pb = readPlaybookManifest("software-change-delivery");
+    let deps;
+    deps = depsFor(root, LEADER, {
+      getProjectDisposition: (projectId) => projectDisposition(projectId, deps),
+    });
+    const registry = createLeaderToolRegistry({ playbook: pb, deps });
+    await createAndDispatch(registry);
+    const taskBinding = JSON.parse(await (await import("node:fs/promises")).readFile(
+      join(root, "tasks", "task-design-0", "tiangong", "task-binding.json"), "utf8",
+    ));
+    const blocker = createResultEnvelope({
+      taskId: taskBinding.taskId,
+      projectId: PROJECT_ID,
+      producer: DESIGNER,
+      taskKind: "design",
+      revisionIndex: 0,
+      sourceRole: "designer",
+      playbookDigest: pb.contentDigest,
+      taskBindingDigest: taskBinding.contentDigest,
+      completionContractDigest: pb.completionSchemaDigest,
+      sourceProfileDigest: taskBinding.sourceProfileDigest,
+      sourceSkillId: taskBinding.sourceSkillId,
+      skillDigest: taskBinding.sourceSkillDigest,
+      blocker: "required design evidence is unavailable",
+      createdAt: T(2),
+    });
+    await submitResult(blocker, depsFor(root, DESIGNER));
+    const blocked = await definition(registry, "team_decide_task").execute("block", {
+      taskId: taskBinding.taskId,
+      decision: "blocked",
+    });
+    assert.equal(details(blocked).requiredNextTool, "team_report");
+    assert.equal(details(blocked).terminalDisposition, "RECOVERY_REQUIRED");
+    const reported = await definition(registry, "team_report").execute("report-recovery", {
+      projectId: PROJECT_ID,
+      summary: "The request is blocked and requires recovery.",
+      disposition: "RECOVERY_REQUIRED",
+    });
+    assert.equal(details(reported).queued, true);
+    const stored = JSON.parse(await (await import("node:fs/promises")).readFile(
+      join(root, "projects", PROJECT_ID, "tiangong", "terminal-report.json"), "utf8",
+    ));
+    assert.equal(stored.disposition, "RECOVERY_REQUIRED");
+    assert.equal(stored.reportedBy, LEADER);
   });
 });
 

@@ -4,8 +4,10 @@ import test from "node:test";
 import { canonicalJson, sha256 } from "../agent/canonical-json.mjs";
 import {
   createProjectBinding,
+  createProjectReport,
   createTaskBinding,
   isProjectBinding,
+  isProjectReport,
   isTaskBinding,
   verifyBindingDigest,
 } from "../agent/team/manifest.mjs";
@@ -115,6 +117,35 @@ test("project binding rejects unsupported roles and bad ids", () => {
   assert.throws(
     () => sampleProject({ requester: "manager" }),
     /invalid format/u,
+  );
+});
+
+test("project reports support every closed terminal disposition", () => {
+  for (const disposition of ["DELIVERED", "FAILED_SAFE", "RECOVERY_REQUIRED"]) {
+    const report = createProjectReport({
+      projectId: "proj-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      requester: "@manager:example.test",
+      reportedBy: "tiangong-leader",
+      disposition,
+      dispositionDigest: sha256(disposition),
+      summaryDigest: sha256("bounded requester summary"),
+      createdAt: CREATED_AT,
+    });
+    assert.equal(report.disposition, disposition);
+    assert.equal(isProjectReport(report), true);
+    assert.equal(verifyBindingDigest(report), true);
+  }
+  assert.throws(
+    () => createProjectReport({
+      projectId: "proj-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      requester: "@manager:example.test",
+      reportedBy: "tiangong-leader",
+      disposition: "BLOCKED",
+      dispositionDigest: sha256("BLOCKED"),
+      summaryDigest: sha256("bounded requester summary"),
+      createdAt: CREATED_AT,
+    }),
+    /Unsupported project disposition/u,
   );
 });
 

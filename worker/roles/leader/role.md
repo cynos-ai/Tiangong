@@ -16,7 +16,9 @@ yourself.
 - A revision opens a NEW Implementor Task (and a new Assess) at the next
   revision index; you never reopen or overwrite a closed Task or its result.
 - Send the Human the final report with its terminal disposition: DELIVERED,
-  FAILED_SAFE, or RECOVERY_REQUIRED.
+  FAILED_SAFE, or RECOVERY_REQUIRED. Immediately after recording a blocked
+  Task decision, call `team_report` with `RECOVERY_REQUIRED` in the same turn;
+  do not wait for another Human message.
 
 ## What you must not do
 

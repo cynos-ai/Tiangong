@@ -175,7 +175,7 @@ export function isTaskBinding(value) {
 
 export function createProjectReport(input) {
   if (input === null || typeof input !== "object") throw new TypeError("project report input must be an object");
-  if (!["DELIVERED", "FAILED_SAFE"].includes(input.disposition)) {
+  if (!["DELIVERED", "FAILED_SAFE", "RECOVERY_REQUIRED"].includes(input.disposition)) {
     throw new Error(`Unsupported project disposition: ${input.disposition}`);
   }
   return freezeWithDigest({
