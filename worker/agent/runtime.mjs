@@ -37,9 +37,10 @@ import { createCoreToolRegistry } from "./tools/registry.mjs";
 import { createReviewerToolRegistry } from "./work/reviewer-tools.mjs";
 import { getPlaybook } from "./playbook/registry.mjs";
 import { defaultTiangongRoot } from "./team/shared-fs.mjs";
-import { createLeaderChannel } from "./team/channel-adapter.mjs";
+import { createTeamChannel } from "./team/channel-adapter.mjs";
 import { createLeaderSync } from "./team/sync-adapter.mjs";
 import { createLeaderToolRegistry } from "./work/leader-tools.mjs";
+import { createMemberToolRegistry } from "./work/member-tools.mjs";
 import { completedReviewTargetFacts, renderCompletedReview, workStatusForRun } from "./work/status.mjs";
 import { createTurnResult } from "./turn-contract.mjs";
 import { TurnContextController } from "./turn-context.mjs";
@@ -186,12 +187,23 @@ export class TiangongAgentRuntime {
       const teamDeps = {
         rootDir: defaultTiangongRoot(),
         env: process.env,
-        channel: createLeaderChannel({ evidence }),
+        channel: createTeamChannel({ evidence }),
         sync: createLeaderSync(),
         evidence,
         getInvocation: turns.current,
       };
       registry = createLeaderToolRegistry({ playbook, deps: teamDeps });
+    } else if (profileBundle.profile.roleId === "team-member") {
+      gate = new PolicyGate({ idempotencyStore });
+      const teamDeps = {
+        rootDir: defaultTiangongRoot(),
+        env: process.env,
+        channel: createTeamChannel({ evidence }),
+        sync: createLeaderSync(),
+        evidence,
+        getInvocation: turns.current,
+      };
+      registry = createMemberToolRegistry({ deps: teamDeps });
     } else {
       gate = new PolicyGate({ idempotencyStore });
       registry = createCoreToolRegistry({

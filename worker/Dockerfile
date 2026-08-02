@@ -63,4 +63,8 @@ FROM worker-base AS leader
 COPY role-profiles/leader.json /opt/tiangong-worker/profile.json
 RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role leader
 
+FROM worker-base AS team-member
+COPY role-profiles/team-member.json /opt/tiangong-worker/profile.json
+RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role team-member
+
 FROM kernel AS default

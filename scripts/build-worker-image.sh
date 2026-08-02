@@ -8,6 +8,7 @@ readonly REPO_ROOT
 readonly IMAGE="tiangong-worker:dev"
 readonly REVIEWER_IMAGE="tiangong-worker-reviewer:dev"
 readonly LEADER_IMAGE="tiangong-worker-leader:dev"
+readonly MEMBER_IMAGE="tiangong-worker-member:dev"
 readonly EXPECTED_NODE_VERSION="v22.23.2"
 readonly EXPECTED_PI_VERSION="0.82.0"
 readonly EXPECTED_GIT_VERSION="git version 2.43.0"
@@ -34,6 +35,8 @@ printf '[Tiangong] Building trusted profile image %s\n' "${REVIEWER_IMAGE}"
 docker build "${build_args[@]}" --target reviewer --tag "${REVIEWER_IMAGE}" "${REPO_ROOT}/worker"
 printf '[Tiangong] Building leader profile image %s\n' "${LEADER_IMAGE}"
 docker build "${build_args[@]}" --target leader --tag "${LEADER_IMAGE}" "${REPO_ROOT}/worker"
+printf '[Tiangong] Building team-member profile image %s\n' "${MEMBER_IMAGE}"
+docker build "${build_args[@]}" --target team-member --tag "${MEMBER_IMAGE}" "${REPO_ROOT}/worker"
 
 actual_node_version="$(docker run --rm --entrypoint node "${IMAGE}" --version)"
 [[ "${actual_node_version}" == "${EXPECTED_NODE_VERSION}" ]] || {
@@ -139,6 +142,8 @@ reviewer_profile="$(docker run --rm --entrypoint node "${REVIEWER_IMAGE}" \
   /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role reviewer)"
 leader_profile="$(docker run --rm --entrypoint node "${LEADER_IMAGE}" \
   /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role leader)"
+member_profile="$(docker run --rm --entrypoint node "${MEMBER_IMAGE}" \
+  /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role team-member)"
 docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${LEADER_IMAGE}" \
   --input-type=module -e '
     const [
@@ -206,11 +211,13 @@ node -e '
   if (reviewer.roleId !== "reviewer" || reviewer.runtimeReady !== true) process.exit(1);
   if (leader.roleId !== "leader" || leader.runtimeReady !== true) process.exit(1);
   if (leader.toolIds.join(",") !== "team_create_project,team_dispatch_task,team_check_result,team_decide_task,team_report") process.exit(1);
+  if (member.roleId !== "team-member" || member.runtimeReady !== true) process.exit(1);
+  if (member.toolIds.join(",") !== "team_resolve_task,team_submit_result") process.exit(1);
   if (reviewer.schemaVersion !== 2 || reviewer.targetKindIds.join(",") !== "file,directory_snapshot,commit,git_diff") process.exit(1);
   if (reviewer.materializedTargetKindIds.join(",") !== "file,directory_snapshot,commit,git_diff") process.exit(1);
   if (reviewer.toolIds.join(",") !== "start_work,extend_scope,read,inspect_directory,inspect_repository,check_completion,abandon_work") process.exit(1);
   if (reviewer.materializedToolIds.join(",") !== "start_work,extend_scope,read,inspect_directory,inspect_repository,check_completion,abandon_work") process.exit(1);
-' "${kernel_profile}" "${reviewer_profile}" "${leader_profile}"
+' "${kernel_profile}" "${reviewer_profile}" "${leader_profile}" "${member_profile}"
 
 printf '[Tiangong] Worker image ready: %s (Node.js %s, pi %s, fixed kernel profile)\n' \
   "${IMAGE}" "${actual_node_version}" "${actual_pi_version}"
@@ -218,3 +225,5 @@ printf '[Tiangong] Reviewer profile image validated: %s (runtimeReady=true; dete
   "${REVIEWER_IMAGE}"
 printf '[Tiangong] Leader profile image validated: %s (runtimeReady=true; closed coordination tool surface)\n' \
   "${LEADER_IMAGE}"
+printf '[Tiangong] Team-member profile image validated: %s (runtimeReady=true; resolve + submit)\n' \
+  "${MEMBER_IMAGE}"

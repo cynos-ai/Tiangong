@@ -47,6 +47,15 @@ const registries = deepFreeze({
       roleSkillId: "leader-v1",
       profileDigest: "f580eae443496ed7a3e50575e7157d5563a491b53d9d07ea2bd2f33032272fac",
     },
+    "team-member": {
+      id: "team-member",
+      title: "Tiangong Professional Worker",
+      practiceIds: [],
+      toolIds: ["team_resolve_task", "team_submit_result"],
+      gatePolicyId: "team-member-tools-v1",
+      roleSkillId: "team-member-v1",
+      profileDigest: "baf45788b7dbb350eee233e44453e6b6e4381c45a84b29ddc0eaa3a54ea1f53b",
+    },
   },
   targetKinds: {
     file: {
@@ -149,6 +158,18 @@ const registries = deepFreeze({
       profileRoleIds: ["leader"],
       materializedRoleIds: ["leader"],
     },
+    team_resolve_task: {
+      id: "team_resolve_task",
+      executionMode: "sequential",
+      profileRoleIds: ["team-member"],
+      materializedRoleIds: ["team-member"],
+    },
+    team_submit_result: {
+      id: "team_submit_result",
+      executionMode: "sequential",
+      profileRoleIds: ["team-member"],
+      materializedRoleIds: ["team-member"],
+    },
   },
   practices: {
     "workspace-operations": {
@@ -182,6 +203,11 @@ const registries = deepFreeze({
       supportedRoleIds: ["leader"],
       toolIds: ["team_create_project", "team_dispatch_task", "team_check_result", "team_decide_task", "team_report"],
     },
+    "team-member-tools-v1": {
+      id: "team-member-tools-v1",
+      supportedRoleIds: ["team-member"],
+      toolIds: ["team_resolve_task", "team_submit_result"],
+    },
   },
   roleSkills: {
     "kernel-v1": {
@@ -203,6 +229,13 @@ const registries = deepFreeze({
       supportedRoleIds: ["leader"],
       relativePath: "roles/leader/role.md",
       digest: "fda132c9d4449008f81f3295ddc85f81ead5d7f8a39c3f16e1dec30fa62212b6",
+      maxBytes: 16 * 1024,
+    },
+    "team-member-v1": {
+      id: "team-member-v1",
+      supportedRoleIds: ["team-member"],
+      relativePath: "roles/team-member/role.md",
+      digest: "97b8521510c41d56d966957171bf4d29775ee66ac7131c771d4904883d6bb471",
       maxBytes: 16 * 1024,
     },
   },

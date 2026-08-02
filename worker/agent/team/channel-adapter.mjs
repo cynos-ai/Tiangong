@@ -17,7 +17,7 @@ function nowISO(now) {
   return typeof value === "string" ? value : new Date().toISOString();
 }
 
-export function createLeaderChannel({ evidence, now } = {}) {
+export function createTeamChannel({ evidence, now } = {}) {
   const queued = [];
   return {
     queued,

@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createLeaderChannel } from "../agent/team/channel-adapter.mjs";
+import { createTeamChannel } from "../agent/team/channel-adapter.mjs";
 import { createLeaderSync } from "../agent/team/sync-adapter.mjs";
 
-test("createLeaderChannel records queued mentions and report as Evidence (no false delivery)", () => {
+test("createTeamChannel records queued mentions and report as Evidence (no false delivery)", () => {
   const events = [];
-  const evidence = { record: (e) => events.push(e) };
-  const channel = createLeaderChannel({ evidence, now: () => "2026-08-01T12:00:00Z" });
+  const evidence = { append: (e) => events.push(e) };
+  const channel = createTeamChannel({ evidence, now: () => "2026-08-01T12:00:00Z" });
 
   channel.notifyAssignee("tiangong-designer", "task-1", "a".repeat(64));
   channel.notifyLeader("task-1", "b".repeat(64));
@@ -22,8 +22,8 @@ test("createLeaderChannel records queued mentions and report as Evidence (no fal
   assert.equal(events[2].disposition, "delivered");
 });
 
-test("createLeaderChannel tolerates a missing evidence recorder", () => {
-  const channel = createLeaderChannel({ now: () => "2026-08-01T12:00:00Z" });
+test("createTeamChannel tolerates a missing evidence recorder", () => {
+  const channel = createTeamChannel({ now: () => "2026-08-01T12:00:00Z" });
   assert.doesNotThrow(() => channel.notifyAssignee("w", "t", "d"));
   assert.equal(channel.queued.length, 1);
 });
