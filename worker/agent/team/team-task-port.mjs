@@ -1,5 +1,5 @@
 import { canonicalJson, sha256 } from "../canonical-json.mjs";
-import { findRoleForWorker } from "../playbook/transition-policy.mjs";
+import { assertDecisionResultCompatible, findRoleForWorker } from "../playbook/transition-policy.mjs";
 import { isResultEnvelope } from "../work/result-envelope.mjs";
 import {
   ensureAgentTeamsProject,
@@ -134,6 +134,15 @@ async function exactReplay(readExisting, proposed, label) {
   const existing = await readExisting();
   if (!sameRecord(existing, proposed)) throw new Error(`${label} conflicts with an immutable existing record`);
   return existing;
+}
+
+async function readOptionalResult(taskId, deps) {
+  try {
+    return await readTaskResult(taskId, deps);
+  } catch (error) {
+    if (error?.code === "ENOENT") return undefined;
+    throw error;
+  }
 }
 
 function validateResultBinding({ result, task, project, identity }) {
@@ -311,6 +320,11 @@ export async function recordTaskDecision(decision, deps) {
   if (decision.decidedBy !== identity.workerName) {
     throw new Error("Decision decidedBy is not the authenticated Leader");
   }
+  const result = await readOptionalResult(decision.taskId, deps);
+  if (result) {
+    validateResultBinding({ result, task: taskBinding, project, identity: { workerName: taskBinding.assignee } });
+  }
+  assertDecisionResultCompatible({ decision, taskBinding, result });
   const existing = await readTaskDecisions(decision.taskId, deps);
   if (!existing.every(isTaskDecision)) throw new Error("Task has a malformed transition decision");
   if (existing.length > 0) {
@@ -324,13 +338,6 @@ export async function recordTaskDecision(decision, deps) {
       return { decision: existing[0], replayed: true };
     }
     throw new Error("Task already has a different terminal decision");
-  }
-  if (["accept", "revision"].includes(decision.decision) || decision.resultDigest) {
-    const result = await readTaskResult(decision.taskId, deps);
-    validateResultBinding({ result, task: taskBinding, project, identity: { workerName: taskBinding.assignee } });
-    if (decision.resultDigest !== result.contentDigest) {
-      throw new Error("Decision does not bind the current ResultEnvelope digest");
-    }
   }
   await appendTaskDecision(decision, deps);
   await applyAgentTeamsDecision(taskBinding, decision, deps);

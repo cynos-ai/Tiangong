@@ -17,7 +17,7 @@ import { Type } from "typebox";
 import { canonicalJson, sha256 } from "../canonical-json.mjs";
 import { TiangongToolRegistry } from "../tools/registry.mjs";
 import { buildProjectBinding, buildTaskBinding } from "../playbook/resolver.mjs";
-import { assertResultCurrent, assertTransitionAllowed } from "../playbook/transition-policy.mjs";
+import { assertDecisionResultCompatible, assertTransitionAllowed } from "../playbook/transition-policy.mjs";
 import {
   readProjectBinding,
   readProjectReport,
@@ -201,10 +201,11 @@ export function createLeaderToolRegistry({ playbook, deps }) {
     executionMode: "sequential",
     async execute(_toolCallId, params) {
       const task = await readTaskBinding(params.taskId, deps);
-      let latestResultDigest;
-      if (["accept", "revision"].includes(params.decision)) {
-        const result = await readTaskResult(params.taskId, deps);
-        latestResultDigest = result.contentDigest;
+      let latestResult;
+      try {
+        latestResult = await readTaskResult(params.taskId, deps);
+      } catch (error) {
+        if (error?.code !== "ENOENT" || params.decision !== "blocked") throw error;
       }
       const project = await readProjectBinding(task.projectId, deps);
       const decision = createTaskDecision({
@@ -214,13 +215,11 @@ export function createLeaderToolRegistry({ playbook, deps }) {
         decision: params.decision,
         revisionIndex: task.revisionIndex,
         decidedBy: leaderName(deps),
-        resultDigest: ["accept", "revision"].includes(params.decision) ? latestResultDigest : params.resultDigest,
+        resultDigest: latestResult?.contentDigest ?? params.resultDigest,
         note: params.note,
         createdAt: nowISO(deps),
       });
-      if (["accept", "revision"].includes(params.decision)) {
-        assertResultCurrent({ decision, taskBinding: task, latestResultDigest });
-      }
+      assertDecisionResultCompatible({ decision, taskBinding: task, result: latestResult });
       const recorded = await recordTaskDecision(decision, deps);
       return ok({
         decisionId: decision.decisionId,

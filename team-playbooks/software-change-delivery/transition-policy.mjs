@@ -192,3 +192,34 @@ export function assertResultCurrent({ decision, taskBinding, latestResultDigest 
   }
   return decision;
 }
+
+// Bind the terminal decision to the ResultEnvelope's machine semantics. Model
+// prose cannot turn a blocker into success or suppress an assessor-requested
+// revision. A blocked decision may exist without a result (for example an
+// external prerequisite failure); once a result exists, every decision must
+// bind its exact digest.
+export function assertDecisionResultCompatible({ decision, taskBinding, result }) {
+  assertResultCurrent({
+    decision,
+    taskBinding,
+    latestResultDigest: result?.contentDigest,
+  });
+  if (!result) {
+    if (decision.resultDigest) throw new Error("Decision cannot bind a missing ResultEnvelope");
+    return decision;
+  }
+  if (decision.resultDigest !== result.contentDigest) {
+    throw new Error("Decision must bind the current ResultEnvelope digest");
+  }
+  if (result.blocker && decision.decision !== "blocked") {
+    throw new Error("A blocker ResultEnvelope requires a blocked decision");
+  }
+  if (decision.decision === "accept" && result.revisionRequest) {
+    throw new Error("A revision-request ResultEnvelope cannot be accepted");
+  }
+  if (decision.decision === "revision" &&
+      (taskBinding.taskKind !== "assess" || !result.revisionRequest || result.blocker)) {
+    throw new Error("Revision requires a non-blocked assessor revision request");
+  }
+  return decision;
+}

@@ -23,7 +23,7 @@ const registries = deepFreeze({
       playbookId: "software-change-delivery",
       version: "1.0.0",
       packageDir: PLAYBOOK_PACKAGE_DIR,
-      contentDigest: "dcfaeeed2b090e62b64fa8e6ae29874a4dea5936463343cb7814fac6c0e3995f",
+      contentDigest: "c87cc2026a17291ed43dab4e4f9bc761e7608f3aaedde26509a561e56474ad03",
       roleSlots: ["team_leader", "designer", "implementor", "assessor", "operator"],
       taskKinds: ["design", "implement", "assess", "release"],
       taskKindRoles: {

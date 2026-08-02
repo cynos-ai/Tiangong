@@ -187,6 +187,32 @@ test("full bound flow writes static-oracle-compatible AgentTeams Project/Task re
   });
 });
 
+test("a blocker ResultEnvelope cannot be accepted or advance the Task", async () => {
+  await withRoot(async (root) => {
+    const { project, task } = await setup(root);
+    const result = resultEnvelope(task, { blocker: "controlled executor unavailable" });
+    await submitResult(result, depsFor(DESIGNER, root));
+    const fields = {
+      taskId: task.taskId,
+      projectId: project.projectId,
+      playbookDigest: project.playbookDigest,
+      revisionIndex: 0,
+      decidedBy: LEADER,
+      resultDigest: result.contentDigest,
+      createdAt: T2,
+    };
+    const accept = createTaskDecision({ ...fields, decision: "accept" });
+    await assert.rejects(
+      () => recordTaskDecision(accept, depsFor(LEADER, root)),
+      /requires a blocked decision/u,
+    );
+    const blocked = createTaskDecision({ ...fields, decision: "blocked" });
+    await recordTaskDecision(blocked, depsFor(LEADER, root));
+    const meta = JSON.parse(await readFile(join(root, "tasks", task.taskId, "meta.json"), "utf8"));
+    assert.equal(meta.status, "blocked");
+  });
+});
+
 test("immutable operation replay re-syncs and re-drives the idempotent notification boundary", async () => {
   await withRoot(async (root) => {
     const project = projectBinding();
@@ -290,6 +316,7 @@ test("a Task has exactly one terminal decision and replay is exact", async () =>
       decision: "blocked",
       revisionIndex: 0,
       decidedBy: LEADER,
+      resultDigest: result.contentDigest,
       createdAt: T2,
     });
     await assert.rejects(() => recordTaskDecision(blocked, depsFor(LEADER, root)), /different terminal decision/u);

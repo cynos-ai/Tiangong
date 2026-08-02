@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   MAX_REVISION_WAVES,
+  assertDecisionResultCompatible,
   dispositionForRelease,
   nextTaskKindAfter,
   reduceTaskChain,
@@ -60,6 +61,40 @@ test("a blocker or an unexpected decision fails closed", () => {
     () => nextTaskKindAfter({ taskKind: "design", decision: "invented", revisionIndex: 0 }),
     /Unknown task decision/u,
   );
+});
+
+test("ResultEnvelope machine semantics constrain terminal decisions", () => {
+  const taskBinding = { taskId: "T1", taskKind: "implement", revisionIndex: 0 };
+  const blocker = { contentDigest: "a".repeat(64), blocker: "runner unavailable" };
+  assert.throws(
+    () => assertDecisionResultCompatible({
+      decision: { taskId: "T1", decision: "accept", revisionIndex: 0, resultDigest: blocker.contentDigest },
+      taskBinding,
+      result: blocker,
+    }),
+    /requires a blocked decision/u,
+  );
+  assert.doesNotThrow(() => assertDecisionResultCompatible({
+    decision: { taskId: "T1", decision: "blocked", revisionIndex: 0, resultDigest: blocker.contentDigest },
+    taskBinding,
+    result: blocker,
+  }));
+
+  const assessment = { contentDigest: "b".repeat(64), revisionRequest: { summary: "fix it" } };
+  const assessTask = { taskId: "T2", taskKind: "assess", revisionIndex: 0 };
+  assert.throws(
+    () => assertDecisionResultCompatible({
+      decision: { taskId: "T2", decision: "accept", revisionIndex: 0, resultDigest: assessment.contentDigest },
+      taskBinding: assessTask,
+      result: assessment,
+    }),
+    /cannot be accepted/u,
+  );
+  assert.doesNotThrow(() => assertDecisionResultCompatible({
+    decision: { taskId: "T2", decision: "revision", revisionIndex: 0, resultDigest: assessment.contentDigest },
+    taskBinding: assessTask,
+    result: assessment,
+  }));
 });
 
 test("release disposition: DELIVERED only on post-verify pass", () => {
