@@ -58,6 +58,30 @@ done
 [ "${candidates}" -eq 1 ]
 SH
 }
+team_peer_policy_ready() {
+  local member
+  for member in "${MEMBERS[@]}"; do
+    docker exec "agentteams-worker-${member}" sh -s -- "${MEMBERS[@]}" <<'SH'
+set -eu
+config="/root/agentteams-fs/agents/${AGENTTEAMS_WORKER_NAME}/openclaw.json"
+[ "$(jq -r '.channels.matrix.groupPolicy' "${config}")" = allowlist ]
+[ "$(jq -r '.channels.matrix.dm.policy' "${config}")" = allowlist ]
+allowed=$(jq -r '.channels.matrix.groupAllowFrom[]' "${config}")
+for peer_name in "$@"; do
+  [ "${peer_name}" = "${AGENTTEAMS_WORKER_NAME}" ] && continue
+  printf '%s\n' "${allowed}" | grep -Fxq "@${peer_name}:${AGENTTEAMS_MATRIX_DOMAIN}"
+done
+SH
+  done
+}
+team_peer_policy_loaded() {
+  local since=$1 member logs
+  for member in "${MEMBERS[@]}"; do
+    logs="$(docker logs --since "${since}" "agentteams-worker-${member}" 2>&1 || true)"
+    grep -Fq '[reload] config change applied' <<<"${logs}"
+    grep -Fq 'channels.matrix.groupAllowFrom' <<<"${logs}"
+  done
+}
 
 cleanup() {
   local status=$? failed=0 member container
@@ -156,6 +180,7 @@ done
 ((ready == 1)) || die "Standalone Worker credentials did not become ready"
 sleep 5
 log "Binding the ready Workers into disposable AgentTeams Team ${TEAM_NAME}"
+team_binding_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 docker exec "${MANAGER_CONTAINER}" agt apply -f "${MANAGER_MANIFEST}" >/dev/null
 phase=""
 for _ in $(seq 1 120); do
@@ -181,6 +206,22 @@ for _ in $(seq 1 120); do
   sleep 2
 done
 ((stable_roster_checks >= 3)) || die "Matrix Team roster did not become stably ready"
+stable_peer_policy_checks=0
+for _ in $(seq 1 180); do
+  if team_peer_policy_ready >/dev/null 2>&1; then
+    stable_peer_policy_checks=$((stable_peer_policy_checks + 1))
+    ((stable_peer_policy_checks >= 3)) && break
+  else
+    stable_peer_policy_checks=0
+  fi
+  sleep 2
+done
+((stable_peer_policy_checks >= 3)) || die "OpenClaw Team peer policy did not become stably ready"
+for _ in $(seq 1 180); do
+  team_peer_policy_loaded "${team_binding_started_at}" && break
+  sleep 2
+done
+team_peer_policy_loaded "${team_binding_started_at}" || die "OpenClaw did not load the Team peer policy"
 
 leader_json="$(docker exec "${MANAGER_CONTAINER}" agt get workers "${LEADER_NAME}" -o json)"
 leader_uid="$(jq -r '.matrixUserID // empty' <<<"${leader_json}")"

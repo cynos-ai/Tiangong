@@ -117,6 +117,30 @@ one-command rerun; the attempt's Team deletion again failed and a later
 confirmed dedicated-stack reset removed the residue without changing its
 failed cleanup verdict.
 
+A further fresh run closed those two races and reached real Project creation
+and design dispatch, but exposed another upstream readiness gap. The Designer's
+Matrix client had joined the Team room and the event was durably present with
+the correct sender and `m.mentions`, while its live OpenClaw group allowlist
+still contained only Manager/admin. AgentTeams updated the Team peer allowlist
+several minutes later; by then OpenClaw had already dropped the event, and
+idempotent replay of the same Matrix transaction cannot create a second wake
+event. Merely observing the updated config file was also insufficient: the
+upstream OpenClaw process applies that change on a delayed dynamic-reload loop.
+The driver now waits until every Worker config uses allowlist policy and
+contains every other Team Worker, requires three stable observations, and
+observes every running Worker apply the post-Team `groupAllowFrom` reload
+before sending any coordination message.
+
+The final fresh one-command rerun then reached all declared functional markers:
+real Team, Leader create/dispatch, Designer submit, Leader digest-bound accept,
+and real Matrix handoff. The continued machine-state inspection also showed
+the no-Runner Implementor result terminating with a digest-bound `blocked`
+decision and no Assess or Release Task. This closes the readiness-driver and
+blocker-transition regressions. The command still exited red because upstream
+Team deletion retained all five Workers and containers; a subsequent confirmed
+dedicated-stack reset removed that residue but does not make cleanup pass.
+Therefore this remains partial integration evidence, not Gate 3.
+
 `agt delete team` again returned success while retaining the Team, all five
 Worker resources, and their containers. The run's cleanup verdict is failed. A later confirmed
 reset removed all resources from the dedicated stack; it does not retroactively
