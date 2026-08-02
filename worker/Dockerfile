@@ -59,4 +59,8 @@ FROM worker-base AS reviewer
 COPY role-profiles/reviewer.json /opt/tiangong-worker/profile.json
 RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role reviewer
 
+FROM worker-base AS leader
+COPY role-profiles/leader.json /opt/tiangong-worker/profile.json
+RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role leader
+
 FROM kernel AS default

@@ -54,3 +54,16 @@ export function findPlaybook(playbookId, version) {
     return version === undefined || entry.version === version;
   });
 }
+
+// Return the trusted closed-registry entry for a playbook. The entry is the
+// source of truth (contentDigest + all fields) and is compiled into the code,
+// so the runtime and the Worker image do not depend on the on-disk package
+// file. readPlaybookManifest (below) additionally verifies the on-disk file
+// against this entry for dev/build transparency.
+export function getPlaybook(playbookId, version) {
+  const entry = findPlaybook(playbookId, version);
+  if (!entry) {
+    throw new Error(`Unknown closed playbook: ${playbookId}${version ? `@${version}` : ""}`);
+  }
+  return entry;
+}
