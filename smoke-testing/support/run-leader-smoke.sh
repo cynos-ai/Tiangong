@@ -37,14 +37,25 @@ set -eu
 room_id=$1
 shift
 base=${AGENTTEAMS_MATRIX_URL%/}
-room_path=$(printf '%s' "${room_id}" | jq -sRr @uri)
-members=$(curl --fail --silent --show-error --max-time 10 \
-  -H "Authorization: Bearer ${AGENTTEAMS_WORKER_MATRIX_TOKEN}" \
-  "${base}/_matrix/client/v3/rooms/${room_path}/joined_members" | jq -r '.joined | keys[]')
-printf '%s\n' "${members}" | grep -Fxq "@${AGENTTEAMS_WORKER_NAME}:${AGENTTEAMS_MATRIX_DOMAIN}"
-for worker_name in "$@"; do
-  printf '%s\n' "${members}" | grep -Fxq "@${worker_name}:${AGENTTEAMS_MATRIX_DOMAIN}"
+auth="Authorization: Bearer ${AGENTTEAMS_WORKER_MATRIX_TOKEN}"
+joined_rooms=$(curl --fail --silent --show-error --max-time 10 \
+  -H "${auth}" "${base}/_matrix/client/v3/joined_rooms" | jq -r '.joined_rooms[]')
+printf '%s\n' "${joined_rooms}" | grep -Fxq "${AGENTTEAMS_WORKER_ROOM_ID}"
+printf '%s\n' "${joined_rooms}" | grep -Fxq "${room_id}"
+candidates=0
+for joined_room in ${joined_rooms}; do
+  [ "${joined_room}" = "${AGENTTEAMS_WORKER_ROOM_ID}" ] && continue
+  room_path=$(printf '%s' "${joined_room}" | jq -sRr @uri)
+  members=$(curl --fail --silent --show-error --max-time 10 -H "${auth}" \
+    "${base}/_matrix/client/v3/rooms/${room_path}/joined_members" | jq -r '.joined | keys[]')
+  roster_match=1
+  printf '%s\n' "${members}" | grep -Fxq "@${AGENTTEAMS_WORKER_NAME}:${AGENTTEAMS_MATRIX_DOMAIN}" || roster_match=0
+  for worker_name in "$@"; do
+    printf '%s\n' "${members}" | grep -Fxq "@${worker_name}:${AGENTTEAMS_MATRIX_DOMAIN}" || roster_match=0
+  done
+  [ "${roster_match}" -eq 1 ] && candidates=$((candidates + 1))
 done
+[ "${candidates}" -eq 1 ]
 SH
 }
 

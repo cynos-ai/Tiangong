@@ -95,7 +95,17 @@ boundary was available, but the Leader was able to record `accept` and dispatch
 an Assessor Task. This was not promoted to success. The deterministic decision
 gate now requires a blocker ResultEnvelope to receive a digest-bound `blocked`
 decision and rejects acceptance; an assessor revision request likewise cannot
-be accepted. A fresh-image live rerun is required.
+be accepted.
+
+A fresh image containing that gate was then exercised in the same real-Team
+boundary. After Matrix roster propagation, the design roundtrip completed,
+the Implementor again truthfully submitted a blocker, and this time the Leader
+recorded a digest-bound `blocked` decision. No Assessor Task was created. This
+proves the specific fail-closed product fix, but it does not promote the smoke:
+the initial request still exposed a `/joined_rooms` propagation race and the
+run-owned Team again failed exact deletion. The durable readiness oracle now
+reproduces the channel adapter's joined-room candidate calculation; that test
+driver change still requires a fresh one-command rerun.
 
 `agt delete team` again returned success while retaining the Team, all five
 Worker resources, and their containers. The run's cleanup verdict is failed. A later confirmed
