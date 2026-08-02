@@ -82,6 +82,26 @@ test("valid fixed profiles load frozen code-owned role context", async () => {
   );
 });
 
+test("the leader profile loads practice-less with the closed coordination tool surface", async () => {
+  const leader = await loadSourceProfile("leader");
+  assert.equal(Object.isFrozen(leader), true);
+  assert.equal(leader.profile.roleId, "leader");
+  assert.deepEqual(leader.profile.practiceIds, []);
+  assert.equal(leader.practices.length, 0);
+  assert.deepEqual(leader.profile.toolIds, [
+    "team_create_project",
+    "team_dispatch_task",
+    "team_check_result",
+    "team_decide_task",
+    "team_report",
+  ]);
+  assert.equal(leader.roleSkill.id, "leader-v1");
+  assert.match(leader.roleSkill.text, /Tiangong Team Leader/u);
+  assert.equal(assertRuntimeProfileMaterialized(leader), leader);
+  assert.match(buildBaseSystemPrompt(leader), /Tiangong Team Leader/u);
+  assert.match(buildBaseSystemPrompt(leader), new RegExp(leader.profileDigest, "u"));
+});
+
 test("closed registries deny Reviewer mutation and unknown capability selection", async () => {
   const registries = roleRegistrySnapshot();
   assert.equal(Object.isFrozen(registries), true);

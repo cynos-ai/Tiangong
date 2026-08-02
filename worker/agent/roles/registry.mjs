@@ -38,6 +38,15 @@ const registries = deepFreeze({
       roleSkillId: "reviewer-v2",
       profileDigest: "fbfb76ec336cc841e39cf42d028aa7f1883dfb5a7e546692da18c85648d928cd",
     },
+    leader: {
+      id: "leader",
+      title: "Tiangong Team Leader",
+      practiceIds: [],
+      toolIds: ["team_create_project", "team_dispatch_task", "team_check_result", "team_decide_task", "team_report"],
+      gatePolicyId: "leader-tools-v1",
+      roleSkillId: "leader-v1",
+      profileDigest: "f580eae443496ed7a3e50575e7157d5563a491b53d9d07ea2bd2f33032272fac",
+    },
   },
   targetKinds: {
     file: {
@@ -110,6 +119,36 @@ const registries = deepFreeze({
       profileRoleIds: ["kernel"],
       materializedRoleIds: ["kernel"],
     },
+    team_create_project: {
+      id: "team_create_project",
+      executionMode: "sequential",
+      profileRoleIds: ["leader"],
+      materializedRoleIds: ["leader"],
+    },
+    team_dispatch_task: {
+      id: "team_dispatch_task",
+      executionMode: "sequential",
+      profileRoleIds: ["leader"],
+      materializedRoleIds: ["leader"],
+    },
+    team_check_result: {
+      id: "team_check_result",
+      executionMode: "sequential",
+      profileRoleIds: ["leader"],
+      materializedRoleIds: ["leader"],
+    },
+    team_decide_task: {
+      id: "team_decide_task",
+      executionMode: "sequential",
+      profileRoleIds: ["leader"],
+      materializedRoleIds: ["leader"],
+    },
+    team_report: {
+      id: "team_report",
+      executionMode: "sequential",
+      profileRoleIds: ["leader"],
+      materializedRoleIds: ["leader"],
+    },
   },
   practices: {
     "workspace-operations": {
@@ -138,6 +177,11 @@ const registries = deepFreeze({
       supportedRoleIds: ["reviewer"],
       toolIds: ["start_work", "extend_scope", "read", "inspect_directory", "inspect_repository", "check_completion", "abandon_work"],
     },
+    "leader-tools-v1": {
+      id: "leader-tools-v1",
+      supportedRoleIds: ["leader"],
+      toolIds: ["team_create_project", "team_dispatch_task", "team_check_result", "team_decide_task", "team_report"],
+    },
   },
   roleSkills: {
     "kernel-v1": {
@@ -152,6 +196,13 @@ const registries = deepFreeze({
       supportedRoleIds: ["reviewer"],
       relativePath: "roles/reviewer/role.md",
       digest: "8226e4884d33ab598ebdd435509756d084d120817088d5573f6208bbbe410e07",
+      maxBytes: 16 * 1024,
+    },
+    "leader-v1": {
+      id: "leader-v1",
+      supportedRoleIds: ["leader"],
+      relativePath: "roles/leader/role.md",
+      digest: "fda132c9d4449008f81f3295ddc85f81ead5d7f8a39c3f16e1dec30fa62212b6",
       maxBytes: 16 * 1024,
     },
   },

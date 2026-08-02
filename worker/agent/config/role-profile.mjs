@@ -79,6 +79,22 @@ function assertIdList(value, field) {
   }
 }
 
+// practiceIds may be empty: the Leader (and future practice-less roles) have
+// no methodology. Removing the mandatory-practice requirement is the first
+// evolutionary step of the Practice clean cut (architecture §5); kernel and
+// reviewer keep their non-empty practiceIds.
+function assertOptionalIdList(value, field) {
+  if (!Array.isArray(value) || value.length > MAX_LIST_ITEMS) {
+    fail("PROFILE_SCHEMA_MISMATCH", `${field} must be a bounded array`);
+  }
+  const seen = new Set();
+  for (const id of value) {
+    assertId(id, field);
+    if (seen.has(id)) fail("PROFILE_DUPLICATE_ID", `${field} contains a duplicate identifier`);
+    seen.add(id);
+  }
+}
+
 async function assertNoSymlinkTraversal(root, candidate) {
   const normalizedRoot = resolve(root);
   const normalizedCandidate = resolve(candidate);
@@ -152,7 +168,7 @@ function validateProfile(profile, profileDigest) {
   if (typeof profile.title !== "string" || !TITLE_PATTERN.test(profile.title)) {
     fail("PROFILE_SCHEMA_MISMATCH", "title must be bounded printable ASCII");
   }
-  assertIdList(profile.practiceIds, "practiceIds");
+  assertOptionalIdList(profile.practiceIds, "practiceIds");
   assertIdList(profile.toolIds, "toolIds");
   if (profile.schemaVersion === 2) assertIdList(profile.targetKindIds, "targetKindIds");
   assertId(profile.gatePolicyId, "gatePolicyId");
