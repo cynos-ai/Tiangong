@@ -24,14 +24,17 @@ accept) and cross-worker `agentteams-sync` are out of scope here.
 
 ## Fixture
 
-- `tiangong-worker-leader:dev` — the leader multi-stage image
-  (leader RoleProfile + SOUL + closed coordination tool surface).
-- A disposable standalone Worker `tiangong-leader-smoke`
-  (`runtime: openclaw`, `model: deepseek-v4-flash`).
-- The Manager sends one Team-Room `m.room.message` whose `formatted_body`
+- One disposable real AgentTeams Team containing five independently built
+  profile images: Leader, Designer, Implementor, Assessor, and Operator.
+- All Workers use `runtime: openclaw` and the explicitly configured supported
+  `deepseek-v4-flash` model.
+- Standalone Workers are created first and observed Running with Matrix
+  identities before `spec.workerMembers` binds the Team. The Team must become
+  Active and the Leader must observe the full joined Matrix roster before the
+  request is sent.
+- The Manager sends one personal-room `m.room.message` whose `formatted_body`
   carries the Leader's MXID matrix.to link and whose `m.mentions` lists the
-  Leader (the OpenClaw wake format; a plain body without the link does not
-  wake the Worker).
+  Leader. Coordination handoffs then use the authenticated Team room.
 
 ## Observed contract
 
@@ -61,10 +64,10 @@ accept) and cross-worker `agentteams-sync` are out of scope here.
   `team.project.created` -> `team.mention.queued` -> `team.task.dispatched`.
 
 Those historical verdict lines were over-broad and are revoked. The current
-focused smoke emits `leader_smoke_design_roundtrip=pass` only after a real Team
-Matrix handoff, bound ResultEnvelope, Leader accept, and exact cleanup; it
-still emits an explicit partial Gate 3 marker until requester reporting is
-proved.
+focused smoke may emit `leader_smoke_design_roundtrip=pass` only after a real
+Team Matrix handoff, bound ResultEnvelope, and compatible Leader decision. Its
+process verdict remains red unless the EXIT cleanup oracle also passes; it
+emits an explicit partial Gate 3 marker until requester reporting is proved.
 
 ## Fix surfaced by this run
 
@@ -74,14 +77,37 @@ no-op, so coordination Evidence was never written. Fixed: `recordEvidence` is
 async + awaited and calls `append`. After the fix the hash-chained Evidence
 appears alongside the bindings.
 
+## Follow-up real-Team attempt — BLOCKED, useful evidence
+
+The replacement fixture reached Active with all five Workers. The first
+project call raced Matrix membership propagation even though the Team resource
+was Active; the channel correctly failed closed before writing a Project. A
+manual retry after the full joined roster became observable completed the real
+Leader→Designer→Leader Matrix roundtrip, including native Project/Task files,
+a profile/Skill-bound ResultEnvelope, an exact-digest Leader accept, and
+`team.mention.delivered` / `team.result.notice.delivered` Evidence. The durable
+smoke now waits for the Matrix roster instead of treating Team Active as
+sufficient readiness.
+
+The continued live flow then exposed a product defect: the Implementor truthfully
+submitted a blocker because no controlled implementation tool or artifact
+boundary was available, but the Leader was able to record `accept` and dispatch
+an Assessor Task. This was not promoted to success. The deterministic decision
+gate now requires a blocker ResultEnvelope to receive a digest-bound `blocked`
+decision and rejects acceptance; an assessor revision request likewise cannot
+be accepted. A fresh-image live rerun is required.
+
+`agt delete team` again returned success while retaining the Team, all five
+Worker resources, and their containers. The run's cleanup verdict is failed. A later confirmed
+reset removed all resources from the dedicated stack; it does not retroactively
+make the run's cleanup pass.
+
 ## Known limitations / next
 
-- Mention emission is the Leader's model turn output carried by OpenClaw; the
-  channel adapter records the queued mention as Evidence but does not yet
-  deterministically emit the mention text (like peer-transport) or map the
-  assignee to a full MXID.
-- Cross-worker `agentteams-sync` (Leader reading a Worker-submitted result) is
-  a tolerant no-op on the Leader write path; it is wired with the full
-  multi-turn roundtrip (worker submit -> Leader accept).
-- The professional workers (designer/implementor/assessor/operator) and the
-  success + revision/rollback end-to-end run are the remaining gate-3 work.
+- Upstream v1.2.0 Team deletion still does not release `workerMembers`; exact
+  per-run cleanup therefore remains blocked and keeps this smoke red.
+- The professional role images currently expose only resolve + submit. A real
+  disposable Runner and role-specific design/implementation/assessment/release
+  operations are not yet available.
+- Requester terminal reporting, `DELIVERED`, revision waves, rollback, and
+  `FAILED_SAFE` remain unproven live.

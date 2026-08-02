@@ -30,6 +30,23 @@ die() { printf '[Tiangong] ERROR: %s\n' "$*" >&2; exit 1; }
 container_exists() { docker inspect "$1" >/dev/null 2>&1; }
 team_exists() { docker exec "${MANAGER_CONTAINER}" agt get teams "${TEAM_NAME}" -o json >/dev/null 2>&1; }
 worker_exists() { docker exec "${MANAGER_CONTAINER}" agt get workers "$1" -o json >/dev/null 2>&1; }
+team_roster_ready() {
+  local room_id=$1
+  docker exec "agentteams-worker-${LEADER_NAME}" sh -s -- "${room_id}" "${MEMBERS[@]}" <<'SH'
+set -eu
+room_id=$1
+shift
+base=${AGENTTEAMS_MATRIX_URL%/}
+room_path=$(printf '%s' "${room_id}" | jq -sRr @uri)
+members=$(curl --fail --silent --show-error --max-time 10 \
+  -H "Authorization: Bearer ${AGENTTEAMS_WORKER_MATRIX_TOKEN}" \
+  "${base}/_matrix/client/v3/rooms/${room_path}/joined_members" | jq -r '.joined | keys[]')
+printf '%s\n' "${members}" | grep -Fxq "@${AGENTTEAMS_WORKER_NAME}:${AGENTTEAMS_MATRIX_DOMAIN}"
+for worker_name in "$@"; do
+  printf '%s\n' "${members}" | grep -Fxq "@${worker_name}:${AGENTTEAMS_MATRIX_DOMAIN}"
+done
+SH
+}
 
 cleanup() {
   local status=$? failed=0 member container
@@ -142,6 +159,11 @@ done
 [[ "$(jq -r '.leaderReady' <<<"${team_json}")" == true ]] || die "Leader is not ready"
 team_room="$(jq -r '.teamRoomID // empty' <<<"${team_json}")"
 [[ -n "${team_room}" ]] || die "Team room is unavailable"
+for _ in $(seq 1 120); do
+  team_roster_ready "${team_room}" >/dev/null 2>&1 && break
+  sleep 2
+done
+team_roster_ready "${team_room}" >/dev/null 2>&1 || die "Matrix Team roster did not become ready"
 
 leader_json="$(docker exec "${MANAGER_CONTAINER}" agt get workers "${LEADER_NAME}" -o json)"
 leader_uid="$(jq -r '.matrixUserID // empty' <<<"${leader_json}")"
