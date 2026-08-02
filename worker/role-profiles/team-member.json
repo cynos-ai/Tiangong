@@ -1,9 +1,0 @@
-{
-  "schemaVersion": 1,
-  "roleId": "team-member",
-  "title": "Tiangong Professional Worker",
-  "practiceIds": [],
-  "toolIds": ["team_resolve_task", "team_submit_result"],
-  "gatePolicyId": "team-member-tools-v1",
-  "roleSkillId": "team-member-v1"
-}

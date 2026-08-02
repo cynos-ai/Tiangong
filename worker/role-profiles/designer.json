@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "roleId": "designer",
+  "title": "Tiangong Designer",
+  "practiceIds": [],
+  "toolIds": ["team_resolve_task", "team_submit_result"],
+  "gatePolicyId": "professional-tools-v1",
+  "roleSkillId": "designer-v1"
+}

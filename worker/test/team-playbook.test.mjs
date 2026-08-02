@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { sha256 } from "../agent/canonical-json.mjs";
 import {
   DEFAULT_TASK_KIND_ROLES,
   assertNextTask,
   assertResultCurrent,
+  nextTaskKindAfter,
   assertTaskKindRole,
   assertTransitionAllowed,
   reduceTaskChain,
@@ -17,6 +19,7 @@ import {
   DEFAULT_PLAYBOOK_ROOT,
   buildProjectBinding,
   buildTaskBinding,
+  computePlaybookPackageDigest,
   readPlaybookManifest,
 } from "../agent/playbook/resolver.mjs";
 
@@ -49,9 +52,12 @@ test("readPlaybookManifest verifies the on-disk digest against the closed regist
 test("readPlaybookManifest rejects a tampered manifest", () => {
   const real = readFileSyncReal();
   const dir = mkdtempSync(path.join(tmpdir(), "tiangong-pb-"));
-  mkdirSync(path.join(dir, "software-change-delivery"), { recursive: true });
+  cpSync(
+    path.join(DEFAULT_PLAYBOOK_ROOT, "software-change-delivery"),
+    path.join(dir, "software-change-delivery"),
+    { recursive: true },
+  );
   const target = path.join(dir, "software-change-delivery", "manifest.json");
-  writeFileSync(target, real); // genuine manifest loads fine
   assert.ok(readPlaybookManifest("software-change-delivery", { root: dir }));
 
   const tampered = JSON.parse(real);
@@ -66,6 +72,7 @@ test("buildProjectBinding and buildTaskBinding carry the verified playbook diges
   const project = buildProjectBinding({
     playbook: pb,
     projectId: "P1",
+    requester: "@manager:example.test",
     roleBindings: ROLE_BINDINGS,
     createdAt: "2026-08-01T00:00:00Z",
   });
@@ -83,6 +90,9 @@ test("buildProjectBinding and buildTaskBinding carry the verified playbook diges
     createdAt: "2026-08-01T00:00:01Z",
   });
   assert.equal(task.playbookStepId, "software-change-delivery-transition-v1:design");
+  assert.equal(task.sourceProfileDigest, "aad09452ef5976eeee24a1c976eeae93064ed01bb84ba8bc85588586b361e3e6");
+  assert.equal(task.sourceSkillId, "designer-v1");
+  assert.equal(task.sourceSkillDigest, "360ff77f2da57456ff9510720176e61db03a0b36de3eeb0f9b1338f28296a3f9");
   assert.equal(project.contentDigest.length, 64);
 });
 
@@ -130,7 +140,7 @@ test("assertResultCurrent rejects an expired result and a missing one", () => {
   // accept referencing a different (stale) digest
   assert.throws(
     () => assertResultCurrent({ decision: { taskId: "T1", revisionIndex: 0, decision: "accept", resultDigest: "b".repeat(64) }, taskBinding: task, latestResultDigest: digest }),
-    /expired result digest/,
+    /bind the current result digest/,
   );
   // accept with no submitted result
   assert.throws(
@@ -149,6 +159,7 @@ test("assertTransitionAllowed authorizes the full design->implement handoff and 
   const project = buildProjectBinding({
     playbook: pb,
     projectId: "P2",
+    requester: "@manager:example.test",
     roleBindings: ROLE_BINDINGS,
     createdAt: "2026-08-01T00:00:00Z",
   });
@@ -194,7 +205,7 @@ test("an assessor revision opens a new implement wave and a prior result cannot 
   assert.equal(reduced.nextTaskKind, "implement");
   assert.equal(reduced.revisionIndex, 1);
   // the new implement task must be at revision 1 and owned by the implementor
-  const project = buildProjectBinding({ playbook: pb, projectId: "P3", roleBindings: ROLE_BINDINGS, createdAt: "2026-08-01T00:00:00Z" });
+  const project = buildProjectBinding({ playbook: pb, projectId: "P3", requester: "@manager:example.test", roleBindings: ROLE_BINDINGS, createdAt: "2026-08-01T00:00:00Z" });
   assert.doesNotThrow(() =>
     assertTransitionAllowed({
       projectBinding: project,
@@ -213,6 +224,44 @@ test("an assessor revision opens a new implement wave and a prior result cannot 
       }),
     /revision 0 but the task is at revision 1/,
   );
+});
+
+test("playbooks.lock pins package, policy, schemas, roles, and upstream contracts", () => {
+  const manifest = JSON.parse(readFileSync(
+    path.join(DEFAULT_PLAYBOOK_ROOT, "software-change-delivery", "manifest.json"),
+    "utf8",
+  ));
+  const computed = computePlaybookPackageDigest(
+    path.join(DEFAULT_PLAYBOOK_ROOT, "software-change-delivery"),
+    manifest,
+  );
+  const lock = JSON.parse(readFileSync(path.resolve(DEFAULT_PLAYBOOK_ROOT, "../playbooks.lock.json"), "utf8"));
+  const entry = lock.playbooks.find((item) => item.playbookId === manifest.playbookId && item.version === manifest.version);
+  assert.equal(entry.contentDigest, computed.contentDigest);
+  assert.deepEqual(entry.fileDigests, computed.fileDigests);
+  assert.equal(entry.transitionPolicyDigest, computed.fileDigests["transition-policy.mjs"]);
+  assert.equal(entry.agentTeamsVersion, "v1.2.0");
+  assert.equal(entry.teamTaskPortContractVersion, "team-task-port-v1");
+  assert.deepEqual(Object.keys(entry.compatibleRoleProfileDigests), ["leader", "designer", "implementor", "assessor", "operator"]);
+  assert.deepEqual(Object.keys(entry.compatibleRoleSkillDigests), ["leader-v1", "designer-v1", "implementor-v1", "assessor-v1", "operator-v1"]);
+  const workerRoot = path.resolve(DEFAULT_PLAYBOOK_ROOT, "../worker");
+  for (const [roleId, digest] of Object.entries(entry.compatibleRoleProfileDigests)) {
+    assert.equal(sha256(readFileSync(path.join(workerRoot, "role-profiles", `${roleId}.json`))), digest);
+  }
+  for (const [skillId, digest] of Object.entries(entry.compatibleRoleSkillDigests)) {
+    const roleId = skillId.replace(/-v1$/u, "");
+    assert.equal(sha256(readFileSync(path.join(workerRoot, "roles", roleId, "role.md"))), digest);
+  }
+});
+
+test("versioned transition truth table is executed by the package policy", () => {
+  const table = JSON.parse(readFileSync(
+    path.join(DEFAULT_PLAYBOOK_ROOT, "software-change-delivery", "tests", "transition-truth-table.json"),
+    "utf8",
+  ));
+  for (const entry of table.cases) {
+    assert.deepEqual(nextTaskKindAfter(entry), entry.expected);
+  }
 });
 
 function readFileSyncReal() {

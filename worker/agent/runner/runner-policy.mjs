@@ -5,9 +5,10 @@
 // disposable runner that only mounts the fixture/scratch, never host config,
 // credentials, or the container-runtime socket, and cannot reach the
 // AgentTeams/Matrix/Gateway/storage/Collector control planes. This module
-// defines and validates that contract deterministically; the disposable
-// container build enforces it at runtime. cwd is only an initial directory,
-// not a path-isolation policy.
+// defines and validates that contract deterministically. It is not isolation
+// by itself: no production executor is active until a disposable-container
+// adapter proves mounts, credentials, ownership, and network boundaries in the
+// real stack. cwd is only an initial directory, not a path-isolation policy.
 
 const RUN_ID_PATTERN = /^run-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const RELATIVE_CWD_PATTERN = /^[A-Za-z0-9._][A-Za-z0-9._/-]{0,254}$/u;

@@ -20,7 +20,14 @@ function sampleProject(overrides = {}) {
     playbookId: "software-change-delivery",
     playbookVersion: "1.0.0",
     playbookDigest: PLAYBOOK_DIGEST,
-    roleBindings: { team_leader: "tiangong-leader", implementor: "tiangong-implementor" },
+    requester: "@manager:example.test",
+    roleBindings: {
+      team_leader: "tiangong-leader",
+      designer: "tiangong-designer",
+      implementor: "tiangong-implementor",
+      assessor: "tiangong-assessor",
+      operator: "tiangong-operator",
+    },
     createdAt: CREATED_AT,
     ...overrides,
   });
@@ -35,6 +42,9 @@ function sampleTask(overrides = {}) {
     revisionIndex: 0,
     assignee: "tiangong-implementor",
     completionContractDigest: CONTRACT_DIGEST,
+    sourceProfileDigest: sha256("implementor-profile"),
+    sourceSkillId: "implementor-v1",
+    sourceSkillDigest: sha256("implementor-skill"),
     inputRefs: ["result-design-1"],
     createdAt: CREATED_AT,
     ...overrides,
@@ -79,7 +89,7 @@ test("distinct inputs produce distinct digests", () => {
 test("tampering with a stored binding breaks digest verification", () => {
   const binding = sampleProject();
   const tampered = { ...binding, projectId: "proj-tampered" };
-  assert.equal(isProjectBinding(tampered), true);
+  assert.equal(isProjectBinding(tampered), false);
   assert.equal(verifyBindingDigest(tampered), false);
   assert.equal(verifyBindingDigest({ ...binding, contentDigest: "0".repeat(64) }), false);
   assert.equal(verifyBindingDigest(null), false);
@@ -92,7 +102,7 @@ test("project binding rejects unsupported roles and bad ids", () => {
   );
   assert.throws(
     () => sampleProject({ roleBindings: {} }),
-    /at least one role/u,
+    /exactly the five required team roles/u,
   );
   assert.throws(
     () => sampleProject({ projectId: "has spaces" }),
@@ -100,6 +110,10 @@ test("project binding rejects unsupported roles and bad ids", () => {
   );
   assert.throws(
     () => sampleProject({ playbookDigest: "not-a-digest" }),
+    /invalid format/u,
+  );
+  assert.throws(
+    () => sampleProject({ requester: "manager" }),
     /invalid format/u,
   );
 });

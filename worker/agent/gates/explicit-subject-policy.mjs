@@ -48,7 +48,7 @@ export function assertExplicitSubjectApproval({ actorId, approver }) {
 // smuggle a subject (which would let Task text or model parameters choose the
 // approver). This is the guard that keeps the subject config-bound.
 export function assertCheckpointApprovalPolicyWellFormed(checkpoint) {
-  const policy = checkpoint?.approvalPolicy;
+  const policy = checkpoint?.operation?.approvalPolicy ?? checkpoint?.approvalPolicy;
   if (policy === undefined || policy === null) return true;
   if (policy?.type !== "explicit_subject") {
     throw new Error("unsupported approval policy type");
@@ -57,4 +57,17 @@ export function assertCheckpointApprovalPolicyWellFormed(checkpoint) {
     throw new Error("approval policy subject must not travel with the checkpoint");
   }
   return true;
+}
+
+export function assertOperationApprovalSubject({ checkpoint, actorId, config, assertRequester }) {
+  assertCheckpointApprovalPolicyWellFormed(checkpoint);
+  const policy = checkpoint?.operation?.approvalPolicy ?? checkpoint?.approvalPolicy;
+  if (policy?.type === "explicit_subject") {
+    const approver = resolveDeploymentApprover(config);
+    return assertExplicitSubjectApproval({ actorId, approver });
+  }
+  if (typeof assertRequester !== "function") {
+    throw new TypeError("requester approval validator is required");
+  }
+  return assertRequester(checkpoint, actorId);
 }

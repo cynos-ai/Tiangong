@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "roleId": "operator",
+  "title": "Tiangong Operator",
+  "practiceIds": [],
+  "toolIds": ["team_resolve_task", "team_submit_result"],
+  "gatePolicyId": "professional-tools-v1",
+  "roleSkillId": "operator-v1"
+}

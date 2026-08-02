@@ -19,6 +19,7 @@ import {
   parseApprovalCommand,
 } from "./gates/approval-command.mjs";
 import { assertApprovalSubject } from "./gates/approval-subject.mjs";
+import { assertOperationApprovalSubject } from "./gates/explicit-subject-policy.mjs";
 import { PolicyGate } from "./gates/policy-gate.mjs";
 import { ReviewerPracticeGate } from "./gates/reviewer-practice-gate.mjs";
 import { IdempotencyStore } from "./idempotency/store.mjs";
@@ -35,10 +36,11 @@ import {
 } from "./session-store.mjs";
 import { createCoreToolRegistry } from "./tools/registry.mjs";
 import { createReviewerToolRegistry } from "./work/reviewer-tools.mjs";
-import { getPlaybook } from "./playbook/registry.mjs";
+import { readPlaybookManifest } from "./playbook/resolver.mjs";
 import { defaultTiangongRoot } from "./team/shared-fs.mjs";
 import { createTeamChannel } from "./team/channel-adapter.mjs";
 import { createTeamSync } from "./team/sync-adapter.mjs";
+import { TeamCoordinationGate } from "./team/tool-wrapper.mjs";
 import { createLeaderToolRegistry } from "./work/leader-tools.mjs";
 import { createMemberToolRegistry } from "./work/member-tools.mjs";
 import { completedReviewTargetFacts, renderCompletedReview, workStatusForRun } from "./work/status.mjs";
@@ -122,12 +124,14 @@ function appendDeterministicAssistantMessage(state, content) {
 export class TiangongAgentRuntime {
   #gateway;
   #profileBundle;
+  #approvalConfig;
   #sessions = new Map();
   #stores = new Map();
 
-  constructor({ configPath, provider, profileBundle }) {
+  constructor({ configPath, provider, profileBundle, deploymentApprover = process.env.TIANGONG_DEPLOYMENT_APPROVER }) {
     this.#gateway = new ModelGateway({ configPath, provider });
     this.#profileBundle = profileBundle ? Promise.resolve(profileBundle) : null;
+    this.#approvalConfig = Object.freeze({ deploymentApprover });
   }
 
   #trustedProfileBundle() {
@@ -182,26 +186,32 @@ export class TiangongAgentRuntime {
         inspectionLockPath: persisted.paths.reviewInspectionLockPath,
       });
     } else if (profileBundle.profile.roleId === "leader") {
-      gate = new PolicyGate({ idempotencyStore });
-      const playbook = getPlaybook("software-change-delivery");
+      gate = new TeamCoordinationGate();
+      const playbook = readPlaybookManifest("software-change-delivery");
       const teamDeps = {
         rootDir: defaultTiangongRoot(),
         env: process.env,
         channel: createTeamChannel({ evidence }),
         sync: createTeamSync(),
         evidence,
+        gate,
         getInvocation: turns.current,
       };
       registry = createLeaderToolRegistry({ playbook, deps: teamDeps });
-    } else if (profileBundle.profile.roleId === "team-member") {
-      gate = new PolicyGate({ idempotencyStore });
+    } else if (["designer", "implementor", "assessor", "operator"].includes(profileBundle.profile.roleId)) {
+      gate = new TeamCoordinationGate();
       const teamDeps = {
         rootDir: defaultTiangongRoot(),
         env: process.env,
         channel: createTeamChannel({ evidence }),
         sync: createTeamSync(),
         evidence,
+        gate,
         getInvocation: turns.current,
+        professionalRole: profileBundle.profile.roleId,
+        sourceProfileDigest: profileBundle.profileDigest,
+        sourceSkillId: profileBundle.roleSkill.id,
+        sourceSkillDigest: profileBundle.roleSkill.digest,
       };
       registry = createMemberToolRegistry({ deps: teamDeps });
     } else {
@@ -311,7 +321,12 @@ export class TiangongAgentRuntime {
     const match = await state.idempotencyStore.findApproval(command.approvalId);
     if (!match) throw new Error("Approval request not found");
     const checkpoint = match.entry;
-    const actorId = assertApprovalSubject(checkpoint, request.actor.id);
+    const actorId = assertOperationApprovalSubject({
+      checkpoint,
+      actorId: request.actor.id,
+      config: this.#approvalConfig,
+      assertRequester: assertApprovalSubject,
+    });
 
     if (command.action === "reject") {
       await state.idempotencyStore.reject(match.key, {

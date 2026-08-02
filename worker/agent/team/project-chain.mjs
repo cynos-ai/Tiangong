@@ -9,17 +9,18 @@
 
 import { listTaskBindingsForProject, readTaskDecisions } from "./manifest-store.mjs";
 
-function byCreatedAt(a, b) {
-  return a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0;
-}
-
 export async function projectChain(projectId, deps) {
   const tasks = await listTaskBindingsForProject(projectId, deps);
   const chain = [];
   for (const task of tasks) {
     const decisions = await readTaskDecisions(task.taskId, deps);
-    if (decisions.length === 0) continue;
-    const terminal = [...decisions].sort(byCreatedAt).at(-1);
+    if (decisions.length === 0) {
+      throw new Error(`Project has an undecided Task: ${task.taskId}`);
+    }
+    if (decisions.length !== 1) {
+      throw new Error(`Task has conflicting terminal decisions: ${task.taskId}`);
+    }
+    const terminal = decisions[0];
     chain.push({
       taskKind: task.taskKind,
       decision: terminal.decision,

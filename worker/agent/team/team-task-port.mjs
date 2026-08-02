@@ -1,4 +1,12 @@
 import { canonicalJson, sha256 } from "../canonical-json.mjs";
+import { findRoleForWorker } from "../playbook/transition-policy.mjs";
+import { isResultEnvelope } from "../work/result-envelope.mjs";
+import {
+  ensureAgentTeamsProject,
+  ensureAgentTeamsResult,
+  ensureAgentTeamsTask,
+  applyAgentTeamsDecision,
+} from "./agentteams-records.mjs";
 import {
   appendTaskDecision,
   readProjectBinding,
@@ -10,16 +18,12 @@ import {
   writeTaskResult,
 } from "./manifest-store.mjs";
 import { assertAssignee, assertLeaderForProject, loadWorkerIdentity } from "./team-context.mjs";
+import { verifyContentDigest } from "./manifest.mjs";
 
-// TeamTaskPort: RoleProfile-scoped coordination operations over the
-// AgentTeams v1.2.0 shared-filesystem + Matrix @mention + sync model, with
-// Tiangong immutable manifests, authorization, idempotency, and Evidence.
-//
-// Leader operations: createProject, dispatchTask, checkResult,
-// recordTaskDecision. Worker operations: resolveAssignedTask, submitResult.
-// Side effects (@mention, storage sync, Evidence) are injected so the
-// contract is deterministic and the real Matrix/sync adapters are wired
-// when the Worker image is assembled.
+// TeamTaskPort adapts Tiangong's closed coordination operations to the real
+// AgentTeams v1.2 shared Project/Task records. Immutable Tiangong bindings live
+// under each upstream record's tiangong directory; meta.json, plan.md,
+// spec.md, and result.md remain the AgentTeams coordination facts.
 
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/u;
@@ -35,76 +39,69 @@ function demandPattern(value, name, pattern) {
   if (!pattern.test(value)) throw new Error(`${name} has an invalid format: ${value}`);
   return value;
 }
-function frozen(record) {
-  const base = Object.freeze({ ...record });
-  return Object.freeze({ ...base, contentDigest: sha256(canonicalJson(base)) });
-}
-function frozenStringArray(input, name) {
-  if (input === undefined) return Object.freeze([]);
-  if (!Array.isArray(input)) throw new TypeError(`${name} must be an array`);
-  const items = input.map((item) => demandPattern(item, `${name} entry`, ID_PATTERN));
-  if (new Set(items).size !== items.length) throw new Error(`${name} contains duplicates`);
-  return Object.freeze(items);
-}
 function now(deps) {
   const value = deps?.now?.();
   return typeof value === "string" ? value : new Date().toISOString();
 }
-async function recordEvidence(deps, type, body) {
-  deps?.evidence?.append?.({ type, ...body, at: now(deps) });
+function frozen(record) {
+  const base = Object.freeze({ ...record });
+  return Object.freeze({ ...base, contentDigest: sha256(canonicalJson(base)) });
 }
-async function isEEXIST(error) {
-  return error?.code === "EEXIST";
+function sameRecord(left, right) {
+  return canonicalJson(left) === canonicalJson(right);
+}
+function requirePortDependencies(deps, { channel = false } = {}) {
+  if (!deps?.sync?.beforeRead || !deps?.sync?.afterWrite) {
+    throw new TypeError("TeamTaskPort requires beforeRead/afterWrite synchronization");
+  }
+  if (!deps?.evidence?.append) throw new TypeError("TeamTaskPort requires durable Evidence");
+  if (channel && (!deps?.channel || typeof deps.channel.assertTeamIdentity !== "function" ||
+      typeof deps.channel.assertTeamRoster !== "function" || typeof deps.channel.notifyAssignee !== "function" ||
+      typeof deps.channel.notifyLeader !== "function")) {
+    throw new TypeError("TeamTaskPort requires the closed Matrix channel adapter");
+  }
+}
+async function recordEvidence(deps, type, body) {
+  await deps.evidence.append({ type, ...body, at: now(deps) });
 }
 
-export function createTaskResult(input) {
-  if (input === null || typeof input !== "object") throw new TypeError("result input must be an object");
-  demandPattern(input.taskId, "taskId", ID_PATTERN);
-  demandPattern(input.projectId, "projectId", ID_PATTERN);
-  demandPattern(input.producer, "producer", ID_PATTERN);
-  demandString(input.summary, "summary");
-  if (input.summary.length > SUMMARY_MAX) throw new Error("summary exceeds the maximum length");
-  demandPattern(input.createdAt, "createdAt", ISO_PATTERN);
-  return frozen({
-    kind: "tiangong.task-result",
-    schemaVersion: 1,
-    taskId: input.taskId,
+function decisionIdentity(input) {
+  return {
     projectId: input.projectId,
-    producer: input.producer,
-    summary: input.summary,
-    artifactRefs: frozenStringArray(input.artifactRefs, "artifactRefs"),
-    createdAt: input.createdAt,
-  });
+    playbookDigest: input.playbookDigest,
+    sourceTaskId: input.taskId,
+    decision: input.decision,
+    revisionIndex: input.revisionIndex,
+  };
 }
 
 export function createTaskDecision(input) {
   if (input === null || typeof input !== "object") throw new TypeError("decision input must be an object");
-  demandPattern(input.decisionId, "decisionId", ID_PATTERN);
   demandPattern(input.taskId, "taskId", ID_PATTERN);
   demandPattern(input.projectId, "projectId", ID_PATTERN);
+  demandPattern(input.playbookDigest, "playbookDigest", DIGEST_PATTERN);
   if (!DECISIONS.has(input.decision)) throw new Error(`Unsupported decision: ${input.decision}`);
   if (!Number.isInteger(input.revisionIndex) || input.revisionIndex < 0) {
     throw new TypeError("revisionIndex must be a non-negative integer");
   }
   demandPattern(input.decidedBy, "decidedBy", ID_PATTERN);
   demandPattern(input.createdAt, "createdAt", ISO_PATTERN);
-  if (input.resultDigest !== undefined && input.resultDigest !== null) {
+  if (["accept", "revision"].includes(input.decision)) {
+    demandPattern(input.resultDigest, "resultDigest", DIGEST_PATTERN);
+  } else if (input.resultDigest !== undefined && input.resultDigest !== null) {
     demandPattern(input.resultDigest, "resultDigest", DIGEST_PATTERN);
   }
+  const identity = decisionIdentity(input);
   const record = {
     kind: "tiangong.task-decision",
     schemaVersion: 1,
-    decisionId: input.decisionId,
+    decisionId: `transition-${sha256(canonicalJson(identity)).slice(0, 48)}`,
+    ...identity,
     taskId: input.taskId,
-    projectId: input.projectId,
-    decision: input.decision,
-    revisionIndex: input.revisionIndex,
     decidedBy: input.decidedBy,
     createdAt: input.createdAt,
   };
-  if (input.resultDigest !== undefined && input.resultDigest !== null) {
-    record.resultDigest = input.resultDigest;
-  }
+  if (input.resultDigest !== undefined && input.resultDigest !== null) record.resultDigest = input.resultDigest;
   if (input.note !== undefined && input.note !== null) {
     demandString(input.note, "note");
     if (input.note.length > SUMMARY_MAX) throw new Error("note exceeds the maximum length");
@@ -113,48 +110,128 @@ export function createTaskDecision(input) {
   return frozen(record);
 }
 
+export function isTaskDecision(value) {
+  try {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+    const recreated = createTaskDecision({
+      taskId: value.taskId,
+      projectId: value.projectId,
+      playbookDigest: value.playbookDigest,
+      decision: value.decision,
+      revisionIndex: value.revisionIndex,
+      decidedBy: value.decidedBy,
+      resultDigest: value.resultDigest,
+      note: value.note,
+      createdAt: value.createdAt,
+    });
+    return sameRecord(recreated, value);
+  } catch {
+    return false;
+  }
+}
+
+async function exactReplay(readExisting, proposed, label) {
+  const existing = await readExisting();
+  if (!sameRecord(existing, proposed)) throw new Error(`${label} conflicts with an immutable existing record`);
+  return existing;
+}
+
+function validateResultBinding({ result, task, project, identity }) {
+  if (!isResultEnvelope(result) || !verifyContentDigest(result)) {
+    throw new Error("Task result must be a schema-valid ResultEnvelope");
+  }
+  const expectedRole = findRoleForWorker(project.roleBindings, identity.workerName);
+  const checks = [
+    [result.taskId, task.taskId, "taskId"],
+    [result.projectId, task.projectId, "projectId"],
+    [result.producer, identity.workerName, "producer"],
+    [result.taskKind, task.taskKind, "taskKind"],
+    [result.revisionIndex, task.revisionIndex, "revisionIndex"],
+    [result.sourceRole, expectedRole, "sourceRole"],
+    [result.playbookDigest, project.playbookDigest, "playbookDigest"],
+    [result.taskBindingDigest, task.contentDigest, "taskBindingDigest"],
+    [result.completionContractDigest, task.completionContractDigest, "completionContractDigest"],
+    [result.sourceProfileDigest, task.sourceProfileDigest, "sourceProfileDigest"],
+    [result.sourceSkillId, task.sourceSkillId, "sourceSkillId"],
+    [result.skillDigest, task.sourceSkillDigest, "skillDigest"],
+  ];
+  for (const [actual, expected, field] of checks) {
+    if (actual !== expected) throw new Error(`Result ${field} does not match the assigned task binding`);
+  }
+}
+
 export async function createProject(projectBinding, deps) {
+  requirePortDependencies(deps, { channel: true });
   const identity = loadWorkerIdentity(deps);
   assertLeaderForProject(identity, projectBinding);
-  const manifestPath = await writeProjectBinding(projectBinding, deps);
-  await deps?.sync?.afterWrite?.();
-  await recordEvidence(deps, "team.project.created", {
-    projectId: projectBinding.projectId,
-    playbookDigest: projectBinding.playbookDigest,
-    manifestDigest: projectBinding.contentDigest,
+  if (!identity.roomId) throw new Error("Authenticated Leader room is unavailable");
+  await deps.channel.assertTeamIdentity("team_leader");
+  const roster = await deps.channel.assertTeamRoster(Object.values(projectBinding.roleBindings));
+  await deps.sync.beforeRead();
+  let stored = projectBinding;
+  let replayed = false;
+  try {
+    await writeProjectBinding(projectBinding, deps);
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+    stored = await exactReplay(() => readProjectBinding(projectBinding.projectId, deps), projectBinding, "Project binding");
+    replayed = true;
+  }
+  await ensureAgentTeamsProject(stored, { ...deps, roomId: roster.roomId });
+  await deps.sync.afterWrite({ projectIds: [stored.projectId] });
+  await recordEvidence(deps, replayed ? "team.project.create.replay" : "team.project.created", {
+    projectId: stored.projectId,
+    playbookDigest: stored.playbookDigest,
+    manifestDigest: stored.contentDigest,
   });
-  return { projectBinding, manifestPath };
+  return { projectBinding: stored, replayed };
 }
 
 export async function dispatchTask(taskBinding, deps) {
+  requirePortDependencies(deps, { channel: true });
   const identity = loadWorkerIdentity(deps);
+  if (!identity.roomId) throw new Error("Authenticated Leader room is unavailable");
+  await deps.channel.assertTeamIdentity("team_leader");
+  await deps.sync.beforeRead();
   const project = await readProjectBinding(taskBinding.projectId, deps);
   assertLeaderForProject(identity, project);
+  const roster = await deps.channel.assertTeamRoster(Object.values(project.roleBindings));
+  let stored = taskBinding;
+  let replayed = false;
   try {
     await writeTaskBinding(taskBinding, deps);
-    await deps?.sync?.afterWrite?.();
   } catch (error) {
-    if (await isEEXIST(error)) {
-      const existing = await readTaskBinding(taskBinding.taskId, deps);
-      await recordEvidence(deps, "team.task.dispatch.replay", {
-        taskId: taskBinding.taskId,
-        manifestDigest: existing.contentDigest,
-      });
-      return { taskBinding: existing, replayed: true, notified: false };
-    }
-    throw error;
+    if (error?.code !== "EEXIST") throw error;
+    stored = await exactReplay(() => readTaskBinding(taskBinding.taskId, deps), taskBinding, "Task binding");
+    replayed = true;
   }
-  await deps?.channel?.notifyAssignee?.(taskBinding.assignee, taskBinding.taskId, taskBinding.contentDigest);
-  await recordEvidence(deps, "team.task.dispatched", {
-    taskId: taskBinding.taskId,
-    assignee: taskBinding.assignee,
-    manifestDigest: taskBinding.contentDigest,
+  await ensureAgentTeamsTask(stored, project, { ...deps, roomId: roster.roomId });
+  await deps.sync.afterWrite({ projectIds: [stored.projectId], taskIds: [stored.taskId] });
+  const notification = await deps.channel.notifyAssignee(
+    stored.assignee,
+    stored.projectId,
+    stored.taskId,
+    stored.contentDigest,
+  );
+  await recordEvidence(deps, replayed ? "team.task.dispatch.replay" : "team.task.dispatched", {
+    taskId: stored.taskId,
+    assignee: stored.assignee,
+    manifestDigest: stored.contentDigest,
+    notificationQueued: notification?.queued === true,
+    notificationDelivered: notification?.delivered === true,
   });
-  return { taskBinding, replayed: false, notified: true };
+  return {
+    taskBinding: stored,
+    replayed,
+    notified: notification?.delivered === true,
+    notificationQueued: notification?.queued === true,
+  };
 }
 
 export async function resolveAssignedTask(taskId, deps) {
-  await deps?.sync?.beforeRead?.();
+  requirePortDependencies(deps, { channel: true });
+  await deps.channel.assertTeamIdentity("worker");
+  await deps.sync.beforeRead();
   const taskBinding = await readTaskBinding(taskId, deps);
   const identity = loadWorkerIdentity(deps);
   assertAssignee(identity, taskBinding);
@@ -162,82 +239,108 @@ export async function resolveAssignedTask(taskId, deps) {
 }
 
 export async function submitResult(result, deps) {
+  requirePortDependencies(deps, { channel: true });
   const identity = loadWorkerIdentity(deps);
-  await deps?.sync?.beforeRead?.();
+  await deps.channel.assertTeamIdentity("worker");
+  await deps.sync.beforeRead();
   const taskBinding = await readTaskBinding(result.taskId, deps);
   assertAssignee(identity, taskBinding);
-  if (result.projectId !== taskBinding.projectId) {
-    throw new Error("Result projectId does not match the assigned task");
-  }
+  const project = await readProjectBinding(taskBinding.projectId, deps);
+  validateResultBinding({ result, task: taskBinding, project, identity });
+  let stored = result;
+  let replayed = false;
   try {
     await writeTaskResult(result, deps);
-    await deps?.sync?.afterWrite?.();
   } catch (error) {
-    if (await isEEXIST(error)) {
-      const existing = await readTaskResult(result.taskId, deps);
-      await recordEvidence(deps, "team.result.submit.replay", {
-        taskId: result.taskId,
-        resultDigest: existing.contentDigest,
-      });
-      return { result: existing, replayed: true, notified: false };
-    }
-    throw error;
+    if (error?.code !== "EEXIST") throw error;
+    stored = await exactReplay(() => readTaskResult(result.taskId, deps), result, "ResultEnvelope");
+    replayed = true;
   }
-  await deps?.channel?.notifyLeader?.(taskBinding.taskId, result.contentDigest);
-  await recordEvidence(deps, "team.result.submitted", {
-    taskId: result.taskId,
-    producer: result.producer,
-    resultDigest: result.contentDigest,
+  await ensureAgentTeamsResult(stored, deps);
+  await deps.sync.afterWrite({ taskIds: [stored.taskId] });
+  const notification = await deps.channel.notifyLeader(
+    project.roleBindings.team_leader,
+    stored.projectId,
+    stored.taskId,
+    stored.contentDigest,
+  );
+  await recordEvidence(deps, replayed ? "team.result.submit.replay" : "team.result.submitted", {
+    taskId: stored.taskId,
+    producer: stored.producer,
+    resultDigest: stored.contentDigest,
+    notificationQueued: notification?.queued === true,
+    notificationDelivered: notification?.delivered === true,
   });
-  return { result, replayed: false, notified: true };
+  return {
+    result: stored,
+    replayed,
+    notified: notification?.delivered === true,
+    notificationQueued: notification?.queued === true,
+  };
 }
 
 export async function checkResult(taskId, deps) {
+  requirePortDependencies(deps, { channel: true });
   const identity = loadWorkerIdentity(deps);
+  await deps.channel.assertTeamIdentity("team_leader");
+  await deps.sync.beforeRead();
   const taskBinding = await readTaskBinding(taskId, deps);
   const project = await readProjectBinding(taskBinding.projectId, deps);
   assertLeaderForProject(identity, project);
-  await deps?.sync?.beforeRead?.();
   const result = await readTaskResult(taskId, deps);
+  validateResultBinding({ result, task: taskBinding, project, identity: { workerName: taskBinding.assignee } });
   const decisions = await readTaskDecisions(taskId, deps);
+  if (!decisions.every(isTaskDecision)) throw new Error("Task has a malformed transition decision");
+  if (decisions.length > 1) throw new Error("Task has conflicting terminal decisions");
   return { taskBinding, result, decisions };
 }
 
 export async function recordTaskDecision(decision, deps) {
+  requirePortDependencies(deps, { channel: true });
   const identity = loadWorkerIdentity(deps);
+  await deps.channel.assertTeamIdentity("team_leader");
+  await deps.sync.beforeRead();
   const taskBinding = await readTaskBinding(decision.taskId, deps);
-  if (decision.projectId !== taskBinding.projectId) {
-    throw new Error("Decision projectId does not match the task");
-  }
   const project = await readProjectBinding(taskBinding.projectId, deps);
   assertLeaderForProject(identity, project);
-  if (decision.decision === "accept") {
-    await deps?.sync?.beforeRead?.();
-    try {
-      await readTaskResult(decision.taskId, deps);
-    } catch {
-      throw new Error("Cannot accept a task that has no submitted result");
-    }
+  if (!isTaskDecision(decision)) throw new Error("Decision schema or stable transition identity is invalid");
+  if (decision.projectId !== taskBinding.projectId || decision.playbookDigest !== project.playbookDigest ||
+      decision.revisionIndex !== taskBinding.revisionIndex) {
+    throw new Error("Decision binding does not match the current Task/Project");
   }
-  let manifestPath;
-  try {
-    manifestPath = await appendTaskDecision(decision, deps);
-    await deps?.sync?.afterWrite?.();
-  } catch (error) {
-    if (await isEEXIST(error)) {
+  if (decision.decidedBy !== identity.workerName) {
+    throw new Error("Decision decidedBy is not the authenticated Leader");
+  }
+  const existing = await readTaskDecisions(decision.taskId, deps);
+  if (!existing.every(isTaskDecision)) throw new Error("Task has a malformed transition decision");
+  if (existing.length > 0) {
+    if (existing.length === 1 && sameRecord(existing[0], decision)) {
+      await applyAgentTeamsDecision(taskBinding, decision, deps);
+      await deps.sync.afterWrite({ projectIds: [taskBinding.projectId], taskIds: [taskBinding.taskId] });
       await recordEvidence(deps, "team.task.decision.replay", {
         taskId: decision.taskId,
         decisionId: decision.decisionId,
       });
-      return { decision, replayed: true };
+      return { decision: existing[0], replayed: true };
     }
-    throw error;
+    throw new Error("Task already has a different terminal decision");
   }
+  if (["accept", "revision"].includes(decision.decision) || decision.resultDigest) {
+    const result = await readTaskResult(decision.taskId, deps);
+    validateResultBinding({ result, task: taskBinding, project, identity: { workerName: taskBinding.assignee } });
+    if (decision.resultDigest !== result.contentDigest) {
+      throw new Error("Decision does not bind the current ResultEnvelope digest");
+    }
+  }
+  await appendTaskDecision(decision, deps);
+  await applyAgentTeamsDecision(taskBinding, decision, deps);
+  await deps.sync.afterWrite({ projectIds: [taskBinding.projectId], taskIds: [taskBinding.taskId] });
   await recordEvidence(deps, "team.task.decision", {
     taskId: decision.taskId,
     decision: decision.decision,
     decidedBy: decision.decidedBy,
     decisionDigest: decision.contentDigest,
+    resultDigest: decision.resultDigest ?? null,
   });
-  return { decision, manifestPath, replayed: false };
+  return { decision, replayed: false };
 }

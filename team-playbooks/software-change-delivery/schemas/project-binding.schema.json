@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tiangong.invalid/schemas/project-binding-v1.json",
+  "title": "ProjectPlaybookBinding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "schemaVersion", "projectId", "playbookId", "playbookVersion", "playbookDigest", "requester", "roleBindings", "createdAt", "contentDigest"],
+  "properties": {
+    "kind": { "const": "tiangong.project-binding" },
+    "schemaVersion": { "const": 1 },
+    "projectId": { "$ref": "#/$defs/id" },
+    "playbookId": { "const": "software-change-delivery" },
+    "playbookVersion": { "const": "1.0.0" },
+    "playbookDigest": { "$ref": "#/$defs/digest" },
+    "requester": { "type": "string", "pattern": "^@[A-Za-z0-9._=/\\\\-]+:[A-Za-z0-9.-]+(:[0-9]{1,5})?$" },
+    "roleBindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["team_leader", "designer", "implementor", "assessor", "operator"],
+      "properties": {
+        "team_leader": { "$ref": "#/$defs/id" },
+        "designer": { "$ref": "#/$defs/id" },
+        "implementor": { "$ref": "#/$defs/id" },
+        "assessor": { "$ref": "#/$defs/id" },
+        "operator": { "$ref": "#/$defs/id" }
+      }
+    },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "contentDigest": { "$ref": "#/$defs/digest" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

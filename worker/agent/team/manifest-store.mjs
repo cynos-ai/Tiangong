@@ -2,9 +2,10 @@ import { mkdir, open, readFile, readdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { canonicalJson } from "../canonical-json.mjs";
-import { isProjectBinding, isTaskBinding, verifyContentDigest } from "./manifest.mjs";
+import { isProjectBinding, isProjectReport, isTaskBinding, verifyContentDigest } from "./manifest.mjs";
 import {
   projectBindingFile,
+  projectReportFile,
   taskBindingFile,
   projectDir,
   taskDir,
@@ -48,13 +49,15 @@ async function writeImmutable(filePath, record) {
   }
 }
 
-async function readVerified(filePath, label) {
+async function readVerified(filePath, label, validate) {
   let bytes;
   try {
     bytes = await readFile(filePath, { encoding: "utf8" });
   } catch (error) {
     if (error.code === "ENOENT") {
-      throw new Error(`No ${label} manifest at ${filePath}`);
+      const missing = new Error(`No ${label} manifest at ${filePath}`);
+      missing.code = "ENOENT";
+      throw missing;
     }
     throw error;
   }
@@ -67,6 +70,9 @@ async function readVerified(filePath, label) {
   if (!verifyContentDigest(parsed)) {
     throw new Error(`${label} manifest at ${filePath} failed digest verification`);
   }
+  if (validate && !validate(parsed)) {
+    throw new Error(`${label} manifest at ${filePath} failed schema verification`);
+  }
   return parsed;
 }
 
@@ -78,7 +84,18 @@ export async function writeProjectBinding(binding, { rootDir } = {}) {
 }
 
 export async function readProjectBinding(projectId, { rootDir } = {}) {
-  return readVerified(projectBindingFile(projectId, rootDir), "project binding");
+  return readVerified(projectBindingFile(projectId, rootDir), "project binding", isProjectBinding);
+}
+
+export async function writeProjectReport(report, { rootDir } = {}) {
+  if (!isProjectReport(report)) throw new Error("Expected a Tiangong project report manifest");
+  const filePath = projectReportFile(report.projectId, rootDir);
+  await writeImmutable(filePath, report);
+  return filePath;
+}
+
+export async function readProjectReport(projectId, { rootDir } = {}) {
+  return readVerified(projectReportFile(projectId, rootDir), "project report", isProjectReport);
 }
 
 export async function writeTaskBinding(binding, { rootDir } = {}) {
@@ -89,7 +106,7 @@ export async function writeTaskBinding(binding, { rootDir } = {}) {
 }
 
 export async function readTaskBinding(taskId, { rootDir } = {}) {
-  return readVerified(taskBindingFile(taskId, rootDir), "task binding");
+  return readVerified(taskBindingFile(taskId, rootDir), "task binding", isTaskBinding);
 }
 
 export async function writeTaskResult(result, { rootDir } = {}) {
@@ -149,12 +166,17 @@ export async function listTaskBindingsForProject(projectId, { rootDir } = {}) {
   }
   const matches = [];
   for (const name of entries) {
-    const filePath = taskBindingFile(name, rootDir);
+    let filePath;
+    try {
+      filePath = taskBindingFile(name, rootDir);
+    } catch {
+      continue; // AgentTeams keeps adjacent files such as .gitkeep here.
+    }
     let parsed;
     try {
-      parsed = await readVerified(filePath, "task binding");
+      parsed = await readVerified(filePath, "task binding", isTaskBinding);
     } catch (error) {
-      if (error.code === "ENOENT") continue; // not a task directory
+      if (error.code === "ENOENT") continue; // not a Tiangong-bound task directory
       throw error;
     }
     if (parsed.projectId === projectId) matches.push(parsed);

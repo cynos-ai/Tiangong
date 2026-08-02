@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tiangong.invalid/schemas/task-binding-v1.json",
+  "title": "TaskPlaybookBinding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "schemaVersion", "taskId", "projectId", "playbookStepId", "taskKind", "revisionIndex", "assignee", "completionContractDigest", "sourceProfileDigest", "sourceSkillId", "sourceSkillDigest", "inputRefs", "createdAt", "contentDigest"],
+  "properties": {
+    "kind": { "const": "tiangong.task-binding" },
+    "schemaVersion": { "const": 1 },
+    "taskId": { "$ref": "#/$defs/id" },
+    "projectId": { "$ref": "#/$defs/id" },
+    "playbookStepId": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "taskKind": { "enum": ["design", "implement", "assess", "release"] },
+    "revisionIndex": { "type": "integer", "minimum": 0 },
+    "assignee": { "$ref": "#/$defs/id" },
+    "completionContractDigest": { "$ref": "#/$defs/digest" },
+    "sourceProfileDigest": { "$ref": "#/$defs/digest" },
+    "sourceSkillId": { "$ref": "#/$defs/id" },
+    "sourceSkillDigest": { "$ref": "#/$defs/digest" },
+    "inputRefs": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/id" },
+      "uniqueItems": true
+    },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "contentDigest": { "$ref": "#/$defs/digest" }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

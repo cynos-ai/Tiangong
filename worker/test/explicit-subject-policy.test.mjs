@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   assertCheckpointApprovalPolicyWellFormed,
   assertExplicitSubjectApproval,
+  assertOperationApprovalSubject,
   isMatrixUserId,
   resolveDeploymentApprover,
 } from "../agent/gates/explicit-subject-policy.mjs";
@@ -61,6 +62,33 @@ test("the approver subject never comes from the checkpoint", () => {
     () => assertCheckpointApprovalPolicyWellFormed({ approvalPolicy: { type: "anyone" } }),
     /unsupported approval policy type/,
   );
+});
+
+test("runtime approval selection uses config for explicit_subject and preserves requester-only default", () => {
+  const explicitCheckpoint = { operation: { approvalPolicy: { type: "explicit_subject" } } };
+  assert.equal(assertOperationApprovalSubject({
+    checkpoint: explicitCheckpoint,
+    actorId: ADMIN,
+    config: { deploymentApprover: ADMIN },
+    assertRequester: () => { throw new Error("requester path must not run"); },
+  }), ADMIN);
+  assert.throws(() => assertOperationApprovalSubject({
+    checkpoint: explicitCheckpoint,
+    actorId: OTHER,
+    config: { deploymentApprover: ADMIN },
+    assertRequester: () => OTHER,
+  }), /not the configured deployment approver/u);
+
+  const requesterCheckpoint = { requestedBy: OTHER };
+  assert.equal(assertOperationApprovalSubject({
+    checkpoint: requesterCheckpoint,
+    actorId: OTHER,
+    config: {},
+    assertRequester: (checkpoint, actor) => {
+      assert.equal(checkpoint, requesterCheckpoint);
+      return actor;
+    },
+  }), OTHER);
 });
 
 test("even with a forged subject on the checkpoint, only config decides the approver", () => {

@@ -8,7 +8,10 @@ readonly REPO_ROOT
 readonly IMAGE="tiangong-worker:dev"
 readonly REVIEWER_IMAGE="tiangong-worker-reviewer:dev"
 readonly LEADER_IMAGE="tiangong-worker-leader:dev"
-readonly MEMBER_IMAGE="tiangong-worker-member:dev"
+readonly DESIGNER_IMAGE="tiangong-worker-designer:dev"
+readonly IMPLEMENTOR_IMAGE="tiangong-worker-implementor:dev"
+readonly ASSESSOR_IMAGE="tiangong-worker-assessor:dev"
+readonly OPERATOR_IMAGE="tiangong-worker-operator:dev"
 readonly EXPECTED_NODE_VERSION="v22.23.2"
 readonly EXPECTED_PI_VERSION="0.82.0"
 readonly EXPECTED_GIT_VERSION="git version 2.43.0"
@@ -24,7 +27,7 @@ docker info >/dev/null 2>&1 || {
   exit 1
 }
 
-build_args=(--pull)
+build_args=(--pull --build-context "team_playbooks=${REPO_ROOT}/team-playbooks")
 if [[ -n "${TIANGONG_OTEL_EXPORTER_ENDPOINT:-}" ]]; then
   build_args+=(--build-arg "TIANGONG_OTEL_EXPORTER_ENDPOINT=${TIANGONG_OTEL_EXPORTER_ENDPOINT}")
 fi
@@ -35,8 +38,12 @@ printf '[Tiangong] Building trusted profile image %s\n' "${REVIEWER_IMAGE}"
 docker build "${build_args[@]}" --target reviewer --tag "${REVIEWER_IMAGE}" "${REPO_ROOT}/worker"
 printf '[Tiangong] Building leader profile image %s\n' "${LEADER_IMAGE}"
 docker build "${build_args[@]}" --target leader --tag "${LEADER_IMAGE}" "${REPO_ROOT}/worker"
-printf '[Tiangong] Building team-member profile image %s\n' "${MEMBER_IMAGE}"
-docker build "${build_args[@]}" --target team-member --tag "${MEMBER_IMAGE}" "${REPO_ROOT}/worker"
+for role in designer implementor assessor operator; do
+  image_var="${role^^}_IMAGE"
+  image="${!image_var}"
+  printf '[Tiangong] Building %s profile image %s\n' "${role}" "${image}"
+  docker build "${build_args[@]}" --target "${role}" --tag "${image}" "${REPO_ROOT}/worker"
+done
 
 actual_node_version="$(docker run --rm --entrypoint node "${IMAGE}" --version)"
 [[ "${actual_node_version}" == "${EXPECTED_NODE_VERSION}" ]] || {
@@ -142,25 +149,39 @@ reviewer_profile="$(docker run --rm --entrypoint node "${REVIEWER_IMAGE}" \
   /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role reviewer)"
 leader_profile="$(docker run --rm --entrypoint node "${LEADER_IMAGE}" \
   /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role leader)"
-member_profile="$(docker run --rm --entrypoint node "${MEMBER_IMAGE}" \
-  /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role team-member)"
+designer_profile="$(docker run --rm --entrypoint node "${DESIGNER_IMAGE}" \
+  /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role designer)"
+implementor_profile="$(docker run --rm --entrypoint node "${IMPLEMENTOR_IMAGE}" \
+  /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role implementor)"
+assessor_profile="$(docker run --rm --entrypoint node "${ASSESSOR_IMAGE}" \
+  /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role assessor)"
+operator_profile="$(docker run --rm --entrypoint node "${OPERATOR_IMAGE}" \
+  /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role operator)"
 docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${LEADER_IMAGE}" \
   --input-type=module -e '
     const [
       { loadFixedRoleProfileBundle },
-      { getPlaybook },
+      { readPlaybookManifest },
+      { TeamCoordinationGate },
       { createLeaderToolRegistry },
     ] = await Promise.all([
       import("./agent/config/role-profile.mjs"),
-      import("./agent/playbook/registry.mjs"),
+      import("./agent/playbook/resolver.mjs"),
+      import("./agent/team/tool-wrapper.mjs"),
       import("./agent/work/leader-tools.mjs"),
     ]);
     const profileBundle = await loadFixedRoleProfileBundle();
     if (profileBundle.profile.roleId !== "leader") process.exit(1);
-    const playbook = getPlaybook("software-change-delivery");
+    const playbook = readPlaybookManifest("software-change-delivery");
     const registry = createLeaderToolRegistry({
       playbook,
-      deps: { rootDir: "/root/agentteams-fs/shared/tiangong", env: { AGENTTEAMS_WORKER_NAME: "tiangong-leader" } },
+      deps: {
+        rootDir: "/root/agentteams-fs/shared",
+        env: { AGENTTEAMS_WORKER_NAME: "tiangong-leader" },
+        gate: new TeamCoordinationGate(),
+        evidence: { append: async () => {} },
+        getInvocation: () => { throw new Error("image contract does not execute tools"); },
+      },
     });
     if (registry.names().join(",") !== "team_create_project,team_dispatch_task,team_check_result,team_decide_task,team_report") process.exit(1);
   '
@@ -206,18 +227,18 @@ docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${REVIEWER_IMA
     if (registry.names().join(",") !== "start_work,extend_scope,read,inspect_directory,inspect_repository,check_completion,abandon_work") process.exit(1);
   '
 node -e '
-  const [kernel, reviewer, leader, member] = process.argv.slice(1).map(JSON.parse);
+  const [kernel, reviewer, leader, ...professionals] = process.argv.slice(1).map(JSON.parse);
   if (kernel.roleId !== "kernel" || kernel.runtimeReady !== true) process.exit(1);
   if (reviewer.roleId !== "reviewer" || reviewer.runtimeReady !== true) process.exit(1);
   if (leader.roleId !== "leader" || leader.runtimeReady !== true) process.exit(1);
   if (leader.toolIds.join(",") !== "team_create_project,team_dispatch_task,team_check_result,team_decide_task,team_report") process.exit(1);
-  if (member.roleId !== "team-member" || member.runtimeReady !== true) process.exit(1);
-  if (member.toolIds.join(",") !== "team_resolve_task,team_submit_result") process.exit(1);
+  if (professionals.map((profile) => profile.roleId).join(",") !== "designer,implementor,assessor,operator") process.exit(1);
+  if (professionals.some((profile) => profile.runtimeReady !== true || profile.toolIds.join(",") !== "team_resolve_task,team_submit_result")) process.exit(1);
   if (reviewer.schemaVersion !== 2 || reviewer.targetKindIds.join(",") !== "file,directory_snapshot,commit,git_diff") process.exit(1);
   if (reviewer.materializedTargetKindIds.join(",") !== "file,directory_snapshot,commit,git_diff") process.exit(1);
   if (reviewer.toolIds.join(",") !== "start_work,extend_scope,read,inspect_directory,inspect_repository,check_completion,abandon_work") process.exit(1);
   if (reviewer.materializedToolIds.join(",") !== "start_work,extend_scope,read,inspect_directory,inspect_repository,check_completion,abandon_work") process.exit(1);
-' "${kernel_profile}" "${reviewer_profile}" "${leader_profile}" "${member_profile}"
+' "${kernel_profile}" "${reviewer_profile}" "${leader_profile}" "${designer_profile}" "${implementor_profile}" "${assessor_profile}" "${operator_profile}"
 
 printf '[Tiangong] Worker image ready: %s (Node.js %s, pi %s, fixed kernel profile)\n' \
   "${IMAGE}" "${actual_node_version}" "${actual_pi_version}"
@@ -225,5 +246,5 @@ printf '[Tiangong] Reviewer profile image validated: %s (runtimeReady=true; dete
   "${REVIEWER_IMAGE}"
 printf '[Tiangong] Leader profile image validated: %s (runtimeReady=true; closed coordination tool surface)\n' \
   "${LEADER_IMAGE}"
-printf '[Tiangong] Team-member profile image validated: %s (runtimeReady=true; resolve + submit)\n' \
-  "${MEMBER_IMAGE}"
+printf '[Tiangong] Professional profile images validated: %s, %s, %s, %s (runtimeReady=true; resolve + submit)\n' \
+  "${DESIGNER_IMAGE}" "${IMPLEMENTOR_IMAGE}" "${ASSESSOR_IMAGE}" "${OPERATOR_IMAGE}"

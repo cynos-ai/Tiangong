@@ -47,14 +47,25 @@ const registries = deepFreeze({
       roleSkillId: "leader-v1",
       profileDigest: "f580eae443496ed7a3e50575e7157d5563a491b53d9d07ea2bd2f33032272fac",
     },
-    "team-member": {
-      id: "team-member",
-      title: "Tiangong Professional Worker",
-      practiceIds: [],
-      toolIds: ["team_resolve_task", "team_submit_result"],
-      gatePolicyId: "team-member-tools-v1",
-      roleSkillId: "team-member-v1",
-      profileDigest: "baf45788b7dbb350eee233e44453e6b6e4381c45a84b29ddc0eaa3a54ea1f53b",
+    designer: {
+      id: "designer", title: "Tiangong Designer", practiceIds: [],
+      toolIds: ["team_resolve_task", "team_submit_result"], gatePolicyId: "professional-tools-v1",
+      roleSkillId: "designer-v1", profileDigest: "aad09452ef5976eeee24a1c976eeae93064ed01bb84ba8bc85588586b361e3e6",
+    },
+    implementor: {
+      id: "implementor", title: "Tiangong Implementor", practiceIds: [],
+      toolIds: ["team_resolve_task", "team_submit_result"], gatePolicyId: "professional-tools-v1",
+      roleSkillId: "implementor-v1", profileDigest: "b480e40a8d3c332cd0e57577f37aed44cb7102653075ba9ec5a0da2f8d49162e",
+    },
+    assessor: {
+      id: "assessor", title: "Tiangong Assessor", practiceIds: [],
+      toolIds: ["team_resolve_task", "team_submit_result"], gatePolicyId: "professional-tools-v1",
+      roleSkillId: "assessor-v1", profileDigest: "25ca2f8b55cde6859521458f81c008d91be0bda4675e6fe16b792f36a2fd0a83",
+    },
+    operator: {
+      id: "operator", title: "Tiangong Operator", practiceIds: [],
+      toolIds: ["team_resolve_task", "team_submit_result"], gatePolicyId: "professional-tools-v1",
+      roleSkillId: "operator-v1", profileDigest: "52a3929e673a2d1e0142b1db0488b6bcc18a3c769c99494561e6eca3e80cae02",
     },
   },
   targetKinds: {
@@ -161,15 +172,15 @@ const registries = deepFreeze({
     team_resolve_task: {
       id: "team_resolve_task",
       executionMode: "sequential",
-      profileRoleIds: ["team-member"],
-      materializedRoleIds: ["team-member"],
+      profileRoleIds: ["designer", "implementor", "assessor", "operator"],
+      materializedRoleIds: ["designer", "implementor", "assessor", "operator"],
     },
     team_submit_result: {
       id: "team_submit_result",
       executionMode: "sequential",
-      profileRoleIds: ["team-member"],
-      materializedRoleIds: ["team-member"],
-    },
+      profileRoleIds: ["designer", "implementor", "assessor", "operator"],
+      materializedRoleIds: ["designer", "implementor", "assessor", "operator"],
+    }
   },
   practices: {
     "workspace-operations": {
@@ -203,9 +214,9 @@ const registries = deepFreeze({
       supportedRoleIds: ["leader"],
       toolIds: ["team_create_project", "team_dispatch_task", "team_check_result", "team_decide_task", "team_report"],
     },
-    "team-member-tools-v1": {
-      id: "team-member-tools-v1",
-      supportedRoleIds: ["team-member"],
+    "professional-tools-v1": {
+      id: "professional-tools-v1",
+      supportedRoleIds: ["designer", "implementor", "assessor", "operator"],
       toolIds: ["team_resolve_task", "team_submit_result"],
     },
   },
@@ -231,12 +242,21 @@ const registries = deepFreeze({
       digest: "fda132c9d4449008f81f3295ddc85f81ead5d7f8a39c3f16e1dec30fa62212b6",
       maxBytes: 16 * 1024,
     },
-    "team-member-v1": {
-      id: "team-member-v1",
-      supportedRoleIds: ["team-member"],
-      relativePath: "roles/team-member/role.md",
-      digest: "97b8521510c41d56d966957171bf4d29775ee66ac7131c771d4904883d6bb471",
-      maxBytes: 16 * 1024,
+    "designer-v1": {
+      id: "designer-v1", supportedRoleIds: ["designer"], relativePath: "roles/designer/role.md",
+      digest: "360ff77f2da57456ff9510720176e61db03a0b36de3eeb0f9b1338f28296a3f9", maxBytes: 16 * 1024,
+    },
+    "implementor-v1": {
+      id: "implementor-v1", supportedRoleIds: ["implementor"], relativePath: "roles/implementor/role.md",
+      digest: "73ccf10923efd9c7200f872e09fe743b41662a71149df38a867fb4f058250a8b", maxBytes: 16 * 1024,
+    },
+    "assessor-v1": {
+      id: "assessor-v1", supportedRoleIds: ["assessor"], relativePath: "roles/assessor/role.md",
+      digest: "9cc39ed746ae6c9dfc78b8e4e2838d23b258b29106fa135379480ff5865d0e37", maxBytes: 16 * 1024,
+    },
+    "operator-v1": {
+      id: "operator-v1", supportedRoleIds: ["operator"], relativePath: "roles/operator/role.md",
+      digest: "c47469c440ad86994082d8413d9fd004ae6b8c9a7c0e3290850e12d00430767e", maxBytes: 16 * 1024,
     },
   },
   methodologySkills: {

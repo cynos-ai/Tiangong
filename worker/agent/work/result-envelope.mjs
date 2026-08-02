@@ -12,7 +12,13 @@ const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/u;
 const ISO_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/u;
 const TASK_KIND_SET = new Set(TASK_KINDS);
-const ROLE_SET = new Set(TEAM_ROLES);
+const ROLE_SET = new Set(TEAM_ROLES.filter((role) => role !== "team_leader"));
+const TASK_KIND_ROLE = Object.freeze({
+  design: "designer",
+  implement: "implementor",
+  assess: "assessor",
+  release: "operator",
+});
 const CLAIM_MAX = 8192;
 const SUMMARY_MAX = 4096;
 // taskKinds whose Result must seal a ChangeRevisionRef.
@@ -52,30 +58,29 @@ export function createResultEnvelope(input) {
   if (!ROLE_SET.has(input.sourceRole)) {
     throw new Error(`Unsupported source role: ${input.sourceRole}`);
   }
+  if (TASK_KIND_ROLE[input.taskKind] !== input.sourceRole) {
+    throw new Error(`sourceRole ${input.sourceRole} cannot produce a ${input.taskKind} result`);
+  }
 
   const record = {
     kind: "tiangong.result-envelope",
     schemaVersion: 1,
     taskId: demandPattern(input.taskId, "taskId", ID_PATTERN),
     projectId: demandPattern(input.projectId, "projectId", ID_PATTERN),
+    producer: demandPattern(input.producer, "producer", ID_PATTERN),
     taskKind: input.taskKind,
     revisionIndex: input.revisionIndex,
     sourceRole: input.sourceRole,
+    playbookDigest: demandPattern(input.playbookDigest, "playbookDigest", DIGEST_PATTERN),
+    taskBindingDigest: demandPattern(input.taskBindingDigest, "taskBindingDigest", DIGEST_PATTERN),
     completionContractDigest: demandPattern(input.completionContractDigest, "completionContractDigest", DIGEST_PATTERN),
+    sourceProfileDigest: demandPattern(input.sourceProfileDigest, "sourceProfileDigest", DIGEST_PATTERN),
+    sourceSkillId: demandString(input.sourceSkillId, "sourceSkillId"),
+    skillDigest: demandPattern(input.skillDigest, "skillDigest", DIGEST_PATTERN),
     artifactRefs: frozenRefArray(input.artifactRefs, "artifactRefs"),
     evidenceRefs: frozenRefArray(input.evidenceRefs, "evidenceRefs"),
     createdAt: demandPattern(input.createdAt, "createdAt", ISO_PATTERN),
   };
-
-  if (input.sourceProfileDigest !== undefined && input.sourceProfileDigest !== null) {
-    record.sourceProfileDigest = demandPattern(input.sourceProfileDigest, "sourceProfileDigest", DIGEST_PATTERN);
-  }
-  if (input.sourceSkillId !== undefined && input.sourceSkillId !== null) {
-    record.sourceSkillId = demandString(input.sourceSkillId, "sourceSkillId");
-  }
-  if (input.skillDigest !== undefined && input.skillDigest !== null) {
-    record.skillDigest = demandPattern(input.skillDigest, "skillDigest", DIGEST_PATTERN);
-  }
 
   // A blocker envelope reports why the Worker cannot proceed; otherwise a
   // non-empty professional claim is required.
@@ -107,11 +112,31 @@ export function createResultEnvelope(input) {
 }
 
 export function isResultEnvelope(value) {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    value.kind === "tiangong.result-envelope" &&
-    typeof value.contentDigest === "string" &&
-    DIGEST_PATTERN.test(value.contentDigest)
-  );
+  try {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+    const recreated = createResultEnvelope({
+      taskId: value.taskId,
+      projectId: value.projectId,
+      producer: value.producer,
+      taskKind: value.taskKind,
+      revisionIndex: value.revisionIndex,
+      sourceRole: value.sourceRole,
+      playbookDigest: value.playbookDigest,
+      taskBindingDigest: value.taskBindingDigest,
+      completionContractDigest: value.completionContractDigest,
+      artifactRefs: value.artifactRefs,
+      evidenceRefs: value.evidenceRefs,
+      createdAt: value.createdAt,
+      sourceProfileDigest: value.sourceProfileDigest,
+      sourceSkillId: value.sourceSkillId,
+      skillDigest: value.skillDigest,
+      blocker: value.blocker,
+      claim: value.claim,
+      changeRevisionRef: value.changeRevisionRef,
+      revisionRequest: value.revisionRequest,
+    });
+    return canonicalJson(recreated) === canonicalJson(value);
+  } catch {
+    return false;
+  }
 }

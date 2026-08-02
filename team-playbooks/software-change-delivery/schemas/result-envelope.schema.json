@@ -2,50 +2,80 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tiangong.invalid/schemas/software-change-delivery-result-v1.json",
   "title": "software-change-delivery-result-v1",
-  "description": "ResultEnvelope shape a Worker submits for a software-change-delivery Task. The authoritative producer of each field is the role that owns the taskKind; the Leader records accept/revision/blocked decisions, never a Worker.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["taskKind", "revisionIndex", "claim", "artifactRefs"],
+  "required": [
+    "kind", "schemaVersion", "taskId", "projectId", "producer", "taskKind",
+    "revisionIndex", "sourceRole", "playbookDigest", "taskBindingDigest",
+    "completionContractDigest", "artifactRefs", "evidenceRefs", "createdAt", "contentDigest"
+  ],
   "properties": {
-    "taskKind": {
-      "enum": ["design", "implement", "assess", "release"]
-    },
-    "revisionIndex": {
-      "type": "integer",
-      "minimum": 0
-    },
+    "kind": { "const": "tiangong.result-envelope" },
+    "schemaVersion": { "const": 1 },
+    "taskId": { "$ref": "#/$defs/id" },
+    "projectId": { "$ref": "#/$defs/id" },
+    "producer": { "$ref": "#/$defs/id" },
+    "taskKind": { "enum": ["design", "implement", "assess", "release"] },
+    "revisionIndex": { "type": "integer", "minimum": 0 },
+    "sourceRole": { "enum": ["designer", "implementor", "assessor", "operator"] },
+    "playbookDigest": { "$ref": "#/$defs/digest" },
+    "taskBindingDigest": { "$ref": "#/$defs/digest" },
+    "completionContractDigest": { "$ref": "#/$defs/digest" },
+    "sourceProfileDigest": { "$ref": "#/$defs/digest" },
+    "sourceSkillId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "skillDigest": { "$ref": "#/$defs/digest" },
+    "claim": { "type": "string", "minLength": 1, "maxLength": 8192 },
+    "blocker": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "artifactRefs": { "$ref": "#/$defs/refs" },
+    "evidenceRefs": { "$ref": "#/$defs/refs" },
     "changeRevisionRef": {
-      "description": "Required for implement and release tasks: the sealed artifact reference the Assessor verifies and the Operator deploys.",
-      "type": ["object", "null"],
+      "type": "object",
       "additionalProperties": false,
-      "required": ["producerTaskId", "artifactPath", "artifactDigest", "revision"],
+      "required": ["kind", "schemaVersion", "producerTaskId", "artifactPath", "artifactDigest", "revision", "contentDigest"],
       "properties": {
-        "producerTaskId": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "artifactPath": { "type": "string", "minLength": 1 },
-        "artifactDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "revision": { "type": "integer", "minimum": 0 }
+        "kind": { "const": "tiangong.change-revision-ref" },
+        "schemaVersion": { "const": 1 },
+        "producerTaskId": { "$ref": "#/$defs/id" },
+        "artifactPath": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "artifactDigest": { "$ref": "#/$defs/digest" },
+        "revision": { "type": "integer", "minimum": 0 },
+        "contentDigest": { "$ref": "#/$defs/digest" }
       }
     },
-    "claim": {
-      "description": "Professional claim text. A claim is never Evidence by itself.",
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 8192
+    "revisionRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary"],
+      "properties": { "summary": { "type": "string", "minLength": 1, "maxLength": 4096 } }
     },
-    "completionContractDigest": {
-      "description": "Echo of the Task binding's completion contract; must match for the Result to count.",
-      "type": "string",
-      "pattern": "^[0-9a-f]{64}$"
+    "createdAt": { "type": "string", "format": "date-time" },
+    "contentDigest": { "$ref": "#/$defs/digest" }
+  },
+  "oneOf": [
+    { "required": ["claim"], "not": { "required": ["blocker"] } },
+    { "required": ["blocker"], "not": { "required": ["claim"] } }
+  ],
+  "allOf": [
+    {
+      "if": { "properties": { "taskKind": { "enum": ["implement", "release"] } }, "required": ["taskKind"] },
+      "then": {
+        "if": { "not": { "required": ["blocker"] } },
+        "then": { "required": ["changeRevisionRef"] }
+      }
     },
-    "artifactRefs": {
+    {
+      "if": { "required": ["revisionRequest"] },
+      "then": { "properties": { "taskKind": { "const": "assess" } } }
+    }
+  ],
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "refs": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1, "maxLength": 128 },
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/id" },
       "uniqueItems": true
-    },
-    "blocker": {
-      "description": "Set only when the Worker cannot proceed; forces a BLOCKED transition.",
-      "type": ["string", "null"],
-      "maxLength": 4096
     }
   }
 }

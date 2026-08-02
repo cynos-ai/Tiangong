@@ -15,7 +15,7 @@ import test from "node:test";
 
 import { assertTransitionAllowed, assertResultCurrent, dispositionForRelease, reduceTaskChain } from "../agent/playbook/transition-policy.mjs";
 import { buildProjectBinding, buildTaskBinding, readPlaybookManifest } from "../agent/playbook/resolver.mjs";
-import { createTaskDecision, createTaskResult, dispatchTask, recordTaskDecision, resolveAssignedTask, submitResult, createProject } from "../agent/team/team-task-port.mjs";
+import { createTaskDecision, dispatchTask, recordTaskDecision, resolveAssignedTask, submitResult, createProject } from "../agent/team/team-task-port.mjs";
 import { WorkRunStore } from "../agent/work/work-run-store.mjs";
 import { createResultEnvelope } from "../agent/work/result-envelope.mjs";
 
@@ -32,20 +32,33 @@ function channel() {
   const calls = [];
   return {
     calls,
-    notifyAssignee: (w, t, d) => calls.push({ kind: "notifyAssignee", worker: w, taskId: t }),
-    notifyLeader: (t) => calls.push({ kind: "notifyLeader", taskId: t }),
+    async assertTeamIdentity(role) { return { team: "team-1", role }; },
+    async assertTeamRoster() { return { roomId: "!team:example.test", roomIdDigest: "f".repeat(64), memberDigests: [] }; },
+    async notifyAssignee(w, t, d) {
+      calls.push({ kind: "notifyAssignee", worker: w, taskId: t });
+      return { queued: true, delivered: false };
+    },
+    async notifyLeader(t) {
+      calls.push({ kind: "notifyLeader", taskId: t });
+      return { queued: true, delivered: false };
+    },
   };
 }
 function evidence() {
   const events = [];
-  return { events, record: (e) => events.push(e) };
+  return { events, async append(e) { events.push(e); } };
 }
 function depsFor(worker, root, ch) {
   return {
     rootDir: root,
-    env: { AGENTTEAMS_WORKER_NAME: worker, AGENTTEAMS_WORKER_ROOM_ID: `room-${worker}` },
+    env: {
+      AGENTTEAMS_WORKER_NAME: worker,
+      AGENTTEAMS_WORKER_ROLE: worker === LEADER ? "team_leader" : "worker",
+      AGENTTEAMS_WORKER_ROOM_ID: `room-${worker}`,
+      AGENTTEAMS_MATRIX_DOMAIN: "example.test",
+    },
     channel: ch,
-    sync: { beforeRead: () => {} },
+    sync: { async beforeRead() {}, async afterWrite() {} },
     evidence: evidence(),
   };
 }
@@ -64,7 +77,7 @@ async function runStep({ pb, project, root, chain, taskKind, revisionIndex, assi
     taskKind,
     revisionIndex,
     assignee,
-    completionContractDigest: pb.contentDigest,
+    completionContractDigest: pb.completionSchemaDigest,
     createdAt: T(1),
   });
   // TransitionPolicy gates creation: legal role + deterministic next step
@@ -76,7 +89,7 @@ async function runStep({ pb, project, root, chain, taskKind, revisionIndex, assi
 
   // Worker-local WorkRun lifecycle
   const store = roleStores[assignee];
-  const run = await store.open({ runId: `run-${taskId}`, taskId, role: pb.taskKindRoles[taskKind], skillId: `${taskKind}-v1`, objective: taskKind, scope: taskKind, completionContractDigest: pb.contentDigest, createdAt: T(1) });
+  const run = await store.open({ runId: `run-${taskId}`, taskId, role: pb.taskKindRoles[taskKind], skillId: `${taskKind}-v1`, objective: taskKind, scope: taskKind, completionContractDigest: pb.completionSchemaDigest, createdAt: T(1) });
   await store.transition(run.binding.runId, "executing");
   await store.transition(run.binding.runId, "verifying");
   await store.transition(run.binding.runId, "finalized");
@@ -89,8 +102,14 @@ async function runStep({ pb, project, root, chain, taskKind, revisionIndex, assi
     projectId: PROJECT_ID,
     taskKind,
     revisionIndex,
+    producer: assignee,
     sourceRole: pb.taskKindRoles[taskKind],
-    completionContractDigest: pb.contentDigest,
+    playbookDigest: pb.contentDigest,
+    taskBindingDigest: task.contentDigest,
+    completionContractDigest: pb.completionSchemaDigest,
+    sourceProfileDigest: task.sourceProfileDigest,
+    sourceSkillId: task.sourceSkillId,
+    skillDigest: task.sourceSkillDigest,
     createdAt: T(2),
   };
   if (taskKind === "implement" || taskKind === "release") {
@@ -104,7 +123,7 @@ async function runStep({ pb, project, root, chain, taskKind, revisionIndex, assi
   }
   const envelope = createResultEnvelope(envelopeInput);
 
-  const stored = createTaskResult({ taskId, projectId: PROJECT_ID, producer: assignee, summary: envelope.claim ?? envelope.blocker, artifactRefs: [], createdAt: T(2) });
+  const stored = envelope;
   const workerCh = channel();
   await submitResult(stored, depsFor(assignee, root, workerCh));
   assert.equal(workerCh.calls.some((c) => c.kind === "notifyLeader"), true);
@@ -112,13 +131,13 @@ async function runStep({ pb, project, root, chain, taskKind, revisionIndex, assi
   if (!decide) return undefined; // release hands off to deploy, no task decision
 
   const decision = createTaskDecision({
-    decisionId: `dec-${taskId}`,
     taskId,
     projectId: PROJECT_ID,
+    playbookDigest: pb.contentDigest,
     decision: decide,
     revisionIndex,
     decidedBy: LEADER,
-    resultDigest: decide === "accept" ? stored.contentDigest : undefined,
+    resultDigest: stored.contentDigest,
     createdAt: T(3),
   });
   // gate: accept must reference the current result
@@ -131,7 +150,7 @@ test("full coordination: design -> implement -> assess revision -> implement@1 -
   const root = await mkdtemp(join(tmpdir(), "tiangong-integ-"));
   try {
     const pb = readPlaybookManifest("software-change-delivery");
-    const project = buildProjectBinding({ playbook: pb, projectId: PROJECT_ID, roleBindings: ROLE_BINDINGS, createdAt: T(0) });
+    const project = buildProjectBinding({ playbook: pb, projectId: PROJECT_ID, requester: "@manager:example.test", roleBindings: ROLE_BINDINGS, createdAt: T(0) });
     await createProject(project, depsFor(LEADER, root, channel()));
     const roleStores = {
       [DESIGNER]: runStore(join(root, "designer")),
@@ -173,16 +192,16 @@ test("dispatch is idempotent across the integration boundary", async () => {
   const root = await mkdtemp(join(tmpdir(), "tiangong-integ-idem-"));
   try {
     const pb = readPlaybookManifest("software-change-delivery");
-    const project = buildProjectBinding({ playbook: pb, projectId: PROJECT_ID, roleBindings: ROLE_BINDINGS, createdAt: T(0) });
+    const project = buildProjectBinding({ playbook: pb, projectId: PROJECT_ID, requester: "@manager:example.test", roleBindings: ROLE_BINDINGS, createdAt: T(0) });
     await createProject(project, depsFor(LEADER, root, channel()));
-    const task = buildTaskBinding({ playbook: pb, taskId: "task-design-0-idem", projectId: PROJECT_ID, taskKind: "design", revisionIndex: 0, assignee: DESIGNER, completionContractDigest: pb.contentDigest, createdAt: T(1) });
+    const task = buildTaskBinding({ playbook: pb, taskId: "task-design-0-idem", projectId: PROJECT_ID, taskKind: "design", revisionIndex: 0, assignee: DESIGNER, completionContractDigest: pb.completionSchemaDigest, createdAt: T(1) });
     assertTransitionAllowed({ projectBinding: project, taskBinding: task, chain: [] });
     const ch1 = channel();
     await dispatchTask(task, depsFor(LEADER, root, ch1));
     const ch2 = channel();
     const replayed = await dispatchTask(task, depsFor(LEADER, root, ch2));
     assert.equal(replayed.replayed, true);
-    assert.equal(ch2.calls.length, 0);
+    assert.equal(ch2.calls.length, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -190,15 +209,15 @@ test("dispatch is idempotent across the integration boundary", async () => {
 
 test("the policy rejects an illegal role and an expired result within the flow", async () => {
   const pb = readPlaybookManifest("software-change-delivery");
-  const project = buildProjectBinding({ playbook: pb, projectId: PROJECT_ID, roleBindings: ROLE_BINDINGS, createdAt: T(0) });
+  const project = buildProjectBinding({ playbook: pb, projectId: PROJECT_ID, requester: "@manager:example.test", roleBindings: ROLE_BINDINGS, createdAt: T(0) });
   // assessor assigned to a design task -> illegal role
-  const wrongRole = buildTaskBinding({ playbook: pb, taskId: "task-x", projectId: PROJECT_ID, taskKind: "design", revisionIndex: 0, assignee: ASSESS, completionContractDigest: pb.contentDigest, createdAt: T(1) });
+  const wrongRole = buildTaskBinding({ playbook: pb, taskId: "task-x", projectId: PROJECT_ID, taskKind: "design", revisionIndex: 0, assignee: ASSESS, completionContractDigest: pb.completionSchemaDigest, createdAt: T(1) });
   assert.throws(() => assertTransitionAllowed({ projectBinding: project, taskBinding: wrongRole, chain: [] }), /must be owned by designer/);
   // an accept referencing a stale result digest is rejected
   const fresh = "a".repeat(64);
   const stale = "b".repeat(64);
   assert.throws(
     () => assertResultCurrent({ decision: { taskId: "t", revisionIndex: 0, decision: "accept", resultDigest: stale }, taskBinding: { taskId: "t", revisionIndex: 0 }, latestResultDigest: fresh }),
-    /expired result digest/,
+    /bind the current result digest/,
   );
 });

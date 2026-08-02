@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "roleId": "assessor",
+  "title": "Tiangong Assessor",
+  "practiceIds": [],
+  "toolIds": ["team_resolve_task", "team_submit_result"],
+  "gatePolicyId": "professional-tools-v1",
+  "roleSkillId": "assessor-v1"
+}

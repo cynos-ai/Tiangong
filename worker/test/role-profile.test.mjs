@@ -102,6 +102,19 @@ test("the leader profile loads practice-less with the closed coordination tool s
   assert.match(buildBaseSystemPrompt(leader), new RegExp(leader.profileDigest, "u"));
 });
 
+test("four independent professional profiles load with role-specific Skills", async () => {
+  for (const roleId of ["designer", "implementor", "assessor", "operator"]) {
+    const profile = await loadSourceProfile(roleId);
+    assert.equal(profile.profile.roleId, roleId);
+    assert.deepEqual(profile.profile.practiceIds, []);
+    assert.deepEqual(profile.profile.toolIds, ["team_resolve_task", "team_submit_result"]);
+    assert.equal(profile.gatePolicy.id, "professional-tools-v1");
+    assert.equal(profile.roleSkill.id, `${roleId}-v1`);
+    assert.match(profile.roleSkill.text, new RegExp(`Tiangong ${roleId[0].toUpperCase()}${roleId.slice(1)}`, "u"));
+    assert.equal(assertRuntimeProfileMaterialized(profile), profile);
+  }
+});
+
 test("closed registries deny Reviewer mutation and unknown capability selection", async () => {
   const registries = roleRegistrySnapshot();
   assert.equal(Object.isFrozen(registries), true);

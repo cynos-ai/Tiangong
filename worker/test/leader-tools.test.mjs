@@ -4,14 +4,22 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { TurnGateState } from "../agent/gates/turn-state.mjs";
 import { readPlaybookManifest } from "../agent/playbook/resolver.mjs";
-import { createTaskResult, submitResult } from "../agent/team/team-task-port.mjs";
+import { TeamCoordinationGate } from "../agent/team/tool-wrapper.mjs";
+import { submitResult } from "../agent/team/team-task-port.mjs";
 import { createLeaderToolRegistry } from "../agent/work/leader-tools.mjs";
+import { createResultEnvelope } from "../agent/work/result-envelope.mjs";
 
 const LEADER = "tiangong-leader";
 const DESIGNER = "tiangong-designer";
 const IMPL = "tiangong-implementor";
-const ROLE_BINDINGS = { team_leader: LEADER, designer: DESIGNER, implementor: IMPL, assessor: "tiangong-assessor", operator: "tiangong-operator" };
+const ROLE_BINDINGS_INPUT = {
+  designer: DESIGNER,
+  implementor: IMPL,
+  assessor: "tiangong-assessor",
+  operator: "tiangong-operator",
+};
 const PROJECT_ID = "proj-leader-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const T = (n) => `2026-08-01T12:0${n}:00Z`;
 
@@ -19,40 +27,101 @@ function channel() {
   const calls = [];
   return {
     calls,
-    notifyAssignee: (w, t) => calls.push({ kind: "notifyAssignee", worker: w, taskId: t }),
-    notifyLeader: (t) => calls.push({ kind: "notifyLeader", taskId: t }),
-    reportToRequester: (p, s, d) => calls.push({ kind: "reportToRequester", projectId: p, disposition: d }),
+    async assertTeamIdentity(role) { return { team: "team-1", role }; },
+    async assertTeamRoster() { return { roomId: "!team:example.test", roomIdDigest: "f".repeat(64), memberDigests: [] }; },
+    async notifyAssignee(worker, taskId) {
+      calls.push({ kind: "notifyAssignee", worker, taskId });
+      return { queued: true, delivered: false };
+    },
+    async notifyLeader(taskId) {
+      calls.push({ kind: "notifyLeader", taskId });
+      return { queued: true, delivered: false };
+    },
+    async reportRequester(requester, projectId, disposition, reportDigest, summary) {
+      calls.push({ kind: "reportRequester", requester, projectId, disposition, reportDigest, summary });
+      return { queued: true, delivered: false };
+    },
   };
 }
 function evidence() {
   const events = [];
-  return { events, record: (e) => events.push(e) };
+  return { events, async append(event) { events.push(event); } };
 }
-function depsFor(root) {
-  return { rootDir: root, env: { AGENTTEAMS_WORKER_NAME: LEADER, AGENTTEAMS_WORKER_ROOM_ID: `room-${LEADER}` }, channel: channel(), sync: { beforeRead: () => {} }, evidence: evidence(), now: () => T(1) };
+function depsFor(root, worker = LEADER, extra = {}) {
+  const ev = evidence();
+  return {
+    rootDir: root,
+    env: {
+      AGENTTEAMS_WORKER_NAME: worker,
+      AGENTTEAMS_WORKER_ROLE: worker === LEADER ? "team_leader" : "worker",
+      AGENTTEAMS_WORKER_ROOM_ID: `room-${worker}`,
+      AGENTTEAMS_MATRIX_DOMAIN: "example.test",
+    },
+    channel: channel(),
+    sync: { async beforeRead() {}, async afterWrite() {} },
+    evidence: ev,
+    gate: new TeamCoordinationGate(),
+    getInvocation: () => ({
+      sessionId: `session-${worker}`,
+      turnId: `turn-${worker}`,
+      actor: { id: "@admin:example.test" },
+      turnState: new TurnGateState(),
+      resumed: false,
+    }),
+    now: () => T(1),
+    ...extra,
+  };
 }
-function details(result) {
-  return JSON.parse(result.content[0].text);
-}
-
+function details(result) { return JSON.parse(result.content[0].text); }
 async function withRoot(fn) {
   const root = await mkdtemp(join(tmpdir(), "tiangong-leader-tools-"));
-  try {
-    await fn(root);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  try { await fn(root); } finally { await rm(root, { recursive: true, force: true }); }
+}
+function definition(registry, name) {
+  return registry.definitions().find((tool) => tool.name === name);
+}
+async function createAndDispatch(registry, taskId = "task-design-0") {
+  await definition(registry, "team_create_project").execute("create", {
+    projectId: PROJECT_ID,
+    roleBindings: ROLE_BINDINGS_INPUT,
+  });
+  return definition(registry, "team_dispatch_task").execute("dispatch", {
+    projectId: PROJECT_ID,
+    taskId,
+    taskKind: "design",
+    revisionIndex: 0,
+    assignee: DESIGNER,
+  });
+}
+function designResult(pb, taskId, taskBindingDigest) {
+  return createResultEnvelope({
+    taskId,
+    projectId: PROJECT_ID,
+    producer: DESIGNER,
+    taskKind: "design",
+    revisionIndex: 0,
+    sourceRole: "designer",
+    playbookDigest: pb.contentDigest,
+    taskBindingDigest,
+    completionContractDigest: pb.completionSchemaDigest,
+    sourceProfileDigest: "aad09452ef5976eeee24a1c976eeae93064ed01bb84ba8bc85588586b361e3e6",
+    sourceSkillId: "designer-v1",
+    skillDigest: "360ff77f2da57456ff9510720176e61db03a0b36de3eeb0f9b1338f28296a3f9",
+    claim: "design done",
+    evidenceRefs: ["evidence-design"],
+    createdAt: T(2),
+  });
 }
 
-test("createLeaderToolRegistry requires a loaded playbook and team deps", () => {
+test("createLeaderToolRegistry requires loaded playbook and wrapped team dependencies", () => {
   const pb = readPlaybookManifest("software-change-delivery");
-  assert.throws(() => createLeaderToolRegistry({ deps: { rootDir: "/x" } }), /loaded playbook/);
-  assert.throws(() => createLeaderToolRegistry({ playbook: pb }), /team deps/);
+  assert.throws(() => createLeaderToolRegistry({ deps: { rootDir: "/x" } }), /loaded playbook/u);
+  assert.throws(() => createLeaderToolRegistry({ playbook: pb, deps: { rootDir: "/x" } }), /Gate, Evidence/u);
 });
 
-test("the leader tool surface is the closed coordination set", () => {
+test("the Leader exposes only the wrapped closed coordination surface", () => {
   const pb = readPlaybookManifest("software-change-delivery");
-  const registry = createLeaderToolRegistry({ playbook: pb, deps: { rootDir: "/x" } });
+  const registry = createLeaderToolRegistry({ playbook: pb, deps: depsFor("/x") });
   assert.deepEqual(registry.names(), [
     "team_create_project",
     "team_dispatch_task",
@@ -62,100 +131,107 @@ test("the leader tool surface is the closed coordination set", () => {
   ]);
 });
 
-test("a leader creates a project then dispatches design as the first task", async () => {
+test("Leader creates an AgentTeams Project and dispatches only one active design Task", async () => {
   await withRoot(async (root) => {
     const pb = readPlaybookManifest("software-change-delivery");
     const deps = depsFor(root);
     const registry = createLeaderToolRegistry({ playbook: pb, deps });
+    const dispatched = await createAndDispatch(registry);
+    assert.equal(details(dispatched).notified, false);
+    assert.equal(details(dispatched).notificationQueued, true);
+    assert.ok(deps.evidence.events.some((event) => event.type === "gate.decided"));
+    const project = JSON.parse(await (await import("node:fs/promises")).readFile(
+      join(root, "projects", PROJECT_ID, "tiangong", "project-binding.json"), "utf8",
+    ));
+    assert.equal(project.requester, "@admin:example.test");
 
-    const created = await registry.definitions().find((t) => t.name === "team_create_project").execute(0, { projectId: PROJECT_ID, roleBindings: ROLE_BINDINGS });
-    assert.equal(details(created).projectId, PROJECT_ID);
-
-    const dispatch = registry.definitions().find((t) => t.name === "team_dispatch_task");
-    const out = await dispatch.execute(0, { projectId: PROJECT_ID, taskId: "task-design-0", taskKind: "design", revisionIndex: 0, assignee: DESIGNER });
-    assert.equal(details(out).notified, true);
-    assert.equal(details(out).taskKind, "design");
-  });
-});
-
-test("dispatch rejects an out-of-order step and an illegal role", async () => {
-  await withRoot(async (root) => {
-    const pb = readPlaybookManifest("software-change-delivery");
-    const deps = depsFor(root);
-    const registry = createLeaderToolRegistry({ playbook: pb, deps });
-    await registry.definitions().find((t) => t.name === "team_create_project").execute(0, { projectId: PROJECT_ID, roleBindings: ROLE_BINDINGS });
-    const dispatch = registry.definitions().find((t) => t.name === "team_dispatch_task");
-
-    // implement before design is accepted -> wrong step
     await assert.rejects(
-      () => dispatch.execute(0, { projectId: PROJECT_ID, taskId: "task-impl-0", taskKind: "implement", revisionIndex: 0, assignee: IMPL }),
-      /Expected next task design/,
-    );
-    // design assigned to the implementor worker -> illegal role
-    await assert.rejects(
-      () => dispatch.execute(0, { projectId: PROJECT_ID, taskId: "task-design-0", taskKind: "design", revisionIndex: 0, assignee: IMPL }),
-      /must be owned by designer/,
+      () => definition(registry, "team_dispatch_task").execute("dispatch-2", {
+        projectId: PROJECT_ID,
+        taskId: "task-design-duplicate",
+        taskKind: "design",
+        revisionIndex: 0,
+        assignee: DESIGNER,
+      }),
+      /undecided Task/u,
     );
   });
 });
 
-test("an accept requires the task's current result; a revision is allowed without one", async () => {
+test("accept binds the current schema-valid ResultEnvelope", async () => {
   await withRoot(async (root) => {
     const pb = readPlaybookManifest("software-change-delivery");
     const deps = depsFor(root);
     const registry = createLeaderToolRegistry({ playbook: pb, deps });
-    await registry.definitions().find((t) => t.name === "team_create_project").execute(0, { projectId: PROJECT_ID, roleBindings: ROLE_BINDINGS });
-    const dispatch = registry.definitions().find((t) => t.name === "team_dispatch_task");
-    const decide = registry.definitions().find((t) => t.name === "team_decide_task");
-
-    await dispatch.execute(0, { projectId: PROJECT_ID, taskId: "task-design-0", taskKind: "design", revisionIndex: 0, assignee: DESIGNER });
-
-    // accept with no submitted result -> rejected (no result to read)
+    await createAndDispatch(registry);
     await assert.rejects(
-      () => decide.execute(0, { taskId: "task-design-0", decision: "accept" }),
-      /No task result/,
+      () => definition(registry, "team_decide_task").execute("accept-empty", {
+        taskId: "task-design-0",
+        decision: "accept",
+      }),
+      /No task result/u,
     );
 
-    // a designer submits a result, then the leader accepts against the current result
-    const workerDeps = { rootDir: root, env: { AGENTTEAMS_WORKER_NAME: DESIGNER, AGENTTEAMS_WORKER_ROOM_ID: "room-d" }, channel: channel(), sync: { beforeRead: () => {} }, evidence: evidence(), now: () => T(2) };
-    await submitResult(createTaskResult({ taskId: "task-design-0", projectId: PROJECT_ID, producer: DESIGNER, summary: "design done", createdAt: T(2) }), workerDeps);
-    const accepted = await decide.execute(0, { taskId: "task-design-0", decision: "accept" });
+    const taskBinding = JSON.parse(await (await import("node:fs/promises")).readFile(
+      join(root, "tasks", "task-design-0", "tiangong", "task-binding.json"), "utf8",
+    ));
+    const result = designResult(pb, "task-design-0", taskBinding.contentDigest);
+    await submitResult(result, depsFor(root, DESIGNER));
+    const accepted = await definition(registry, "team_decide_task").execute("accept", {
+      taskId: "task-design-0",
+      decision: "accept",
+    });
     assert.equal(details(accepted).decision, "accept");
   });
 });
 
-test("re-dispatching the same taskId is an idempotent replay", async () => {
+test("terminal reporting fails closed without exact authoritative disposition", async () => {
   await withRoot(async (root) => {
     const pb = readPlaybookManifest("software-change-delivery");
-    const deps = depsFor(root);
+    const blocked = createLeaderToolRegistry({ playbook: pb, deps: depsFor(root) });
+    await assert.rejects(
+      () => definition(blocked, "team_report").execute("report", {
+        projectId: PROJECT_ID,
+        summary: "premature",
+        disposition: "DELIVERED",
+      }),
+      /disposition is unavailable/u,
+    );
+
+    const deps = depsFor(root, LEADER, { getProjectDisposition: async () => "FAILED_SAFE" });
     const registry = createLeaderToolRegistry({ playbook: pb, deps });
-    await registry.definitions().find((t) => t.name === "team_create_project").execute(0, { projectId: PROJECT_ID, roleBindings: ROLE_BINDINGS });
-    const dispatch = registry.definitions().find((t) => t.name === "team_dispatch_task");
-    await dispatch.execute(0, { projectId: PROJECT_ID, taskId: "task-design-0", taskKind: "design", revisionIndex: 0, assignee: DESIGNER });
-    const replayed = await dispatch.execute(0, { projectId: PROJECT_ID, taskId: "task-design-0", taskKind: "design", revisionIndex: 0, assignee: DESIGNER });
-    assert.equal(details(replayed).replayed, true);
-    assert.equal(details(replayed).notified, false);
-  });
-});
-
-test("the leader can dispatch the next task after an accept, and report DELIVERED", async () => {
-  await withRoot(async (root) => {
-    const pb = readPlaybookManifest("software-change-delivery");
-    const deps = depsFor(root);
-    const registry = createLeaderToolRegistry({ playbook: pb, deps });
-    const def = (name) => registry.definitions().find((t) => t.name === name);
-    await def("team_create_project").execute(0, { projectId: PROJECT_ID, roleBindings: ROLE_BINDINGS });
-    await def("team_dispatch_task").execute(0, { projectId: PROJECT_ID, taskId: "task-design-0", taskKind: "design", revisionIndex: 0, assignee: DESIGNER });
-    const workerDeps = { rootDir: root, env: { AGENTTEAMS_WORKER_NAME: DESIGNER, AGENTTEAMS_WORKER_ROOM_ID: "room-d" }, channel: channel(), sync: { beforeRead: () => {} }, evidence: evidence(), now: () => T(2) };
-    await submitResult(createTaskResult({ taskId: "task-design-0", projectId: PROJECT_ID, producer: DESIGNER, summary: "design done", createdAt: T(2) }), workerDeps);
-    await def("team_decide_task").execute(0, { taskId: "task-design-0", decision: "accept" });
-
-    // after design.accept the next task is implement@0
-    const dispatched = await def("team_dispatch_task").execute(0, { projectId: PROJECT_ID, taskId: "task-impl-0", taskKind: "implement", revisionIndex: 0, assignee: IMPL });
-    assert.equal(details(dispatched).taskKind, "implement");
-
-    const reported = await def("team_report").execute(0, { projectId: PROJECT_ID, summary: "design phase opened implementation", disposition: "delivered" });
-    assert.equal(details(reported).reported, true);
-    assert.ok(deps.channel.calls.some((c) => c.kind === "reportToRequester" && c.disposition === "delivered"));
+    await definition(registry, "team_create_project").execute("create-report-project", {
+      projectId: PROJECT_ID,
+      roleBindings: ROLE_BINDINGS_INPUT,
+    });
+    await assert.rejects(
+      () => definition(registry, "team_report").execute("report-wrong", {
+        projectId: PROJECT_ID,
+        summary: "wrong",
+        disposition: "DELIVERED",
+      }),
+      /does not match authoritative/u,
+    );
+    const queued = await definition(registry, "team_report").execute("report-safe", {
+      projectId: PROJECT_ID,
+      summary: "new change was not delivered; previous digest restored",
+      disposition: "FAILED_SAFE",
+    });
+    assert.equal(details(queued).reported, false);
+    assert.equal(details(queued).queued, true);
+    const replay = await definition(registry, "team_report").execute("report-safe-replay", {
+      projectId: PROJECT_ID,
+      summary: "new change was not delivered; previous digest restored",
+      disposition: "FAILED_SAFE",
+    });
+    assert.equal(details(replay).queued, true);
+    await assert.rejects(
+      () => definition(registry, "team_report").execute("report-conflict", {
+        projectId: PROJECT_ID,
+        summary: "different terminal prose",
+        disposition: "FAILED_SAFE",
+      }),
+      /different terminal report/u,
+    );
   });
 });

@@ -42,7 +42,14 @@ function sampleProject() {
     playbookId: "software-change-delivery",
     playbookVersion: "1.0.0",
     playbookDigest: PLAYBOOK_DIGEST,
-    roleBindings: { team_leader: "leader", implementor: "impl" },
+    requester: "@manager:example.test",
+    roleBindings: {
+      team_leader: "leader",
+      designer: "designer",
+      implementor: "impl",
+      assessor: "assessor",
+      operator: "operator",
+    },
     createdAt: CREATED_AT,
   });
 }
@@ -56,15 +63,18 @@ function sampleTask() {
     revisionIndex: 0,
     assignee: "impl",
     completionContractDigest: CONTRACT_DIGEST,
+    sourceProfileDigest: sha256("implementor-profile"),
+    sourceSkillId: "implementor-v1",
+    sourceSkillDigest: sha256("implementor-skill"),
     inputRefs: [],
     createdAt: CREATED_AT,
   });
 }
 
-test("shared-fs resolves paths under the Tiangong namespace and rejects escape", () => {
+test("shared-fs resolves bindings inside AgentTeams Project/Task records and rejects escape", () => {
   const root = "/tmp/tiangong-team-root";
   const file = projectBindingFile("proj-1", root);
-  assert.equal(file, join(root, "projects", "proj-1", "project-binding.json"));
+  assert.equal(file, join(root, "projects", "proj-1", "tiangong", "project-binding.json"));
   // "..", separators, empty, and leading-dot segments are rejected.
   assert.throws(() => resolveTeamPath(["..", "x"], root), /Invalid team path segment/u);
   assert.throws(() => resolveTeamPath(["a/b"], root), /Invalid team path segment/u);
@@ -73,7 +83,7 @@ test("shared-fs resolves paths under the Tiangong namespace and rejects escape",
 });
 
 test("shared-fs default root points at the AgentTeams shared namespace", () => {
-  assert.equal(defaultTiangongRoot(), "/root/agentteams-fs/shared/tiangong");
+  assert.equal(defaultTiangongRoot(), "/root/agentteams-fs/shared");
 });
 
 test("manifest store writes and reads back a verified project binding", async () => {

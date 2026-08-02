@@ -1,20 +1,7 @@
-// Team storage-sync adapter: cross-worker sharing on the AgentTeams v1.2.0
-// shared filesystem.
-//
-// Each Worker's /root/agentteams-fs/shared is local-only; cross-worker sharing
-// goes through MinIO shared/ via explicit push/pull:
-//   - beforeRead pulls (agentteams-sync mirrors MinIO shared/ -> local).
-//   - afterWrite pushes (mc mirror local shared/ -> MinIO shared/).
-// A Worker therefore pulls before it reads another Worker's state and pushes
-// after it writes its own, so the immutable Tiangong manifests become visible
-// across the Team. The command runner is injected so the contract is testable.
-
 import { exec } from "node:child_process";
 
 const PULL_COMMAND = "agentteams-sync";
-const PUSH_COMMAND =
-  ". /opt/agentteams/scripts/lib/agentteams-env.sh && " +
-  'mc mirror /root/agentteams-fs/shared/ "${AGENTTEAMS_STORAGE_PREFIX}/shared/" --overwrite';
+const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 
 function defaultRun(command, { timeoutMs = 30000 } = {}) {
   return new Promise((resolve, reject) => {
@@ -30,6 +17,23 @@ function defaultRun(command, { timeoutMs = 30000 } = {}) {
   });
 }
 
+function boundedIds(value, name) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 16) throw new TypeError(`${name} must be a bounded array`);
+  const ids = value.map((id) => {
+    if (typeof id !== "string" || !ID_PATTERN.test(id)) throw new Error(`${name} contains an invalid id`);
+    return id;
+  });
+  if (new Set(ids).size !== ids.length) throw new Error(`${name} contains duplicates`);
+  return ids;
+}
+
+function pushCommand(kind, id) {
+  return ". /opt/agentteams/scripts/lib/agentteams-env.sh && " +
+    `mc mirror "/root/agentteams-fs/shared/${kind}/${id}/" ` +
+    `"\${AGENTTEAMS_STORAGE_PREFIX}/shared/${kind}/${id}/" --overwrite`;
+}
+
 export function createTeamSync({ run = defaultRun, now } = {}) {
   const stamp = () => (typeof now === "function" ? now() : new Date().toISOString());
   return {
@@ -37,8 +41,14 @@ export function createTeamSync({ run = defaultRun, now } = {}) {
       await run(PULL_COMMAND);
       return stamp();
     },
-    async afterWrite() {
-      await run(PUSH_COMMAND);
+    async afterWrite(scope) {
+      const projectIds = boundedIds(scope?.projectIds, "projectIds");
+      const taskIds = boundedIds(scope?.taskIds, "taskIds");
+      if (projectIds.length + taskIds.length === 0) {
+        throw new Error("Team sync push requires an exact Project/Task scope");
+      }
+      for (const projectId of projectIds) await run(pushCommand("projects", projectId));
+      for (const taskId of taskIds) await run(pushCommand("tasks", taskId));
       return stamp();
     },
   };

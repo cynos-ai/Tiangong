@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 ARG AGENTTEAMS_WORKER_IMAGE=higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-worker@sha256:daf587ad042f9564abb2347db5c4205ecc25d1b322e09fdd0d58a2a16c2d5c85
 FROM ${AGENTTEAMS_WORKER_IMAGE} AS worker-base
 
@@ -33,6 +34,7 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
     && test "$(stat -c '%F:%u' /usr/lib/git-core)" = "directory:0"
 
 COPY agent/ ./agent/
+COPY --from=team_playbooks . /opt/team-playbooks/
 COPY observability/ ./observability/
 COPY plugin/ ./plugin/
 COPY roles/ ./roles/
@@ -63,8 +65,20 @@ FROM worker-base AS leader
 COPY role-profiles/leader.json /opt/tiangong-worker/profile.json
 RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role leader
 
-FROM worker-base AS team-member
-COPY role-profiles/team-member.json /opt/tiangong-worker/profile.json
-RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role team-member
+FROM worker-base AS designer
+COPY role-profiles/designer.json /opt/tiangong-worker/profile.json
+RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role designer
+
+FROM worker-base AS implementor
+COPY role-profiles/implementor.json /opt/tiangong-worker/profile.json
+RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role implementor
+
+FROM worker-base AS assessor
+COPY role-profiles/assessor.json /opt/tiangong-worker/profile.json
+RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role assessor
+
+FROM worker-base AS operator
+COPY role-profiles/operator.json /opt/tiangong-worker/profile.json
+RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role operator
 
 FROM kernel AS default

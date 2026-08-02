@@ -14,6 +14,7 @@ import { canonicalJson, sha256 } from "../canonical-json.mjs";
 // TeamPlaybook closed resolver and TransitionPolicy on top of them.
 
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+const MATRIX_USER_ID_PATTERN = /^@[A-Za-z0-9._=\/-]+:[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/u;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/u;
 const ISO_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/u;
 export const TASK_KINDS = Object.freeze(["design", "implement", "assess", "release"]);
@@ -55,11 +56,19 @@ function validateRoleBindings(input) {
     throw new TypeError("roleBindings must be an object");
   }
   const entries = Object.entries(input);
-  if (entries.length === 0) throw new Error("roleBindings must list at least one role");
-  const normalized = {};
-  for (const [role, workerName] of entries) {
+  for (const [role] of entries) {
     if (!ROLE_SET.has(role)) throw new Error(`Unsupported team role: ${role}`);
+  }
+  if (entries.length !== TEAM_ROLES.length || !TEAM_ROLES.every((role) => Object.hasOwn(input, role))) {
+    throw new Error("roleBindings must bind exactly the five required team roles");
+  }
+  const normalized = {};
+  const workers = new Set();
+  for (const role of TEAM_ROLES) {
+    const workerName = input[role];
     demandPattern(workerName, `roleBindings.${role}`, ID_PATTERN);
+    if (workers.has(workerName)) throw new Error("roleBindings must use distinct Worker identities");
+    workers.add(workerName);
     normalized[role] = workerName;
   }
   return Object.freeze(normalized);
@@ -84,6 +93,7 @@ export function createProjectBinding(input) {
     playbookId: demandString(input.playbookId, "playbookId"),
     playbookVersion: demandString(input.playbookVersion, "playbookVersion"),
     playbookDigest: demandPattern(input.playbookDigest, "playbookDigest", DIGEST_PATTERN),
+    requester: demandPattern(input.requester, "requester", MATRIX_USER_ID_PATTERN),
     roleBindings: validateRoleBindings(input.roleBindings),
     createdAt: demandTimestamp(input.createdAt, "createdAt"),
   });
@@ -114,29 +124,81 @@ export function createTaskBinding(input) {
       "completionContractDigest",
       DIGEST_PATTERN,
     ),
+    sourceProfileDigest: demandPattern(input.sourceProfileDigest, "sourceProfileDigest", DIGEST_PATTERN),
+    sourceSkillId: demandPattern(input.sourceSkillId, "sourceSkillId", ID_PATTERN),
+    sourceSkillDigest: demandPattern(input.sourceSkillDigest, "sourceSkillDigest", DIGEST_PATTERN),
     inputRefs: validateRefs(input.inputRefs, "inputRefs"),
     createdAt: demandTimestamp(input.createdAt, "createdAt"),
   });
 }
 
 export function isProjectBinding(value) {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    value.kind === "tiangong.project-binding" &&
-    typeof value.contentDigest === "string" &&
-    DIGEST_PATTERN.test(value.contentDigest)
-  );
+  try {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+    const recreated = createProjectBinding({
+      projectId: value.projectId,
+      playbookId: value.playbookId,
+      playbookVersion: value.playbookVersion,
+      playbookDigest: value.playbookDigest,
+      requester: value.requester,
+      roleBindings: value.roleBindings,
+      createdAt: value.createdAt,
+    });
+    return canonicalJson(recreated) === canonicalJson(value);
+  } catch {
+    return false;
+  }
 }
 
 export function isTaskBinding(value) {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    value.kind === "tiangong.task-binding" &&
-    typeof value.contentDigest === "string" &&
-    DIGEST_PATTERN.test(value.contentDigest)
-  );
+  try {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+    const recreated = createTaskBinding({
+      taskId: value.taskId,
+      projectId: value.projectId,
+      playbookStepId: value.playbookStepId,
+      taskKind: value.taskKind,
+      revisionIndex: value.revisionIndex,
+      assignee: value.assignee,
+      completionContractDigest: value.completionContractDigest,
+      sourceProfileDigest: value.sourceProfileDigest,
+      sourceSkillId: value.sourceSkillId,
+      sourceSkillDigest: value.sourceSkillDigest,
+      inputRefs: value.inputRefs,
+      createdAt: value.createdAt,
+    });
+    return canonicalJson(recreated) === canonicalJson(value);
+  } catch {
+    return false;
+  }
+}
+
+export function createProjectReport(input) {
+  if (input === null || typeof input !== "object") throw new TypeError("project report input must be an object");
+  if (!["DELIVERED", "FAILED_SAFE"].includes(input.disposition)) {
+    throw new Error(`Unsupported project disposition: ${input.disposition}`);
+  }
+  return freezeWithDigest({
+    kind: "tiangong.project-report",
+    schemaVersion: 1,
+    projectId: demandPattern(input.projectId, "projectId", ID_PATTERN),
+    requester: demandPattern(input.requester, "requester", MATRIX_USER_ID_PATTERN),
+    reportedBy: demandPattern(input.reportedBy, "reportedBy", ID_PATTERN),
+    disposition: input.disposition,
+    dispositionDigest: demandPattern(input.dispositionDigest, "dispositionDigest", DIGEST_PATTERN),
+    summaryDigest: demandPattern(input.summaryDigest, "summaryDigest", DIGEST_PATTERN),
+    createdAt: demandTimestamp(input.createdAt, "createdAt"),
+  });
+}
+
+export function isProjectReport(value) {
+  try {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+    const recreated = createProjectReport(value);
+    return canonicalJson(recreated) === canonicalJson(value);
+  } catch {
+    return false;
+  }
 }
 
 export function verifyContentDigest(value) {

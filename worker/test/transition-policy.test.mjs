@@ -34,10 +34,13 @@ test("an assessor revision under the limit opens a new implement wave", () => {
   );
 });
 
-test("a revision at the maxRevisionWaves limit is blocked, not retried forever", () => {
-  const lastIndex = MAX_REVISION_WAVES - 1;
+test("revision indices below maxRevisionWaves advance; the max index blocks", () => {
   assert.deepEqual(
-    nextTaskKindAfter({ taskKind: "assess", decision: "revision", revisionIndex: lastIndex }),
+    nextTaskKindAfter({ taskKind: "assess", decision: "revision", revisionIndex: MAX_REVISION_WAVES - 1 }),
+    { status: "next", taskKind: "implement", revisionIndex: MAX_REVISION_WAVES },
+  );
+  assert.deepEqual(
+    nextTaskKindAfter({ taskKind: "assess", decision: "revision", revisionIndex: MAX_REVISION_WAVES }),
     { status: "blocked" },
   );
 });
@@ -52,6 +55,10 @@ test("a blocker or an unexpected decision fails closed", () => {
   assert.equal(
     nextTaskKindAfter({ taskKind: "design", decision: "revision", revisionIndex: 0 }).status,
     "blocked",
+  );
+  assert.throws(
+    () => nextTaskKindAfter({ taskKind: "design", decision: "invented", revisionIndex: 0 }),
+    /Unknown task decision/u,
   );
 });
 

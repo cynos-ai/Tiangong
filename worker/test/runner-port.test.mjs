@@ -70,11 +70,11 @@ test("a completed command is recorded and replayed without re-execution", async 
     return { status: "completed", exitCode: 0, stdout: "ok\n", stderr: "", durationMs: 12 };
   };
   const journal = memoryJournal();
-  const first = await runCommand(validRequest(), { executor, journal });
+  const first = await runCommand(validRequest(), { executor, journal, env: {} });
   assert.equal(first.outcome, "completed");
   assert.equal(first.replayed, false);
   assert.equal(calls, 1);
-  const replay = await runCommand(validRequest(), { executor, journal });
+  const replay = await runCommand(validRequest(), { executor, journal, env: {} });
   assert.equal(replay.outcome, "completed");
   assert.equal(replay.replayed, true);
   assert.equal(calls, 1);
@@ -88,11 +88,11 @@ test("an interrupted command is outcome_uncertain and is never retried", async (
     return { status: "interrupted", exitCode: null };
   };
   const journal = memoryJournal();
-  const result = await runCommand(validRequest(), { executor, journal });
+  const result = await runCommand(validRequest(), { executor, journal, env: {} });
   assert.equal(result.outcome, "outcome_uncertain");
   assert.equal(calls, 1);
   // replay of an uncertain command must NOT replay a saved success and must NOT retry
-  const again = await runCommand(validRequest(), { executor, journal });
+  const again = await runCommand(validRequest(), { executor, journal, env: {} });
   assert.equal(again.outcome, "outcome_uncertain");
   assert.equal(calls, 1);
   assert.equal(journal.uncertain.size, 1);
@@ -103,9 +103,20 @@ test("an executor throw is treated as outcome_uncertain", async () => {
     throw new Error("runner vanished");
   };
   const journal = memoryJournal();
-  const result = await runCommand(validRequest(), { executor, journal });
+  const result = await runCommand(validRequest(), { executor, journal, env: {} });
   assert.equal(result.outcome, "outcome_uncertain");
-  assert.match(result.reason, /runner vanished/u);
+  assert.equal(result.reason, "RUNNER_EXECUTOR_FAILED");
+});
+
+test("runCommand stays unavailable without a validated disposable executor and explicit env", async () => {
+  await assert.rejects(
+    () => runCommand(validRequest(), { env: {} }),
+    (error) => error?.code === "TIANGONG_RUNNER_UNAVAILABLE",
+  );
+  await assert.rejects(
+    () => runCommand(validRequest(), { executor: async () => ({ status: "completed", exitCode: 0 }) }),
+    /explicit sanitized environment/u,
+  );
 });
 
 test("runCommand refuses to execute when a forbidden credential is injected", async () => {

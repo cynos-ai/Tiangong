@@ -2,9 +2,20 @@
   "playbookId": "software-change-delivery",
   "version": "1.0.0",
   "title": "Software Change Delivery",
-  "summary": "Leader-coordinated, evidence-based delivery of a single software change across design, implement, assess, and release. Each step is a Task bound to one professional role; revisions open a new Implementor/Assessor wave rather than mutating a closed Task.",
-  "roleSlots": ["team_leader", "designer", "implementor", "assessor", "operator"],
-  "taskKinds": ["design", "implement", "assess", "release"],
+  "summary": "Leader-coordinated, evidence-based delivery of one software change across design, implement, assess, and release.",
+  "roleSlots": [
+    "team_leader",
+    "designer",
+    "implementor",
+    "assessor",
+    "operator"
+  ],
+  "taskKinds": [
+    "design",
+    "implement",
+    "assess",
+    "release"
+  ],
   "taskKindRoles": {
     "design": "designer",
     "implement": "implementor",
@@ -13,5 +24,14 @@
   },
   "maxRevisionWaves": 2,
   "completionSchemaId": "software-change-delivery-result-v1",
-  "transitionPolicyId": "software-change-delivery-transition-v1"
+  "schemas": {
+    "projectBinding": "schemas/project-binding.schema.json",
+    "taskBinding": "schemas/task-binding.schema.json",
+    "resultEnvelope": "schemas/result-envelope.schema.json",
+    "transitionDecision": "schemas/transition-decision.schema.json"
+  },
+  "transitionPolicyId": "software-change-delivery-transition-v1",
+  "transitionPolicyPath": "transition-policy.mjs",
+  "transitionTruthTablePath": "tests/transition-truth-table.json",
+  "contentDigest": "dcfaeeed2b090e62b64fa8e6ae29874a4dea5936463343cb7814fac6c0e3995f"
 }

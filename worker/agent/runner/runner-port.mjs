@@ -36,21 +36,34 @@ export async function runCommand(request, deps) {
     }
   }
 
-  if (deps?.env) {
-    assertNoForbiddenEnv(deps.env);
+  if (typeof deps?.executor !== "function") {
+    const error = new Error("RunnerPort has no validated disposable executor");
+    error.code = "TIANGONG_RUNNER_UNAVAILABLE";
+    throw error;
   }
+  if (deps?.env === null || typeof deps?.env !== "object") {
+    throw new TypeError("RunnerPort requires an explicit sanitized environment");
+  }
+  assertNoForbiddenEnv(deps.env);
 
   let raw;
   try {
-    raw = await deps.executor({ ...validated, env: deps?.env });
-  } catch (error) {
-    if (journal) await journal.recordUncertain(key, error?.message ?? "executor threw");
-    return { outcome: "outcome_uncertain", invocationKey: key, reason: error?.message ?? "executor threw" };
+    raw = await deps.executor({ ...validated, env: Object.freeze({ ...deps.env }) });
+  } catch {
+    const reason = "RUNNER_EXECUTOR_FAILED";
+    if (journal) await journal.recordUncertain(key, reason);
+    return { outcome: "outcome_uncertain", invocationKey: key, reason };
   }
 
   if (raw?.status === "interrupted") {
     if (journal) await journal.recordUncertain(key, "command interrupted");
     return { outcome: "outcome_uncertain", invocationKey: key, reason: "command interrupted" };
+  }
+
+  if (raw?.status !== "completed" || !Number.isInteger(raw.exitCode) || raw.exitCode < 0 || raw.exitCode > 255) {
+    const reason = "RUNNER_RESULT_INVALID";
+    if (journal) await journal.recordUncertain(key, reason);
+    return { outcome: "outcome_uncertain", invocationKey: key, reason };
   }
 
   const result = {

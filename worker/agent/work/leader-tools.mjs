@@ -14,12 +14,21 @@
 
 import { Type } from "typebox";
 
+import { canonicalJson, sha256 } from "../canonical-json.mjs";
 import { TiangongToolRegistry } from "../tools/registry.mjs";
 import { buildProjectBinding, buildTaskBinding } from "../playbook/resolver.mjs";
 import { assertResultCurrent, assertTransitionAllowed } from "../playbook/transition-policy.mjs";
-import { readProjectBinding, readTaskBinding, readTaskResult } from "../team/manifest-store.mjs";
+import {
+  readProjectBinding,
+  readProjectReport,
+  readTaskBinding,
+  readTaskResult,
+  writeProjectReport,
+} from "../team/manifest-store.mjs";
+import { createProjectReport } from "../team/manifest.mjs";
 import { projectChain } from "../team/project-chain.mjs";
 import { loadWorkerIdentity } from "../team/team-context.mjs";
+import { wrapTeamTool } from "../team/tool-wrapper.mjs";
 import {
   checkResult,
   createProject,
@@ -38,7 +47,7 @@ const DECISION = Type.Union(
   [Type.Literal("accept"), Type.Literal("revision"), Type.Literal("blocked")],
 );
 const DISPOSITION = Type.Union(
-  [Type.Literal("delivered"), Type.Literal("failed_safe"), Type.Literal("recovery_required")],
+  [Type.Literal("DELIVERED"), Type.Literal("FAILED_SAFE"), Type.Literal("RECOVERY_REQUIRED")],
 );
 const ROLE_BINDINGS_INPUT = Type.Object(
   {
@@ -83,16 +92,22 @@ export function createLeaderToolRegistry({ playbook, deps }) {
       "Bind a new software-change-delivery project to the closed playbook and write its immutable roleBindings. The team_leader slot is bound to the authenticated Leader identity (not model input); only the four professional slots are provided. Only the team_leader may call this.",
     parameters: Type.Object({ projectId: ID, roleBindings: ROLE_BINDINGS_INPUT }, { additionalProperties: false }),
     executionMode: "sequential",
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx, invocation) {
       const identity = loadWorkerIdentity(deps);
       const project = buildProjectBinding({
         playbook,
         projectId: params.projectId,
+        requester: invocation?.actor?.id,
         roleBindings: { ...params.roleBindings, team_leader: identity.workerName },
         createdAt: nowISO(deps),
       });
-      const { projectBinding, manifestPath } = await createProject(project, deps);
-      return ok({ projectId: projectBinding.projectId, manifestPath, playbookVersion: projectBinding.playbookVersion });
+      const { projectBinding, replayed } = await createProject(project, deps);
+      return ok({
+        projectId: projectBinding.projectId,
+        bindingDigest: projectBinding.contentDigest,
+        playbookVersion: projectBinding.playbookVersion,
+        replayed,
+      });
     },
   });
 
@@ -115,6 +130,7 @@ export function createLeaderToolRegistry({ playbook, deps }) {
     ),
     executionMode: "sequential",
     async execute(_toolCallId, params) {
+      await deps.sync.beforeRead();
       const project = await readProjectBinding(params.projectId, deps);
       const task = buildTaskBinding({
         playbook,
@@ -123,7 +139,7 @@ export function createLeaderToolRegistry({ playbook, deps }) {
         taskKind: params.taskKind,
         revisionIndex: params.revisionIndex,
         assignee: params.assignee,
-        completionContractDigest: params.completionContractDigest ?? playbook.contentDigest,
+        completionContractDigest: params.completionContractDigest ?? playbook.completionSchemaDigest,
         inputRefs: params.inputRefs,
         createdAt: nowISO(deps),
       });
@@ -143,6 +159,7 @@ export function createLeaderToolRegistry({ playbook, deps }) {
         assignee: dispatched.taskBinding.assignee,
         replayed: dispatched.replayed,
         notified: dispatched.notified,
+        notificationQueued: dispatched.notificationQueued,
       });
     },
   });
@@ -185,22 +202,23 @@ export function createLeaderToolRegistry({ playbook, deps }) {
     async execute(_toolCallId, params) {
       const task = await readTaskBinding(params.taskId, deps);
       let latestResultDigest;
-      if (params.decision === "accept") {
+      if (["accept", "revision"].includes(params.decision)) {
         const result = await readTaskResult(params.taskId, deps);
         latestResultDigest = result.contentDigest;
       }
+      const project = await readProjectBinding(task.projectId, deps);
       const decision = createTaskDecision({
-        decisionId: `dec-${params.taskId}-${params.decision}`,
         taskId: params.taskId,
         projectId: task.projectId,
+        playbookDigest: project.playbookDigest,
         decision: params.decision,
         revisionIndex: task.revisionIndex,
         decidedBy: leaderName(deps),
-        resultDigest: params.decision === "accept" ? latestResultDigest : params.resultDigest,
+        resultDigest: ["accept", "revision"].includes(params.decision) ? latestResultDigest : params.resultDigest,
         note: params.note,
         createdAt: nowISO(deps),
       });
-      if (params.decision === "accept") {
+      if (["accept", "revision"].includes(params.decision)) {
         assertResultCurrent({ decision, taskBinding: task, latestResultDigest });
       }
       const recorded = await recordTaskDecision(decision, deps);
@@ -217,7 +235,7 @@ export function createLeaderToolRegistry({ playbook, deps }) {
     name: "team_report",
     label: "Tiangong team report to requester",
     description:
-      "Send the final Human-facing report for a project with its terminal disposition (delivered | failed_safe | recovery_required). A non-authoritative Concern cannot complete a project.",
+      "Deliver a final Human-facing report only after a code-owned disposition store proves the exact terminal disposition. A Concern or model claim cannot complete a project.",
     parameters: Type.Object(
       {
         projectId: ID,
@@ -228,16 +246,85 @@ export function createLeaderToolRegistry({ playbook, deps }) {
     ),
     executionMode: "sequential",
     async execute(_toolCallId, params) {
-      await deps?.channel?.reportToRequester?.(params.projectId, params.summary, params.disposition);
-      deps?.evidence?.record?.({
-        type: "team.report.sent",
+      if (typeof deps.getProjectDisposition !== "function") {
+        throw new Error("Authoritative project disposition is unavailable");
+      }
+      const authoritative = await deps.getProjectDisposition(params.projectId);
+      if (authoritative !== params.disposition) {
+        throw new Error("Requested report disposition does not match authoritative machine state");
+      }
+      await deps.channel.assertTeamIdentity("team_leader");
+      await deps.sync.beforeRead();
+      const project = await readProjectBinding(params.projectId, deps);
+      const identity = loadWorkerIdentity(deps);
+      if (project.roleBindings.team_leader !== identity.workerName) {
+        throw new Error("Authenticated Worker is not the bound Project Leader");
+      }
+      const summaryDigest = sha256(params.summary);
+      const dispositionDigest = sha256(canonicalJson({
         projectId: params.projectId,
         disposition: params.disposition,
+      }));
+      const reportFields = {
+        projectId: params.projectId,
+        requester: project.requester,
+        reportedBy: identity.workerName,
+        disposition: params.disposition,
+        dispositionDigest,
+        summaryDigest,
+      };
+      let report;
+      try {
+        report = await readProjectReport(params.projectId, deps);
+        for (const [field, expected] of Object.entries(reportFields)) {
+          if (report[field] !== expected) throw new Error("Project already has a different terminal report");
+        }
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+        report = createProjectReport({ ...reportFields, createdAt: nowISO(deps) });
+        try {
+          await writeProjectReport(report, deps);
+        } catch (writeError) {
+          if (writeError?.code !== "EEXIST") throw writeError;
+          report = await readProjectReport(params.projectId, deps);
+          for (const [field, expected] of Object.entries(reportFields)) {
+            if (report[field] !== expected) throw new Error("Project already has a different terminal report");
+          }
+        }
+      }
+      await deps.sync.afterWrite({ projectIds: [params.projectId] });
+      const delivery = await deps.channel.reportRequester(
+        project.requester,
+        params.projectId,
+        params.disposition,
+        report.contentDigest,
+        params.summary,
+      );
+      await deps.evidence.append({
+        type: "team.report.delivered",
+        projectId: params.projectId,
+        disposition: params.disposition,
+        summaryDigest,
+        delivered: delivery?.delivered === true,
         at: nowISO(deps),
       });
-      return ok({ projectId: params.projectId, disposition: params.disposition, reported: true });
+      return ok({
+        projectId: params.projectId,
+        disposition: params.disposition,
+        reported: delivery?.delivered === true,
+        queued: delivery?.queued === true,
+      });
     },
   });
 
-  return registry;
+  const wrapped = new TiangongToolRegistry();
+  for (const definition of registry.definitions()) {
+    wrapped.register(wrapTeamTool(definition, {
+      gate: deps.gate,
+      evidence: deps.evidence,
+      getInvocation: deps.getInvocation,
+      category: definition.name === "team_check_result" ? "read-only" : "state-transition",
+    }));
+  }
+  return wrapped;
 }

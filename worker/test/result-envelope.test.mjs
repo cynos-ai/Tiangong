@@ -12,7 +12,18 @@ import {
 
 const DIGEST = "a".repeat(64);
 const CONTRACT = "c".repeat(64);
+const PLAYBOOK = "b".repeat(64);
+const TASK_BINDING = "d".repeat(64);
 const AT = "2026-08-01T00:00:00Z";
+
+const BINDING = {
+  producer: "tiangong-worker",
+  playbookDigest: PLAYBOOK,
+  taskBindingDigest: TASK_BINDING,
+  sourceProfileDigest: "e".repeat(64),
+  sourceSkillId: "professional-v1",
+  skillDigest: "f".repeat(64),
+};
 
 test("createChangeRevisionRef seals and digests the reference", () => {
   const ref = createChangeRevisionRef({
@@ -36,6 +47,7 @@ test("createChangeRevisionRef rejects a non-64-hex digest", () => {
 
 test("a design result envelope carries a claim without a revision ref", () => {
   const env = createResultEnvelope({
+    ...BINDING,
     taskId: "t1",
     projectId: "p1",
     taskKind: "design",
@@ -55,6 +67,7 @@ test("an implement result must seal a changeRevisionRef unless it is a blocker",
   assert.throws(
     () =>
       createResultEnvelope({
+        ...BINDING,
         taskId: "t2",
         projectId: "p1",
         taskKind: "implement",
@@ -68,6 +81,7 @@ test("an implement result must seal a changeRevisionRef unless it is a blocker",
   );
   // with a sealed ref it is accepted
   const env = createResultEnvelope({
+    ...BINDING,
     taskId: "t2",
     projectId: "p1",
     taskKind: "implement",
@@ -83,6 +97,7 @@ test("an implement result must seal a changeRevisionRef unless it is a blocker",
 
 test("a blocker envelope does not require a claim or a revision ref", () => {
   const env = createResultEnvelope({
+    ...BINDING,
     taskId: "t3",
     projectId: "p1",
     taskKind: "implement",
@@ -100,6 +115,7 @@ test("a revision request is only allowed on an assessor result", () => {
   assert.throws(
     () =>
       createResultEnvelope({
+        ...BINDING,
         taskId: "t4",
         projectId: "p1",
         taskKind: "design",
@@ -113,6 +129,7 @@ test("a revision request is only allowed on an assessor result", () => {
     /Only an assessor result may carry a revision request/,
   );
   const assess = createResultEnvelope({
+    ...BINDING,
     taskId: "t5",
     projectId: "p1",
     taskKind: "assess",
@@ -130,6 +147,7 @@ test("createResultEnvelope rejects unsupported task kinds and roles", () => {
   assert.throws(
     () =>
       createResultEnvelope({
+        ...BINDING,
         taskId: "t",
         projectId: "p",
         taskKind: "rocket",
@@ -144,6 +162,7 @@ test("createResultEnvelope rejects unsupported task kinds and roles", () => {
   assert.throws(
     () =>
       createResultEnvelope({
+        ...BINDING,
         taskId: "t",
         projectId: "p",
         taskKind: "design",
