@@ -1,0 +1,17 @@
+apiVersion: agentteams.io/v1beta1
+kind: Team
+metadata:
+  name: tiangong-leader-smoke
+spec:
+  description: Disposable Tiangong Leader to professional Worker coordination smoke.
+  workerMembers:
+    - name: tiangong-leader-smoke-leader
+      role: team_leader
+    - name: tiangong-leader-smoke-designer
+      role: worker
+    - name: tiangong-leader-smoke-implementor
+      role: worker
+    - name: tiangong-leader-smoke-assessor
+      role: worker
+    - name: tiangong-leader-smoke-operator
+      role: worker

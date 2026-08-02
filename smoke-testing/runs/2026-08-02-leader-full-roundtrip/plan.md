@@ -4,11 +4,13 @@
 > A review found the claim did not hold: two standalone Workers (no Team),
 > each turn operator-driven (not Leader mention waking the Worker), no real
 > requester report, no reproducible one-command run, residual Workers left in
-> place, and the port layer does not enforce producer/digest/decidedBy binding
-> (deterministic negatives ALLOWED). The upstream Project/Task is not driven;
+> place, and the port layer did not enforce producer/digest/decidedBy binding
+> (deterministic negatives ALLOWED). The upstream Project/Task was not driven;
 > a second Tiangong coordination-state namespace was created, conflicting with
 > the baseline. The dispatch->submit->accept mechanics were observed live, but
-> they do not satisfy the contract. Treat as partial evidence only.
+> they do not satisfy the contract. Treat as partial evidence only. The later
+> deployed-script inspection is a static file-format oracle; dynamic stock-
+> Leader generation of meta/spec/result remains unproven.
 > Date: 2026-08-02
 > Branch: `feat/43-agentteams-v1.2-and-leader-spike`
 
@@ -51,7 +53,9 @@ pulls — so the immutable manifests are visible across Workers.
 
 ## Machine evidence (verified)
 
-Shared FS (Leader view after pull):
+Historical non-conforming Tiangong namespace (Leader view after pull; these
+paths are not AgentTeams Project/Task authority and were removed from the
+current implementation):
 - `projects/fr-demo/project-binding.json` — `team_leader = tiangong-fullrt-leader`.
 - `tasks/design-1/task-binding.json` — `design@0`, assignee `tiangong-fullrt-designer`.
 - `tasks/design-1/result.json` — producer `tiangong-fullrt-designer`, digest
@@ -68,10 +72,12 @@ Leader hash-chained Evidence: `team.project.created` -> `team.mention.queued` ->
 - The Leader and Worker have separate Matrix rooms; turns are operator-driven.
   Deterministic mention emission (the Leader's turn output carrying the
   @mention that wakes the Worker, like peer-transport) is not yet wired.
-- The roundtrip uses a generic professional-Worker (team-member) surface
-  (resolve + submit). The distinct designer/implementor/assessor/operator work
-  tools, the full design->implement->assess->release chain, revision waves,
+- The historical roundtrip used the now-deleted generic professional-Worker
+  profile. Current code has independent designer/implementor/assessor/operator
+  profiles, but the full design->implement->assess->release chain, revision waves,
   and the DELIVERED/FAILED_SAFE end-to-end run are the remaining demo work.
 - The idle `tiangong-rt-*` Team Workers (stock leader + leader + designer
-  image) from an earlier Team attempt remain until a `make uninstall` reset;
-  they are harmless.
+  image) from an earlier Team attempt were unresolved cleanup residue, not
+  harmless or successful cleanup evidence. A later confirmed `make uninstall`
+  reset removed them; that later reset does not retroactively make this run's
+  cleanup pass.

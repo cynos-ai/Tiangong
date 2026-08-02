@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 # Send a coordination prompt to the Leader over Matrix (formatted-body mention)
 # and poll for the LEADER_DONE reply. Runs inside the manager container, which
-# holds the Matrix credentials. Usage: ROOM_ID LEADER_USER_ID NONCE PROJECT_ID
+# holds the Matrix credentials. Usage:
+# ROOM_ID LEADER_USER_ID NONCE PROJECT_ID TASK_ID DESIGNER IMPLEMENTOR ASSESSOR OPERATOR
 set -Eeuo pipefail
-(($# == 4)) || { printf 'Usage: %s ROOM_ID LEADER_USER_ID NONCE PROJECT_ID\n' "$0" >&2; exit 2; }
-readonly ROOM_ID="$1" LEADER_UID="$2" NONCE="$3" PROJECT_ID="$4"
+(($# == 9)) || { printf 'Usage: %s ROOM_ID LEADER_USER_ID NONCE PROJECT_ID TASK_ID DESIGNER IMPLEMENTOR ASSESSOR OPERATOR\n' "$0" >&2; exit 2; }
+readonly ROOM_ID="$1" LEADER_UID="$2" NONCE="$3" PROJECT_ID="$4" TASK_ID="$5"
+readonly DESIGNER="$6" IMPLEMENTOR="$7" ASSESSOR="$8" OPERATOR="$9"
 CFG="${HOME}/openclaw.json"
 homeserver="$(jq -r '.channels.matrix.homeserver // empty' "${CFG}")"; homeserver="${homeserver%/}"
 token="$(jq -r '.channels.matrix.accessToken // empty' "${CFG}")"
 room_path="$(printf '%s' "${ROOM_ID}" | jq -sRr @uri)"
 localpart="${LEADER_UID%%:*}"
 PROMPT="${localpart} You are the Tiangong Team Leader. Use your tools to do exactly this, then report:
-1. Call team_create_project with projectId \"${PROJECT_ID}\" and roleBindings {designer:\"tiangong-designer-smoke\", implementor:\"tiangong-impl-smoke\", assessor:\"tiangong-assess-smoke\", operator:\"tiangong-op-smoke\"}.
-2. Call team_dispatch_task with projectId \"${PROJECT_ID}\", taskId \"design-1\", taskKind \"design\", revisionIndex 0, assignee \"tiangong-designer-smoke\".
+1. Call team_create_project with projectId \"${PROJECT_ID}\" and roleBindings {designer:\"${DESIGNER}\", implementor:\"${IMPLEMENTOR}\", assessor:\"${ASSESSOR}\", operator:\"${OPERATOR}\"}.
+2. Call team_dispatch_task with projectId \"${PROJECT_ID}\", taskId \"${TASK_ID}\", taskKind \"design\", revisionIndex 0, assignee \"${DESIGNER}\".
 Reply with LEADER_DONE and a one-line summary."
-FORMATTED="<a href=\"https://matrix.to/#/${LEADER_UID}\">${localpart}</a> ${PROMPT#${localpart} }"
+FORMATTED="<a href=\"https://matrix.to/#/${LEADER_UID}\">${localpart}</a> ${PROMPT#"${localpart}" }"
 body="$(jq -cn --arg b "${PROMPT}" --arg fb "${FORMATTED}" --arg u "${LEADER_UID}" \
   '{msgtype:"m.text",body:$b,format:"org.matrix.custom.html",formatted_body:$fb,"m.mentions":{user_ids:[$u]}}')"
 curl --fail --silent --show-error --max-time 30 -X PUT -H "Authorization: Bearer ${token}" \
@@ -31,7 +33,7 @@ for i in $(seq 1 40); do
   msgs="$(printf '%s' "${resp}" | jq -r --arg room "${ROOM_ID}" --arg leader "${LEADER_UID}" '
     .rooms.join[$room].timeline.events[]?
     | select(.type=="m.room.message" and .sender==$leader) | .content.body // empty' 2>/dev/null || true)"
-  if [[ -n "${msgs}" ]]; then printf '%s\n' "${msgs}"; exit 0; fi
+  if grep -Fq LEADER_DONE <<<"${msgs}"; then printf '%s\n' "${msgs}"; exit 0; fi
   printf '[%d] polling...\n' "${i}" >&2
 done
 printf 'leader_response_timeout=1\n' >&2

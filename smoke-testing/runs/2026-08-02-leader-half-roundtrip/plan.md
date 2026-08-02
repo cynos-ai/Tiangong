@@ -1,11 +1,13 @@
 # Focused run — Gate 3 Leader-half roundtrip
 
-> Status: PARTIAL — leader-half only (create + dispatch), reproducible via `make test-leader-image-basic`.
-> NOT architecture Gate 3: a subsequent review found that the port layer does
-> not enforce producer/digest/decidedBy, tools bypass the unified wrapper, the
-> channel does not actually send to Matrix, and the upstream Project/Task is
-> not driven (a second Tiangong state namespace was created). Treat as partial
-> evidence, not a passed gate.
+> Status: HISTORICAL PARTIAL — leader-half only (create + dispatch).
+> NOT architecture Gate 3. The original standalone reproduction and second
+> coordination namespace were removed. `make test-leader-image-basic` now
+> targets a disposable real Team and a Matrix Leader→Designer→Leader design
+> roundtrip; that replacement must produce its own run record before it is
+> evidence. Producer/digest/decidedBy, unified Gate wrapping, native
+> Project/Task records, and Matrix delivery are now deterministic code gates,
+> but requester reporting and terminal delivery are still unproven live.
 > Date: 2026-08-02
 > Branch: `feat/43-agentteams-v1.2-and-leader-spike`
 > Reproduce: `make test-leader-image-basic`
@@ -47,21 +49,22 @@ accept) and cross-worker `agentteams-sync` are out of scope here.
 
 ## Machine evidence (verified by the smoke)
 
-- Immutable project binding at
+- Historical, now-removed project binding at
   `shared/tiangong/projects/<id>/project-binding.json` — `team_leader` =
   `tiangong-leader-smoke`, `playbookId=software-change-delivery@1.0.0`,
   content digest valid.
-- Immutable design task binding at `shared/tiangong/tasks/design-1/...` —
+- Historical, now-removed design task binding at `shared/tiangong/tasks/design-1/...` —
   `taskKind=design`, `revisionIndex=0`, `assignee=tiangong-designer-smoke`,
   `playbookStepId=software-change-delivery-transition-v1:design`, digest valid.
 - Hash-chained coordination Evidence under the Worker's
   `.tiangong/runtime/evidence/<hash>/events.jsonl`:
   `team.project.created` -> `team.mention.queued` -> `team.task.dispatched`.
 
-Smoke verdict lines: `leader_smoke_team_leader_bound=pass`,
-`leader_smoke_design_task_dispatched=pass`,
-`leader_smoke_coordination_evidence=pass`, `leader_smoke_roundtrip=pass`,
-`leader_smoke_cleanup=pass`.
+Those historical verdict lines were over-broad and are revoked. The current
+focused smoke emits `leader_smoke_design_roundtrip=pass` only after a real Team
+Matrix handoff, bound ResultEnvelope, Leader accept, and exact cleanup; it
+still emits an explicit partial Gate 3 marker until requester reporting is
+proved.
 
 ## Fix surfaced by this run
 

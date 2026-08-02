@@ -1,6 +1,6 @@
 # Focused run — AgentTeams v1.2.0 Leader oracle
 
-> Status: evidence captured
+> Status: PARTIAL — dynamic structured-file oracle pending
 > Date: 2026-08-01
 > Branch: `feat/43-agentteams-v1.2-and-leader-spike`
 > Scope: capture the real v1.2.0 team-collaboration contract so TeamTaskPort
@@ -39,12 +39,35 @@ sync**, not a structured Project/Task RPC:
 - Leader skills actually deployed: `file-sync`, `find-skills`, `mcporter`,
   `project-participation`, `task-progress` — **not** the documented
   `team-coordination` / `project-management` / `task-management`.
-- Project = `/root/agentteams-fs/shared/projects/{project-id}/plan.md`;
-  Task = `/root/agentteams-fs/shared/tasks/{task-id}/progress/`; state is
+- The running stock Leader exposed Project `plan.md` and legacy Task progress
+  paths. Subsequent static inspection of the v1.2.0 live Manager image's
+  deployed `project-management` / `task-management` Skills and scripts
+  established the deployed file-format contract: Project `meta.json` +
+  `plan.md`, and Task `meta.json` + `spec.md` + `result.md`; state is
   synchronised with `agentteams-sync` (`/usr/local/bin/agentteams-sync`) and
   `mc cp`/`mc mirror`; completion is signalled by @mentioning the coordinator.
+  This static oracle supports format-compatible implementation, but does not
+  prove that a model-driven stock Leader dynamically creates and consumes all
+  of these records in a real Team.
 - `/opt/openclaw/skills/taskflow` exists in the image but is **not** deployed
   to the leader.
+
+## Dynamic closure still required
+
+This oracle is not complete until a fresh stock v1.2.0 `team_leader`, prompted
+through its supported model in a real disposable Team, creates a Project and
+Task without Tiangong pre-creating their platform files. The run must capture
+from Team remote storage:
+
+1. the stock Leader-created Project `meta.json` and `plan.md`;
+2. the delegated Task `meta.json` and `spec.md`;
+3. the assigned Worker-created `result.md` and its Matrix completion mention;
+4. the stock Leader consuming that result and updating the platform records;
+5. exact cleanup or an explicit failed-cleanup verdict.
+
+Until those artifacts exist, report the deployed formats as **static-oracle
+backed, dynamically unproven**. The Tiangong product-Leader smoke cannot close
+this stock-Leader oracle.
 
 ## Gaps vs design docs (step 6)
 
@@ -57,8 +80,9 @@ sync**, not a structured Project/Task RPC:
   `DELETE /api/v1/teams/<name>`, HTTP 204) does not release `workerMembers`;
   member Workers cannot be deleted (`HTTP 409 worker is a member of team`).
   `PUT` of empty `workerMembers` does not release them either. A disposable
-  stack reset (`make uninstall`) is the reliable cleanup path; ad-hoc oracle
-  Workers are left in place until then.
+  stack reset (`make uninstall`) is the reliable cleanup path. The historical
+  oracle Workers remained residue until a later confirmed reset removed them;
+  that reset does not upgrade the original run's cleanup verdict.
 
 ## Implication for TeamTaskPort
 
@@ -66,18 +90,22 @@ TeamTaskPort does **not** wrap a `projectflow`/`taskflow` MCP (it does not
 exist). Following the architecture baseline §7 / contract §5 contingency, it
 is grounded on:
 
-- Tiangong-owned **immutable Project/Task binding manifests** (content digest)
-  written to the shared filesystem namespace
-  `/root/agentteams-fs/shared/tiangong/`.
+- AgentTeams-owned Project/Task records under
+  `/root/agentteams-fs/shared/projects/{project-id}/` and
+  `/root/agentteams-fs/shared/tasks/{task-id}/` are the sole coordination
+  truth. Tiangong-owned immutable binding/Evidence supplements live only in
+  each bound record's `tiangong/` subdirectory; there is no second Project/Task
+  state tree.
 - **Authorization** against the immutable `roleBindings` / `assignee` from the
   authenticated Worker identity, never Task prose.
 - **@mention + sync** side effects behind injected adapters; **idempotent**
   dispatch / submit / decision (re-dispatch and re-submit do not re-notify or
   overwrite); `accept` requires a submitted result.
 
-Implemented (deterministic, 168 tests green at the time of capture):
-`worker/agent/team/{manifest,shared-fs,manifest-store,team-context,
-team-task-port}.mjs`.
+The initial implementation named here was superseded after review. The current
+port also drives native AgentTeams records, binds producer/profile/Skill/result
+and Leader decisions, uses authenticated Matrix Team-room delivery, and fails
+closed when Team roster or durable Evidence cannot be proved.
 
 ## Sequencing note
 
