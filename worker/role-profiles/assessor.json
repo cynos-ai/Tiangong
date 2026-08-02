@@ -3,7 +3,7 @@
   "roleId": "assessor",
   "title": "Tiangong Assessor",
   "practiceIds": [],
-  "toolIds": ["team_resolve_task", "team_submit_result"],
-  "gatePolicyId": "professional-tools-v1",
+  "toolIds": ["team_resolve_task", "run_test_command", "team_submit_result"],
+  "gatePolicyId": "assessor-tools-v1",
   "roleSkillId": "assessor-v1"
 }

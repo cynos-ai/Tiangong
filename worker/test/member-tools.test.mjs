@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { TurnGateState } from "../agent/gates/turn-state.mjs";
+import { RunnerJournal } from "../agent/runner/journal.mjs";
 import { createProjectBinding, createTaskBinding } from "../agent/team/manifest.mjs";
 import { TeamCoordinationGate } from "../agent/team/tool-wrapper.mjs";
 import { createProject, dispatchTask } from "../agent/team/team-task-port.mjs";
@@ -55,7 +56,7 @@ function depsFor(worker, root) {
     getInvocation: () => ({
       sessionId: `session-${worker}`,
       turnId: `turn-${worker}`,
-      actor: { id: `@leader:example.test` },
+      actor: { id: `@${LEADER}:example.test` },
       turnState: new TurnGateState(),
       resumed: false,
     }),
@@ -88,26 +89,39 @@ function project(id) {
     createdAt: T(0),
   });
 }
-function designTask(boundProject, id) {
+function professionalTask(boundProject, id, { taskKind = "design", assignee = DESIGNER, role = "designer" } = {}) {
   return createTaskBinding({
     taskId: id,
     projectId: boundProject.projectId,
-    playbookStepId: "software-change-delivery-transition-v1:design",
-    taskKind: "design",
+    playbookStepId: `software-change-delivery-transition-v1:${taskKind}`,
+    taskKind,
     revisionIndex: 0,
-    assignee: DESIGNER,
+    assignee,
     completionContractDigest: CONTRACT,
     sourceProfileDigest: PROFILE,
-    sourceSkillId: "designer-v1",
+    sourceSkillId: `${role}-v1`,
     sourceSkillDigest: SKILL,
     inputRefs: [],
     createdAt: T(0),
   });
 }
+function designTask(boundProject, id) {
+  return professionalTask(boundProject, id);
+}
 
-test("createMemberToolRegistry exposes only wrapped resolve + submit", () => {
-  const registry = createMemberToolRegistry({ deps: depsFor(DESIGNER, "/x") });
-  assert.deepEqual(registry.names(), ["team_resolve_task", "team_submit_result"]);
+test("createMemberToolRegistry exposes only each professional RoleProfile surface", () => {
+  const designer = createMemberToolRegistry({ deps: depsFor(DESIGNER, "/x") });
+  assert.deepEqual(designer.names(), ["team_resolve_task", "team_submit_result"]);
+  const implementorDeps = depsFor("tiangong-implementor", "/x");
+  implementorDeps.professionalRole = "implementor";
+  implementorDeps.sourceSkillId = "implementor-v1";
+  const implementor = createMemberToolRegistry({ deps: implementorDeps });
+  assert.deepEqual(implementor.names(), ["team_resolve_task", "run_command", "team_submit_result"]);
+  const assessorDeps = depsFor("tiangong-assessor", "/x");
+  assessorDeps.professionalRole = "assessor";
+  assessorDeps.sourceSkillId = "assessor-v1";
+  const assessor = createMemberToolRegistry({ deps: assessorDeps });
+  assert.deepEqual(assessor.names(), ["team_resolve_task", "run_test_command", "team_submit_result"]);
 });
 
 test("an assignee resolves its Task and submits a bound ResultEnvelope", async () => {
@@ -163,6 +177,145 @@ test("a non-assignee cannot resolve or submit", async () => {
       () => wrongProfile.definitions().find((tool) => tool.name === "team_submit_result")
         .execute("submit-wrong-profile", { taskId: task.taskId, claim: "forged" }),
       /RoleProfile does not match/u,
+    );
+  });
+});
+
+test("Implementor command runs only through the Task-bound broker and projects machine Evidence", async () => {
+  await withRoot(async (root) => {
+    const boundProject = project("proj-run-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    const task = professionalTask(boundProject, "task-implement-run", {
+      taskKind: "implement",
+      assignee: "tiangong-implementor",
+      role: "implementor",
+    });
+    await createProject(boundProject, depsFor(LEADER, root));
+    await dispatchTask(task, depsFor(LEADER, root));
+    const deps = depsFor("tiangong-implementor", root);
+    deps.professionalRole = "implementor";
+    deps.sourceSkillId = "implementor-v1";
+    deps.runnerBrokerEndpoint = "http://runner-broker:18090/v1/execute";
+    deps.runnerJournal = new RunnerJournal({ filePath: join(root, "runner.jsonl") });
+    let brokerCalls = 0;
+    deps.runnerFetch = async (_url, options) => {
+      brokerCalls += 1;
+      const request = JSON.parse(options.body);
+      assert.equal(request.taskId, task.taskId);
+      assert.deepEqual(request.command, ["node", "test.mjs"]);
+      return new Response(JSON.stringify({
+        status: "completed",
+        exitCode: 0,
+        stdout: "tests pass\n",
+        stderr: "",
+        durationMs: 7,
+        runnerEvidence: {
+          schemaVersion: 1,
+          runId: request.runId,
+          invocationKey: request.invocationKey,
+          imageId: `sha256:${"a".repeat(64)}`,
+          policyDigest: "b".repeat(64),
+          containerConfigDigest: "c".repeat(64),
+          fixtureDigest: "d".repeat(64),
+        },
+      }), { status: 200 });
+    };
+    const command = createMemberToolRegistry({ deps }).definitions()
+      .find((tool) => tool.name === "run_command");
+    const params = { taskId: task.taskId, command: ["node", "test.mjs"], timeoutMs: 1000 };
+    const first = await command.execute("run-1", params);
+    assert.equal(details(first).stdout, "tests pass\n");
+    assert.equal(details(first).replayed, false);
+    const replay = await command.execute("run-2", params);
+    assert.equal(details(replay).replayed, true);
+    assert.equal(brokerCalls, 1);
+    const completion = deps.evidence.events.find((event) =>
+      event.type === "tool.execution.completed" && event.executionCategory === "isolated-execution");
+    assert.equal(completion.runnerImageId, `sha256:${"a".repeat(64)}`);
+    assert.equal(completion.runnerPolicyDigest, "b".repeat(64));
+    assert.equal(Object.hasOwn(completion, "stdout"), false);
+  });
+});
+
+test("Assessor test command is independently bound to an assess Task", async () => {
+  await withRoot(async (root) => {
+    const boundProject = project("proj-assess-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    const task = professionalTask(boundProject, "task-assess-run", {
+      taskKind: "assess",
+      assignee: "tiangong-assessor",
+      role: "assessor",
+    });
+    await createProject(boundProject, depsFor(LEADER, root));
+    await dispatchTask(task, depsFor(LEADER, root));
+    const deps = depsFor("tiangong-assessor", root);
+    deps.professionalRole = "assessor";
+    deps.sourceSkillId = "assessor-v1";
+    deps.runnerBrokerEndpoint = "http://runner-broker:18090/v1/execute";
+    deps.runnerJournal = new RunnerJournal({ filePath: join(root, "assessor-runner.jsonl") });
+    deps.runnerFetch = async (_url, options) => {
+      const request = JSON.parse(options.body);
+      return new Response(JSON.stringify({
+        status: "completed",
+        exitCode: 1,
+        stdout: "",
+        stderr: "test failed\n",
+        durationMs: 5,
+        runnerEvidence: {
+          schemaVersion: 1,
+          runId: request.runId,
+          invocationKey: request.invocationKey,
+          imageId: `sha256:${"a".repeat(64)}`,
+          policyDigest: "b".repeat(64),
+          containerConfigDigest: "c".repeat(64),
+          fixtureDigest: "d".repeat(64),
+        },
+      }), { status: 200 });
+    };
+    const result = await createMemberToolRegistry({ deps }).definitions()
+      .find((tool) => tool.name === "run_test_command")
+      .execute("assess-run", { taskId: task.taskId, command: ["node", "test.mjs"], timeoutMs: 1000 });
+    assert.equal(details(result).exitCode, 1);
+    assert.equal(details(result).stderr, "test failed\n");
+  });
+});
+
+test("member tools reject a non-Leader Matrix actor and unavailable Runner", async () => {
+  await withRoot(async (root) => {
+    const boundProject = project("proj-auth-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    const task = professionalTask(boundProject, "task-implement-auth", {
+      taskKind: "implement",
+      assignee: "tiangong-implementor",
+      role: "implementor",
+    });
+    await createProject(boundProject, depsFor(LEADER, root));
+    await dispatchTask(task, depsFor(LEADER, root));
+    const deps = depsFor("tiangong-implementor", root);
+    deps.professionalRole = "implementor";
+    deps.sourceSkillId = "implementor-v1";
+    deps.getInvocation = () => ({
+      sessionId: "session-intruder",
+      turnId: "turn-intruder",
+      actor: { id: "@manager:example.test" },
+      turnState: new TurnGateState(),
+      resumed: false,
+    });
+    const registry = createMemberToolRegistry({ deps });
+    await assert.rejects(
+      () => registry.definitions().find((tool) => tool.name === "team_resolve_task")
+        .execute("resolve-intruder", { taskId: task.taskId }),
+      /not the Project Leader/u,
+    );
+    deps.getInvocation = () => ({
+      sessionId: "session-leader",
+      turnId: "turn-leader",
+      actor: { id: `@${LEADER}:example.test` },
+      turnState: new TurnGateState(),
+      resumed: false,
+    });
+    const leaderRegistry = createMemberToolRegistry({ deps });
+    await assert.rejects(
+      () => leaderRegistry.definitions().find((tool) => tool.name === "run_command")
+        .execute("run-unavailable", { taskId: task.taskId, command: ["node", "test.mjs"], timeoutMs: 1000 }),
+      (error) => error?.code === "TIANGONG_RUNNER_UNAVAILABLE",
     );
   });
 });

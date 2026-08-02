@@ -4,13 +4,13 @@
 >
 > Status: **PASS at the local Docker executor boundary**
 >
-> Promotion: production executor module implemented; Worker adapter and professional tools remain blocked
+> Promotion: production executor module implemented; superseded for adapter status by the later closed-broker run
 
 ## Purpose
 
 Replace the shell-only feasibility proof with a code-owned disposable Docker executor behind `RunnerPort`, while preserving the previously proven credential, socket, network, mount, resource, ownership, timeout, Evidence, and cleanup boundaries.
 
-This run does not mount the Docker socket into an AgentTeams Worker and does not claim that a model can reach the executor. AgentTeams v1.2.0 Worker resources have no public custom-volume field. The next topology must therefore keep Docker authority outside the Worker or establish another closed, authenticated adapter rather than mutating an upstream-managed Worker container.
+This run does not mount the Docker socket into an AgentTeams Worker and does not claim that a model can reach the executor. AgentTeams v1.2.0 Worker resources have no public custom-volume field. The subsequent B3 broker run therefore keeps Docker authority outside the Worker rather than mutating an upstream-managed Worker container.
 
 ## Implementation under test
 
@@ -37,18 +37,18 @@ This run does not mount the Docker socket into an AgentTeams Worker and does not
 
 ## Machine observations
 
-Focused RunnerPort, journal, and Docker executor tests: **20 passed**.
+Focused RunnerPort, journal, and Docker executor tests: **21 passed**.
 
 The real Docker run used the locally built Implementor image resolved to immutable ID:
 
-`sha256:b7230ad937997bf55aba2b12250e782eb5819f6ec4cd8f3e3c32e706cf90c3d1`
+`sha256:5f018354d18ff66ff7c53ff42ffdaf83a54c8b847ce2fed37abcaf77228f8431`
 
 Observed markers:
 
 - `runner_executor_daemon_policy=pass`
 - `runner_probe=pass`
 - `runner_executor_machine_evidence=pass`
-- runner policy digest `06a3250627ba86dd2d8af05d1b023d07198dffb6a18dfe5274926e99e74e2b26`
+- runner policy digest `d0832894dcf742a969446dd7f765a4fe86c05c9b94d78c58f662a9781ffb3e0e`
 - copied fixture digest `a1d02f2718b45e2a8013119646d76d5c7bbb7789bfcd60d3207029bd970b2d5f`
 - `runner_executor_journal=pass`
 - `runner_executor_timeout_uncertain=pass`
@@ -74,4 +74,4 @@ Every daemon resource name is derived from the validated run UUID and invocation
 
 ## Honest limit and next step
 
-The Docker executor and append-only, hash-chained runner journal are now real and machine-tested. Full runner completion remains blocked on a closed Worker-to-executor adapter, professional role tools, durable Runner Evidence projection into the Worker Evidence chain, and ChangeRevision materialization. Directly mounting the Docker socket into each model-facing Worker is not accepted merely for convenience: the stock Worker CRD cannot express that mount, and changing an upstream-managed container out of band would weaken ownership and reconciliation.
+The Docker executor and append-only, hash-chained runner journal are real and machine-tested. A later focused run implements and proves the closed container-identity broker and materializes the Implementor/Assessor command tools. Full runner completion remains blocked on an official AgentTeams/Matrix professional-role turn and ChangeRevision materialization. Directly mounting the Docker socket into each model-facing Worker remains forbidden: the stock Worker CRD cannot express that mount, and changing an upstream-managed container out of band would weaken ownership and reconciliation.

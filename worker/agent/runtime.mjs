@@ -37,6 +37,7 @@ import {
 import { createCoreToolRegistry } from "./tools/registry.mjs";
 import { createReviewerToolRegistry } from "./work/reviewer-tools.mjs";
 import { readPlaybookManifest } from "./playbook/resolver.mjs";
+import { RunnerJournal } from "./runner/journal.mjs";
 import { defaultTiangongRoot } from "./team/shared-fs.mjs";
 import { createTeamChannel } from "./team/channel-adapter.mjs";
 import { projectDisposition } from "./team/project-chain.mjs";
@@ -215,6 +216,10 @@ export class TiangongAgentRuntime {
         sourceProfileDigest: profileBundle.profileDigest,
         sourceSkillId: profileBundle.roleSkill.id,
         sourceSkillDigest: profileBundle.roleSkill.digest,
+        runnerBrokerEndpoint: process.env.TIANGONG_RUNNER_BROKER_ENDPOINT,
+        runnerJournal: ["implementor", "assessor"].includes(profileBundle.profile.roleId)
+          ? new RunnerJournal({ filePath: persisted.paths.runnerJournalFilePath })
+          : undefined,
       };
       registry = createMemberToolRegistry({ deps: teamDeps });
     } else {

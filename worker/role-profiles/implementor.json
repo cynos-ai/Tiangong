@@ -3,7 +3,7 @@
   "roleId": "implementor",
   "title": "Tiangong Implementor",
   "practiceIds": [],
-  "toolIds": ["team_resolve_task", "team_submit_result"],
-  "gatePolicyId": "professional-tools-v1",
+  "toolIds": ["team_resolve_task", "run_command", "team_submit_result"],
+  "gatePolicyId": "implementor-tools-v1",
   "roleSkillId": "implementor-v1"
 }

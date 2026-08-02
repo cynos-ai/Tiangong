@@ -1,0 +1,227 @@
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import test from "node:test";
+
+import { createRunnerBrokerExecutor } from "../agent/runner/broker-client.mjs";
+import {
+  createDockerPeerAuthenticator,
+  createRunnerBrokerHandler,
+  validateBrokerConfig,
+} from "../agent/runner/broker-server.mjs";
+import { runCommand, runnerInvocationIdentity } from "../agent/runner/runner-port.mjs";
+
+const RUN_ID = "run-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const TASK_ID = "task-implement-a";
+const IMAGE_ID = `sha256:${"a".repeat(64)}`;
+const WORKER_IMAGE_ID = `sha256:${"b".repeat(64)}`;
+const EVIDENCE = Object.freeze({
+  schemaVersion: 1,
+  runId: RUN_ID,
+  invocationKey: "unused",
+  imageId: IMAGE_ID,
+  policyDigest: "c".repeat(64),
+  containerConfigDigest: "d".repeat(64),
+  fixtureDigest: "e".repeat(64),
+});
+
+function configInput() {
+  return {
+    schemaVersion: 1,
+    network: "runner-test-net",
+    listenPort: 18090,
+    bindings: [{
+      workerName: "tiangong-implementor",
+      containerName: "agentteams-worker-tiangong-implementor",
+      workerImageId: WORKER_IMAGE_ID,
+      role: "implementor",
+      taskId: TASK_ID,
+      runId: RUN_ID,
+      runnerImageId: IMAGE_ID,
+      fixtureId: "software-change-fixture",
+    }],
+  };
+}
+
+async function listen(handler) {
+  const server = createServer(handler);
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const { port } = server.address();
+  return {
+    endpoint: `http://127.0.0.1:${port}/v1/execute`,
+    close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
+  };
+}
+
+function request() {
+  return {
+    runId: RUN_ID,
+    command: ["node", "test.mjs"],
+    cwd: "fixture",
+    timeoutMs: 1000,
+    outputLimitBytes: 1024,
+  };
+}
+
+test("broker client reaches only the bound Task and returns invocation-bound runner Evidence", async () => {
+  const binding = validateBrokerConfig(configInput()).bindings[0];
+  let executions = 0;
+  const handler = createRunnerBrokerHandler({
+    async authenticatePeer(address) {
+      assert.equal(address, "127.0.0.1");
+      return binding;
+    },
+    async execute(receivedBinding, command) {
+      executions += 1;
+      assert.equal(receivedBinding, binding);
+      const identity = runnerInvocationIdentity(command);
+      return {
+        outcome: "completed",
+        invocationKey: identity.invocationKey,
+        exitCode: 0,
+        stdout: "tests passed\n",
+        stderr: "",
+        durationMs: 8,
+        runnerEvidence: { ...EVIDENCE, invocationKey: identity.invocationKey },
+      };
+    },
+  });
+  const server = await listen(handler);
+  try {
+    const executor = createRunnerBrokerExecutor({ endpoint: server.endpoint, taskId: TASK_ID });
+    const result = await runCommand(request(), { executor, env: {} });
+    assert.equal(result.outcome, "completed");
+    assert.equal(result.stdout, "tests passed\n");
+    assert.equal(result.runnerEvidence.imageId, IMAGE_ID);
+    assert.equal(executions, 1);
+  } finally {
+    await server.close();
+  }
+});
+
+test("broker rejects Task, run, invocation, route, and peer mismatches before execution", async () => {
+  const binding = validateBrokerConfig(configInput()).bindings[0];
+  let executions = 0;
+  const allowed = await listen(createRunnerBrokerHandler({
+    async authenticatePeer() { return binding; },
+    async execute() { executions += 1; },
+  }));
+  try {
+    const identity = runnerInvocationIdentity(request());
+    const base = {
+      schemaVersion: 1,
+      taskId: TASK_ID,
+      invocationKey: identity.invocationKey,
+      ...request(),
+      env: {},
+    };
+    for (const body of [
+      { ...base, taskId: "task-other" },
+      { ...base, runId: "run-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" },
+      { ...base, invocationKey: "f".repeat(64) },
+    ]) {
+      const response = await fetch(allowed.endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      assert.equal(response.status, 403);
+    }
+    const route = await fetch(allowed.endpoint.replace("/v1/execute", "/v1/other"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(route.status, 404);
+    assert.equal(executions, 0);
+  } finally {
+    await allowed.close();
+  }
+
+  const denied = await listen(createRunnerBrokerHandler({
+    async authenticatePeer() { throw new Error("untrusted"); },
+    async execute() { executions += 1; },
+  }));
+  try {
+    const executor = createRunnerBrokerExecutor({ endpoint: denied.endpoint, taskId: TASK_ID });
+    const result = await runCommand(request(), { executor, env: {} });
+    assert.equal(result.outcome, "outcome_uncertain");
+    assert.equal(result.reason, "RUNNER_EXECUTOR_FAILED");
+    assert.equal(executions, 0);
+  } finally {
+    await denied.close();
+  }
+});
+
+test("Docker peer authentication binds source IP, exact container, Worker name, image, and network", async () => {
+  const config = validateBrokerConfig(configInput());
+  const binding = config.bindings[0];
+  const calls = [];
+  const runDocker = async (args) => {
+    calls.push(args);
+    if (args[0] === "network") {
+      return {
+        exitCode: 0,
+        stdout: JSON.stringify([{
+          Containers: {
+            abc: { Name: binding.containerName, IPv4Address: "172.30.0.5/16" },
+          },
+        }]),
+        stderr: "",
+        timedOut: false,
+      };
+    }
+    return {
+      exitCode: 0,
+      stdout: JSON.stringify([{
+        Name: `/${binding.containerName}`,
+        Image: binding.workerImageId,
+        State: { Running: true },
+        Config: { Env: [`AGENTTEAMS_WORKER_NAME=${binding.workerName}`] },
+        NetworkSettings: { Networks: { [config.network]: { IPAddress: "172.30.0.5" } } },
+      }]),
+      stderr: "",
+      timedOut: false,
+    };
+  };
+  const authenticate = createDockerPeerAuthenticator({ config, runDocker });
+  assert.equal(await authenticate("::ffff:172.30.0.5"), binding);
+  assert.deepEqual(calls.map((args) => args.slice(0, 3)), [
+    ["network", "inspect", config.network],
+    ["container", "inspect", binding.containerName],
+  ]);
+
+  const mismatch = createDockerPeerAuthenticator({
+    config,
+    runDocker: async (args) => {
+      const result = await runDocker(args);
+      if (args[0] === "container") {
+        const [container] = JSON.parse(result.stdout);
+        container.Image = IMAGE_ID;
+        result.stdout = JSON.stringify([container]);
+      }
+      return result;
+    },
+  });
+  await assert.rejects(() => mismatch("172.30.0.5"), /IDENTITY_MISMATCH/u);
+});
+
+test("broker config and client endpoint are closed, bounded contracts", () => {
+  assert.throws(
+    () => validateBrokerConfig({ ...configInput(), extra: true }),
+    /missing or unknown/u,
+  );
+  const duplicate = configInput();
+  duplicate.bindings.push({ ...duplicate.bindings[0], role: "assessor" });
+  assert.throws(() => validateBrokerConfig(duplicate), /unique Worker/u);
+  assert.throws(
+    () => createRunnerBrokerExecutor({ endpoint: "http://user:secret@broker/v1/execute", taskId: TASK_ID }),
+    /credential-free/u,
+  );
+  assert.throws(
+    () => createRunnerBrokerExecutor({ endpoint: "http://broker/v1/other", taskId: TASK_ID }),
+    /credential-free/u,
+  );
+});

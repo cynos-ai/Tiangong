@@ -25,15 +25,15 @@
       "compatibleRoleProfileDigests": {
         "leader": "f580eae443496ed7a3e50575e7157d5563a491b53d9d07ea2bd2f33032272fac",
         "designer": "aad09452ef5976eeee24a1c976eeae93064ed01bb84ba8bc85588586b361e3e6",
-        "implementor": "b480e40a8d3c332cd0e57577f37aed44cb7102653075ba9ec5a0da2f8d49162e",
-        "assessor": "25ca2f8b55cde6859521458f81c008d91be0bda4675e6fe16b792f36a2fd0a83",
+        "implementor": "e51507408f2fa6546163bff1aeb42fc37e908847207bbceca108b2314ca28d0a",
+        "assessor": "9f3a2da2bc39ca35f99e4b0f50708714bfcd11ad1990ca5784d948d5dd245283",
         "operator": "52a3929e673a2d1e0142b1db0488b6bcc18a3c769c99494561e6eca3e80cae02"
       },
       "compatibleRoleSkillDigests": {
         "leader-v1": "9a1f92ec43d344c49ceca8fa5c8048157bfb4ab153a1f8d1e2bd98ec66951f84",
         "designer-v1": "360ff77f2da57456ff9510720176e61db03a0b36de3eeb0f9b1338f28296a3f9",
-        "implementor-v1": "73ccf10923efd9c7200f872e09fe743b41662a71149df38a867fb4f058250a8b",
-        "assessor-v1": "9cc39ed746ae6c9dfc78b8e4e2838d23b258b29106fa135379480ff5865d0e37",
+        "implementor-v1": "8e6a8d9c0840a9856d8c0d69fc9491910549e0f269e4d3fe7be6aa5dfcb129f2",
+        "assessor-v1": "5cb4e5e8b1972e5a74f40843e5c82723bb802e49739aa6825de91bd9e6adef47",
         "operator-v1": "c47469c440ad86994082d8413d9fd004ae6b8c9a7c0e3290850e12d00430767e"
       },
       "agentTeamsVersion": "v1.2.0",

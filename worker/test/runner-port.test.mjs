@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { runCommand } from "../agent/runner/runner-port.mjs";
+import { runCommand, runnerRunIdForTask } from "../agent/runner/runner-port.mjs";
 import {
   FORBIDDEN_ENV_KEYS,
   assertNoForbiddenEnv,
@@ -41,6 +41,14 @@ function memoryJournal() {
   };
 }
 
+test("runner run identity is derived from the immutable Task binding digest", () => {
+  assert.equal(
+    runnerRunIdForTask({ contentDigest: "0123456789abcdef0123456789abcdef".repeat(2) }),
+    "run-01234567-89ab-4def-8123-456789abcdef",
+  );
+  assert.throws(() => runnerRunIdForTask({ contentDigest: "mutable" }), /immutable content digest/u);
+});
+
 test("validateCommandRequest accepts a bounded command and rejects unsafe shapes", () => {
   assert.equal(validateCommandRequest(validRequest()).command.join(" "), "node -e 1+1");
   assert.throws(() => validateCommandRequest(validRequest({ command: [] })), /non-empty/u);
@@ -66,6 +74,18 @@ test("assertNoForbiddenEnv rejects credential keys and secret-looking values", (
   assert.throws(
     () => assertNoForbiddenEnv({ CUSTOM_TOKEN: "X".repeat(48) }),
     /looks like a secret/u,
+  );
+  assert.throws(
+    () => assertNoForbiddenEnv({ lower: "value" }),
+    /bounded strings/u,
+  );
+  assert.throws(
+    () => assertNoForbiddenEnv(Object.fromEntries(Array.from({ length: 33 }, (_, index) => [`KEY_${index}`, "x"]))),
+    /too many keys/u,
+  );
+  assert.throws(
+    () => assertNoForbiddenEnv({ TOO_LARGE: "x".repeat(4097) }),
+    /exceeds its bound/u,
   );
   assertNoForbiddenEnv({ PATH: "/usr/bin", NODE_ENV: "test" });
 });

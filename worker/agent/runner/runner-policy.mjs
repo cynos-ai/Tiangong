@@ -55,6 +55,10 @@ export const FORBIDDEN_ENV_KEYS = Object.freeze([
 ]);
 
 const SECRET_VALUE_HINTS = /(?:sk-[A-Za-z0-9]{12,}|Bearer\s+\S|-----BEGIN|[A-Za-z0-9_-]{40,})/u;
+const ENV_KEY_PATTERN = /^[A-Z_][A-Z0-9_]{0,63}$/u;
+const MAX_ENV_KEYS = 32;
+const MAX_ENV_VALUE_BYTES = 4096;
+const MAX_ENV_TOTAL_BYTES = 16 * 1024;
 
 export function validateCommandRequest(input) {
   if (input === null || typeof input !== "object") {
@@ -106,14 +110,24 @@ export function validateCommandRequest(input) {
 }
 
 export function assertNoForbiddenEnv(env) {
-  if (env === null || typeof env !== "object") throw new TypeError("env must be an object");
-  for (const key of Object.keys(env)) {
+  if (env === null || typeof env !== "object" || Array.isArray(env)) throw new TypeError("env must be an object");
+  const keys = Object.keys(env);
+  if (keys.length > MAX_ENV_KEYS) throw new Error("Runner environment has too many keys");
+  let total = 0;
+  for (const key of keys) {
+    if (!ENV_KEY_PATTERN.test(key) || typeof env[key] !== "string") {
+      throw new TypeError("Runner environment keys and values must be bounded strings");
+    }
     if (FORBIDDEN_ENV_KEYS.includes(key)) {
       throw new Error(`Forbidden credential key is present in the runner environment: ${key}`);
     }
-    const value = String(env[key] ?? "");
+    const value = env[key];
+    const bytes = Buffer.byteLength(value);
+    if (bytes > MAX_ENV_VALUE_BYTES) throw new Error(`Runner environment value for ${key} exceeds its bound`);
+    total += Buffer.byteLength(key) + bytes;
     if (SECRET_VALUE_HINTS.test(value)) {
       throw new Error(`Runner environment value for ${key} looks like a secret and is forbidden`);
     }
   }
+  if (total > MAX_ENV_TOTAL_BYTES) throw new Error("Runner environment exceeds its total byte bound");
 }

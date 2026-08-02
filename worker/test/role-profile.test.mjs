@@ -107,8 +107,14 @@ test("four independent professional profiles load with role-specific Skills", as
     const profile = await loadSourceProfile(roleId);
     assert.equal(profile.profile.roleId, roleId);
     assert.deepEqual(profile.profile.practiceIds, []);
-    assert.deepEqual(profile.profile.toolIds, ["team_resolve_task", "team_submit_result"]);
-    assert.equal(profile.gatePolicy.id, "professional-tools-v1");
+    const expected = {
+      designer: { tools: ["team_resolve_task", "team_submit_result"], gate: "professional-tools-v1" },
+      implementor: { tools: ["team_resolve_task", "run_command", "team_submit_result"], gate: "implementor-tools-v1" },
+      assessor: { tools: ["team_resolve_task", "run_test_command", "team_submit_result"], gate: "assessor-tools-v1" },
+      operator: { tools: ["team_resolve_task", "team_submit_result"], gate: "professional-tools-v1" },
+    }[roleId];
+    assert.deepEqual(profile.profile.toolIds, expected.tools);
+    assert.equal(profile.gatePolicy.id, expected.gate);
     assert.equal(profile.roleSkill.id, `${roleId}-v1`);
     assert.match(profile.roleSkill.text, new RegExp(`Tiangong ${roleId[0].toUpperCase()}${roleId.slice(1)}`, "u"));
     assert.equal(assertRuntimeProfileMaterialized(profile), profile);

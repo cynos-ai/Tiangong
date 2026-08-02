@@ -9,6 +9,8 @@ const ALLOWED_TOOLS = new Set([
   "team_decide_task",
   "team_report",
   "team_resolve_task",
+  "run_command",
+  "run_test_command",
   "team_submit_result",
 ]);
 
@@ -30,10 +32,10 @@ export class TeamCoordinationGate {
 
 function projectSafeParams(params) {
   const safe = {};
-  for (const key of ["projectId", "taskId", "taskKind", "revisionIndex", "assignee", "completionContractDigest", "decision", "resultDigest", "disposition"]) {
+  for (const key of ["projectId", "taskId", "taskKind", "revisionIndex", "assignee", "completionContractDigest", "decision", "resultDigest", "disposition", "cwd", "timeoutMs", "outputLimitBytes"]) {
     if (params[key] !== undefined) safe[key] = params[key];
   }
-  for (const key of ["roleBindings", "inputRefs", "artifactRefs", "evidenceRefs", "changeRevisionRef", "revisionRequest"]) {
+  for (const key of ["roleBindings", "inputRefs", "artifactRefs", "evidenceRefs", "changeRevisionRef", "revisionRequest", "command"]) {
     if (params[key] !== undefined) safe[`${key}Digest`] = sha256(canonicalJson(params[key]));
   }
   for (const key of ["summary", "note", "claim", "blocker"]) {
@@ -62,6 +64,21 @@ export function wrapTeamTool(definition, { gate, evidence, getInvocation, catego
     evidence,
     getInvocation,
     category,
+    completionMetadata(result) {
+      if (category !== "isolated-execution") return {};
+      const runner = result?.details?.runnerEvidence;
+      return {
+        runnerOutcome: result?.details?.outcome ?? null,
+        runnerInvocationKey: result?.details?.invocationKey ?? null,
+        runnerReplayed: result?.details?.replayed === true,
+        runnerExitCode: result?.details?.exitCode ?? null,
+        runnerDurationMs: result?.details?.durationMs ?? null,
+        runnerImageId: runner?.imageId ?? null,
+        runnerPolicyDigest: runner?.policyDigest ?? null,
+        runnerContainerConfigDigest: runner?.containerConfigDigest ?? null,
+        runnerFixtureDigest: runner?.fixtureDigest ?? null,
+      };
+    },
     executeOperation({ toolCallId, params, signal, onUpdate, ctx, invocation }) {
       return definition.execute(toolCallId, params, signal, onUpdate, ctx, invocation);
     },

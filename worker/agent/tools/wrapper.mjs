@@ -74,7 +74,7 @@ export function createGatedTool({
       (typeof definition.execute !== "function" && typeof executeOperation !== "function")) {
     throw new TypeError("A tool definition and code-owned executor are required");
   }
-  if (!["read-only", "state-transition", "external-side-effect"].includes(category) ||
+  if (!["read-only", "state-transition", "isolated-execution", "external-side-effect"].includes(category) ||
       sideEffect !== (category === "external-side-effect")) {
     throw new TypeError("Tool execution category conflicts with side-effect semantics");
   }

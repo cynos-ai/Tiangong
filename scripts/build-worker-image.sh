@@ -12,10 +12,12 @@ readonly DESIGNER_IMAGE="tiangong-worker-designer:dev"
 readonly IMPLEMENTOR_IMAGE="tiangong-worker-implementor:dev"
 readonly ASSESSOR_IMAGE="tiangong-worker-assessor:dev"
 readonly OPERATOR_IMAGE="tiangong-worker-operator:dev"
+readonly RUNNER_BROKER_IMAGE="tiangong-runner-broker:dev"
 readonly EXPECTED_NODE_VERSION="v22.23.2"
 readonly EXPECTED_PI_VERSION="0.82.0"
 readonly EXPECTED_GIT_VERSION="git version 2.43.0"
 readonly EXPECTED_UTIL_LINUX_VERSION="2.39.3"
+readonly EXPECTED_DOCKER_CLI_VERSION="28.3.3"
 
 command -v docker >/dev/null 2>&1 || {
   printf 'ERROR: docker is required.\n' >&2
@@ -44,10 +46,18 @@ for role in designer implementor assessor operator; do
   printf '[Tiangong] Building %s profile image %s\n' "${role}" "${image}"
   docker build "${build_args[@]}" --target "${role}" --tag "${image}" "${REPO_ROOT}/worker"
 done
+printf '[Tiangong] Building controlled Runner broker image %s\n' "${RUNNER_BROKER_IMAGE}"
+docker build "${build_args[@]}" --target runner-broker --tag "${RUNNER_BROKER_IMAGE}" "${REPO_ROOT}/worker"
 
 actual_node_version="$(docker run --rm --entrypoint node "${IMAGE}" --version)"
 [[ "${actual_node_version}" == "${EXPECTED_NODE_VERSION}" ]] || {
   printf 'ERROR: expected Node.js %s, got %s.\n' "${EXPECTED_NODE_VERSION}" "${actual_node_version}" >&2
+  exit 1
+}
+
+actual_docker_cli_version="$(docker run --rm --entrypoint /usr/local/bin/docker "${RUNNER_BROKER_IMAGE}" --version | awk '{print $3}' | tr -d ',')"
+[[ "${actual_docker_cli_version}" == "${EXPECTED_DOCKER_CLI_VERSION}" ]] || {
+  printf 'ERROR: expected Runner broker Docker CLI %s, got %s.\n' "${EXPECTED_DOCKER_CLI_VERSION}" "${actual_docker_cli_version}" >&2
   exit 1
 }
 
@@ -233,7 +243,13 @@ node -e '
   if (leader.roleId !== "leader" || leader.runtimeReady !== true) process.exit(1);
   if (leader.toolIds.join(",") !== "team_create_project,team_dispatch_task,team_check_result,team_decide_task,team_report") process.exit(1);
   if (professionals.map((profile) => profile.roleId).join(",") !== "designer,implementor,assessor,operator") process.exit(1);
-  if (professionals.some((profile) => profile.runtimeReady !== true || profile.toolIds.join(",") !== "team_resolve_task,team_submit_result")) process.exit(1);
+  const expectedProfessionalTools = {
+    designer: "team_resolve_task,team_submit_result",
+    implementor: "team_resolve_task,run_command,team_submit_result",
+    assessor: "team_resolve_task,run_test_command,team_submit_result",
+    operator: "team_resolve_task,team_submit_result",
+  };
+  if (professionals.some((profile) => profile.runtimeReady !== true || profile.toolIds.join(",") !== expectedProfessionalTools[profile.roleId])) process.exit(1);
   if (reviewer.schemaVersion !== 2 || reviewer.targetKindIds.join(",") !== "file,directory_snapshot,commit,git_diff") process.exit(1);
   if (reviewer.materializedTargetKindIds.join(",") !== "file,directory_snapshot,commit,git_diff") process.exit(1);
   if (reviewer.toolIds.join(",") !== "start_work,extend_scope,read,inspect_directory,inspect_repository,check_completion,abandon_work") process.exit(1);
@@ -246,5 +262,7 @@ printf '[Tiangong] Reviewer profile image validated: %s (runtimeReady=true; dete
   "${REVIEWER_IMAGE}"
 printf '[Tiangong] Leader profile image validated: %s (runtimeReady=true; closed coordination tool surface)\n' \
   "${LEADER_IMAGE}"
-printf '[Tiangong] Professional profile images validated: %s, %s, %s, %s (runtimeReady=true; resolve + submit)\n' \
+printf '[Tiangong] Professional profile images validated: %s, %s, %s, %s (runtimeReady=true; role-scoped closed tools)\n' \
   "${DESIGNER_IMAGE}" "${IMPLEMENTOR_IMAGE}" "${ASSESSOR_IMAGE}" "${OPERATOR_IMAGE}"
+printf '[Tiangong] Runner broker image validated: %s (Docker CLI %s; socket authority isolated from Workers)\n' \
+  "${RUNNER_BROKER_IMAGE}" "${actual_docker_cli_version}"

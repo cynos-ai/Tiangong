@@ -24,6 +24,29 @@ function invocationIdentity(validated) {
   };
 }
 
+export function runnerRunIdForTask(taskBinding) {
+  const digest = taskBinding?.contentDigest;
+  if (typeof digest !== "string" || !/^[0-9a-f]{64}$/u.test(digest)) {
+    throw new TypeError("Runner Task binding requires an immutable content digest");
+  }
+  const value = digest.slice(0, 32).split("");
+  value[12] = "4";
+  value[16] = ((Number.parseInt(value[16], 16) & 0x3) | 0x8).toString(16);
+  const hex = value.join("");
+  return `run-${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export function runnerInvocationIdentity(request) {
+  const validated = validateCommandRequest(request);
+  const operation = invocationIdentity(validated);
+  const invocationKey = sha256(operation);
+  return Object.freeze({
+    validated,
+    invocationKey,
+    requestDigest: sha256({ ...operation, invocationKey }),
+  });
+}
+
 function replayFromJournal(entry, key) {
   if (entry.status === "completed") return { ...entry.result, replayed: true };
   if (entry.status === "outcome_uncertain") {
@@ -64,10 +87,7 @@ function validateRunnerEvidence(value, validated, key) {
 }
 
 export async function runCommand(request, deps) {
-  const validated = validateCommandRequest(request);
-  const identity = invocationIdentity(validated);
-  const key = sha256(identity);
-  const requestDigest = sha256({ ...identity, invocationKey: key });
+  const { validated, invocationKey: key, requestDigest } = runnerInvocationIdentity(request);
   const journal = deps?.journal;
 
   if (typeof deps?.executor !== "function") {
@@ -108,7 +128,9 @@ export async function runCommand(request, deps) {
     return { outcome: "outcome_uncertain", invocationKey: key, reason };
   }
 
-  if (raw?.status !== "completed" || !Number.isInteger(raw.exitCode) || raw.exitCode < 0 || raw.exitCode > 255) {
+  if (raw?.status !== "completed" || !Number.isInteger(raw.exitCode) || raw.exitCode < 0 || raw.exitCode > 255 ||
+      typeof raw.stdout !== "string" || typeof raw.stderr !== "string" ||
+      (raw.durationMs !== undefined && (!Number.isSafeInteger(raw.durationMs) || raw.durationMs < 0))) {
     const reason = "RUNNER_RESULT_INVALID";
     if (journal) await journal.recordUncertain(key, requestDigest, reason);
     return { outcome: "outcome_uncertain", invocationKey: key, reason };
