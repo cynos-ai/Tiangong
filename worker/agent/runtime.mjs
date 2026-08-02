@@ -35,6 +35,11 @@ import {
 } from "./session-store.mjs";
 import { createCoreToolRegistry } from "./tools/registry.mjs";
 import { createReviewerToolRegistry } from "./work/reviewer-tools.mjs";
+import { getPlaybook } from "./playbook/registry.mjs";
+import { defaultTiangongRoot } from "./team/shared-fs.mjs";
+import { createLeaderChannel } from "./team/channel-adapter.mjs";
+import { createLeaderSync } from "./team/sync-adapter.mjs";
+import { createLeaderToolRegistry } from "./work/leader-tools.mjs";
 import { completedReviewTargetFacts, renderCompletedReview, workStatusForRun } from "./work/status.mjs";
 import { createTurnResult } from "./turn-contract.mjs";
 import { TurnContextController } from "./turn-context.mjs";
@@ -175,6 +180,18 @@ export class TiangongAgentRuntime {
         getInvocation: turns.current,
         inspectionLockPath: persisted.paths.reviewInspectionLockPath,
       });
+    } else if (profileBundle.profile.roleId === "leader") {
+      gate = new PolicyGate({ idempotencyStore });
+      const playbook = getPlaybook("software-change-delivery");
+      const teamDeps = {
+        rootDir: defaultTiangongRoot(),
+        env: process.env,
+        channel: createLeaderChannel({ evidence }),
+        sync: createLeaderSync(),
+        evidence,
+        getInvocation: turns.current,
+      };
+      registry = createLeaderToolRegistry({ playbook, deps: teamDeps });
     } else {
       gate = new PolicyGate({ idempotencyStore });
       registry = createCoreToolRegistry({
