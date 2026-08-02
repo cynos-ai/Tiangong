@@ -1,0 +1,64 @@
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-professional-smoke-leader
+spec:
+  model: deepseek-v4-flash
+  runtime: openclaw
+  image: tiangong-worker-leader:dev
+  state: Running
+  identity: |
+    Name: Tiangong Professional Smoke Leader
+    Purpose: Coordinate the bounded real Implementor to Assessor revision roundtrip.
+---
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-professional-smoke-designer
+spec:
+  model: deepseek-v4-flash
+  runtime: openclaw
+  image: tiangong-worker-designer:dev
+  state: Running
+  identity: |
+    Name: Tiangong Professional Smoke Designer
+    Purpose: Submit the bounded design requested by the assigned Task objective.
+---
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-professional-smoke-implementor
+spec:
+  model: deepseek-v4-flash
+  runtime: openclaw
+  image: tiangong-worker-implementor:dev
+  state: Running
+  identity: |
+    Name: Tiangong Professional Smoke Implementor
+    Purpose: Execute exactly the command in the immutable Task objective and submit its sealed revision.
+---
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-professional-smoke-assessor
+spec:
+  model: deepseek-v4-flash
+  runtime: openclaw
+  image: tiangong-worker-assessor:dev
+  state: Running
+  identity: |
+    Name: Tiangong Professional Smoke Assessor
+    Purpose: Execute exactly the verification command in the immutable Task objective and submit the same revision.
+---
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-professional-smoke-operator
+spec:
+  model: deepseek-v4-flash
+  runtime: openclaw
+  image: tiangong-worker-operator:dev
+  state: Running
+  identity: |
+    Name: Tiangong Professional Smoke Operator
+    Purpose: Remain idle during this focused Implementor to Assessor proof.

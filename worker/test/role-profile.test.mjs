@@ -111,7 +111,7 @@ test("four independent professional profiles load with role-specific Skills", as
       designer: { tools: ["team_resolve_task", "team_submit_result"], gate: "professional-tools-v1" },
       implementor: { tools: ["team_resolve_task", "run_command", "team_submit_result"], gate: "implementor-tools-v1" },
       assessor: { tools: ["team_resolve_task", "run_test_command", "team_submit_result"], gate: "assessor-tools-v1" },
-      operator: { tools: ["team_resolve_task", "team_submit_result"], gate: "professional-tools-v1" },
+      operator: { tools: ["team_resolve_task", "deploy_release", "team_submit_result"], gate: "deployment-tools-v1" },
     }[roleId];
     assert.deepEqual(profile.profile.toolIds, expected.tools);
     assert.equal(profile.gatePolicy.id, expected.gate);

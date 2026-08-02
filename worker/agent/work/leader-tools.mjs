@@ -115,7 +115,7 @@ export function createLeaderToolRegistry({ playbook, deps }) {
     name: "team_dispatch_task",
     label: "Tiangong team dispatch task",
     description:
-      "Create and dispatch the next playbook Task to its owning role. The deterministic TransitionPolicy validates the role and step order; re-dispatch of the same taskId is an idempotent replay that does not re-notify.",
+      "Create and dispatch the next playbook Task with a bounded immutable objective to its owning role. The deterministic TransitionPolicy validates the role and step order; re-dispatch of the same taskId is an idempotent replay that does not re-notify.",
     parameters: Type.Object(
       {
         projectId: ID,
@@ -123,6 +123,7 @@ export function createLeaderToolRegistry({ playbook, deps }) {
         taskKind: TASK_KIND,
         revisionIndex: Type.Integer({ minimum: 0 }),
         assignee: ID,
+        objective: Type.String({ minLength: 1, maxLength: 4096, pattern: "^[^\\r\\n]+$" }),
         completionContractDigest: Type.Optional(DIGEST),
         inputRefs: Type.Optional(Type.Array(ID, { maxItems: 32 })),
       },
@@ -139,6 +140,7 @@ export function createLeaderToolRegistry({ playbook, deps }) {
         taskKind: params.taskKind,
         revisionIndex: params.revisionIndex,
         assignee: params.assignee,
+        objective: params.objective,
         completionContractDigest: params.completionContractDigest ?? playbook.completionSchemaDigest,
         inputRefs: params.inputRefs,
         createdAt: nowISO(deps),
@@ -178,7 +180,17 @@ export function createLeaderToolRegistry({ playbook, deps }) {
         taskKind: checked.taskBinding.taskKind,
         revisionIndex: checked.taskBinding.revisionIndex,
         assignee: checked.taskBinding.assignee,
+        objective: checked.taskBinding.objective,
         resultDigest: checked.result?.contentDigest ?? null,
+        result: checked.result ? {
+          claim: checked.result.claim ?? null,
+          blocker: checked.result.blocker ?? null,
+          artifactRefs: checked.result.artifactRefs,
+          evidenceRefs: checked.result.evidenceRefs,
+          changeRevisionRef: checked.result.changeRevisionRef ?? null,
+          releaseOutcome: checked.result.releaseOutcome ?? null,
+          revisionRequest: checked.result.revisionRequest ?? null,
+        } : null,
         decisions: checked.decisions.map((d) => ({ decisionId: d.decisionId, decision: d.decision })),
       });
     },
@@ -221,13 +233,18 @@ export function createLeaderToolRegistry({ playbook, deps }) {
       });
       assertDecisionResultCompatible({ decision, taskBinding: task, result: latestResult });
       const recorded = await recordTaskDecision(decision, deps);
+      const terminalDisposition = decision.decision === "blocked"
+        ? "RECOVERY_REQUIRED"
+        : (task.taskKind === "release" && decision.decision === "accept"
+          ? await deps.getProjectDisposition?.(task.projectId)
+          : null);
       return ok({
         decisionId: decision.decisionId,
         decision: decision.decision,
         revisionIndex: decision.revisionIndex,
         replayed: recorded.replayed,
-        requiredNextTool: decision.decision === "blocked" ? "team_report" : null,
-        terminalDisposition: decision.decision === "blocked" ? "RECOVERY_REQUIRED" : null,
+        requiredNextTool: terminalDisposition ? "team_report" : null,
+        terminalDisposition,
       });
     },
   });

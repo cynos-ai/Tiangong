@@ -4,7 +4,7 @@
   "title": "TaskPlaybookBinding",
   "type": "object",
   "additionalProperties": false,
-  "required": ["kind", "schemaVersion", "taskId", "projectId", "playbookStepId", "taskKind", "revisionIndex", "assignee", "completionContractDigest", "sourceProfileDigest", "sourceSkillId", "sourceSkillDigest", "inputRefs", "createdAt", "contentDigest"],
+  "required": ["kind", "schemaVersion", "taskId", "projectId", "playbookStepId", "taskKind", "revisionIndex", "assignee", "objective", "completionContractDigest", "sourceProfileDigest", "sourceSkillId", "sourceSkillDigest", "inputRefs", "createdAt", "contentDigest"],
   "properties": {
     "kind": { "const": "tiangong.task-binding" },
     "schemaVersion": { "const": 1 },
@@ -14,6 +14,7 @@
     "taskKind": { "enum": ["design", "implement", "assess", "release"] },
     "revisionIndex": { "type": "integer", "minimum": 0 },
     "assignee": { "$ref": "#/$defs/id" },
+    "objective": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[^\\r\\n]+$" },
     "completionContractDigest": { "$ref": "#/$defs/digest" },
     "sourceProfileDigest": { "$ref": "#/$defs/digest" },
     "sourceSkillId": { "$ref": "#/$defs/id" },

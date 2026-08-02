@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { sha256 } from "../agent/canonical-json.mjs";
+import { createDeploymentOutcome } from "../agent/deployment/client.mjs";
 import { createProjectBinding, createTaskBinding } from "../agent/team/manifest.mjs";
 import { projectDisposition } from "../agent/team/project-chain.mjs";
 import {
@@ -16,6 +17,7 @@ import {
   resolveAssignedTask,
   submitResult,
 } from "../agent/team/team-task-port.mjs";
+import { createChangeRevisionRef } from "../agent/work/change-revision-ref.mjs";
 import { createResultEnvelope } from "../agent/work/result-envelope.mjs";
 
 const PLAYBOOK_DIGEST = sha256("playbook-1");
@@ -106,6 +108,7 @@ function taskBinding(overrides = {}) {
     taskKind: "design",
     revisionIndex: 0,
     assignee: DESIGNER,
+    objective: "Design the bounded change and acceptance contract.",
     completionContractDigest: CONTRACT_DIGEST,
     sourceProfileDigest: PROFILE_DIGEST,
     sourceSkillId: "designer-v1",
@@ -185,6 +188,34 @@ test("full bound flow writes static-oracle-compatible AgentTeams Project/Task re
     assert.match(resultMarkdown, /\*\*Status\*\*: SUCCESS/u);
     assert.match(plan, new RegExp(`- \\[x\\] ${task.taskId}`));
     assert.match(plan, /Tiangong Binding/u);
+  });
+});
+
+test("an accepted release machine outcome authorizes DELIVERED", async () => {
+  await withRoot(async (root) => {
+    const project = projectBinding();
+    await createProject(project, depsFor(LEADER, root));
+    const tasks = {
+      design: taskBinding({ taskId: "design-delivered", createdAt: "2026-08-01T12:01:00Z" }),
+      implement: taskBinding({ taskId: "implement-delivered", taskKind: "implement", assignee: IMPL, sourceSkillId: "implementor-v1", inputRefs: ["design-delivered"], createdAt: "2026-08-01T12:02:00Z" }),
+      assess: taskBinding({ taskId: "assess-delivered", taskKind: "assess", assignee: ASSESSOR, sourceSkillId: "assessor-v1", inputRefs: ["implement-delivered"], createdAt: "2026-08-01T12:03:00Z" }),
+      release: taskBinding({ taskId: "release-delivered", taskKind: "release", assignee: OPERATOR, sourceSkillId: "operator-v1", inputRefs: ["assess-delivered"], createdAt: "2026-08-01T12:04:00Z" }),
+    };
+    const revision = createChangeRevisionRef({ producerTaskId: tasks.implement.taskId, artifactPath: "revision.tar", artifactDigest: "9".repeat(64), revision: 0 });
+    const results = {
+      design: resultEnvelope(tasks.design),
+      implement: resultEnvelope(tasks.implement, { sourceRole: "implementor", sourceSkillId: "implementor-v1", claim: "implemented", changeRevisionRef: revision, evidenceRefs: ["runner-implement"] }),
+      assess: resultEnvelope(tasks.assess, { sourceRole: "assessor", sourceSkillId: "assessor-v1", claim: "verified", changeRevisionRef: revision, evidenceRefs: ["runner-assess"] }),
+    };
+    const outcome = createDeploymentOutcome({ taskId: tasks.release.taskId, targetId: "target-a", operationDigest: "8".repeat(64), previousDigest: "7".repeat(64), currentDigest: revision.artifactDigest, changeRevisionRef: revision, disposition: "DELIVERED", postVerifyHealthy: true, rollbackPerformed: false, previousVerifyHealthy: null });
+    results.release = resultEnvelope(tasks.release, { sourceRole: "operator", sourceSkillId: "operator-v1", claim: "deployed and verified", changeRevisionRef: revision, releaseOutcome: outcome, evidenceRefs: ["deployment-receipt"] });
+    for (const kind of ["design", "implement", "assess", "release"]) {
+      const task = tasks[kind]; const result = results[kind];
+      await dispatchTask(task, depsFor(LEADER, root));
+      await submitResult(result, depsFor(task.assignee, root));
+      await recordTaskDecision(createTaskDecision({ taskId: task.taskId, projectId: project.projectId, playbookDigest: project.playbookDigest, decision: "accept", revisionIndex: 0, decidedBy: LEADER, resultDigest: result.contentDigest, createdAt: T2 }), depsFor(LEADER, root));
+    }
+    assert.equal(await projectDisposition(project.projectId, { rootDir: root, maxRevisionWaves: 2 }), "DELIVERED");
   });
 });
 

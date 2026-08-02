@@ -33,5 +33,5 @@
   "transitionPolicyId": "software-change-delivery-transition-v1",
   "transitionPolicyPath": "transition-policy.mjs",
   "transitionTruthTablePath": "tests/transition-truth-table.json",
-  "contentDigest": "2699bd1e23e72ea44d3748d5ab6e64519f1d4ff0fe4e5e4f94541a2272bfcd5b"
+  "contentDigest": "f3cb1b29dd8d5e2eece0e073a337d0babb9004f1e650cdccd0a4e90e12039c5d"
 }

@@ -20,6 +20,7 @@ export function stateRootPaths(stateDirectory) {
     localGitRoot: join(root, "local-git"),
     idempotencyRoot: join(root, "idempotency"),
     runnerJournalsRoot: join(root, "runner-journals"),
+    deploymentReceiptsRoot: join(root, "deployment-receipts"),
     pendingOperationsRoot: join(root, "pending-operations"),
     rollbacksRoot: join(root, "rollbacks"),
   });
@@ -57,6 +58,7 @@ export function statePathsForSessionHash({ stateDirectory, sessionHash }) {
     idempotencyDirectory,
     idempotencyFilePath: join(idempotencyDirectory, "idempotency.jsonl"),
     runnerJournalFilePath: join(roots.runnerJournalsRoot, sessionHash, "runner.jsonl"),
+    deploymentReceiptFilePath: join(roots.deploymentReceiptsRoot, sessionHash, "deployments.jsonl"),
     pendingOperationDirectory: join(roots.pendingOperationsRoot, sessionHash),
     rollbackDirectory: join(roots.rollbacksRoot, sessionHash),
   });

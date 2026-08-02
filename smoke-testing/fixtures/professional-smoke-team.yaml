@@ -1,0 +1,17 @@
+apiVersion: agentteams.io/v1beta1
+kind: Team
+metadata:
+  name: tiangong-professional-smoke
+spec:
+  description: Disposable real Implementor to Assessor ChangeRevision smoke.
+  workerMembers:
+    - name: tiangong-professional-smoke-leader
+      role: team_leader
+    - name: tiangong-professional-smoke-designer
+      role: worker
+    - name: tiangong-professional-smoke-implementor
+      role: worker
+    - name: tiangong-professional-smoke-assessor
+      role: worker
+    - name: tiangong-professional-smoke-operator
+      role: worker

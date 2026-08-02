@@ -4,22 +4,22 @@
     {
       "playbookId": "software-change-delivery",
       "version": "1.0.0",
-      "contentDigest": "2699bd1e23e72ea44d3748d5ab6e64519f1d4ff0fe4e5e4f94541a2272bfcd5b",
+      "contentDigest": "f3cb1b29dd8d5e2eece0e073a337d0babb9004f1e650cdccd0a4e90e12039c5d",
       "transitionPolicyId": "software-change-delivery-transition-v1",
       "transitionPolicyDigest": "bd8bb7ea24e37b735279e623b6b4aa14ddf14de1f5c5221535fd6143a116a51d",
       "fileDigests": {
-        "PLAYBOOK.md": "5ccd5fec10226b18eda88e7cde03c6051fe4c059c89460a8c3cd0d5347fb29fc",
+        "PLAYBOOK.md": "b7966cad556f5712a6142b9182d73f5bf9f452e6f05e6b022d26fcbcd62bddef",
         "schemas/project-binding.schema.json": "91e4c87aa6794f92943c8131df4415879a443e62c175544214e41bbc762a57e5",
-        "schemas/task-binding.schema.json": "7fbc5f0d91c5f2b02198da477a737bb7e14cf7bb6957621f6942ed4e81d8cad8",
-        "schemas/result-envelope.schema.json": "6e5ef7ae62d1c57e42be83246e9deb2b2eaab94300d8b8f87d953cb9584f98bf",
+        "schemas/task-binding.schema.json": "79fd54a06d17773d22378c200b16556499046f0ced95aaf82fa720eeceac8bc7",
+        "schemas/result-envelope.schema.json": "efbfc8975eff4fa162e714f2332a465f8cce36a2b009b9ee71a2bf6f5ec2cb24",
         "schemas/transition-decision.schema.json": "dddc9c23b85c000fb8da465a7d1bb3fd179e9f462439b2bf1184c7eabaeda61e",
         "transition-policy.mjs": "bd8bb7ea24e37b735279e623b6b4aa14ddf14de1f5c5221535fd6143a116a51d",
         "tests/transition-truth-table.json": "dfe0cd7a9aaf588d525dfac0814c5c7e5c87f9a02374f7ffd4e7884ccd53ef02"
       },
       "schemaDigests": {
         "projectBinding": "8c76ec7721dcb57cd95f34ed8b1547f0e257d6e734eb6e6ea664f4ce297e387d",
-        "taskBinding": "e33fb41f3f141b7784bdc01e3ad9ae4b715944d29664aecac449a35b8854c3c1",
-        "resultEnvelope": "67aff48b2ebc4114d59b805ea6186c0846cadf9b2c376e642ae02e959558b03a",
+        "taskBinding": "9ee0ddba980b7afbc5d7ad81155fbb8be67ae2211b4aa21c5cafecaed32986b3",
+        "resultEnvelope": "44a9134a73b6d15f4b4502762fc887ad3d772b1bd16474a6b1cd160269819282",
         "transitionDecision": "b2e5de496ad9f691a0fe68971a372a683c1d82d3b0a22f39b0797bbdbe27b040"
       },
       "compatibleRoleProfileDigests": {
@@ -27,14 +27,14 @@
         "designer": "aad09452ef5976eeee24a1c976eeae93064ed01bb84ba8bc85588586b361e3e6",
         "implementor": "e51507408f2fa6546163bff1aeb42fc37e908847207bbceca108b2314ca28d0a",
         "assessor": "9f3a2da2bc39ca35f99e4b0f50708714bfcd11ad1990ca5784d948d5dd245283",
-        "operator": "52a3929e673a2d1e0142b1db0488b6bcc18a3c769c99494561e6eca3e80cae02"
+        "operator": "43f05e5a5b4797fccb329e9bc6990a088dec5704016b8a2a4f701c141982d143"
       },
       "compatibleRoleSkillDigests": {
-        "leader-v1": "9a1f92ec43d344c49ceca8fa5c8048157bfb4ab153a1f8d1e2bd98ec66951f84",
+        "leader-v1": "1e023bd9aa0af90ce044036b81b0976391d03a2831e9578ec00b0ef860a000cb",
         "designer-v1": "360ff77f2da57456ff9510720176e61db03a0b36de3eeb0f9b1338f28296a3f9",
         "implementor-v1": "3099bfc6e6d6c1cb8d215b025f54e4d1028e2e8b419e5e9aba20483e7d3c6561",
         "assessor-v1": "09eb73c76073e0668c790f1be89cc2a23786825455c0e77d417ccf5a5a53f8d3",
-        "operator-v1": "c47469c440ad86994082d8413d9fd004ae6b8c9a7c0e3290850e12d00430767e"
+        "operator-v1": "fee7b721bb069e4edc5ea982f833489b8f822ae2c203825794e2fdad22c5cce3"
       },
       "agentTeamsVersion": "v1.2.0",
       "teamTaskPortContractVersion": "team-task-port-v1"

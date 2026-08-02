@@ -6,6 +6,7 @@
 
 import { canonicalJson, sha256 } from "../canonical-json.mjs";
 import { TASK_KINDS, TEAM_ROLES } from "../team/manifest.mjs";
+import { createDeploymentOutcome } from "../deployment/client.mjs";
 import { createChangeRevisionRef } from "./change-revision-ref.mjs";
 
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
@@ -98,6 +99,17 @@ export function createResultEnvelope(input) {
   if (REQUIRES_REVISION_REF.has(input.taskKind) && !record.changeRevisionRef && !record.blocker) {
     throw new Error(`${input.taskKind} result must seal a changeRevisionRef unless it is a blocker`);
   }
+  if (input.releaseOutcome !== undefined && input.releaseOutcome !== null) {
+    if (input.taskKind !== "release" || record.blocker) throw new Error("Only a non-blocked release result may carry a deployment outcome");
+    record.releaseOutcome = createDeploymentOutcome(input.releaseOutcome);
+    if (record.releaseOutcome.taskId !== record.taskId ||
+        canonicalJson(record.releaseOutcome.changeRevisionRef) !== canonicalJson(record.changeRevisionRef)) {
+      throw new Error("Deployment outcome does not match the release Task and ChangeRevision");
+    }
+  }
+  if (input.taskKind === "release" && !record.blocker && !record.releaseOutcome) {
+    throw new Error("release result must carry a machine deployment outcome unless it is a blocker");
+  }
 
   if (input.revisionRequest !== undefined && input.revisionRequest !== null) {
     if (input.taskKind !== "assess") {
@@ -133,6 +145,7 @@ export function isResultEnvelope(value) {
       blocker: value.blocker,
       claim: value.claim,
       changeRevisionRef: value.changeRevisionRef,
+      releaseOutcome: value.releaseOutcome,
       revisionRequest: value.revisionRequest,
     });
     return canonicalJson(recreated) === canonicalJson(value);

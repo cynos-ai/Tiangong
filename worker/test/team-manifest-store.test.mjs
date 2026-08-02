@@ -62,6 +62,7 @@ function sampleTask() {
     taskKind: "implement",
     revisionIndex: 0,
     assignee: "impl",
+    objective: "Implement the accepted bounded change.",
     completionContractDigest: CONTRACT_DIGEST,
     sourceProfileDigest: sha256("implementor-profile"),
     sourceSkillId: "implementor-v1",

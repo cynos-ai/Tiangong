@@ -86,6 +86,7 @@ test("buildProjectBinding and buildTaskBinding carry the verified playbook diges
     taskKind: "design",
     revisionIndex: 0,
     assignee: "design-w",
+    objective: "Design the bounded change.",
     completionContractDigest: pb.contentDigest,
     createdAt: "2026-08-01T00:00:01Z",
   });
@@ -167,7 +168,7 @@ test("assertTransitionAllowed authorizes the full design->implement handoff and 
   assert.doesNotThrow(() =>
     assertTransitionAllowed({
       projectBinding: project,
-      taskBinding: buildTaskBinding({ playbook: pb, taskId: "T1", projectId: "P2", taskKind: "design", revisionIndex: 0, assignee: "design-w", completionContractDigest: pb.contentDigest, createdAt: "2026-08-01T00:00:01Z" }),
+      taskBinding: buildTaskBinding({ playbook: pb, taskId: "T1", projectId: "P2", taskKind: "design", revisionIndex: 0, assignee: "design-w", objective: "Design the bounded change.", completionContractDigest: pb.contentDigest, createdAt: "2026-08-01T00:00:01Z" }),
       chain: [],
     }),
   );
@@ -176,7 +177,7 @@ test("assertTransitionAllowed authorizes the full design->implement handoff and 
     () =>
       assertTransitionAllowed({
         projectBinding: project,
-        taskBinding: buildTaskBinding({ playbook: pb, taskId: "T2", projectId: "P2", taskKind: "implement", revisionIndex: 0, assignee: "assess-w", completionContractDigest: pb.contentDigest, createdAt: "2026-08-01T00:00:02Z" }),
+        taskBinding: buildTaskBinding({ playbook: pb, taskId: "T2", projectId: "P2", taskKind: "implement", revisionIndex: 0, assignee: "assess-w", objective: "Implement the bounded change.", completionContractDigest: pb.contentDigest, createdAt: "2026-08-01T00:00:02Z" }),
         chain: [{ taskKind: "design", decision: "accept", revisionIndex: 0 }],
       }),
     /must be owned by implementor/,
@@ -186,7 +187,7 @@ test("assertTransitionAllowed authorizes the full design->implement handoff and 
     () =>
       assertTransitionAllowed({
         projectBinding: project,
-        taskBinding: buildTaskBinding({ playbook: pb, taskId: "T3", projectId: "P2", taskKind: "assess", revisionIndex: 0, assignee: "assess-w", completionContractDigest: pb.contentDigest, createdAt: "2026-08-01T00:00:03Z" }),
+        taskBinding: buildTaskBinding({ playbook: pb, taskId: "T3", projectId: "P2", taskKind: "assess", revisionIndex: 0, assignee: "assess-w", objective: "Assess the sealed revision.", completionContractDigest: pb.contentDigest, createdAt: "2026-08-01T00:00:03Z" }),
         chain: [{ taskKind: "design", decision: "accept", revisionIndex: 0 }],
       }),
     /Expected next task implement/,
@@ -209,7 +210,7 @@ test("an assessor revision opens a new implement wave and a prior result cannot 
   assert.doesNotThrow(() =>
     assertTransitionAllowed({
       projectBinding: project,
-      taskBinding: buildTaskBinding({ playbook: pb, taskId: "T-impl-1", projectId: "P3", taskKind: "implement", revisionIndex: 1, assignee: "impl-w", completionContractDigest: pb.contentDigest, createdAt: "2026-08-01T00:00:10Z" }),
+      taskBinding: buildTaskBinding({ playbook: pb, taskId: "T-impl-1", projectId: "P3", taskKind: "implement", revisionIndex: 1, assignee: "impl-w", objective: "Implement the requested revision.", completionContractDigest: pb.contentDigest, createdAt: "2026-08-01T00:00:10Z" }),
       chain,
     }),
   );

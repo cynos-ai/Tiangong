@@ -118,6 +118,7 @@ function taskSpec(task, project) {
     `**Task ID**: ${task.taskId}\n` +
     `**Project ID**: ${task.projectId}\n` +
     `**Assigned to**: ${task.assignee}\n` +
+    `**Objective**: ${task.objective}\n` +
     `**Playbook digest**: ${project.playbookDigest}\n` +
     `**Binding**: shared/tasks/${task.taskId}/tiangong/task-binding.json (${task.contentDigest})\n` +
     `**Completion contract digest**: ${task.completionContractDigest}\n` +

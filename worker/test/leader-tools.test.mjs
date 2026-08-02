@@ -92,6 +92,7 @@ async function createAndDispatch(registry, taskId = "task-design-0") {
     taskKind: "design",
     revisionIndex: 0,
     assignee: DESIGNER,
+    objective: "Design the bounded change.",
   });
 }
 function designResult(pb, taskId, taskBindingDigest) {
@@ -145,6 +146,10 @@ test("Leader creates an AgentTeams Project and dispatches only one active design
       join(root, "projects", PROJECT_ID, "tiangong", "project-binding.json"), "utf8",
     ));
     assert.equal(project.requester, "@admin:example.test");
+    const task = JSON.parse(await (await import("node:fs/promises")).readFile(
+      join(root, "tasks", "task-design-0", "tiangong", "task-binding.json"), "utf8",
+    ));
+    assert.equal(task.objective, "Design the bounded change.");
 
     await assert.rejects(
       () => definition(registry, "team_dispatch_task").execute("dispatch-2", {
@@ -153,6 +158,7 @@ test("Leader creates an AgentTeams Project and dispatches only one active design
         taskKind: "design",
         revisionIndex: 0,
         assignee: DESIGNER,
+        objective: "Design a duplicate change.",
       }),
       /undecided Task/u,
     );

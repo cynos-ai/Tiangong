@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { createDeploymentOutcome } from "../agent/deployment/client.mjs";
 import {
   createChangeRevisionRef,
   isChangeRevisionRef,
@@ -153,6 +154,16 @@ test("a revision request is only allowed on an assessor result", () => {
     createdAt: AT,
   });
   assert.equal(assess.revisionRequest.summary, "tests missing for edge case");
+});
+
+test("a release result requires a consistent machine deployment outcome", () => {
+  const ref = createChangeRevisionRef({ producerTaskId: "implement-release", artifactPath: "revision.tar", artifactDigest: DIGEST, revision: 0 });
+  assert.throws(() => createResultEnvelope({ ...BINDING, taskId: "release-1", projectId: "p1", taskKind: "release", revisionIndex: 0, sourceRole: "operator", completionContractDigest: CONTRACT, claim: "deployed", changeRevisionRef: ref, createdAt: AT }), /machine deployment outcome/);
+  const outcome = createDeploymentOutcome({ taskId: "release-1", targetId: "target-a", operationDigest: "9".repeat(64), previousDigest: "8".repeat(64), currentDigest: DIGEST, changeRevisionRef: ref, disposition: "DELIVERED", postVerifyHealthy: true, rollbackPerformed: false, previousVerifyHealthy: null });
+  const release = createResultEnvelope({ ...BINDING, taskId: "release-1", projectId: "p1", taskKind: "release", revisionIndex: 0, sourceRole: "operator", completionContractDigest: CONTRACT, claim: "machine deploy complete", changeRevisionRef: ref, releaseOutcome: outcome, createdAt: AT });
+  assert.equal(release.releaseOutcome.disposition, "DELIVERED");
+  assert.equal(isResultEnvelope(release), true);
+  assert.throws(() => createResultEnvelope({ ...BINDING, taskId: "release-other", projectId: "p1", taskKind: "release", revisionIndex: 0, sourceRole: "operator", completionContractDigest: CONTRACT, claim: "forged", changeRevisionRef: ref, releaseOutcome: outcome, createdAt: AT }), /does not match/);
 });
 
 test("createResultEnvelope rejects unsupported task kinds and roles", () => {

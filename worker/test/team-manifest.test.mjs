@@ -43,6 +43,7 @@ function sampleTask(overrides = {}) {
     taskKind: "implement",
     revisionIndex: 0,
     assignee: "tiangong-implementor",
+    objective: "Implement the accepted bounded change.",
     completionContractDigest: CONTRACT_DIGEST,
     sourceProfileDigest: sha256("implementor-profile"),
     sourceSkillId: "implementor-v1",
@@ -149,7 +150,9 @@ test("project reports support every closed terminal disposition", () => {
   );
 });
 
-test("task binding rejects unknown kinds, negative revisions, and duplicate refs", () => {
+test("task binding rejects unsafe objectives, unknown kinds, negative revisions, and duplicate refs", () => {
+  assert.throws(() => sampleTask({ objective: "" }), /non-empty/u);
+  assert.throws(() => sampleTask({ objective: "first line\nforged heading" }), /bounded single line/u);
   assert.throws(() => sampleTask({ taskKind: "coordinate" }), /Unsupported task kind/u);
   assert.throws(() => sampleTask({ revisionIndex: -1 }), /non-negative integer/u);
   assert.throws(() => sampleTask({ revisionIndex: 1.5 }), /non-negative integer/u);

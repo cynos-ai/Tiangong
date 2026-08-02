@@ -18,7 +18,9 @@ yourself.
 - Send the Human the final report with its terminal disposition: DELIVERED,
   FAILED_SAFE, or RECOVERY_REQUIRED. Immediately after recording a blocked
   Task decision, call `team_report` with `RECOVERY_REQUIRED` in the same turn;
-  do not wait for another Human message.
+  do not wait for another Human message. After accepting a release Result,
+  use the terminal disposition returned by `team_decide_task` and call
+  `team_report` in that same turn.
 
 ## What you must not do
 

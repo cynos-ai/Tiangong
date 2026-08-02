@@ -13,6 +13,8 @@ readonly IMPLEMENTOR_IMAGE="tiangong-worker-implementor:dev"
 readonly ASSESSOR_IMAGE="tiangong-worker-assessor:dev"
 readonly OPERATOR_IMAGE="tiangong-worker-operator:dev"
 readonly RUNNER_BROKER_IMAGE="tiangong-runner-broker:dev"
+readonly DEPLOYMENT_SERVICE_IMAGE="tiangong-deployment-service:dev"
+readonly DEPLOYMENT_BROKER_IMAGE="tiangong-deployment-broker:dev"
 readonly EXPECTED_NODE_VERSION="v22.23.2"
 readonly EXPECTED_PI_VERSION="0.82.0"
 readonly EXPECTED_GIT_VERSION="git version 2.43.0"
@@ -48,6 +50,10 @@ for role in designer implementor assessor operator; do
 done
 printf '[Tiangong] Building controlled Runner broker image %s\n' "${RUNNER_BROKER_IMAGE}"
 docker build "${build_args[@]}" --target runner-broker --tag "${RUNNER_BROKER_IMAGE}" "${REPO_ROOT}/worker"
+printf '[Tiangong] Building disposable deployment service image %s\n' "${DEPLOYMENT_SERVICE_IMAGE}"
+docker build "${build_args[@]}" --target deployment-service --tag "${DEPLOYMENT_SERVICE_IMAGE}" "${REPO_ROOT}/worker"
+printf '[Tiangong] Building controlled deployment broker image %s\n' "${DEPLOYMENT_BROKER_IMAGE}"
+docker build "${build_args[@]}" --target deployment-broker --tag "${DEPLOYMENT_BROKER_IMAGE}" "${REPO_ROOT}/worker"
 
 actual_node_version="$(docker run --rm --entrypoint node "${IMAGE}" --version)"
 [[ "${actual_node_version}" == "${EXPECTED_NODE_VERSION}" ]] || {

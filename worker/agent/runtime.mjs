@@ -37,6 +37,9 @@ import {
 import { createCoreToolRegistry } from "./tools/registry.mjs";
 import { createReviewerToolRegistry } from "./work/reviewer-tools.mjs";
 import { readPlaybookManifest } from "./playbook/resolver.mjs";
+import { deploymentBrokerEndpointForWorker } from "./deployment/client.mjs";
+import { DeploymentReceiptStore } from "./deployment/receipt-store.mjs";
+import { runnerBrokerEndpointForWorker } from "./runner/broker-client.mjs";
 import { RunnerJournal } from "./runner/journal.mjs";
 import { defaultTiangongRoot } from "./team/shared-fs.mjs";
 import { createTeamChannel } from "./team/channel-adapter.mjs";
@@ -216,7 +219,19 @@ export class TiangongAgentRuntime {
         sourceProfileDigest: profileBundle.profileDigest,
         sourceSkillId: profileBundle.roleSkill.id,
         sourceSkillDigest: profileBundle.roleSkill.digest,
-        runnerBrokerEndpoint: process.env.TIANGONG_RUNNER_BROKER_ENDPOINT,
+        idempotencyStore,
+        pendingOperationStore,
+        deploymentBrokerEndpoint: deploymentBrokerEndpointForWorker({
+          role: profileBundle.profile.roleId,
+          env: process.env,
+        }),
+        deploymentReceiptStore: profileBundle.profile.roleId === "operator"
+          ? new DeploymentReceiptStore({ filePath: persisted.paths.deploymentReceiptFilePath })
+          : undefined,
+        runnerBrokerEndpoint: runnerBrokerEndpointForWorker({
+          role: profileBundle.profile.roleId,
+          env: process.env,
+        }),
         runnerJournal: ["implementor", "assessor"].includes(profileBundle.profile.roleId)
           ? new RunnerJournal({ filePath: persisted.paths.runnerJournalFilePath })
           : undefined,

@@ -46,6 +46,30 @@
         "contentDigest": { "$ref": "#/$defs/digest" }
       }
     },
+    "releaseOutcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind", "schemaVersion", "taskId", "targetId", "operationDigest",
+        "previousDigest", "currentDigest", "changeRevisionRef", "disposition",
+        "postVerifyHealthy", "rollbackPerformed", "previousVerifyHealthy", "contentDigest"
+      ],
+      "properties": {
+        "kind": { "const": "tiangong.deployment-outcome" },
+        "schemaVersion": { "const": 1 },
+        "taskId": { "$ref": "#/$defs/id" },
+        "targetId": { "$ref": "#/$defs/id" },
+        "operationDigest": { "$ref": "#/$defs/digest" },
+        "previousDigest": { "$ref": "#/$defs/digest" },
+        "currentDigest": { "$ref": "#/$defs/digest" },
+        "changeRevisionRef": { "$ref": "#/properties/changeRevisionRef" },
+        "disposition": { "enum": ["DELIVERED", "FAILED_SAFE", "RECOVERY_REQUIRED"] },
+        "postVerifyHealthy": { "type": "boolean" },
+        "rollbackPerformed": { "type": "boolean" },
+        "previousVerifyHealthy": { "type": ["boolean", "null"] },
+        "contentDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
     "revisionRequest": {
       "type": "object",
       "additionalProperties": false,
@@ -70,6 +94,21 @@
     {
       "if": { "required": ["revisionRequest"] },
       "then": { "properties": { "taskKind": { "const": "assess" } } }
+    },
+    {
+      "if": {
+        "properties": { "taskKind": { "const": "release" } },
+        "required": ["taskKind"],
+        "not": { "required": ["blocker"] }
+      },
+      "then": { "required": ["releaseOutcome"] }
+    },
+    {
+      "if": { "required": ["releaseOutcome"] },
+      "then": {
+        "properties": { "taskKind": { "const": "release" } },
+        "not": { "required": ["blocker"] }
+      }
     }
   ],
   "$defs": {

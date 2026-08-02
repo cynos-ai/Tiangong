@@ -27,6 +27,7 @@ export const TEAM_ROLES = Object.freeze([
   "operator",
 ]);
 const ROLE_SET = new Set(TEAM_ROLES);
+const OBJECTIVE_MAX = 4096;
 
 function demandString(value, name) {
   if (typeof value !== "string" || value === "") {
@@ -119,6 +120,13 @@ export function createTaskBinding(input) {
     taskKind: input.taskKind,
     revisionIndex,
     assignee: demandPattern(input.assignee, "assignee", ID_PATTERN),
+    objective: (() => {
+      const value = demandString(input.objective, "objective");
+      if (value.length > OBJECTIVE_MAX || /[\r\n]/u.test(value)) {
+        throw new Error("objective must be a bounded single line");
+      }
+      return value;
+    })(),
     completionContractDigest: demandPattern(
       input.completionContractDigest,
       "completionContractDigest",
@@ -160,6 +168,7 @@ export function isTaskBinding(value) {
       taskKind: value.taskKind,
       revisionIndex: value.revisionIndex,
       assignee: value.assignee,
+      objective: value.objective,
       completionContractDigest: value.completionContractDigest,
       sourceProfileDigest: value.sourceProfileDigest,
       sourceSkillId: value.sourceSkillId,

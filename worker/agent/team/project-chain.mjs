@@ -7,8 +7,9 @@
 // not yet decided contributes nothing; once decided it is terminal (the
 // architecture opens a new Task on revision rather than reopening one).
 
-import { reduceTaskChain } from "../playbook/transition-policy.mjs";
-import { listTaskBindingsForProject, readTaskDecisions } from "./manifest-store.mjs";
+import { dispositionForRelease, reduceTaskChain } from "../playbook/transition-policy.mjs";
+import { isResultEnvelope } from "../work/result-envelope.mjs";
+import { listTaskBindingsForProject, readTaskDecisions, readTaskResult } from "./manifest-store.mjs";
 
 export async function projectChain(projectId, deps) {
   const tasks = await listTaskBindingsForProject(projectId, deps);
@@ -42,7 +43,28 @@ export function terminalDispositionForTaskChain(chain, options) {
 }
 
 export async function projectDisposition(projectId, deps) {
-  return terminalDispositionForTaskChain(await projectChain(projectId, deps), {
-    maxRevisionWaves: deps?.maxRevisionWaves,
-  });
+  const chain = await projectChain(projectId, deps);
+  const reduced = reduceTaskChain(chain, { maxRevisionWaves: deps?.maxRevisionWaves });
+  if (reduced.status === "blocked") return "RECOVERY_REQUIRED";
+  if (reduced.status !== "awaiting_deploy") return null;
+  const tasks = await listTaskBindingsForProject(projectId, deps);
+  const releases = tasks.filter((task) => task.taskKind === "release" && task.revisionIndex === reduced.revisionIndex);
+  if (releases.length !== 1) throw new Error("Terminal project chain must have exactly one release Task");
+  const result = await readTaskResult(releases[0].taskId, deps);
+  if (!isResultEnvelope(result) || !result.releaseOutcome || result.releaseOutcome.taskId !== releases[0].taskId) {
+    throw new Error("Accepted release Task lacks a valid machine deployment outcome");
+  }
+  const outcome = result.releaseOutcome;
+  const derived = dispositionForRelease({
+    postVerify: outcome.postVerifyHealthy ? "pass" : "fail",
+    rollback: outcome.rollbackPerformed ? "done" : "not_done",
+    verifyPrevious: outcome.previousVerifyHealthy === true ? "pass" : (outcome.previousVerifyHealthy === false ? "fail" : "unknown"),
+  }).disposition;
+  const disposition = {
+    delivered: "DELIVERED",
+    failed_safe: "FAILED_SAFE",
+    recovery_required: "RECOVERY_REQUIRED",
+  }[derived] ?? null;
+  if (disposition !== outcome.disposition) throw new Error("Deployment outcome conflicts with the deterministic terminal disposition");
+  return disposition;
 }

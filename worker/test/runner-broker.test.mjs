@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import test from "node:test";
 
-import { createRunnerBrokerExecutor } from "../agent/runner/broker-client.mjs";
+import {
+  DEFAULT_AGENTTEAMS_RUNNER_BROKER_ENDPOINT,
+  createRunnerBrokerExecutor,
+  runnerBrokerEndpointForWorker,
+} from "../agent/runner/broker-client.mjs";
 import {
   createDockerPeerAuthenticator,
   createRunnerBrokerHandler,
@@ -218,6 +222,23 @@ test("Docker peer authentication binds source IP, exact container, Worker name, 
     },
   });
   await assert.rejects(() => mismatch("172.30.0.5"), /IDENTITY_MISMATCH/u);
+});
+
+test("AgentTeams professional Workers use the fixed broker service when custom env is unavailable", () => {
+  assert.equal(runnerBrokerEndpointForWorker({
+    role: "implementor",
+    env: { AGENTTEAMS_WORKER_NAME: "impl" },
+  }), DEFAULT_AGENTTEAMS_RUNNER_BROKER_ENDPOINT);
+  assert.equal(runnerBrokerEndpointForWorker({
+    role: "assessor",
+    env: { AGENTTEAMS_WORKER_NAME: "assess", TIANGONG_RUNNER_BROKER_ENDPOINT: "http://custom-broker:9000/v1/execute" },
+  }), "http://custom-broker:9000/v1/execute");
+  assert.equal(runnerBrokerEndpointForWorker({ role: "operator", env: { AGENTTEAMS_WORKER_NAME: "op" } }), undefined);
+  assert.equal(runnerBrokerEndpointForWorker({ role: "implementor", env: {} }), undefined);
+  assert.throws(
+    () => runnerBrokerEndpointForWorker({ role: "implementor", env: { AGENTTEAMS_WORKER_NAME: "impl", TIANGONG_RUNNER_BROKER_ENDPOINT: "" } }),
+    /empty/,
+  );
 });
 
 test("broker config and client endpoint are closed, bounded contracts", () => {

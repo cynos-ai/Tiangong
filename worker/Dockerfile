@@ -55,10 +55,19 @@ ENV PATH="/opt/tiangong-worker/bin:/opt/tiangong-worker/node_modules/.bin:${PATH
 
 WORKDIR /root/agentteams-fs
 
+FROM worker-base AS deployment-service
+WORKDIR /opt/tiangong-worker
+ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/deployment/service.mjs"]
+
 FROM worker-base AS runner-broker
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 WORKDIR /opt/tiangong-worker
 ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/runner/broker-server.mjs"]
+
+FROM worker-base AS deployment-broker
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
+WORKDIR /opt/tiangong-worker
+ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/deployment/broker-server.mjs"]
 
 FROM worker-base AS kernel
 COPY role-profiles/kernel.json /opt/tiangong-worker/profile.json

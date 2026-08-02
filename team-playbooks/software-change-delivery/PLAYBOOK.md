@@ -17,8 +17,10 @@ Artifact, and Approval kept as distinct facts:
 - **Assessor** independently verifies a read-only materialization of the sealed
   revision against the acceptance contract; its Result carries the exact same
   `ChangeRevisionRef` and supports `accept`, `revision`, or `blocked`.
-- **Operator** consumes that same accepted revision, builds, requests approval,
-  deploys, post-verifies, and rolls back if needed as the `release` step.
+- **Operator** consumes that same accepted revision, requests explicit approval,
+  deploys through the closed adapter, post-verifies, and rolls back if needed as
+  the `release` step. A non-blocked release Result must carry the adapter's
+  durable `releaseOutcome`; model prose cannot create a deployment fact.
 
 ## Coordination contract
 

@@ -98,6 +98,7 @@ function professionalTask(boundProject, id, { taskKind = "design", assignee = DE
     taskKind,
     revisionIndex: 0,
     assignee,
+    objective: `Complete the assigned ${taskKind} work.`,
     completionContractDigest: CONTRACT,
     sourceProfileDigest: PROFILE,
     sourceSkillId: `${role}-v1`,
@@ -123,6 +124,15 @@ test("createMemberToolRegistry exposes only each professional RoleProfile surfac
   assessorDeps.sourceSkillId = "assessor-v1";
   const assessor = createMemberToolRegistry({ deps: assessorDeps });
   assert.deepEqual(assessor.names(), ["team_resolve_task", "run_test_command", "team_submit_result"]);
+  const operatorDeps = depsFor("tiangong-operator", "/x");
+  operatorDeps.professionalRole = "operator";
+  operatorDeps.sourceSkillId = "operator-v1";
+  operatorDeps.deploymentBrokerEndpoint = "http://tiangong-deployment-broker:8791/v1/deploy";
+  operatorDeps.deploymentReceiptStore = { completedOutcome() {}, record() {} };
+  operatorDeps.idempotencyStore = { get() {} };
+  operatorDeps.pendingOperationStore = {};
+  const operator = createMemberToolRegistry({ deps: operatorDeps });
+  assert.deepEqual(operator.names(), ["team_resolve_task", "deploy_release", "team_submit_result"]);
 });
 
 test("an assignee resolves its Task and submits a bound ResultEnvelope", async () => {

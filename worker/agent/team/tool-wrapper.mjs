@@ -38,7 +38,7 @@ function projectSafeParams(params) {
   for (const key of ["roleBindings", "inputRefs", "artifactRefs", "evidenceRefs", "changeRevisionRef", "revisionRequest", "command"]) {
     if (params[key] !== undefined) safe[`${key}Digest`] = sha256(canonicalJson(params[key]));
   }
-  for (const key of ["summary", "note", "claim", "blocker"]) {
+  for (const key of ["objective", "summary", "note", "claim", "blocker"]) {
     if (params[key] !== undefined) {
       safe[`${key}Digest`] = sha256(params[key]);
       safe[`${key}Bytes`] = Buffer.byteLength(params[key]);

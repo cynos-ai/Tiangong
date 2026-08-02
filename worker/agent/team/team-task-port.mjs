@@ -188,6 +188,38 @@ async function validateResultBinding({ result, task, project, identity, deps }) 
       producerDecisions[0].resultDigest !== producerResult.contentDigest) {
     throw new Error("Result ChangeRevision is not the accepted Implementor artifact for this revision");
   }
+  if (task.taskKind === "release") {
+    let acceptedAssessment = false;
+    for (const inputTaskId of task.inputRefs) {
+      const inputTask = await readTaskBinding(inputTaskId, deps);
+      if (inputTask.taskKind !== "assess" || inputTask.projectId !== task.projectId || inputTask.revisionIndex !== task.revisionIndex) continue;
+      const inputResult = await readTaskResult(inputTaskId, deps);
+      const inputDecisions = await readTaskDecisions(inputTaskId, deps);
+      if (isResultEnvelope(inputResult) && canonicalJson(inputResult.changeRevisionRef) === canonicalJson(result.changeRevisionRef) &&
+          inputDecisions.length === 1 && isTaskDecision(inputDecisions[0]) && inputDecisions[0].decision === "accept" &&
+          inputDecisions[0].resultDigest === inputResult.contentDigest) {
+        acceptedAssessment = true;
+        break;
+      }
+    }
+    if (!acceptedAssessment) throw new Error("Release Result does not reference an accepted assessment for this revision");
+  }
+}
+
+export async function acceptedChangeRevisionForRelease(taskBinding, deps) {
+  if (taskBinding?.taskKind !== "release") throw new Error("Accepted release input requires a release Task");
+  const accepted = [];
+  for (const inputTaskId of taskBinding.inputRefs) {
+    const inputTask = await readTaskBinding(inputTaskId, deps);
+    if (inputTask.projectId !== taskBinding.projectId || inputTask.taskKind !== "assess" || inputTask.revisionIndex !== taskBinding.revisionIndex) continue;
+    const inputResult = await readTaskResult(inputTaskId, deps);
+    const inputDecisions = await readTaskDecisions(inputTaskId, deps);
+    if (isResultEnvelope(inputResult) && !inputResult.blocker && inputResult.changeRevisionRef &&
+        inputDecisions.length === 1 && isTaskDecision(inputDecisions[0]) && inputDecisions[0].decision === "accept" &&
+        inputDecisions[0].resultDigest === inputResult.contentDigest) accepted.push(inputResult.changeRevisionRef);
+  }
+  if (accepted.length !== 1) throw new Error("Release Task must reference exactly one accepted assessment ChangeRevision");
+  return accepted[0];
 }
 
 export async function createProject(projectBinding, deps) {

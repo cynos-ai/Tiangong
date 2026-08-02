@@ -12,10 +12,11 @@ PEER_MENTION_SMOKE_TEST := ./scripts/test-peer-mention-smoke.sh
 RUNNER_ISOLATION_SPIKE := ./smoke-testing/support/run-runner-isolation-spike.sh
 RUNNER_EXECUTOR_SMOKE := node ./smoke-testing/support/run-runner-executor-smoke.mjs
 RUNNER_BROKER_SMOKE := node ./smoke-testing/support/run-runner-broker-smoke.mjs
+DEPLOYMENT_SERVICE_SMOKE := node ./smoke-testing/support/run-deployment-service-smoke.mjs
 SKILL_CHECK := node ./scripts/check-skills.mjs
 REVIEWER_SMOKE_CONTRACT := node ./scripts/test-reviewer-smoke-oracle.mjs
 
-.PHONY: help init up start stop down status verify config logs login uninstall check-skills build-worker-image test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-runner-isolation test-runner-executor test-runner-broker test-reviewer-smoke-contract test-reviewer-image-basic test-reviewer-image-git test-reviewer-image test-reviewer-journey-canary test-peer-mention-smoke-contract test-peer-mention-smoke
+.PHONY: help init up start stop down status verify config logs login uninstall check-skills build-worker-image test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-runner-isolation test-runner-executor test-runner-broker test-deployment-service test-reviewer-smoke-contract test-reviewer-image-basic test-reviewer-image-git test-reviewer-image test-reviewer-journey-canary test-peer-mention-smoke-contract test-peer-mention-smoke
 
 help: ## Show available commands
 	@printf '%s\n' 'Tiangong local development commands:'
@@ -76,6 +77,9 @@ test-runner-executor: ## Run the production Docker executor against the isolatio
 
 test-runner-broker: ## Prove the closed container-identity Runner broker path
 	@$(RUNNER_BROKER_SMOKE)
+
+test-deployment-service: ## Prove the disposable deployment target state and authorization contract
+	@$(DEPLOYMENT_SERVICE_SMOKE)
 
 test-reviewer-smoke-contract: ## Validate Reviewer smoke oracle phase semantics
 	@$(REVIEWER_SMOKE_CONTRACT)

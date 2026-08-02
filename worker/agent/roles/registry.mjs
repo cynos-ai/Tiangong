@@ -64,8 +64,8 @@ const registries = deepFreeze({
     },
     operator: {
       id: "operator", title: "Tiangong Operator", practiceIds: [],
-      toolIds: ["team_resolve_task", "team_submit_result"], gatePolicyId: "professional-tools-v1",
-      roleSkillId: "operator-v1", profileDigest: "52a3929e673a2d1e0142b1db0488b6bcc18a3c769c99494561e6eca3e80cae02",
+      toolIds: ["team_resolve_task", "deploy_release", "team_submit_result"], gatePolicyId: "deployment-tools-v1",
+      roleSkillId: "operator-v1", profileDigest: "43f05e5a5b4797fccb329e9bc6990a088dec5704016b8a2a4f701c141982d143",
     },
   },
   targetKinds: {
@@ -187,6 +187,12 @@ const registries = deepFreeze({
       profileRoleIds: ["assessor"],
       materializedRoleIds: ["assessor"],
     },
+    deploy_release: {
+      id: "deploy_release",
+      executionMode: "sequential",
+      profileRoleIds: ["operator"],
+      materializedRoleIds: ["operator"],
+    },
     team_submit_result: {
       id: "team_submit_result",
       executionMode: "sequential",
@@ -228,8 +234,13 @@ const registries = deepFreeze({
     },
     "professional-tools-v1": {
       id: "professional-tools-v1",
-      supportedRoleIds: ["designer", "operator"],
+      supportedRoleIds: ["designer"],
       toolIds: ["team_resolve_task", "team_submit_result"],
+    },
+    "deployment-tools-v1": {
+      id: "deployment-tools-v1",
+      supportedRoleIds: ["operator"],
+      toolIds: ["team_resolve_task", "deploy_release", "team_submit_result"],
     },
     "implementor-tools-v1": {
       id: "implementor-tools-v1",
@@ -261,7 +272,7 @@ const registries = deepFreeze({
       id: "leader-v1",
       supportedRoleIds: ["leader"],
       relativePath: "roles/leader/role.md",
-      digest: "9a1f92ec43d344c49ceca8fa5c8048157bfb4ab153a1f8d1e2bd98ec66951f84",
+      digest: "1e023bd9aa0af90ce044036b81b0976391d03a2831e9578ec00b0ef860a000cb",
       maxBytes: 16 * 1024,
     },
     "designer-v1": {
@@ -278,7 +289,7 @@ const registries = deepFreeze({
     },
     "operator-v1": {
       id: "operator-v1", supportedRoleIds: ["operator"], relativePath: "roles/operator/role.md",
-      digest: "c47469c440ad86994082d8413d9fd004ae6b8c9a7c0e3290850e12d00430767e", maxBytes: 16 * 1024,
+      digest: "fee7b721bb069e4edc5ea982f833489b8f822ae2c203825794e2fdad22c5cce3", maxBytes: 16 * 1024,
     },
   },
   methodologySkills: {

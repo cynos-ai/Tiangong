@@ -13,10 +13,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { createDeploymentOutcome } from "../agent/deployment/client.mjs";
 import { assertTransitionAllowed, assertResultCurrent, dispositionForRelease, reduceTaskChain } from "../agent/playbook/transition-policy.mjs";
 import { buildProjectBinding, buildTaskBinding, readPlaybookManifest } from "../agent/playbook/resolver.mjs";
+import { projectDisposition } from "../agent/team/project-chain.mjs";
 import { createTaskDecision, dispatchTask, recordTaskDecision, resolveAssignedTask, submitResult, createProject } from "../agent/team/team-task-port.mjs";
 import { WorkRunStore } from "../agent/work/work-run-store.mjs";
+import { createChangeRevisionRef } from "../agent/work/change-revision-ref.mjs";
 import { createResultEnvelope } from "../agent/work/result-envelope.mjs";
 
 const LEADER = "tiangong-leader";
@@ -77,8 +80,10 @@ async function runStep({ pb, project, root, chain, taskKind, revisionIndex, assi
     taskKind,
     revisionIndex,
     assignee,
+    objective: `Complete the ${taskKind} step for revision ${revisionIndex}.`,
     completionContractDigest: pb.completionSchemaDigest,
-    createdAt: T(1),
+    inputRefs: chain.length === 0 ? [] : [chain.at(-1).taskId],
+    createdAt: T(chain.length + 1),
   });
   // TransitionPolicy gates creation: legal role + deterministic next step
   assertTransitionAllowed({ projectBinding: project, taskBinding: task, chain, taskKindRoles: pb.taskKindRoles, maxRevisionWaves: pb.maxRevisionWaves });
@@ -125,6 +130,14 @@ async function runStep({ pb, project, root, chain, taskKind, revisionIndex, assi
       envelopeInput.claim = "needs revision";
       envelopeInput.revisionRequest = { summary: "edge case uncovered" };
     }
+    if (taskKind === "release") {
+      const sealed = createChangeRevisionRef(envelopeInput.changeRevisionRef);
+      envelopeInput.releaseOutcome = createDeploymentOutcome({
+        taskId, targetId: "integration-target", operationDigest: "8".repeat(64), previousDigest: "7".repeat(64),
+        currentDigest: sealed.artifactDigest, changeRevisionRef: sealed, disposition: "DELIVERED",
+        postVerifyHealthy: true, rollbackPerformed: false, previousVerifyHealthy: null,
+      });
+    }
   } else {
     envelopeInput.claim = `${taskKind} complete`;
   }
@@ -135,7 +148,7 @@ async function runStep({ pb, project, root, chain, taskKind, revisionIndex, assi
   await submitResult(stored, depsFor(assignee, root, workerCh));
   assert.equal(workerCh.calls.some((c) => c.kind === "notifyLeader"), true);
 
-  if (!decide) return undefined; // release hands off to deploy, no task decision
+  if (!decide) return undefined;
 
   const decision = createTaskDecision({
     taskId,
@@ -150,7 +163,7 @@ async function runStep({ pb, project, root, chain, taskKind, revisionIndex, assi
   // gate: accept must reference the current result
   assertResultCurrent({ decision, taskBinding: task, latestResultDigest: stored.contentDigest });
   await recordTaskDecision(decision, depsFor(LEADER, root, channel()));
-  return { taskKind, decision: decide, revisionIndex };
+  return { taskId, taskKind, decision: decide, revisionIndex };
 }
 
 test("full coordination: design -> implement -> assess revision -> implement@1 -> assess accept -> release -> DELIVERED", async () => {
@@ -180,10 +193,11 @@ test("full coordination: design -> implement -> assess revision -> implement@1 -
     chain.push(await runStep({ pb, project, root, chain, taskKind: "implement", revisionIndex: 1, assignee: IMPL, roleStores, decide: "accept" }));
     chain.push(await runStep({ pb, project, root, chain, taskKind: "assess", revisionIndex: 1, assignee: ASSESS, roleStores, decide: "accept" }));
 
-    // release hands off to deploy
-    await runStep({ pb, project, root, chain, taskKind: "release", revisionIndex: 1, assignee: OP, roleStores, decide: undefined });
-    const beforeDeploy = reduceTaskChain([...chain, { taskKind: "release", decision: "accept", revisionIndex: 1 }], { maxRevisionWaves: pb.maxRevisionWaves });
+    // release carries the deployment adapter's machine outcome and is accepted.
+    chain.push(await runStep({ pb, project, root, chain, taskKind: "release", revisionIndex: 1, assignee: OP, roleStores, decide: "accept" }));
+    const beforeDeploy = reduceTaskChain(chain, { maxRevisionWaves: pb.maxRevisionWaves });
     assert.equal(beforeDeploy.status, "awaiting_deploy");
+    assert.equal(await projectDisposition(PROJECT_ID, { rootDir: root, maxRevisionWaves: pb.maxRevisionWaves }), "DELIVERED");
 
     const delivered = dispositionForRelease({ postVerify: "pass" });
     assert.equal(delivered.disposition, "delivered");
@@ -201,7 +215,7 @@ test("dispatch is idempotent across the integration boundary", async () => {
     const pb = readPlaybookManifest("software-change-delivery");
     const project = buildProjectBinding({ playbook: pb, projectId: PROJECT_ID, requester: "@manager:example.test", roleBindings: ROLE_BINDINGS, createdAt: T(0) });
     await createProject(project, depsFor(LEADER, root, channel()));
-    const task = buildTaskBinding({ playbook: pb, taskId: "task-design-0-idem", projectId: PROJECT_ID, taskKind: "design", revisionIndex: 0, assignee: DESIGNER, completionContractDigest: pb.completionSchemaDigest, createdAt: T(1) });
+    const task = buildTaskBinding({ playbook: pb, taskId: "task-design-0-idem", projectId: PROJECT_ID, taskKind: "design", revisionIndex: 0, assignee: DESIGNER, objective: "Design the bounded change.", completionContractDigest: pb.completionSchemaDigest, createdAt: T(1) });
     assertTransitionAllowed({ projectBinding: project, taskBinding: task, chain: [] });
     const ch1 = channel();
     await dispatchTask(task, depsFor(LEADER, root, ch1));
@@ -218,7 +232,7 @@ test("the policy rejects an illegal role and an expired result within the flow",
   const pb = readPlaybookManifest("software-change-delivery");
   const project = buildProjectBinding({ playbook: pb, projectId: PROJECT_ID, requester: "@manager:example.test", roleBindings: ROLE_BINDINGS, createdAt: T(0) });
   // assessor assigned to a design task -> illegal role
-  const wrongRole = buildTaskBinding({ playbook: pb, taskId: "task-x", projectId: PROJECT_ID, taskKind: "design", revisionIndex: 0, assignee: ASSESS, completionContractDigest: pb.completionSchemaDigest, createdAt: T(1) });
+  const wrongRole = buildTaskBinding({ playbook: pb, taskId: "task-x", projectId: PROJECT_ID, taskKind: "design", revisionIndex: 0, assignee: ASSESS, objective: "Design the bounded change.", completionContractDigest: pb.completionSchemaDigest, createdAt: T(1) });
   assert.throws(() => assertTransitionAllowed({ projectBinding: project, taskBinding: wrongRole, chain: [] }), /must be owned by designer/);
   // an accept referencing a stale result digest is rejected
   const fresh = "a".repeat(64);

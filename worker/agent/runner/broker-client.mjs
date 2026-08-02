@@ -4,7 +4,9 @@ import { MAX_OUTPUT_BYTES, assertNoForbiddenEnv, validateCommandRequest } from "
 
 const ID = /^[A-Za-z0-9._:-]{1,128}$/u;
 const HOST = /^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$/u;
+const BROKER_ROLES = new Set(["implementor", "assessor"]);
 const MAX_RESPONSE_BYTES = (MAX_OUTPUT_BYTES * 2) + (256 * 1024);
+export const DEFAULT_AGENTTEAMS_RUNNER_BROKER_ENDPOINT = "http://tiangong-runner-broker:8787/v1/execute";
 
 function validateEndpoint(value) {
   let endpoint;
@@ -18,6 +20,21 @@ function validateEndpoint(value) {
     throw new Error("Runner broker endpoint must be a credential-free internal HTTP /v1/execute URL");
   }
   return endpoint.toString();
+}
+
+export function runnerBrokerEndpointForWorker({ role, env = process.env } = {}) {
+  if (!BROKER_ROLES.has(role)) return undefined;
+  const configured = env.TIANGONG_RUNNER_BROKER_ENDPOINT;
+  if (configured !== undefined) {
+    if (typeof configured !== "string" || configured === "") {
+      throw new Error("Configured Runner broker endpoint is empty");
+    }
+    return validateEndpoint(configured);
+  }
+  if (typeof env.AGENTTEAMS_WORKER_NAME !== "string" || env.AGENTTEAMS_WORKER_NAME === "") {
+    return undefined;
+  }
+  return DEFAULT_AGENTTEAMS_RUNNER_BROKER_ENDPOINT;
 }
 
 function validateTaskId(value) {

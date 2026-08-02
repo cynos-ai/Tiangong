@@ -26,6 +26,7 @@ test("state path resolver produces physically separate per-session roots", () =>
     localGitRoot: join(stateDirectory, "local-git"),
     idempotencyRoot: join(stateDirectory, "idempotency"),
     runnerJournalsRoot: join(stateDirectory, "runner-journals"),
+    deploymentReceiptsRoot: join(stateDirectory, "deployment-receipts"),
     pendingOperationsRoot: join(stateDirectory, "pending-operations"),
     rollbacksRoot: join(stateDirectory, "rollbacks"),
   });
@@ -76,6 +77,10 @@ test("state path resolver produces physically separate per-session roots", () =>
   assert.equal(
     paths.runnerJournalFilePath,
     join(stateDirectory, "runner-journals", sessionHash, "runner.jsonl"),
+  );
+  assert.equal(
+    paths.deploymentReceiptFilePath,
+    join(stateDirectory, "deployment-receipts", sessionHash, "deployments.jsonl"),
   );
   assert.equal(
     paths.pendingOperationDirectory,
