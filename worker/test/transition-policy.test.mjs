@@ -8,6 +8,7 @@ import {
   nextTaskKindAfter,
   reduceTaskChain,
 } from "../agent/playbook/transition-policy.mjs";
+import { terminalDispositionForTaskChain } from "../agent/team/project-chain.mjs";
 
 test("the happy path walks design -> implement -> assess -> release", () => {
   assert.deepEqual(
@@ -149,4 +150,29 @@ test("reduceTaskChain stops at a blocked transition", () => {
     { taskKind: "assess", decision: "blocked", revisionIndex: 0 },
   ]);
   assert.equal(reduced.status, "blocked");
+});
+
+test("a task blocker authorizes only the RECOVERY_REQUIRED terminal report", () => {
+  assert.equal(
+    terminalDispositionForTaskChain([
+      { taskKind: "design", decision: "accept", revisionIndex: 0 },
+      { taskKind: "implement", decision: "blocked", revisionIndex: 0 },
+    ]),
+    "RECOVERY_REQUIRED",
+  );
+  assert.equal(
+    terminalDispositionForTaskChain([
+      { taskKind: "design", decision: "accept", revisionIndex: 0 },
+    ]),
+    null,
+  );
+  assert.equal(
+    terminalDispositionForTaskChain([
+      { taskKind: "design", decision: "accept", revisionIndex: 0 },
+      { taskKind: "implement", decision: "accept", revisionIndex: 0 },
+      { taskKind: "assess", decision: "accept", revisionIndex: 0 },
+      { taskKind: "release", decision: "accept", revisionIndex: 0 },
+    ]),
+    null,
+  );
 });

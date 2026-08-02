@@ -7,6 +7,7 @@
 // not yet decided contributes nothing; once decided it is terminal (the
 // architecture opens a new Task on revision rather than reopening one).
 
+import { reduceTaskChain } from "../playbook/transition-policy.mjs";
 import { listTaskBindingsForProject, readTaskDecisions } from "./manifest-store.mjs";
 
 export async function projectChain(projectId, deps) {
@@ -28,4 +29,20 @@ export async function projectChain(projectId, deps) {
     });
   }
   return chain;
+}
+
+// A task-level blocker is terminal for the current demo request, but it is not
+// a safe delivery or rollback outcome. Map it to RECOVERY_REQUIRED so the
+// Leader can report the authenticated requester through the gated terminal
+// report path. Non-blocked chains are not terminal here: DELIVERED and
+// FAILED_SAFE require independent Operator deploy/verify facts.
+export function terminalDispositionForTaskChain(chain, options) {
+  const reduced = reduceTaskChain(chain, options);
+  return reduced.status === "blocked" ? "RECOVERY_REQUIRED" : null;
+}
+
+export async function projectDisposition(projectId, deps) {
+  return terminalDispositionForTaskChain(await projectChain(projectId, deps), {
+    maxRevisionWaves: deps?.maxRevisionWaves,
+  });
 }

@@ -39,6 +39,7 @@ import { createReviewerToolRegistry } from "./work/reviewer-tools.mjs";
 import { readPlaybookManifest } from "./playbook/resolver.mjs";
 import { defaultTiangongRoot } from "./team/shared-fs.mjs";
 import { createTeamChannel } from "./team/channel-adapter.mjs";
+import { projectDisposition } from "./team/project-chain.mjs";
 import { createTeamSync } from "./team/sync-adapter.mjs";
 import { TeamCoordinationGate } from "./team/tool-wrapper.mjs";
 import { createLeaderToolRegistry } from "./work/leader-tools.mjs";
@@ -196,6 +197,8 @@ export class TiangongAgentRuntime {
         evidence,
         gate,
         getInvocation: turns.current,
+        maxRevisionWaves: playbook.maxRevisionWaves,
+        getProjectDisposition: (projectId) => projectDisposition(projectId, teamDeps),
       };
       registry = createLeaderToolRegistry({ playbook, deps: teamDeps });
     } else if (["designer", "implementor", "assessor", "operator"].includes(profileBundle.profile.roleId)) {

@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { sha256 } from "../agent/canonical-json.mjs";
 import { createProjectBinding, createTaskBinding } from "../agent/team/manifest.mjs";
+import { projectDisposition } from "../agent/team/project-chain.mjs";
 import {
   checkResult,
   createProject,
@@ -210,6 +211,7 @@ test("a blocker ResultEnvelope cannot be accepted or advance the Task", async ()
     await recordTaskDecision(blocked, depsFor(LEADER, root));
     const meta = JSON.parse(await readFile(join(root, "tasks", task.taskId, "meta.json"), "utf8"));
     assert.equal(meta.status, "blocked");
+    assert.equal(await projectDisposition(project.projectId, { rootDir: root }), "RECOVERY_REQUIRED");
   });
 });
 
