@@ -26,6 +26,26 @@
   - `runner_cleanup=pass` plus absence of the exact run-owned container.
 - Skip/block rules: block if Docker, the image, policy module, or fixture is unavailable. Never inject host credentials to test their absence. Any cleanup failure keeps the smoke red.
 
+### B2: Docker executor preserves the proven boundary
+
+- Purpose: execute the production Docker executor module, rather than a parallel shell implementation, against the same isolation fixture.
+- Setup: build `tiangong-worker-implementor:dev`; Docker must be available. Run `make test-runner-executor`. The smoke resolves the mutable development tag to an immutable daemon image ID before constructing the executor.
+- Prompt: none.
+- Expected observations:
+  - the executor creates one uniquely named/labeled fixture volume plus seed and command containers; command scratch is a bounded 64 MiB tmpfs rather than an unbounded daemon volume;
+  - it copies only the validated fixture tree, independently revalidates and digest-binds the copied volume before command start, rejects links and unsupported entries, and never replaces a pre-existing resource;
+  - the command container matches the B1 network, root filesystem, capability, privilege, resource, user, tmpfs, mount, workdir, and environment boundaries before it starts;
+  - RunnerPort receives invocation-bound image, policy, copied-fixture, and container-configuration digests;
+  - a timed-out command becomes `outcome_uncertain` rather than being reported complete;
+  - both completed and interrupted invocations remove their exactly owned containers and fixture volume and verify absence.
+- Required evidence:
+  - `runner_executor_daemon_policy=pass`;
+  - `runner_probe=pass`;
+  - `runner_executor_machine_evidence=pass` with run ID, immutable image ID, policy digest, copied-fixture digest, and configuration digest;
+  - `runner_executor_timeout_uncertain=pass`;
+  - `runner_executor_cleanup=pass`.
+- Skip/block rules: block if Docker, the immutable image, or the fixture is unavailable. This proves the executor module on the local Docker boundary; it does not prove an authenticated Worker-to-executor adapter or make the tools model-accessible.
+
 ## Full smoke
 
 ### F1: Production executor preserves the same boundary
@@ -39,11 +59,11 @@
   - replay returns the saved terminal result without creating another container;
   - an interrupted execution becomes `outcome_uncertain` and is not retried automatically.
 - Required evidence: invocation-bound Gate decision, container identity/config digest, execution result digest, replay or uncertain journal state, and cleanup proof.
-- Skip/block rules: this scenario remains blocked while RunnerPort has no production disposable executor. The Basic feasibility spike must not be promoted to production-executor proof.
+- Skip/block rules: this scenario remains blocked until the Docker executor is reached through the closed Worker adapter and professional-role tools. B1 proves feasibility and B2 proves the local executor implementation; neither is authenticated Worker-to-executor or model-tool proof.
 
 ## Maintenance notes
 
 - Keep model prose, RunnerPort state, Docker execution, and cleanup as separate facts.
 - Derive forbidden environment names and network targets from `runner-policy.mjs`; do not maintain a divergent smoke allowlist.
-- Seed run-owned named volumes through a labeled setup container because host bind-mount visibility varies across Docker contexts; the command runner still receives only the read-only fixture and writable scratch volumes.
+- B1 seeds run-owned named volumes through a labeled setup container because host bind-mount visibility varies across Docker contexts. B2 narrows this further: the command runner receives one read-only fixture volume and a bounded writable scratch tmpfs.
 - Do not mount the Docker socket, AgentTeams storage, Worker home, provider config, deployment target, or Collector credentials into the runner.

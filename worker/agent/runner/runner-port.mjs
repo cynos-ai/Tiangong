@@ -21,6 +21,29 @@ function invocationKey(validated) {
   });
 }
 
+function validateRunnerEvidence(value, validated, key) {
+  if (value === undefined) return undefined;
+  if (
+    value === null || typeof value !== "object" || value.schemaVersion !== 1 ||
+    value.runId !== validated.runId || value.invocationKey !== key ||
+    !/^sha256:[0-9a-f]{64}$/u.test(value.imageId) ||
+    !/^[0-9a-f]{64}$/u.test(value.policyDigest) ||
+    !/^[0-9a-f]{64}$/u.test(value.containerConfigDigest) ||
+    !/^[0-9a-f]{64}$/u.test(value.fixtureDigest)
+  ) {
+    throw new Error("RUNNER_EVIDENCE_INVALID");
+  }
+  return Object.freeze({
+    schemaVersion: 1,
+    runId: value.runId,
+    invocationKey: value.invocationKey,
+    imageId: value.imageId,
+    policyDigest: value.policyDigest,
+    containerConfigDigest: value.containerConfigDigest,
+    fixtureDigest: value.fixtureDigest,
+  });
+}
+
 export async function runCommand(request, deps) {
   const validated = validateCommandRequest(request);
   const key = invocationKey(validated);
@@ -48,7 +71,11 @@ export async function runCommand(request, deps) {
 
   let raw;
   try {
-    raw = await deps.executor({ ...validated, env: Object.freeze({ ...deps.env }) });
+    raw = await deps.executor({
+      ...validated,
+      invocationKey: key,
+      env: Object.freeze({ ...deps.env }),
+    });
   } catch {
     const reason = "RUNNER_EXECUTOR_FAILED";
     if (journal) await journal.recordUncertain(key, reason);
@@ -66,6 +93,15 @@ export async function runCommand(request, deps) {
     return { outcome: "outcome_uncertain", invocationKey: key, reason };
   }
 
+  let runnerEvidence;
+  try {
+    runnerEvidence = validateRunnerEvidence(raw.runnerEvidence, validated, key);
+  } catch {
+    const reason = "RUNNER_EVIDENCE_INVALID";
+    if (journal) await journal.recordUncertain(key, reason);
+    return { outcome: "outcome_uncertain", invocationKey: key, reason };
+  }
+
   const result = {
     outcome: "completed",
     invocationKey: key,
@@ -73,6 +109,7 @@ export async function runCommand(request, deps) {
     stdout: truncate(raw.stdout, validated.outputLimitBytes),
     stderr: truncate(raw.stderr, validated.outputLimitBytes),
     durationMs: raw.durationMs ?? null,
+    ...(runnerEvidence ? { runnerEvidence } : {}),
   };
   if (journal) await journal.record(key, result);
   return { ...result, replayed: false };

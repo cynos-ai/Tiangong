@@ -10,10 +10,11 @@ REVIEWER_IMAGE_TEST := ./smoke-testing/support/run-reviewer-smoke.sh
 PEER_MENTION_SMOKE := ./smoke-testing/support/run-peer-mention-smoke.sh
 PEER_MENTION_SMOKE_TEST := ./scripts/test-peer-mention-smoke.sh
 RUNNER_ISOLATION_SPIKE := ./smoke-testing/support/run-runner-isolation-spike.sh
+RUNNER_EXECUTOR_SMOKE := node ./smoke-testing/support/run-runner-executor-smoke.mjs
 SKILL_CHECK := node ./scripts/check-skills.mjs
 REVIEWER_SMOKE_CONTRACT := node ./scripts/test-reviewer-smoke-oracle.mjs
 
-.PHONY: help init up start stop down status verify config logs login uninstall check-skills build-worker-image test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-runner-isolation test-reviewer-smoke-contract test-reviewer-image-basic test-reviewer-image-git test-reviewer-image test-reviewer-journey-canary test-peer-mention-smoke-contract test-peer-mention-smoke
+.PHONY: help init up start stop down status verify config logs login uninstall check-skills build-worker-image test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-runner-isolation test-runner-executor test-reviewer-smoke-contract test-reviewer-image-basic test-reviewer-image-git test-reviewer-image test-reviewer-journey-canary test-peer-mention-smoke-contract test-peer-mention-smoke
 
 help: ## Show available commands
 	@printf '%s\n' 'Tiangong local development commands:'
@@ -68,6 +69,9 @@ test-leader-image-basic: ## Run the Leader Matrix coordination (blocked terminal
 
 test-runner-isolation: ## Prove the disposable RunnerPort isolation contract and clean up
 	@$(RUNNER_ISOLATION_SPIKE)
+
+test-runner-executor: ## Run the production Docker executor against the isolation fixture
+	@$(RUNNER_EXECUTOR_SMOKE)
 
 test-reviewer-smoke-contract: ## Validate Reviewer smoke oracle phase semantics
 	@$(REVIEWER_SMOKE_CONTRACT)
