@@ -338,6 +338,7 @@ run_installer_sanitized() {
 
 up() {
   require_command docker
+  require_command jq
   load_config
   validate_up_config
   docker info >/dev/null 2>&1 || die "Docker daemon is not available"
@@ -349,9 +350,76 @@ up() {
   log "Installing AgentTeams ${AGENTTEAMS_VERSION} from a checksum-verified upstream script"
   run_installer_sanitized "${installer}"
   [[ -f "${AGENTTEAMS_ENV_FILE}" ]] && chmod 600 "${AGENTTEAMS_ENV_FILE}"
+  recover_manager_dm_membership 30
   wait_for_readiness
   log "AgentTeams installation completed"
   print_login
+}
+
+recover_manager_dm_membership() {
+  # AgentTeams v1.2.0 can persist a CoPaw sync cursor before processing the
+  # controller-created admin-DM invitation. Recover only that exact invitation
+  # using the authenticated Manager identity; never join an input-selected room.
+  local attempts="${1:-1}" attempt resource room manager token joined sync encoded response matrix_domain
+  [[ "${attempts}" =~ ^[1-9][0-9]?$ ]] || die "Invalid Manager DM recovery attempt count"
+  [[ -f "${GENERATED_ENV_FILE}" && ! -L "${GENERATED_ENV_FILE}" ]] || \
+    die "Manager DM recovery requires the generated owner-only environment file."
+  [[ "$(stat -c '%a' "${GENERATED_ENV_FILE}" 2>/dev/null || stat -f '%Lp' "${GENERATED_ENV_FILE}")" == "600" ]] || \
+    die "Manager DM recovery requires mode 600 on the generated environment file."
+  if [[ "${AGENTTEAMS_MANAGER_RUNTIME}" != "copaw" ]]; then
+    log "Manager DM recovery is not required for runtime ${AGENTTEAMS_MANAGER_RUNTIME}"
+    return
+  fi
+  token=""
+  matrix_domain="${AGENTTEAMS_MATRIX_DOMAIN:-matrix-local.agentteams.io:18080}"
+
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    resource="$(docker exec agentteams-controller agt get managers default -o json 2>/dev/null || true)"
+    if ! jq -e --arg domain "${matrix_domain}" '
+      .phase == "Running" and .runtime == "copaw" and
+      (.welcomeSent == true or .welcomeSent == false) and
+      .matrixUserID == ("@manager:" + $domain) and
+      (.roomID | type == "string" and startswith("!") and endswith(":" + $domain))
+    ' >/dev/null 2>&1 <<<"${resource}"; then
+      sleep 2
+      continue
+    fi
+    if [[ "$(jq -r .welcomeSent <<<"${resource}")" == "true" ]]; then
+      log "Manager readiness is already complete"
+      return
+    fi
+    if [[ -z "${token}" ]]; then
+      token="$(docker inspect agentteams-manager --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | \
+        awk -F= '$1 == "AGENTTEAMS_MANAGER_MATRIX_TOKEN" {sub(/^[^=]*=/, ""); print; exit}')"
+      [[ "${token}" =~ ^[A-Za-z0-9._~-]{16,512}$ ]] || die "Manager container Matrix token has an invalid format."
+    fi
+    room="$(jq -r .roomID <<<"${resource}")"
+    manager="$(jq -r .matrixUserID <<<"${resource}")"
+    encoded="$(printf '%s' "${room}" | jq -sRr @uri)"
+    joined="$(printf 'header = "Authorization: Bearer %s"\n' "${token}" | \
+      curl --config - --fail --silent --show-error --max-time 10 \
+      "http://127.0.0.1:${AGENTTEAMS_PORT_GATEWAY}/_matrix/client/v3/joined_rooms" 2>/dev/null || true)"
+    if jq -e --arg room "${room}" 'any(.joined_rooms[]?; . == $room)' >/dev/null 2>&1 <<<"${joined}"; then
+      log "Manager identity is already joined to its authoritative admin DM"
+      return
+    fi
+    sync="$(printf 'header = "Authorization: Bearer %s"\n' "${token}" | \
+      curl --config - --fail --silent --show-error --max-time 10 \
+      "http://127.0.0.1:${AGENTTEAMS_PORT_GATEWAY}/_matrix/client/v3/sync?timeout=0&full_state=true" 2>/dev/null || true)"
+    if ! jq -e --arg room "${room}" '(.rooms.invite // {}) | has($room)' >/dev/null 2>&1 <<<"${sync}"; then
+      sleep 2
+      continue
+    fi
+    response="$(printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' "${token}" | \
+      curl --config - --fail --silent --show-error --max-time 10 --request POST --data '{}' \
+      "http://127.0.0.1:${AGENTTEAMS_PORT_GATEWAY}/_matrix/client/v3/rooms/${encoded}/join")" || \
+      die "Manager failed to accept its authoritative admin-DM invitation."
+    [[ "$(jq -r '.room_id // empty' <<<"${response}")" == "${room}" ]] || \
+      die "Manager admin-DM join response did not match the authoritative room."
+    log "Recovered Manager admin-DM membership for ${manager}"
+    return
+  done
+  die "Manager authoritative admin-DM invitation was not observable."
 }
 
 wait_for_readiness() (
@@ -594,6 +662,7 @@ case "${ACTION}" in
   stop) stop_stack ;;
   status) status ;;
   verify) verify ;;
+  recover-manager-readiness) load_config; validate_stack_ownership; recover_manager_dm_membership 1 ;;
   config) print_config ;;
   logs) show_logs ;;
   login) load_config; print_login ;;
