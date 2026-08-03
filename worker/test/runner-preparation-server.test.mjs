@@ -40,13 +40,13 @@ function project() {
   });
 }
 
-function task(boundProject, taskKind, taskId, assignee, inputRefs = []) {
+function task(boundProject, taskKind, taskId, assignee, inputRefs = [], revisionIndex = 0) {
   return createTaskBinding({
     taskId,
     projectId: boundProject.projectId,
     playbookStepId: `software-change-delivery-transition-v1:${taskKind}`,
     taskKind,
-    revisionIndex: 0,
+    revisionIndex,
     assignee,
     objective: `Prepare the ${taskKind} Runner binding.`,
     completionContractDigest: sha256("contract"),
@@ -168,6 +168,32 @@ test("preparation registers one immutable binding before notification, accepts e
     });
     assert.equal(preparedAssess.status, "ready");
     assert.equal(registry.get(assessTask.taskId).inputRevisionTaskId, implementTask.taskId);
+
+    const revisionTask = task(
+      boundProject,
+      "implement",
+      "prep-implement-revision-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "tiangong-implementor",
+      [],
+      1,
+    );
+    const preparedRevision = await service("172.30.0.2", {
+      schemaVersion: 1,
+      projectBinding: boundProject,
+      taskBinding: revisionTask,
+      inputTaskBinding: null,
+    });
+    assert.equal(preparedRevision.status, "ready");
+    assert.equal(preparedRevision.replayed, false);
+    assert.equal(registry.config().bindings.length, 3);
+    const sequentialAuthenticator = createDockerPeerAuthenticator({
+      config: registry.config(),
+      runDocker: dockerAdapter(),
+    });
+    assert.equal(
+      (await sequentialAuthenticator("172.30.0.3", revisionTask.taskId)).taskId,
+      revisionTask.taskId,
+    );
 
     const restarted = await createRunnerBrokerBindingRegistry({ config: brokerConfig, stateRoot });
     assert.equal(restarted.get(implementTask.taskId).taskId, implementTask.taskId);

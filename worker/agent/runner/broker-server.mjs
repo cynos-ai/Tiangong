@@ -122,8 +122,8 @@ export function validateBrokerConfig(value) {
   const preparation = value.preparation === undefined || value.preparation === null
     ? null
     : validatePreparationConfig(value.preparation);
-  const workers = new Set();
-  const containers = new Set();
+  const workers = new Map();
+  const containers = new Map();
   const tasks = new Set();
   const bindings = value.bindings.map((entry) => {
     exactKeys(entry, BINDING_KEYS, "Runner broker binding");
@@ -151,11 +151,17 @@ export function validateBrokerConfig(value) {
         (binding.role === "assessor" && (binding.fixtureId !== null || binding.inputRevisionTaskId === null))) {
       throw new Error("Runner broker fixture binding does not match the professional role");
     }
-    if (workers.has(binding.workerName) || containers.has(binding.containerName) || tasks.has(binding.taskId)) {
-      throw new Error("Runner broker bindings must have unique Worker, container, and Task identities");
+    const existingWorker = workers.get(binding.workerName);
+    const existingContainer = containers.get(binding.containerName);
+    if (tasks.has(binding.taskId) ||
+        (existingWorker && (existingWorker.containerName !== binding.containerName ||
+          existingWorker.workerImageId !== binding.workerImageId || existingWorker.role !== binding.role)) ||
+        (existingContainer && (existingContainer.workerName !== binding.workerName ||
+          existingContainer.workerImageId !== binding.workerImageId || existingContainer.role !== binding.role))) {
+      throw new Error("Runner broker bindings must have unique Task identities and consistent Worker/container identities");
     }
-    workers.add(binding.workerName);
-    containers.add(binding.containerName);
+    workers.set(binding.workerName, binding);
+    containers.set(binding.containerName, binding);
     tasks.add(binding.taskId);
     return binding;
   });
@@ -277,8 +283,13 @@ function addressFromNetworkEntry(entry) {
 
 export function createDockerPeerAuthenticator({ config, runDocker }) {
   if (typeof runDocker !== "function") throw new TypeError("Docker peer authentication requires a Docker command runner");
-  const byContainer = new Map(config.bindings.map((binding) => [binding.containerName, binding]));
-  return async function authenticate(remoteAddress) {
+  const byContainer = new Map();
+  for (const binding of config.bindings) {
+    const candidates = byContainer.get(binding.containerName) ?? [];
+    candidates.push(binding);
+    byContainer.set(binding.containerName, candidates);
+  }
+  return async function authenticate(remoteAddress, requestedTaskId) {
     const address = normalizeAddress(remoteAddress);
     const inspected = await runDocker(["network", "inspect", config.network], { outputLimitBytes: 1024 * 1024 });
     if (inspected.timedOut || inspected.exitCode !== 0) throw new Error("RUNNER_BROKER_NETWORK_INSPECT_FAILED");
@@ -295,8 +306,16 @@ export function createDockerPeerAuthenticator({ config, runDocker }) {
     const peers = Object.values(network?.Containers ?? {})
       .filter((entry) => addressFromNetworkEntry(entry) === address);
     if (peers.length !== 1) throw new Error("RUNNER_BROKER_PEER_NOT_UNIQUE");
-    const binding = byContainer.get(peers[0].Name);
-    if (!binding) throw new Error("RUNNER_BROKER_PEER_UNAUTHORIZED");
+    const candidates = byContainer.get(peers[0].Name) ?? [];
+    if (candidates.length === 0) throw new Error("RUNNER_BROKER_PEER_UNAUTHORIZED");
+    let binding;
+    if (requestedTaskId === undefined) {
+      if (candidates.length !== 1) throw new Error("RUNNER_BROKER_TASK_REQUIRED");
+      [binding] = candidates;
+    } else {
+      binding = candidates.find((candidate) => candidate.taskId === requestedTaskId);
+      if (!binding) throw new Error("RUNNER_BROKER_TASK_UNBOUND");
+    }
 
     const containerResult = await runDocker(["container", "inspect", binding.containerName], {
       outputLimitBytes: 1024 * 1024,
@@ -443,7 +462,7 @@ export function createRunnerBrokerPreparationService({ config, registry, runDock
       };
       const registration = await registry.register(binding);
       const authenticateWorker = createDockerPeerAuthenticator({ config: registry.config(), runDocker });
-      await authenticateWorker(worker.address);
+      await authenticateWorker(worker.address, taskBinding.taskId);
       return {
         schemaVersion: 1,
         status: "ready",
@@ -548,7 +567,7 @@ export function createRunnerBrokerHandler({ authenticatePeer, execute, prepare }
         return;
       }
       stage = "authenticate";
-      const binding = await authenticatePeer(request.socket.remoteAddress);
+      const binding = await authenticatePeer(request.socket.remoteAddress, body?.taskId);
       stage = request.url === "/v1/plan" ? "plan" : "request";
       if (request.url === "/v1/plan") {
         send(response, 200, planFromBody(body, binding));
@@ -662,10 +681,10 @@ export async function startRunnerBroker({
   await mkdir(stateRoot, { recursive: true, mode: 0o700 });
   const runDocker = createDockerCommandRunner({ dockerPath });
   const registry = await createRunnerBrokerBindingRegistry({ config, stateRoot });
-  const authenticatePeer = async (remoteAddress) => createDockerPeerAuthenticator({
+  const authenticatePeer = async (remoteAddress, taskId) => createDockerPeerAuthenticator({
     config: registry.config(),
     runDocker,
-  })(remoteAddress);
+  })(remoteAddress, taskId);
   const execute = createBrokerExecutionAdapter({ fixtureRoot, stateRoot, runDocker });
   const prepare = config.preparation
     ? createRunnerBrokerPreparationService({ config, registry, runDocker })

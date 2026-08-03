@@ -83,8 +83,9 @@ test("broker client reaches only the bound Task and returns invocation-bound run
   const binding = validateBrokerConfig(configInput()).bindings[0];
   let executions = 0;
   const handler = createRunnerBrokerHandler({
-    async authenticatePeer(address) {
+    async authenticatePeer(address, taskId) {
       assert.equal(address, "127.0.0.1");
+      assert.equal(taskId, TASK_ID);
       return binding;
     },
     async execute(receivedBinding, command) {
@@ -214,9 +215,27 @@ test("Docker peer authentication binds source IP, exact container, Worker name, 
   };
   const authenticate = createDockerPeerAuthenticator({ config, runDocker });
   assert.equal(await authenticate("::ffff:172.30.0.5"), binding);
+  const sequentialConfig = validateBrokerConfig({
+    ...configInput(),
+    bindings: [
+      configInput().bindings[0],
+      {
+        ...configInput().bindings[0],
+        taskId: "task-implement-b",
+        runId: "run-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        revisionIndex: 1,
+      },
+    ],
+  });
+  const authenticateSequential = createDockerPeerAuthenticator({ config: sequentialConfig, runDocker });
+  assert.equal((await authenticateSequential("172.30.0.5", "task-implement-b")).taskId, "task-implement-b");
+  await assert.rejects(() => authenticateSequential("172.30.0.5"), /TASK_REQUIRED/u);
   assert.deepEqual(calls.map((args) => args.slice(0, 3)), [
     ["network", "inspect", config.network],
     ["container", "inspect", binding.containerName],
+    ["network", "inspect", sequentialConfig.network],
+    ["container", "inspect", binding.containerName],
+    ["network", "inspect", sequentialConfig.network],
   ]);
 
   const mismatch = createDockerPeerAuthenticator({
@@ -261,7 +280,15 @@ test("broker config and client endpoint are closed, bounded contracts", () => {
   assert.throws(() => validateBrokerConfig(malformedPlan), /non-empty string array/u);
   const duplicate = configInput();
   duplicate.bindings.push({ ...duplicate.bindings[0] });
-  assert.throws(() => validateBrokerConfig(duplicate), /unique Worker/u);
+  assert.throws(() => validateBrokerConfig(duplicate), /unique Task/u);
+  const sequential = configInput();
+  sequential.bindings.push({
+    ...sequential.bindings[0],
+    taskId: "task-implement-b",
+    runId: "run-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    revisionIndex: 1,
+  });
+  assert.equal(validateBrokerConfig(sequential).bindings.length, 2);
   const paired = configInput();
   paired.bindings.push({
     workerName: "tiangong-assessor",

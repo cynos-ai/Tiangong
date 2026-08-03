@@ -92,10 +92,14 @@ ChangeRevision artifact reference; only the single matching Implement Task
 binding is used for preparation, while malformed Task references fail closed.
 
 Registration is idempotent for the exact Task binding and rejects a different
-binding for the same Task. After registration, the broker independently
-re-authenticates the assignee's exact container before returning `ready`.
-Runner `/v1/plan` and `/v1/execute` continue to authenticate the assignee by
-exact source container, Worker name, image, network, and registered Task.
+binding for the same Task. Historical bindings may retain the same exact Worker
+and container across revision waves, but their Task identities remain unique
+and their Worker/container/image/role identity must stay consistent. After
+registration, the broker independently re-authenticates the assignee's exact
+container and requested Task before returning `ready`. Runner `/v1/plan` and
+`/v1/execute` select the registered Task from the request body, then
+authenticate the exact source container, Worker name, image, network, and
+selected Task.
 
 ## Verification
 
