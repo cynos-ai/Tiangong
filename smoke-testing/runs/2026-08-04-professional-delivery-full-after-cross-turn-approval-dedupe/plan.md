@@ -102,10 +102,15 @@ must still pass independently and cannot be used as proof of delivery.
 
 ## Cleanup
 
-After evidence capture, remove the exact target/broker, three labeled
-Deployment volumes, Runner broker/state, Team, Workers, network, and temporary
-capability/config files. Verify absence and restore the pinned installer cache.
-A cleanup failure keeps this run red.
+Cleanup passed after evidence capture. The exact target/broker and three labeled
+Deployment volumes were removed; the fixed Runner broker was stopped with purge;
+Team deletion and supported uninstall completed with the known four exact Worker
+containers left behind, which were then manually removed. The exact
+`agentteams-net` network, AgentTeams containers/data volume, deployment
+resources, and temporary capability/config files were verified absent. The
+pinned installer cache was restored with checksum
+`701f53c53dc476d8ca7f33428e231c1706d967ac2b517ec4c1c59d742864331d`.
+A cleanup failure would have kept this run red.
 
 ## Stop rules
 
