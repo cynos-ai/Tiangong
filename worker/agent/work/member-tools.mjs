@@ -19,8 +19,6 @@ import { createResultEnvelope } from "./result-envelope.mjs";
 const ID = Type.String({ pattern: "^[A-Za-z0-9._:-]{1,128}$" });
 const DIGEST = Type.String({ pattern: "^[0-9a-f]{64}$" });
 const PROFESSIONAL_ROLES = new Set(["designer", "implementor", "assessor", "operator"]);
-const RUNNER_COMMAND = Type.Array(Type.String({ minLength: 1, maxLength: 8192 }), { minItems: 1, maxItems: 64 });
-const RUNNER_OUTPUT_MAX = 64 * 1024;
 const CHANGE_REVISION_REF = Type.Object({
   kind: Type.Literal("tiangong.change-revision-ref"),
   schemaVersion: Type.Literal(1),
@@ -152,13 +150,8 @@ function registerRunnerTool(registry, deps) {
   registry.register({
     name: toolName,
     label: role === "implementor" ? "Tiangong isolated implementation command" : "Tiangong isolated assessment command",
-    description: "Run a bounded command through the task-bound disposable Runner broker. The Worker never receives the container-runtime socket.",
-    parameters: Type.Object({
-      taskId: ID,
-      command: RUNNER_COMMAND,
-      timeoutMs: Type.Integer({ minimum: 1, maximum: 5 * 60 * 1000 }),
-      outputLimitBytes: Type.Optional(Type.Integer({ minimum: 1, maximum: RUNNER_OUTPUT_MAX })),
-    }, { additionalProperties: false }),
+    description: "Execute the immutable task-bound command plan through the disposable Runner broker. The model cannot choose or alter argv, timeout, output bounds, or working directory, and the Worker never receives the container-runtime socket.",
+    parameters: Type.Object({ taskId: ID }, { additionalProperties: false }),
     executionMode: "sequential",
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx, invocation) {
       const { taskBinding } = await resolveAssignedTask(params.taskId, deps);
@@ -172,12 +165,27 @@ function registerRunnerTool(registry, deps) {
         taskId: taskBinding.taskId,
         fetchImpl: deps.runnerFetch,
       });
+      const runId = runnerRunIdForTask(taskBinding);
+      let plan;
+      try {
+        plan = await executor.plan({ runId });
+      } catch (cause) {
+        const error = new Error("Validated Runner broker command plan is unavailable", { cause });
+        error.code = "TIANGONG_RUNNER_PLAN_UNAVAILABLE";
+        throw error;
+      }
+      const expectedCwd = role === "implementor" ? "scratch/revision" : "fixture";
+      if (plan.cwd !== expectedCwd) {
+        const error = new Error("Runner broker command plan does not match the professional role");
+        error.code = "TIANGONG_RUNNER_PLAN_INVALID";
+        throw error;
+      }
       const result = await runCommand({
-        runId: runnerRunIdForTask(taskBinding),
-        command: params.command,
-        cwd: role === "implementor" ? "scratch/revision" : "fixture",
-        timeoutMs: params.timeoutMs,
-        outputLimitBytes: params.outputLimitBytes ?? RUNNER_OUTPUT_MAX,
+        runId,
+        command: plan.command,
+        cwd: plan.cwd,
+        timeoutMs: plan.timeoutMs,
+        outputLimitBytes: plan.outputLimitBytes,
       }, {
         executor,
         journal: deps.runnerJournal,
@@ -201,6 +209,7 @@ function registerRunnerTool(registry, deps) {
         stderr: result.stderr,
         durationMs: result.durationMs,
         runnerEvidence: result.runnerEvidence,
+        executionPlanDigest: plan.contentDigest,
         changeRevisionRef: result.changeRevisionRef,
       });
     },

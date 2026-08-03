@@ -1,10 +1,13 @@
-import { canonicalJson } from "../canonical-json.mjs";
+import { canonicalJson, sha256 } from "../canonical-json.mjs";
 import { isChangeRevisionRef } from "../work/change-revision-ref.mjs";
 import { MAX_OUTPUT_BYTES, assertNoForbiddenEnv, validateCommandRequest } from "./runner-policy.mjs";
 
 const ID = /^[A-Za-z0-9._:-]{1,128}$/u;
 const HOST = /^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$/u;
 const BROKER_ROLES = new Set(["implementor", "assessor"]);
+const RUN_ID = /^run-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const DIGEST = /^[0-9a-f]{64}$/u;
+const PLAN_KEYS = ["command", "contentDigest", "cwd", "outputLimitBytes", "runId", "schemaVersion", "taskId", "timeoutMs"];
 const MAX_RESPONSE_BYTES = (MAX_OUTPUT_BYTES * 2) + (256 * 1024);
 export const DEFAULT_AGENTTEAMS_RUNNER_BROKER_ENDPOINT = "http://tiangong-runner-broker:8787/v1/execute";
 
@@ -57,6 +60,32 @@ async function readBoundedResponse(response) {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+function validatePlan(value, { taskId, runId }) {
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      Object.keys(value).sort().join("\n") !== [...PLAN_KEYS].sort().join("\n") ||
+      value.schemaVersion !== 1 || value.taskId !== taskId || value.runId !== runId || !DIGEST.test(value.contentDigest)) {
+    throw new Error("RUNNER_BROKER_PLAN_INVALID");
+  }
+  const execution = validateCommandRequest({
+    runId: value.runId,
+    command: value.command,
+    cwd: value.cwd,
+    timeoutMs: value.timeoutMs,
+    outputLimitBytes: value.outputLimitBytes,
+  });
+  const base = {
+    schemaVersion: 1,
+    taskId: value.taskId,
+    runId: execution.runId,
+    command: execution.command,
+    cwd: execution.cwd,
+    timeoutMs: execution.timeoutMs,
+    outputLimitBytes: execution.outputLimitBytes,
+  };
+  if (sha256(canonicalJson(base)) !== value.contentDigest) throw new Error("RUNNER_BROKER_PLAN_INVALID");
+  return Object.freeze({ ...base, contentDigest: value.contentDigest });
+}
+
 function validateResponse(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("RUNNER_BROKER_RESPONSE_INVALID");
@@ -80,11 +109,66 @@ function validateResponse(value) {
 
 export function createRunnerBrokerExecutor({ endpoint, taskId, fetchImpl = globalThis.fetch } = {}) {
   const brokerEndpoint = validateEndpoint(endpoint);
+  const planEndpoint = new URL(brokerEndpoint);
+  planEndpoint.pathname = "/v1/plan";
   const boundTaskId = validateTaskId(taskId);
   if (typeof fetchImpl !== "function") throw new TypeError("Runner broker client requires fetch");
+  let boundPlan;
 
-  return async function executeThroughBroker(request) {
+  async function post(url, body) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    timer.unref?.();
+    let text;
+    try {
+      const response = await fetchImpl(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: canonicalJson(body),
+        signal: controller.signal,
+      });
+      if (!response || response.status !== 200) throw new Error("RUNNER_BROKER_REQUEST_REJECTED");
+      text = await readBoundedResponse(response);
+    } finally {
+      clearTimeout(timer);
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error("RUNNER_BROKER_RESPONSE_INVALID");
+    }
+  }
+
+  async function plan({ runId } = {}) {
+    if (typeof runId !== "string" || !RUN_ID.test(runId)) throw new Error("Runner broker plan requires a run-scoped uuid");
+    const received = validatePlan(await post(planEndpoint, { schemaVersion: 1, taskId: boundTaskId, runId }), {
+      taskId: boundTaskId,
+      runId,
+    });
+    if (boundPlan && canonicalJson(boundPlan) !== canonicalJson(received)) {
+      throw new Error("RUNNER_BROKER_PLAN_CHANGED");
+    }
+    boundPlan = received;
+    return received;
+  }
+
+  async function executeThroughBroker(request) {
     const validated = validateCommandRequest(request);
+    if (!boundPlan || canonicalJson({
+      runId: validated.runId,
+      command: validated.command,
+      cwd: validated.cwd,
+      timeoutMs: validated.timeoutMs,
+      outputLimitBytes: validated.outputLimitBytes,
+    }) !== canonicalJson({
+      runId: boundPlan.runId,
+      command: boundPlan.command,
+      cwd: boundPlan.cwd,
+      timeoutMs: boundPlan.timeoutMs,
+      outputLimitBytes: boundPlan.outputLimitBytes,
+    })) {
+      throw new Error("RUNNER_BROKER_PLAN_REQUIRED");
+    }
     if (typeof request.invocationKey !== "string" || !/^[0-9a-f]{64}$/u.test(request.invocationKey)) {
       throw new Error("Runner broker request requires an invocation key");
     }
@@ -103,25 +187,31 @@ export function createRunnerBrokerExecutor({ endpoint, taskId, fetchImpl = globa
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), validated.timeoutMs + 30_000);
     timer.unref?.();
-    let response;
+    let text;
     try {
-      response = await fetchImpl(brokerEndpoint, {
+      const response = await fetchImpl(brokerEndpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body,
         signal: controller.signal,
       });
+      if (!response || response.status !== 200) throw new Error("RUNNER_BROKER_REQUEST_REJECTED");
+      text = await readBoundedResponse(response);
     } finally {
       clearTimeout(timer);
     }
-    if (!response || response.status !== 200) throw new Error("RUNNER_BROKER_REQUEST_REJECTED");
-    const text = await readBoundedResponse(response);
     let parsed;
     try {
       parsed = JSON.parse(text);
     } catch {
       throw new Error("RUNNER_BROKER_RESPONSE_INVALID");
     }
-    return validateResponse(parsed);
-  };
+    const result = validateResponse(parsed);
+    if (result.status === "completed" && result.runnerEvidence?.executionPlanDigest !== boundPlan.contentDigest) {
+      throw new Error("RUNNER_BROKER_PLAN_EVIDENCE_MISMATCH");
+    }
+    return result;
+  }
+  executeThroughBroker.plan = plan;
+  return executeThroughBroker;
 }

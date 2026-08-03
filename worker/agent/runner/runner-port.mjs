@@ -72,7 +72,8 @@ function validateRunnerEvidence(value, validated, key) {
     !/^sha256:[0-9a-f]{64}$/u.test(value.imageId) ||
     !/^[0-9a-f]{64}$/u.test(value.policyDigest) ||
     !/^[0-9a-f]{64}$/u.test(value.containerConfigDigest) ||
-    !/^[0-9a-f]{64}$/u.test(value.fixtureDigest)
+    !/^[0-9a-f]{64}$/u.test(value.fixtureDigest) ||
+    (value.executionPlanDigest !== undefined && !/^[0-9a-f]{64}$/u.test(value.executionPlanDigest))
   ) {
     throw new Error("RUNNER_EVIDENCE_INVALID");
   }
@@ -84,6 +85,7 @@ function validateRunnerEvidence(value, validated, key) {
     policyDigest: value.policyDigest,
     containerConfigDigest: value.containerConfigDigest,
     fixtureDigest: value.fixtureDigest,
+    ...(value.executionPlanDigest ? { executionPlanDigest: value.executionPlanDigest } : {}),
   });
 }
 

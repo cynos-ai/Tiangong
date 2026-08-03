@@ -48,6 +48,7 @@ function configInput() {
       taskId: TASK_ID,
       runId: RUN_ID,
       runnerImageId: IMAGE_ID,
+      execution: { command: ["node", "test.mjs"], timeoutMs: 1000, outputLimitBytes: 1024 },
       revisionIndex: 0,
       fixtureId: "software-change-fixture",
       inputRevisionTaskId: null,
@@ -105,10 +106,20 @@ test("broker client reaches only the bound Task and returns invocation-bound run
   const server = await listen(handler);
   try {
     const executor = createRunnerBrokerExecutor({ endpoint: server.endpoint, taskId: TASK_ID });
-    const result = await runCommand(request(), { executor, env: {} });
+    const plan = await executor.plan({ runId: RUN_ID });
+    assert.deepEqual(plan.command, ["node", "test.mjs"]);
+    assert.match(plan.contentDigest, /^[0-9a-f]{64}$/u);
+    const result = await runCommand({
+      runId: plan.runId,
+      command: plan.command,
+      cwd: plan.cwd,
+      timeoutMs: plan.timeoutMs,
+      outputLimitBytes: plan.outputLimitBytes,
+    }, { executor, env: {} });
     assert.equal(result.outcome, "completed");
     assert.equal(result.stdout, "tests passed\n");
     assert.equal(result.runnerEvidence.imageId, IMAGE_ID);
+    assert.equal(result.runnerEvidence.executionPlanDigest, plan.contentDigest);
     assert.equal(result.changeRevisionRef.contentDigest, REVISION_REF.contentDigest);
     assert.equal(executions, 1);
   } finally {
@@ -136,6 +147,7 @@ test("broker rejects Task, run, invocation, route, and peer mismatches before ex
       { ...base, taskId: "task-other" },
       { ...base, runId: "run-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" },
       { ...base, invocationKey: "f".repeat(64) },
+      { ...base, command: ["node", "other.mjs"] },
     ]) {
       const response = await fetch(allowed.endpoint, {
         method: "POST",
@@ -161,9 +173,7 @@ test("broker rejects Task, run, invocation, route, and peer mismatches before ex
   }));
   try {
     const executor = createRunnerBrokerExecutor({ endpoint: denied.endpoint, taskId: TASK_ID });
-    const result = await runCommand(request(), { executor, env: {} });
-    assert.equal(result.outcome, "outcome_uncertain");
-    assert.equal(result.reason, "RUNNER_EXECUTOR_FAILED");
+    await assert.rejects(() => executor.plan({ runId: RUN_ID }), /REQUEST_REJECTED/u);
     assert.equal(executions, 0);
   } finally {
     await denied.close();
@@ -246,6 +256,9 @@ test("broker config and client endpoint are closed, bounded contracts", () => {
     () => validateBrokerConfig({ ...configInput(), extra: true }),
     /missing or unknown/u,
   );
+  const malformedPlan = configInput();
+  malformedPlan.bindings[0].execution.command = [];
+  assert.throws(() => validateBrokerConfig(malformedPlan), /non-empty string array/u);
   const duplicate = configInput();
   duplicate.bindings.push({ ...duplicate.bindings[0] });
   assert.throws(() => validateBrokerConfig(duplicate), /unique Worker/u);
@@ -258,6 +271,7 @@ test("broker config and client endpoint are closed, bounded contracts", () => {
     taskId: "task-assess-a",
     runId: "run-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
     runnerImageId: IMAGE_ID,
+    execution: { command: ["node", "test.mjs"], timeoutMs: 1000, outputLimitBytes: 1024 },
     revisionIndex: 0,
     fixtureId: null,
     inputRevisionTaskId: TASK_ID,

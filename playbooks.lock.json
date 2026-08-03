@@ -32,8 +32,8 @@
       "compatibleRoleSkillDigests": {
         "leader-v1": "1e023bd9aa0af90ce044036b81b0976391d03a2831e9578ec00b0ef860a000cb",
         "designer-v1": "360ff77f2da57456ff9510720176e61db03a0b36de3eeb0f9b1338f28296a3f9",
-        "implementor-v1": "3099bfc6e6d6c1cb8d215b025f54e4d1028e2e8b419e5e9aba20483e7d3c6561",
-        "assessor-v1": "09eb73c76073e0668c790f1be89cc2a23786825455c0e77d417ccf5a5a53f8d3",
+        "implementor-v1": "2a206df223179f6557616877e4a96ac0e405b47606f7daee8d5b13f8e8dc7f45",
+        "assessor-v1": "78837abf583f8dcdac3eb3edfc034aff35e9589a9b150915e01a9b861fb9c89c",
         "operator-v1": "fee7b721bb069e4edc5ea982f833489b8f822ae2c203825794e2fdad22c5cce3"
       },
       "agentTeamsVersion": "v1.2.0",

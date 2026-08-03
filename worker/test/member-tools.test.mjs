@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { sha256 } from "../agent/canonical-json.mjs";
 import { TurnGateState } from "../agent/gates/turn-state.mjs";
 import { RunnerJournal } from "../agent/runner/journal.mjs";
 import { createProjectBinding, createTaskBinding } from "../agent/team/manifest.mjs";
@@ -119,11 +120,13 @@ test("createMemberToolRegistry exposes only each professional RoleProfile surfac
   implementorDeps.sourceSkillId = "implementor-v1";
   const implementor = createMemberToolRegistry({ deps: implementorDeps });
   assert.deepEqual(implementor.names(), ["team_resolve_task", "run_command", "team_submit_result"]);
+  assert.deepEqual(Object.keys(implementor.definitions().find((tool) => tool.name === "run_command").parameters.properties), ["taskId"]);
   const assessorDeps = depsFor("tiangong-assessor", "/x");
   assessorDeps.professionalRole = "assessor";
   assessorDeps.sourceSkillId = "assessor-v1";
   const assessor = createMemberToolRegistry({ deps: assessorDeps });
   assert.deepEqual(assessor.names(), ["team_resolve_task", "run_test_command", "team_submit_result"]);
+  assert.deepEqual(Object.keys(assessor.definitions().find((tool) => tool.name === "run_test_command").parameters.properties), ["taskId"]);
   const operatorDeps = depsFor("tiangong-operator", "/x");
   operatorDeps.professionalRole = "operator";
   operatorDeps.sourceSkillId = "operator-v1";
@@ -214,10 +217,24 @@ test("Implementor command runs only through the Task-bound broker and projects m
       revision: 0,
     });
     let brokerCalls = 0;
-    deps.runnerFetch = async (_url, options) => {
+    let planDigest;
+    deps.runnerFetch = async (url, options) => {
       brokerCalls += 1;
       const request = JSON.parse(options.body);
       assert.equal(request.taskId, task.taskId);
+      if (new URL(url).pathname === "/v1/plan") {
+        const plan = {
+          schemaVersion: 1,
+          taskId: task.taskId,
+          runId: request.runId,
+          command: ["node", "test.mjs"],
+          cwd: "scratch/revision",
+          timeoutMs: 1000,
+          outputLimitBytes: 65536,
+        };
+        planDigest = sha256(plan);
+        return new Response(JSON.stringify({ ...plan, contentDigest: planDigest }), { status: 200 });
+      }
       assert.deepEqual(request.command, ["node", "test.mjs"]);
       assert.match(request.env.TIANGONG_FORBIDDEN_ENV_NAMES, /OPENAI_API_KEY/u);
       assert.match(request.env.TIANGONG_FORBIDDEN_NETWORK_TARGETS, /agentteams-controller/u);
@@ -235,13 +252,14 @@ test("Implementor command runs only through the Task-bound broker and projects m
           policyDigest: "b".repeat(64),
           containerConfigDigest: "c".repeat(64),
           fixtureDigest: "0".repeat(64),
+          executionPlanDigest: planDigest,
         },
         changeRevisionRef: revisionRef,
       }), { status: 200 });
     };
     const command = createMemberToolRegistry({ deps }).definitions()
       .find((tool) => tool.name === "run_command");
-    const params = { taskId: task.taskId, command: ["node", "test.mjs"], timeoutMs: 1000 };
+    const params = { taskId: task.taskId };
     const first = await command.execute("run-1", params);
     assert.equal(details(first).stdout, "tests pass\n");
     assert.equal(details(first).replayed, false);
@@ -263,11 +281,12 @@ test("Implementor command runs only through the Task-bound broker and projects m
     assert.match(details(submitted).resultDigest, /^[0-9a-f]{64}$/u);
     const replay = await command.execute("run-2", params);
     assert.equal(details(replay).replayed, true);
-    assert.equal(brokerCalls, 1);
+    assert.equal(brokerCalls, 3);
     const completion = deps.evidence.events.find((event) =>
       event.type === "tool.execution.completed" && event.executionCategory === "isolated-execution");
     assert.equal(completion.runnerImageId, `sha256:${"a".repeat(64)}`);
     assert.equal(completion.runnerPolicyDigest, "b".repeat(64));
+    assert.equal(completion.runnerExecutionPlanDigest, planDigest);
     assert.equal(completion.runnerChangeRevisionRefDigest, revisionRef.contentDigest);
     assert.equal(completion.runnerChangeArtifactDigest, revisionRef.artifactDigest);
     assert.equal(Object.hasOwn(completion, "stdout"), false);
@@ -295,8 +314,22 @@ test("Assessor test command is independently bound to an assess Task", async () 
       artifactDigest: "d".repeat(64),
       revision: 0,
     });
-    deps.runnerFetch = async (_url, options) => {
+    let planDigest;
+    deps.runnerFetch = async (url, options) => {
       const request = JSON.parse(options.body);
+      if (new URL(url).pathname === "/v1/plan") {
+        const plan = {
+          schemaVersion: 1,
+          taskId: task.taskId,
+          runId: request.runId,
+          command: ["node", "test.mjs"],
+          cwd: "fixture",
+          timeoutMs: 1000,
+          outputLimitBytes: 65536,
+        };
+        planDigest = sha256(plan);
+        return new Response(JSON.stringify({ ...plan, contentDigest: planDigest }), { status: 200 });
+      }
       return new Response(JSON.stringify({
         status: "completed",
         exitCode: 1,
@@ -311,16 +344,43 @@ test("Assessor test command is independently bound to an assess Task", async () 
           policyDigest: "b".repeat(64),
           containerConfigDigest: "c".repeat(64),
           fixtureDigest: "d".repeat(64),
+          executionPlanDigest: planDigest,
         },
         changeRevisionRef: assessedRevision,
       }), { status: 200 });
     };
     const result = await createMemberToolRegistry({ deps }).definitions()
       .find((tool) => tool.name === "run_test_command")
-      .execute("assess-run", { taskId: task.taskId, command: ["node", "test.mjs"], timeoutMs: 1000 });
+      .execute("assess-run", { taskId: task.taskId });
     assert.equal(details(result).exitCode, 1);
     assert.equal(details(result).stderr, "test failed\n");
     assert.equal(details(result).changeRevisionRef.contentDigest, assessedRevision.contentDigest);
+  });
+});
+
+test("Runner plan rejection occurs before the immutable Worker invocation journal", async () => {
+  await withRoot(async (root) => {
+    const boundProject = project("proj-plan-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    const task = professionalTask(boundProject, "task-implement-plan", {
+      taskKind: "implement",
+      assignee: "tiangong-implementor",
+      role: "implementor",
+    });
+    await createProject(boundProject, depsFor(LEADER, root));
+    await dispatchTask(task, depsFor(LEADER, root));
+    const journalPath = join(root, "plan-rejected-runner.jsonl");
+    const deps = depsFor("tiangong-implementor", root);
+    deps.professionalRole = "implementor";
+    deps.sourceSkillId = "implementor-v1";
+    deps.runnerBrokerEndpoint = "http://runner-broker:18090/v1/execute";
+    deps.runnerJournal = new RunnerJournal({ filePath: journalPath });
+    deps.runnerFetch = async () => new Response(JSON.stringify({ error: "rejected" }), { status: 403 });
+    const command = createMemberToolRegistry({ deps }).definitions().find((tool) => tool.name === "run_command");
+    await assert.rejects(
+      () => command.execute("run-plan-rejected", { taskId: task.taskId }),
+      (error) => error?.code === "TIANGONG_RUNNER_PLAN_UNAVAILABLE",
+    );
+    await assert.rejects(() => access(journalPath), (error) => error?.code === "ENOENT");
   });
 });
 
@@ -360,7 +420,7 @@ test("member tools reject a non-Leader Matrix actor and unavailable Runner", asy
     const leaderRegistry = createMemberToolRegistry({ deps });
     await assert.rejects(
       () => leaderRegistry.definitions().find((tool) => tool.name === "run_command")
-        .execute("run-unavailable", { taskId: task.taskId, command: ["node", "test.mjs"], timeoutMs: 1000 }),
+        .execute("run-unavailable", { taskId: task.taskId }),
       (error) => error?.code === "TIANGONG_RUNNER_UNAVAILABLE",
     );
   });

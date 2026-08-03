@@ -3,10 +3,10 @@ import { lstat, mkdir, readFile } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { sha256 } from "../canonical-json.mjs";
+import { canonicalJson, sha256 } from "../canonical-json.mjs";
 import { createDisposableDockerExecutor, createDockerCommandRunner } from "./docker-executor.mjs";
 import { RunnerJournal } from "./journal.mjs";
-import { assertNoForbiddenEnv, validateCommandRequest } from "./runner-policy.mjs";
+import { assertNoForbiddenEnv, validateCommandRequest, validateExecutionPlan } from "./runner-policy.mjs";
 import { ChangeRevisionStore } from "./revision-store.mjs";
 import { runCommand, runnerInvocationIdentity } from "./runner-port.mjs";
 
@@ -28,9 +28,11 @@ const REQUEST_KEYS = [
 ];
 const CONFIG_KEYS = ["bindings", "listenPort", "network", "schemaVersion"];
 const BINDING_KEYS = [
-  "containerName", "fixtureId", "inputRevisionTaskId", "revisionIndex", "role", "runId", "runnerImageId",
+  "containerName", "execution", "fixtureId", "inputRevisionTaskId", "revisionIndex", "role", "runId", "runnerImageId",
   "taskId", "workerImageId", "workerName",
 ];
+const EXECUTION_KEYS = ["command", "outputLimitBytes", "timeoutMs"];
+const PLAN_REQUEST_KEYS = ["runId", "schemaVersion", "taskId"];
 
 function exactKeys(value, keys, label) {
   if (!value || typeof value !== "object" || Array.isArray(value) ||
@@ -51,6 +53,19 @@ function normalizeAddress(value) {
   return address;
 }
 
+function executionPlan(binding) {
+  const base = {
+    schemaVersion: 1,
+    taskId: binding.taskId,
+    runId: binding.runId,
+    command: binding.execution.command,
+    cwd: binding.role === "implementor" ? "scratch/revision" : "fixture",
+    timeoutMs: binding.execution.timeoutMs,
+    outputLimitBytes: binding.execution.outputLimitBytes,
+  };
+  return Object.freeze({ ...base, contentDigest: sha256(canonicalJson(base)) });
+}
+
 function bindingId(binding) {
   return sha256({
     workerName: binding.workerName,
@@ -58,6 +73,7 @@ function bindingId(binding) {
     taskId: binding.taskId,
     runId: binding.runId,
     runnerImageId: binding.runnerImageId,
+    executionPlanDigest: executionPlan(binding).contentDigest,
   });
 }
 
@@ -81,6 +97,10 @@ export function validateBrokerConfig(value) {
       taskId: demand(entry.taskId, ID, "taskId"),
       runId: demand(entry.runId, RUN_ID, "runId"),
       runnerImageId: demand(entry.runnerImageId, IMAGE, "runnerImageId"),
+      execution: (() => {
+        exactKeys(entry.execution, EXECUTION_KEYS, "Runner broker execution plan");
+        return validateExecutionPlan(entry.execution);
+      })(),
       revisionIndex: Number.isInteger(entry.revisionIndex) && entry.revisionIndex >= 0
         ? entry.revisionIndex
         : (() => { throw new Error("Runner broker revisionIndex is invalid"); })(),
@@ -180,6 +200,14 @@ export function createDockerPeerAuthenticator({ config, runDocker }) {
   };
 }
 
+function planFromBody(value, binding) {
+  exactKeys(value, PLAN_REQUEST_KEYS, "Runner broker plan request");
+  if (value.schemaVersion !== 1 || value.taskId !== binding.taskId || value.runId !== binding.runId) {
+    throw new Error("RUNNER_BROKER_BINDING_MISMATCH");
+  }
+  return executionPlan(binding);
+}
+
 function requestFromBody(value, binding) {
   exactKeys(value, REQUEST_KEYS, "Runner broker request");
   if (value.schemaVersion !== 1 || value.taskId !== binding.taskId || value.runId !== binding.runId) {
@@ -187,8 +215,26 @@ function requestFromBody(value, binding) {
   }
   assertNoForbiddenEnv(value.env);
   const validated = validateCommandRequest(value);
-  const expectedCwd = binding.role === "implementor" ? "scratch/revision" : "fixture";
-  if (validated.cwd !== expectedCwd) throw new Error("RUNNER_BROKER_WORKDIR_MISMATCH");
+  const expected = executionPlan(binding);
+  if (canonicalJson({
+    schemaVersion: 1,
+    taskId: value.taskId,
+    runId: validated.runId,
+    command: validated.command,
+    cwd: validated.cwd,
+    timeoutMs: validated.timeoutMs,
+    outputLimitBytes: validated.outputLimitBytes,
+  }) !== canonicalJson({
+    schemaVersion: expected.schemaVersion,
+    taskId: expected.taskId,
+    runId: expected.runId,
+    command: expected.command,
+    cwd: expected.cwd,
+    timeoutMs: expected.timeoutMs,
+    outputLimitBytes: expected.outputLimitBytes,
+  })) {
+    throw new Error("RUNNER_BROKER_EXECUTION_PLAN_MISMATCH");
+  }
   const identity = runnerInvocationIdentity(validated);
   if (value.invocationKey !== identity.invocationKey) throw new Error("RUNNER_BROKER_INVOCATION_MISMATCH");
   return { ...validated, env: value.env, invocationKey: identity.invocationKey };
@@ -226,15 +272,19 @@ export function createRunnerBrokerHandler({ authenticatePeer, execute }) {
   return async function handle(request, response) {
     let stage = "route";
     try {
-      if (request.method !== "POST" || request.url !== "/v1/execute" ||
+      if (request.method !== "POST" || !["/v1/plan", "/v1/execute"].includes(request.url) ||
           request.headers["content-type"] !== "application/json") {
         send(response, 404, { error: "RUNNER_BROKER_ROUTE_NOT_FOUND" });
         return;
       }
       stage = "authenticate";
       const binding = await authenticatePeer(request.socket.remoteAddress);
-      stage = "request";
+      stage = request.url === "/v1/plan" ? "plan" : "request";
       const body = await readRequestBody(request);
+      if (request.url === "/v1/plan") {
+        send(response, 200, planFromBody(body, binding));
+        return;
+      }
       const command = requestFromBody(body, binding);
       stage = "execute";
       const result = await execute(binding, command);
@@ -245,7 +295,10 @@ export function createRunnerBrokerHandler({ authenticatePeer, execute }) {
           stdout: result.stdout,
           stderr: result.stderr,
           durationMs: result.durationMs,
-          runnerEvidence: result.runnerEvidence,
+          runnerEvidence: {
+            ...result.runnerEvidence,
+            executionPlanDigest: executionPlan(binding).contentDigest,
+          },
           ...(result.changeRevisionRef ? { changeRevisionRef: result.changeRevisionRef } : {}),
         });
       } else {
@@ -314,6 +367,18 @@ export function createBrokerExecutionAdapter({ fixtureRoot, stateRoot, runDocker
         runDocker,
       });
     }
+    const executeDisposable = executor;
+    executor = async (runnerRequest) => {
+      const result = await executeDisposable(runnerRequest);
+      if (result?.status !== "completed") return result;
+      return {
+        ...result,
+        runnerEvidence: {
+          ...result.runnerEvidence,
+          executionPlanDigest: executionPlan(binding).contentDigest,
+        },
+      };
+    };
     return runCommand(request, { executor, journal, env: request.env });
   };
 }

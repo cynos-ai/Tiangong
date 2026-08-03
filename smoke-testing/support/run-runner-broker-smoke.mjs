@@ -33,6 +33,8 @@ const assessorClient = `tiangong-assessor-client-${suffix}`;
 const intruder = `tiangong-runner-intruder-${suffix}`;
 const stateVolume = `tiangong-runner-broker-state-${suffix}`;
 const ownerLabel = `io.tiangong.broker-run=${runId}`;
+const implementCommand = ["node", "--input-type=module", "-e", "await import('./probe.mjs'); const fs = await import('node:fs/promises'); await fs.appendFile('input.txt', 'sealed-change\\n');"];
+const assessCommand = ["node", "--input-type=module", "-e", "const fs = await import('node:fs/promises'); const value = await fs.readFile('input.txt', 'utf8'); if (!value.endsWith('sealed-change\\n')) process.exit(41); try { await fs.appendFile('input.txt', 'forbidden'); process.exit(42); } catch (error) { if (!['EACCES', 'EROFS'].includes(error.code)) throw error; } console.log('assessor_revision_readonly=pass');"];
 const tempRoot = await mkdtemp(path.join(tmpdir(), "tiangong-runner-broker-smoke-"));
 const configPath = path.join(tempRoot, "config.json");
 let cleanupFailed = false;
@@ -85,24 +87,25 @@ async function removeOwned(kind, name) {
 }
 
 const clientProgram = String.raw`
-const [{ createRunnerBrokerExecutor }, { RunnerJournal }, policy, { runCommand }] = await Promise.all([
+const [{ createRunnerBrokerExecutor }, { RunnerJournal }, policy, { runCommand, runnerInvocationIdentity }] = await Promise.all([
   import("/opt/tiangong-worker/agent/runner/broker-client.mjs"),
   import("/opt/tiangong-worker/agent/runner/journal.mjs"),
   import("/opt/tiangong-worker/agent/runner/runner-policy.mjs"),
   import("/opt/tiangong-worker/agent/runner/runner-port.mjs"),
 ]);
-const request = {
-  runId: process.env.TEST_RUN_ID,
-  command: ["node", "--input-type=module", "-e", "await import('./probe.mjs'); const fs = await import('node:fs/promises'); await fs.appendFile('input.txt', 'sealed-change\\n');"],
-  cwd: "scratch/revision",
-  timeoutMs: 30000,
-  outputLimitBytes: 65536,
-};
 const env = {
   TIANGONG_FORBIDDEN_ENV_NAMES: policy.FORBIDDEN_ENV_KEYS.join(","),
   TIANGONG_FORBIDDEN_NETWORK_TARGETS: policy.FORBIDDEN_NETWORK_TARGETS.join(","),
 };
 const executor = createRunnerBrokerExecutor({ endpoint: process.env.TEST_BROKER_ENDPOINT, taskId: process.env.TEST_TASK_ID });
+const plan = await executor.plan({ runId: process.env.TEST_RUN_ID });
+console.log("runner_broker_plan=pass plan_digest=" + plan.contentDigest);
+const request = { runId: plan.runId, command: plan.command, cwd: plan.cwd, timeoutMs: plan.timeoutMs, outputLimitBytes: plan.outputLimitBytes };
+const altered = { ...request, command: ["node", "-e", "process.exit(99)"] };
+const alteredIdentity = runnerInvocationIdentity(altered);
+const rejected = await fetch(process.env.TEST_BROKER_ENDPOINT, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ schemaVersion: 1, taskId: process.env.TEST_TASK_ID, invocationKey: alteredIdentity.invocationKey, ...altered, env }) });
+if (rejected.status !== 403) process.exit(20);
+console.log("runner_broker_changed_plan_rejected=pass");
 const first = await runCommand(request, {
   executor,
   journal: new RunnerJournal({ filePath: "/tmp/client-first.jsonl" }),
@@ -133,14 +136,9 @@ const [{ createRunnerBrokerExecutor }, { RunnerJournal }, { runCommand }] = awai
   import("/opt/tiangong-worker/agent/runner/journal.mjs"),
   import("/opt/tiangong-worker/agent/runner/runner-port.mjs"),
 ]);
-const request = {
-  runId: process.env.TEST_RUN_ID,
-  command: ["node", "--input-type=module", "-e", "const fs = await import('node:fs/promises'); const value = await fs.readFile('input.txt', 'utf8'); if (!value.endsWith('sealed-change\\n')) process.exit(41); try { await fs.appendFile('input.txt', 'forbidden'); process.exit(42); } catch (error) { if (!['EACCES', 'EROFS'].includes(error.code)) throw error; } console.log('assessor_revision_readonly=pass');"],
-  cwd: "fixture",
-  timeoutMs: 30000,
-  outputLimitBytes: 65536,
-};
 const executor = createRunnerBrokerExecutor({ endpoint: process.env.TEST_BROKER_ENDPOINT, taskId: process.env.TEST_TASK_ID });
+const plan = await executor.plan({ runId: process.env.TEST_RUN_ID });
+const request = { runId: plan.runId, command: plan.command, cwd: plan.cwd, timeoutMs: plan.timeoutMs, outputLimitBytes: plan.outputLimitBytes };
 const result = await runCommand(request, {
   executor,
   journal: new RunnerJournal({ filePath: "/tmp/assessor.jsonl" }),
@@ -155,19 +153,10 @@ console.log("runner_broker_assessor_readonly=pass");
 `;
 
 const intruderProgram = String.raw`
-const [{ createRunnerBrokerExecutor }, { runCommand }] = await Promise.all([
-  import("/opt/tiangong-worker/agent/runner/broker-client.mjs"),
-  import("/opt/tiangong-worker/agent/runner/runner-port.mjs"),
-]);
+const { createRunnerBrokerExecutor } = await import("/opt/tiangong-worker/agent/runner/broker-client.mjs");
 const executor = createRunnerBrokerExecutor({ endpoint: process.env.TEST_BROKER_ENDPOINT, taskId: process.env.TEST_TASK_ID });
-const result = await runCommand({
-  runId: process.env.TEST_RUN_ID,
-  command: ["node", "-e", "process.exit(0)"],
-  cwd: "fixture",
-  timeoutMs: 1000,
-  outputLimitBytes: 1024,
-}, { executor, env: {} });
-if (result.outcome !== "outcome_uncertain" || result.reason !== "RUNNER_EXECUTOR_FAILED") process.exit(31);
+try { await executor.plan({ runId: process.env.TEST_RUN_ID }); process.exit(31); }
+catch (error) { if (!String(error.message).includes("REQUEST_REJECTED")) throw error; }
 console.log("runner_broker_unauthorized_peer=pass");
 `;
 
@@ -192,6 +181,7 @@ try {
       taskId,
       runId,
       runnerImageId: workerImageId,
+      execution: { command: implementCommand, timeoutMs: 30000, outputLimitBytes: 65536 },
       revisionIndex: 0,
       fixtureId: "isolation",
       inputRevisionTaskId: null,
@@ -203,6 +193,7 @@ try {
       taskId: assessorTaskId,
       runId: assessorRunId,
       runnerImageId: assessorImageId,
+      execution: { command: assessCommand, timeoutMs: 30000, outputLimitBytes: 65536 },
       revisionIndex: 0,
       fixtureId: null,
       inputRevisionTaskId: taskId,
@@ -269,6 +260,8 @@ try {
   ], { timeoutMs: 120_000 });
   if (clientResult.timedOut || clientResult.exitCode !== 0 ||
       !clientResult.stdout.includes("runner_broker_client=pass") ||
+      !clientResult.stdout.includes("runner_broker_plan=pass") ||
+      !clientResult.stdout.includes("runner_broker_changed_plan_rejected=pass") ||
       !clientResult.stdout.includes("runner_broker_replay=pass")) {
     const brokerLogs = await docker(["container", "logs", broker]);
     const diagnostic = `client_exit=${clientResult.exitCode} timed_out=${clientResult.timedOut}\n${clientResult.stderr}\n${brokerLogs.stderr}\n${clientResult.stdout}\n${brokerLogs.stdout}`

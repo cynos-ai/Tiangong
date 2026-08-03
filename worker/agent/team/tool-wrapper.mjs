@@ -76,6 +76,7 @@ export function wrapTeamTool(definition, { gate, evidence, getInvocation, catego
         runnerImageId: runner?.imageId ?? null,
         runnerPolicyDigest: runner?.policyDigest ?? null,
         runnerContainerConfigDigest: runner?.containerConfigDigest ?? null,
+        runnerExecutionPlanDigest: runner?.executionPlanDigest ?? result?.details?.executionPlanDigest ?? null,
         runnerFixtureDigest: runner?.fixtureDigest ?? null,
         runnerChangeRevisionRefDigest: result?.details?.changeRevisionRef?.contentDigest ?? null,
         runnerChangeArtifactDigest: result?.details?.changeRevisionRef?.artifactDigest ?? null,

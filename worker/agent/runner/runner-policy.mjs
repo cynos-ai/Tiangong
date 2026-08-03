@@ -1,7 +1,7 @@
 // RunnerPort policy: the structured command contract and the credential /
 // control-plane isolation declaration for the demo-unsafe disposable runner.
 //
-// Implementor/Assessor arbitrary commands must run inside a run-owned
+// Implementor/Assessor broker-bound commands must run inside a run-owned
 // disposable runner that only mounts the fixture/scratch, never host config,
 // credentials, or the container-runtime socket, and cannot reach the
 // AgentTeams/Matrix/Gateway/storage/Collector control planes. This module
@@ -60,21 +60,15 @@ const MAX_ENV_KEYS = 32;
 const MAX_ENV_VALUE_BYTES = 4096;
 const MAX_ENV_TOTAL_BYTES = 16 * 1024;
 
-export function validateCommandRequest(input) {
-  if (input === null || typeof input !== "object") {
-    throw new TypeError("command request must be an object");
-  }
-  if (!RUN_ID_PATTERN.test(input.runId)) {
-    throw new Error("runId must be a run-scoped uuid");
-  }
-  if (!Array.isArray(input.command) || input.command.length === 0) {
+function validateCommandArguments(command) {
+  if (!Array.isArray(command) || command.length === 0) {
     throw new TypeError("command must be a non-empty string array");
   }
-  if (input.command.length > MAX_COMMAND_ARGS) {
+  if (command.length > MAX_COMMAND_ARGS) {
     throw new Error("command exceeds the maximum number of arguments");
   }
   let total = 0;
-  for (const arg of input.command) {
+  for (const arg of command) {
     if (typeof arg !== "string" || arg === "") {
       throw new TypeError("command arguments must be non-empty strings");
     }
@@ -85,13 +79,14 @@ export function validateCommandRequest(input) {
   if (total > MAX_TOTAL_COMMAND_BYTES) {
     throw new Error("command exceeds the maximum total length");
   }
-  const cwd = input.cwd ?? ".";
-  if (typeof cwd !== "string" || cwd === "" || cwd.startsWith("/") || cwd.includes("..")) {
-    throw new Error("cwd must be a relative path inside the runner workspace");
+  return Object.freeze([...command]);
+}
+
+export function validateExecutionPlan(input) {
+  if (input === null || typeof input !== "object") {
+    throw new TypeError("execution plan must be an object");
   }
-  if (!RELATIVE_CWD_PATTERN.test(cwd)) {
-    throw new Error("cwd has an invalid format");
-  }
+  const command = validateCommandArguments(input.command);
   const timeoutMs = input.timeoutMs;
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_TIMEOUT_MS) {
     throw new Error("timeoutMs must be a positive integer within the runner limit");
@@ -100,12 +95,30 @@ export function validateCommandRequest(input) {
   if (!Number.isInteger(outputLimitBytes) || outputLimitBytes <= 0 || outputLimitBytes > MAX_OUTPUT_BYTES) {
     throw new Error("outputLimitBytes must be a positive integer within the runner limit");
   }
+  return Object.freeze({ command, timeoutMs, outputLimitBytes });
+}
+
+export function validateCommandRequest(input) {
+  if (input === null || typeof input !== "object") {
+    throw new TypeError("command request must be an object");
+  }
+  if (!RUN_ID_PATTERN.test(input.runId)) {
+    throw new Error("runId must be a run-scoped uuid");
+  }
+  const execution = validateExecutionPlan(input);
+  const cwd = input.cwd ?? ".";
+  if (typeof cwd !== "string" || cwd === "" || cwd.startsWith("/") || cwd.includes("..")) {
+    throw new Error("cwd must be a relative path inside the runner workspace");
+  }
+  if (!RELATIVE_CWD_PATTERN.test(cwd)) {
+    throw new Error("cwd has an invalid format");
+  }
   return Object.freeze({
     runId: input.runId,
-    command: Object.freeze([...input.command]),
+    command: execution.command,
     cwd,
-    timeoutMs,
-    outputLimitBytes,
+    timeoutMs: execution.timeoutMs,
+    outputLimitBytes: execution.outputLimitBytes,
   });
 }
 
