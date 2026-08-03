@@ -282,6 +282,8 @@ test("Implementor command runs only through the Task-bound broker and projects m
     const replay = await command.execute("run-2", params);
     assert.equal(details(replay).replayed, true);
     assert.equal(brokerCalls, 3);
+    assert.equal(deps.evidence.events.filter((event) => event.type === "runner.plan.requested").length, 2);
+    assert.equal(deps.evidence.events.filter((event) => event.type === "runner.plan.received").length, 2);
     const completion = deps.evidence.events.find((event) =>
       event.type === "tool.execution.completed" && event.executionCategory === "isolated-execution");
     assert.equal(completion.runnerImageId, `sha256:${"a".repeat(64)}`);
@@ -380,6 +382,11 @@ test("Runner plan rejection occurs before the immutable Worker invocation journa
       () => command.execute("run-plan-rejected", { taskId: task.taskId }),
       (error) => error?.code === "TIANGONG_RUNNER_PLAN_UNAVAILABLE",
     );
+    const planRequested = deps.evidence.events.find((event) => event.type === "runner.plan.requested");
+    const planFailed = deps.evidence.events.find((event) => event.type === "runner.plan.failed");
+    assert.equal(planRequested.taskId, task.taskId);
+    assert.equal(planFailed.errorCode, "RUNNER_BROKER_REQUEST_REJECTED");
+    assert.equal(planFailed.taskBindingDigest, task.contentDigest);
     await assert.rejects(() => access(journalPath), (error) => error?.code === "ENOENT");
   });
 });

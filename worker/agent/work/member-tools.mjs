@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 
-import { canonicalJson } from "../canonical-json.mjs";
+import { canonicalJson, sha256 } from "../canonical-json.mjs";
 import { createDeploymentBrokerClient, createDeploymentOutcome } from "../deployment/client.mjs";
 import { DeploymentApprovalGate } from "../deployment/approval-gate.mjs";
 import { findRoleForWorker } from "../playbook/transition-policy.mjs";
@@ -53,6 +53,34 @@ function runnerUnavailable() {
   const error = new Error("Validated Runner broker is unavailable for this Worker");
   error.code = "TIANGONG_RUNNER_UNAVAILABLE";
   return error;
+}
+
+const RUNNER_PLAN_FAILURE_CODES = new Set([
+  "RUNNER_BROKER_PLAN_CHANGED",
+  "RUNNER_BROKER_PLAN_INVALID",
+  "RUNNER_BROKER_PLAN_TIMEOUT",
+  "RUNNER_BROKER_REQUEST_REJECTED",
+  "RUNNER_BROKER_RESPONSE_INVALID",
+  "RUNNER_BROKER_RESPONSE_TOO_LARGE",
+]);
+
+function runnerPlanFailureCode(error) {
+  const values = [error?.code, error?.message, error?.cause?.code, error?.cause?.message];
+  for (const value of values) {
+    if (RUNNER_PLAN_FAILURE_CODES.has(value)) return value;
+  }
+  if (error?.name === "AbortError" || error?.cause?.name === "AbortError") return "RUNNER_BROKER_PLAN_TIMEOUT";
+  return "RUNNER_BROKER_PLAN_NETWORK_ERROR";
+}
+
+async function appendRunnerPlanEvidence(deps, event) {
+  if (typeof deps.evidence?.append !== "function") {
+    throw new Error("Runner plan Evidence recorder is unavailable");
+  }
+  await deps.evidence.append({
+    ...event,
+    endpointDigest: sha256(deps.runnerBrokerEndpoint),
+  });
 }
 
 async function assertLeaderInvocation(taskBinding, invocation, deps) {
@@ -166,14 +194,41 @@ function registerRunnerTool(registry, deps) {
         fetchImpl: deps.runnerFetch,
       });
       const runId = runnerRunIdForTask(taskBinding);
+      await appendRunnerPlanEvidence(deps, {
+        type: "runner.plan.requested",
+        taskId: taskBinding.taskId,
+        runId,
+        role,
+        taskBindingDigest: taskBinding.contentDigest,
+      });
       let plan;
       try {
         plan = await executor.plan({ runId });
       } catch (cause) {
+        await appendRunnerPlanEvidence(deps, {
+          type: "runner.plan.failed",
+          taskId: taskBinding.taskId,
+          runId,
+          role,
+          taskBindingDigest: taskBinding.contentDigest,
+          errorCode: runnerPlanFailureCode(cause),
+        });
         const error = new Error("Validated Runner broker command plan is unavailable", { cause });
         error.code = "TIANGONG_RUNNER_PLAN_UNAVAILABLE";
         throw error;
       }
+      await appendRunnerPlanEvidence(deps, {
+        type: "runner.plan.received",
+        taskId: taskBinding.taskId,
+        runId,
+        role,
+        taskBindingDigest: taskBinding.contentDigest,
+        planDigest: plan.contentDigest,
+        commandDigest: sha256(canonicalJson(plan.command)),
+        cwd: plan.cwd,
+        timeoutMs: plan.timeoutMs,
+        outputLimitBytes: plan.outputLimitBytes,
+      });
       const expectedCwd = role === "implementor" ? "scratch/revision" : "fixture";
       if (plan.cwd !== expectedCwd) {
         const error = new Error("Runner broker command plan does not match the professional role");
