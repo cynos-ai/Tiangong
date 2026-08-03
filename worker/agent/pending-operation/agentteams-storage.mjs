@@ -45,7 +45,9 @@ export function createAgentTeamsPendingStorage({
         . "${ENV_SCRIPT}"
         ensure_mc_credentials >/dev/null 2>&1 || true
         remote="\${AGENTTEAMS_STORAGE_PREFIX}/agents/$1/$2"
-        mc cp "$3/write-content" "\${remote}/write-content" >/dev/null 2>&1
+        for payload in write-content arguments.json; do
+          if [ -f "$3/$payload" ]; then mc cp "$3/$payload" "\${remote}/$payload" >/dev/null 2>&1; fi
+        done
         mc cp "$3/terminal.json" "\${remote}/terminal.json" >/dev/null 2>&1
         mc rm --force "\${remote}/envelope.json" >/dev/null 2>&1 || true
       `, [workerName, path, operationDirectory]);
