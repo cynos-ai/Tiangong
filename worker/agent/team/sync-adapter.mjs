@@ -1,6 +1,12 @@
 import { exec } from "node:child_process";
 
-const PULL_COMMAND = "agentteams-sync";
+// Team reads need only the AgentTeams coordination records. The upstream
+// whole-workspace sync also mirrors `.tiangong/runtime`, which is Worker-owned
+// append-only state; pulling that tree during an active turn can overwrite a
+// just-completed RunnerJournal with a stale remote copy. Worker startup still
+// performs the full restore boundary, while runtime payload erasure uses its
+// explicit storage adapter.
+const PULL_COMMAND = ". /opt/agentteams/scripts/lib/agentteams-env.sh && ensure_mc_credentials >/dev/null 2>&1 || true; mc mirror \"${AGENTTEAMS_STORAGE_PREFIX}/shared/\" \"/root/agentteams-fs/shared/\" --overwrite";
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 
 function defaultRun(command, { timeoutMs = 30000 } = {}) {

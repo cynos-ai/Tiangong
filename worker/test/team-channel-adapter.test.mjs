@@ -153,7 +153,8 @@ test("createTeamSync beforeRead pulls and afterWrite pushes via the injected run
   await sync.beforeRead();
   await sync.afterWrite({ projectIds: ["project-1"], taskIds: ["task-1"] });
   assert.equal(calls.length, 3);
-  assert.equal(calls[0], "agentteams-sync");
+  assert.match(calls[0], /mc mirror .*\$\{AGENTTEAMS_STORAGE_PREFIX\}\/shared\/.*\/root\/agentteams-fs\/shared\/.*--overwrite/u);
+  assert.doesNotMatch(calls[0], /agentteams-sync/u);
   assert.match(calls[1], /mc mirror .*shared\/projects\/project-1\/.*--overwrite/u);
   assert.match(calls[2], /mc mirror .*shared\/tasks\/task-1\/.*--overwrite/u);
 });
