@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  approvalOutcomeText,
   approvalPrompt,
   parseApprovalCommand,
 } from "../agent/gates/approval-command.mjs";
@@ -41,4 +42,16 @@ test("approval prompt is generated from machine operation fields without write c
   assert.match(prompt, /Target: output\.txt/u);
   assert.match(prompt, /APPROVE approval-0123456789abcdef01234567/u);
   assert.equal(prompt.includes("file contents"), false);
+  assert.match(approvalPrompt({
+    approvalId: "approval-0123456789abcdef01234567",
+    operationDigest: "a".repeat(64),
+    operation: { policyVersion: "deployment-v1", workspaceScope: "c".repeat(64), toolName: "deploy_release", targetId: "target-1" },
+  }), /Target: target-1/u);
+});
+
+test("approval outcome text uses the bound target id", () => {
+  assert.match(approvalOutcomeText("approve", {
+    approvalId: "approval-0123456789abcdef01234567",
+    operation: { toolName: "deploy_release", targetId: "target-1" },
+  }), /deploy_release target-1\./u);
 });

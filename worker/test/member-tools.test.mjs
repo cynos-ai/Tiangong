@@ -5,14 +5,23 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { sha256 } from "../agent/canonical-json.mjs";
+import { createDeploymentOutcome } from "../agent/deployment/client.mjs";
 import { TurnGateState } from "../agent/gates/turn-state.mjs";
 import { RunnerJournal } from "../agent/runner/journal.mjs";
 import { RUNNER_BROKER_ENDPOINT_DIGEST } from "../agent/runner/preparation-client.mjs";
 import { createProjectBinding, createTaskBinding } from "../agent/team/manifest.mjs";
 import { TeamCoordinationGate } from "../agent/team/tool-wrapper.mjs";
-import { createProject, dispatchTask } from "../agent/team/team-task-port.mjs";
+import {
+  createProject,
+  createTaskDecision,
+  dispatchTask,
+  recordTaskDecision,
+  submitResult,
+} from "../agent/team/team-task-port.mjs";
 import { createChangeRevisionRef } from "../agent/work/change-revision-ref.mjs";
+import { createResultEnvelope } from "../agent/work/result-envelope.mjs";
 import { createMemberToolRegistry } from "../agent/work/member-tools.mjs";
+import { readTaskResult } from "../agent/team/manifest-store.mjs";
 
 const LEADER = "tiangong-leader";
 const DESIGNER = "tiangong-designer";
@@ -499,5 +508,117 @@ test("exact ResultEnvelope replay re-drives the idempotent notification boundary
     assert.equal(details(replay).replayed, true);
     assert.equal(details(replay).notified, false);
     assert.equal(deps.channel.calls.filter((call) => call.kind === "notifyLeader").length, 2);
+  });
+});
+
+test("approved deployment auto-submits one bound release ResultEnvelope", async () => {
+  await withRoot(async (root) => {
+    const boundProject = project("proj-auto-release-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    await createProject(boundProject, depsFor(LEADER, root));
+    const implementor = professionalTask(boundProject, "task-implement-auto", {
+      taskKind: "implement", assignee: "tiangong-implementor", role: "implementor",
+    });
+    await dispatchTask(implementor, depsFor(LEADER, root));
+    const changeRevisionRef = createChangeRevisionRef({
+      producerTaskId: implementor.taskId,
+      artifactPath: "artifacts/change.tar",
+      artifactDigest: "a".repeat(64),
+      revision: 0,
+      contentDigest: "b".repeat(64),
+    });
+    const implementResult = createResultEnvelope({
+      taskId: implementor.taskId,
+      projectId: boundProject.projectId,
+      producer: implementor.assignee,
+      taskKind: implementor.taskKind,
+      revisionIndex: implementor.revisionIndex,
+      sourceRole: "implementor",
+      playbookDigest: boundProject.playbookDigest,
+      taskBindingDigest: implementor.contentDigest,
+      completionContractDigest: implementor.completionContractDigest,
+      sourceProfileDigest: implementor.sourceProfileDigest,
+      sourceSkillId: implementor.sourceSkillId,
+      skillDigest: implementor.sourceSkillDigest,
+      claim: "sealed",
+      changeRevisionRef,
+      createdAt: T(2),
+    });
+    await submitResult(implementResult, depsFor(implementor.assignee, root));
+    await recordTaskDecision(createTaskDecision({
+      taskId: implementor.taskId,
+      projectId: boundProject.projectId,
+      playbookDigest: boundProject.playbookDigest,
+      decision: "accept",
+      revisionIndex: 0,
+      decidedBy: LEADER,
+      resultDigest: implementResult.contentDigest,
+      createdAt: T(3),
+    }), depsFor(LEADER, root));
+
+    const assessor = professionalTask(boundProject, "task-assess-auto", {
+      taskKind: "assess", assignee: "tiangong-assessor", role: "assessor", inputRefs: [implementor.taskId],
+    });
+    await dispatchTask(assessor, depsFor(LEADER, root));
+    const assessorResult = createResultEnvelope({
+      taskId: assessor.taskId,
+      projectId: boundProject.projectId,
+      producer: assessor.assignee,
+      taskKind: assessor.taskKind,
+      revisionIndex: assessor.revisionIndex,
+      sourceRole: "assessor",
+      playbookDigest: boundProject.playbookDigest,
+      taskBindingDigest: assessor.contentDigest,
+      completionContractDigest: assessor.completionContractDigest,
+      sourceProfileDigest: assessor.sourceProfileDigest,
+      sourceSkillId: assessor.sourceSkillId,
+      skillDigest: assessor.sourceSkillDigest,
+      claim: "accepted",
+      changeRevisionRef,
+      createdAt: T(4),
+    });
+    await submitResult(assessorResult, depsFor(assessor.assignee, root));
+    await recordTaskDecision(createTaskDecision({
+      taskId: assessor.taskId,
+      projectId: boundProject.projectId,
+      playbookDigest: boundProject.playbookDigest,
+      decision: "accept",
+      revisionIndex: 0,
+      decidedBy: LEADER,
+      resultDigest: assessorResult.contentDigest,
+      createdAt: T(5),
+    }), depsFor(LEADER, root));
+
+    const release = professionalTask(boundProject, "task-release-auto", {
+      taskKind: "release", assignee: "tiangong-operator", role: "operator", inputRefs: [assessor.taskId],
+    });
+    await dispatchTask(release, depsFor(LEADER, root));
+    const operatorDeps = depsFor(release.assignee, root);
+    operatorDeps.professionalRole = "operator";
+    operatorDeps.sourceSkillId = "operator-v1";
+    operatorDeps.deploymentBrokerEndpoint = "http://deployment-broker:8791/v1/deploy";
+    operatorDeps.deploymentReceiptStore = {};
+    operatorDeps.idempotencyStore = { get() {} };
+    operatorDeps.pendingOperationStore = {};
+    const deployment = createMemberToolRegistry({ deps: operatorDeps }).definitions()
+      .find((tool) => tool.name === "deploy_release");
+    const outcome = createDeploymentOutcome({
+      taskId: release.taskId,
+      targetId: "target-auto",
+      operationDigest: "c".repeat(64),
+      previousDigest: "d".repeat(64),
+      currentDigest: changeRevisionRef.artifactDigest,
+      changeRevisionRef,
+      disposition: "DELIVERED",
+      postVerifyHealthy: true,
+      rollbackPerformed: false,
+      previousVerifyHealthy: null,
+    });
+
+    await deployment.onApprovalResult({ details: { outcome } });
+    const stored = await readTaskResult(release.taskId, { rootDir: root });
+    assert.equal(stored.releaseOutcome.contentDigest, outcome.contentDigest);
+    assert.equal(stored.changeRevisionRef.contentDigest, changeRevisionRef.contentDigest);
+    assert.equal(operatorDeps.channel.calls.filter((call) => call.kind === "notifyLeader").length, 1);
+    assert.equal(operatorDeps.evidence.events.filter((event) => event.type === "deployment.release.result.autosubmitted").length, 1);
   });
 });

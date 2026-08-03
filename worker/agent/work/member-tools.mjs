@@ -137,7 +137,46 @@ function createDeploymentTool(deps) {
     parameters: Type.Object({ taskId: ID }, { additionalProperties: false }),
     executionMode: "sequential",
   };
-  return createGatedTool({
+  async function submitApprovedReleaseResult(toolResult) {
+    const rawOutcome = toolResult?.details?.outcome;
+    if (!rawOutcome) throw new Error("Approved deployment returned no machine outcome");
+    const outcome = createDeploymentOutcome(rawOutcome);
+    const { taskBinding } = await resolveAssignedTask(outcome.taskId, deps);
+    const project = await readProjectBinding(taskBinding.projectId, deps);
+    const identity = loadWorkerIdentity(deps);
+    const sourceRole = findRoleForWorker(project.roleBindings, identity.workerName);
+    if (sourceRole !== "operator") throw new Error("Approved release Result has no operator role binding");
+    const result = createResultEnvelope({
+      taskId: taskBinding.taskId,
+      projectId: taskBinding.projectId,
+      producer: identity.workerName,
+      taskKind: taskBinding.taskKind,
+      revisionIndex: taskBinding.revisionIndex,
+      sourceRole,
+      playbookDigest: project.playbookDigest,
+      taskBindingDigest: taskBinding.contentDigest,
+      completionContractDigest: taskBinding.completionContractDigest,
+      sourceProfileDigest: taskBinding.sourceProfileDigest,
+      sourceSkillId: taskBinding.sourceSkillId,
+      skillDigest: taskBinding.sourceSkillDigest,
+      claim: "Approved deployment outcome was captured and submitted by the Worker runtime.",
+      artifactRefs: [outcome.changeRevisionRef.artifactDigest],
+      evidenceRefs: [outcome.operationDigest],
+      changeRevisionRef: outcome.changeRevisionRef,
+      releaseOutcome: outcome,
+      createdAt: nowISO(deps),
+    });
+    const submitted = await submitResult(result, deps);
+    await deps.evidence?.append?.({
+      type: "deployment.release.result.autosubmitted",
+      taskId: result.taskId,
+      projectId: result.projectId,
+      resultDigest: result.contentDigest,
+      outcomeDigest: outcome.contentDigest,
+    });
+    return submitted;
+  }
+  const gated = createGatedTool({
     definition,
     sideEffect: true,
     category: "external-side-effect",
@@ -181,6 +220,10 @@ function createDeploymentTool(deps) {
         deploymentCurrentDigest: result?.details?.outcome?.currentDigest ?? null,
       };
     },
+  });
+  return Object.freeze({
+    ...gated,
+    onApprovalResult: submitApprovedReleaseResult,
   });
 }
 

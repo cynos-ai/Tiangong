@@ -65,6 +65,12 @@ function assistantText(message) {
     .join("");
 }
 
+function stableErrorCode(error, fallback) {
+  return typeof error?.code === "string" && /^[A-Z][A-Z0-9_]{0,63}$/u.test(error.code)
+    ? error.code
+    : fallback;
+}
+
 function usageFromMessage(message) {
   const usage = message?.usage;
   const input = usage?.input ?? 0;
@@ -397,6 +403,8 @@ export class TiangongAgentRuntime {
       return routedTurnResult(request, state, route, { text });
     }
 
+    const definition = state.registry.definitions().find((tool) => tool.name === checkpoint.toolName);
+    if (!definition) throw new Error("Approved tool is no longer registered");
     const wasCompleted = checkpoint.status === "completed";
     const recovered = wasCompleted
       ? undefined
@@ -415,6 +423,22 @@ export class TiangongAgentRuntime {
       actorId,
     });
     if (wasCompleted) {
+      if (typeof definition.onApprovalResult === "function") {
+        try {
+          await definition.onApprovalResult(checkpoint.replayResult);
+        } catch (error) {
+          await state.evidence.append({
+            type: "approval.completion_handoff_failed",
+            sessionId: checkpoint.sessionId,
+            turnId: checkpoint.turnId,
+            toolCallId: checkpoint.toolCallId,
+            approvalId: checkpoint.approvalId,
+            operationDigest: checkpoint.operationDigest,
+            errorCode: stableErrorCode(error, "APPROVAL_COMPLETION_HANDOFF_FAILED"),
+          }).catch(() => {});
+          throw error;
+        }
+      }
       try {
         await state.pendingOperationStore.remove(match.key);
       } catch {
@@ -447,8 +471,6 @@ export class TiangongAgentRuntime {
       return routedTurnResult(request, state, route, { text, hadPotentialSideEffects: true });
     }
 
-    const definition = state.registry.definitions().find((tool) => tool.name === checkpoint.toolName);
-    if (!definition) throw new Error("Approved tool is no longer registered");
     const params = recovered.arguments;
     state.turns.begin({
       sessionId: checkpoint.sessionId,
@@ -460,7 +482,23 @@ export class TiangongAgentRuntime {
       observability,
     });
     try {
-      await definition.execute(checkpoint.toolCallId, params, request.abortSignal);
+      const executionResult = await definition.execute(checkpoint.toolCallId, params, request.abortSignal);
+      if (typeof definition.onApprovalResult === "function") {
+        try {
+          await definition.onApprovalResult(executionResult);
+        } catch (error) {
+          await state.evidence.append({
+            type: "approval.completion_handoff_failed",
+            sessionId: checkpoint.sessionId,
+            turnId: checkpoint.turnId,
+            toolCallId: checkpoint.toolCallId,
+            approvalId: checkpoint.approvalId,
+            operationDigest: checkpoint.operationDigest,
+            errorCode: stableErrorCode(error, "APPROVAL_COMPLETION_HANDOFF_FAILED"),
+          }).catch(() => {});
+          throw error;
+        }
+      }
     } finally {
       state.turns.end();
     }
