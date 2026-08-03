@@ -7,6 +7,8 @@ import {
   statePathsForSession,
   statePathsForSessionHash,
   stateRootPaths,
+  workerStatePaths,
+  WORKER_SCOPE_SESSION_HASH,
 } from "../agent/persistence/state-paths.mjs";
 
 test("state path resolver produces physically separate per-session roots", () => {
@@ -91,6 +93,17 @@ test("state path resolver produces physically separate per-session roots", () =>
     statePathsForSessionHash({ stateDirectory, sessionHash }),
     paths,
   );
+});
+
+test("worker-scoped approval paths are stable and separate from Matrix sessions", () => {
+  const stateDirectory = resolve("fixture-state-root");
+  const worker = workerStatePaths(stateDirectory);
+  const session = statePathsForSession({ stateDirectory, sessionId: "matrix-session" });
+  assert.equal(worker.sessionHash, WORKER_SCOPE_SESSION_HASH);
+  assert.equal(worker.idempotencyFilePath, join(stateDirectory, "idempotency", WORKER_SCOPE_SESSION_HASH, "idempotency.jsonl"));
+  assert.equal(worker.pendingOperationDirectory, join(stateDirectory, "pending-operations", WORKER_SCOPE_SESSION_HASH));
+  assert.equal(worker.deploymentReceiptFilePath, join(stateDirectory, "deployment-receipts", WORKER_SCOPE_SESSION_HASH, "deployments.jsonl"));
+  assert.notEqual(worker.idempotencyFilePath, session.idempotencyFilePath);
 });
 
 test("state path resolver rejects untrusted or ambiguous identities", () => {

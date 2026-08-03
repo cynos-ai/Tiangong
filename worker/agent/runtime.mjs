@@ -42,6 +42,7 @@ import { DeploymentReceiptStore } from "./deployment/receipt-store.mjs";
 import { runnerBrokerEndpointForWorker } from "./runner/broker-client.mjs";
 import { RunnerJournal } from "./runner/journal.mjs";
 import { defaultTiangongRoot } from "./team/shared-fs.mjs";
+import { workerStatePaths } from "./persistence/state-paths.mjs";
 import { createTeamChannel } from "./team/channel-adapter.mjs";
 import { projectDisposition } from "./team/project-chain.mjs";
 import { createTeamSync } from "./team/sync-adapter.mjs";
@@ -158,11 +159,12 @@ export class TiangongAgentRuntime {
     const evidence = new EvidenceRecorder({
       filePath: persisted.paths.evidenceFilePath,
     });
+    const sharedPaths = workerStatePaths(stateDirectory);
     const idempotencyStore = new IdempotencyStore({
-      filePath: persisted.paths.idempotencyFilePath,
+      filePath: sharedPaths.idempotencyFilePath,
     });
     const pendingOperationStore = new PendingOperationStore({
-      directory: persisted.paths.pendingOperationDirectory,
+      directory: sharedPaths.pendingOperationDirectory,
       remoteStorage: createAgentTeamsPendingStorage({ workspaceDir: request.workspaceDir }),
     });
     const turns = new TurnContextController();
@@ -229,7 +231,7 @@ export class TiangongAgentRuntime {
           env: process.env,
         }),
         deploymentReceiptStore: profileBundle.profile.roleId === "operator"
-          ? new DeploymentReceiptStore({ filePath: persisted.paths.deploymentReceiptFilePath })
+          ? new DeploymentReceiptStore({ filePath: sharedPaths.deploymentReceiptFilePath })
           : undefined,
         runnerBrokerEndpoint: runnerBrokerEndpointForWorker({
           role: profileBundle.profile.roleId,

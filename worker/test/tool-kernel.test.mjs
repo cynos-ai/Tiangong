@@ -8,7 +8,7 @@ import { EvidenceRecorder } from "../agent/evidence/recorder.mjs";
 import { PolicyGate } from "../agent/gates/policy-gate.mjs";
 import { IdempotencyStore } from "../agent/idempotency/store.mjs";
 import { PendingOperationStore } from "../agent/pending-operation/store.mjs";
-import { statePathsForSession } from "../agent/persistence/state-paths.mjs";
+import { statePathsForSession, workerStatePaths } from "../agent/persistence/state-paths.mjs";
 import { createCoreToolRegistry } from "../agent/tools/registry.mjs";
 import { GateDeniedError } from "../agent/tools/wrapper.mjs";
 import { TurnContextController } from "../agent/turn-context.mjs";
@@ -34,9 +34,10 @@ function createKernel({
   stateDirectory,
   evidenceOverride,
   gateOverride,
+  pathOverride,
   sessionId = "session-1",
 }) {
-  const paths = statePathsForSession({ stateDirectory, sessionId });
+  const paths = pathOverride ?? statePathsForSession({ stateDirectory, sessionId });
   const evidence = evidenceOverride ?? new EvidenceRecorder({ filePath: paths.evidenceFilePath });
   const store = new IdempotencyStore({ filePath: paths.idempotencyFilePath });
   const pendingOperations = new PendingOperationStore({
@@ -200,6 +201,29 @@ test("pending write survives restart, executes once after approval, and replays 
   assert.equal(records.filter((record) =>
     record.type === "tool.execution.started" && record.toolName === "write").length, 1);
   assert.equal(records.filter((record) => record.type === "tool.execution.replayed").length, 1);
+});
+
+test("Worker-scoped approval state is visible from a different Matrix session", async (t) => {
+  const paths = await fixture(t);
+  const shared = workerStatePaths(paths.stateDirectory);
+  const first = createKernel({ ...paths, pathOverride: shared, sessionId: "team-room-session" });
+  const invocation = {
+    turnId: "turn-write",
+    toolCallId: "call-write",
+    name: "write",
+    params: { path: "output.txt", content: "approved content\n" },
+  };
+  const pending = await execute(first, invocation);
+  const second = createKernel({ ...paths, pathOverride: shared, sessionId: "requester-dm-session" });
+  const found = await second.store.findApproval(pending.details.approvalId);
+  assert.equal(found.key, pending.details.idempotencyKey);
+  const recovered = await second.pendingOperations.load(found.key, found.entry);
+  assert.deepEqual(recovered.arguments, invocation.params);
+  await second.store.approve(found.key, {
+    operationDigest: pending.details.operationDigest,
+    approvedBy: "@requester:example.test",
+  });
+  assert.equal((await first.store.get(found.key)).status, "approved");
 });
 
 test("first pending call suspends later tools in the same sequential turn", async (t) => {

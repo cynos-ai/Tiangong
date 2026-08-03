@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { sha256 } from "../canonical-json.mjs";
 
 const SESSION_HASH_PATTERN = /^[a-f0-9]{64}$/u;
+export const WORKER_SCOPE_SESSION_HASH = sha256("tiangong.worker.scope.v1");
 
 function requiredString(value, name) {
   if (typeof value !== "string" || value === "") throw new TypeError(`${name} is required`);
@@ -68,5 +69,18 @@ export function statePathsForSession({ stateDirectory, sessionId }) {
   return statePathsForSessionHash({
     stateDirectory,
     sessionHash: sha256(requiredString(sessionId, "sessionId")),
+  });
+}
+
+// Approval, idempotency, pending-operation, and deployment-receipt state is
+// Worker-scoped rather than Matrix-session-scoped. A requester approval can
+// arrive in a different authenticated Matrix room/session than the Worker
+// turn that created the pending operation; using this fixed, non-input-shaped
+// hash keeps that durable boundary shared without trusting a session supplied
+// by the requester.
+export function workerStatePaths(stateDirectory) {
+  return statePathsForSessionHash({
+    stateDirectory,
+    sessionHash: WORKER_SCOPE_SESSION_HASH,
   });
 }
