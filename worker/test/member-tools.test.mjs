@@ -8,6 +8,8 @@ import { sha256 } from "../agent/canonical-json.mjs";
 import { createDeploymentOutcome } from "../agent/deployment/client.mjs";
 import { TurnGateState } from "../agent/gates/turn-state.mjs";
 import { RunnerJournal } from "../agent/runner/journal.mjs";
+import { IdempotencyStore } from "../agent/idempotency/store.mjs";
+import { PendingOperationStore } from "../agent/pending-operation/store.mjs";
 import { RUNNER_BROKER_ENDPOINT_DIGEST } from "../agent/runner/preparation-client.mjs";
 import { createProjectBinding, createTaskBinding } from "../agent/team/manifest.mjs";
 import { TeamCoordinationGate } from "../agent/team/tool-wrapper.mjs";
@@ -597,9 +599,32 @@ test("approved deployment auto-submits one bound release ResultEnvelope", async 
     operatorDeps.sourceSkillId = "operator-v1";
     operatorDeps.deploymentBrokerEndpoint = "http://deployment-broker:8791/v1/deploy";
     operatorDeps.deploymentReceiptStore = {};
-    operatorDeps.idempotencyStore = { get() {} };
-    operatorDeps.pendingOperationStore = {};
-    const deployment = createMemberToolRegistry({ deps: operatorDeps }).definitions()
+    let operatorTurn = 1;
+    operatorDeps.getInvocation = () => ({
+      sessionId: "operator-session",
+      turnId: `operator-turn-${operatorTurn}`,
+      actor: { id: `@${LEADER}:example.test` },
+      turnState: new TurnGateState(),
+      resumed: false,
+    });
+    operatorDeps.idempotencyStore = new IdempotencyStore({ filePath: join(root, "auto-release-idempotency.jsonl") });
+    operatorDeps.pendingOperationStore = new PendingOperationStore({ directory: join(root, "auto-release-pending") });
+    operatorDeps.deploymentFetch = async () => new Response(JSON.stringify({
+      targetId: "target-auto",
+      previousDigest: "d".repeat(64),
+      changeRevisionRef,
+    }), { status: 200 });
+    const operatorRegistry = createMemberToolRegistry({ deps: operatorDeps });
+    const resolveRelease = operatorRegistry.definitions().find((tool) => tool.name === "team_resolve_task");
+    const resolvedRelease = await resolveRelease.execute("resolve-release-auto", { taskId: release.taskId });
+    assert.equal(resolvedRelease.details.gate, "pending");
+    const firstApprovalId = resolvedRelease.details.approvalId;
+    operatorTurn = 2;
+    const repeatedResolve = await resolveRelease.execute("resolve-release-auto-2", { taskId: release.taskId });
+    assert.equal(repeatedResolve.details.gate, "pending");
+    assert.equal(repeatedResolve.details.approvalId, firstApprovalId);
+    assert.equal((await operatorDeps.idempotencyStore.findByOperationDigest(repeatedResolve.details.operationDigest)).key, resolvedRelease.details.idempotencyKey);
+    const deployment = operatorRegistry.definitions()
       .find((tool) => tool.name === "deploy_release");
     const outcome = createDeploymentOutcome({
       taskId: release.taskId,

@@ -333,6 +333,7 @@ export function createMemberToolRegistry({ deps }) {
     throw new TypeError("createMemberToolRegistry requires team deps and source profile/skill binding");
   }
   const registry = new TiangongToolRegistry();
+  const deploymentTool = createDeploymentTool(deps);
 
   registry.register({
     name: "team_resolve_task",
@@ -344,7 +345,7 @@ export function createMemberToolRegistry({ deps }) {
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx, invocation) {
       const { taskBinding } = await resolveAssignedTask(params.taskId, deps);
       await assertLeaderInvocation(taskBinding, invocation, deps);
-      return ok({
+      const resolved = ok({
         taskId: taskBinding.taskId,
         projectId: taskBinding.projectId,
         taskKind: taskBinding.taskKind,
@@ -354,6 +355,16 @@ export function createMemberToolRegistry({ deps }) {
         completionContractDigest: taskBinding.completionContractDigest,
         inputRefs: taskBinding.inputRefs,
       });
+      if (taskBinding.taskKind === "release" && deploymentTool) {
+        return deploymentTool.execute(
+          `tiangong-auto-deploy-${taskBinding.taskId}`,
+          { taskId: taskBinding.taskId },
+          _signal,
+          _onUpdate,
+          _ctx,
+        );
+      }
+      return resolved;
     },
   });
 
@@ -434,7 +445,6 @@ export function createMemberToolRegistry({ deps }) {
   });
 
   const wrapped = new TiangongToolRegistry();
-  const deploymentTool = createDeploymentTool(deps);
   for (const definition of registry.definitions()) {
     if (definition.name === "team_submit_result" && deploymentTool) wrapped.register(deploymentTool);
     wrapped.register(wrapTeamTool(definition, {

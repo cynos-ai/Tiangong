@@ -199,6 +199,35 @@ export function createGatedTool({
       });
 
       if (decision.kind === "deny") throw new GateDeniedError(decision.reason);
+      if (sideEffect && decision.durableExisting) {
+        const durableEntry = await idempotencyStore.get(decision.existingKey);
+        if (!durableEntry || durableEntry.operationDigest !== digest) {
+          throw new Error("Durable approval record does not match the deployment operation");
+        }
+        if (decision.kind === "pending") {
+          const suspended = invocation.turnState.suspend(durableEntry);
+          return pendingResult(
+            { ...decision, approvalId: suspended.approvalId },
+            suspended.idempotencyKey,
+            suspended.operationDigest,
+          );
+        }
+        if (decision.kind === "allow" && durableEntry.status === "completed") {
+          await evidence.append({
+            type: "tool.execution.replayed",
+            ...common,
+            idempotencyKey: durableEntry.idempotencyKey,
+            durable: true,
+          });
+          invocation.observability?.checkpoint("tool.replayed", {
+            "tiangong.tool.name": definition.name,
+          });
+          return resultProjection(structuredClone(durableEntry.replayResult));
+        }
+        key = durableEntry.idempotencyKey;
+        digest = durableEntry.operationDigest;
+        operation = durableEntry.operation;
+      }
       if (decision.kind === "pending") {
         const checkpoint = {
           ...common,

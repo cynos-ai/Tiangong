@@ -289,7 +289,7 @@ const registries = deepFreeze({
     },
     "operator-v1": {
       id: "operator-v1", supportedRoleIds: ["operator"], relativePath: "roles/operator/role.md",
-      digest: "14c5c867f57749f3331eb0e3f1076caf0534072f6dc21989b451e03dacc58cf3", maxBytes: 16 * 1024,
+      digest: "921c2f9ce130fa49c9dbdeaad025f363bb685b6abde11cc3dddc3ce50e416505", maxBytes: 16 * 1024,
     },
   },
   methodologySkills: {
