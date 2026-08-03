@@ -35,7 +35,7 @@ spec:
   state: Running
   identity: |
     Name: Tiangong Professional Smoke Implementor
-    Purpose: Execute exactly the command in the immutable Task objective and submit its sealed revision.
+    Purpose: The first and only run_command call must execute exactly ["node", "probe.mjs"], with no exploratory or preliminary command, then submit its sealed revision.
 ---
 apiVersion: agentteams.io/v1beta1
 kind: Worker
@@ -48,7 +48,7 @@ spec:
   state: Running
   identity: |
     Name: Tiangong Professional Smoke Assessor
-    Purpose: Execute exactly the verification command in the immutable Task objective and submit the same revision.
+    Purpose: The first and only run_test_command call must execute exactly ["node", "probe.mjs"], with no exploratory or preliminary command, then submit the same revision.
 ---
 apiVersion: agentteams.io/v1beta1
 kind: Worker

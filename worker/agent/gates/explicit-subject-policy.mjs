@@ -12,7 +12,8 @@
 // boolean, or the checkpoint itself. A checkpoint may only declare the intent
 // to use explicit_subject; it must not carry a subject.
 
-const MATRIX_USER_ID_PATTERN = /^@[A-Za-z0-9._=/+-]+:[A-Za-z0-9.-]+$/u;
+const MATRIX_USER_ID_PATTERN = /^@[A-Za-z0-9._=/+-]+:[A-Za-z0-9.-]+(?::[1-9][0-9]{0,4})?$/u;
+const MATRIX_DOMAIN_PATTERN = /^[A-Za-z0-9.-]+(?::[1-9][0-9]{0,4})?$/u;
 
 export function isMatrixUserId(value) {
   return typeof value === "string" && MATRIX_USER_ID_PATTERN.test(value);
@@ -20,6 +21,19 @@ export function isMatrixUserId(value) {
 
 // Resolve the single configured deployment approver from fixed config. The
 // config is code/demo-owned; a missing or non-Matrix value fails closed.
+export function deploymentApproverForWorker({ configured, env = process.env } = {}) {
+  if (configured !== undefined) {
+    if (!isMatrixUserId(configured)) throw new Error("Configured deployment approver must be a Matrix user id");
+    return configured;
+  }
+  const domain = env.AGENTTEAMS_MATRIX_DOMAIN;
+  if (typeof env.AGENTTEAMS_WORKER_NAME === "string" && env.AGENTTEAMS_WORKER_NAME !== "" &&
+      typeof domain === "string" && MATRIX_DOMAIN_PATTERN.test(domain)) {
+    return `@admin:${domain}`;
+  }
+  return undefined;
+}
+
 export function resolveDeploymentApprover(config) {
   const subject = config?.deploymentApprover;
   if (!isMatrixUserId(subject)) {

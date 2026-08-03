@@ -14,7 +14,7 @@ room_path="$(printf '%s' "${ROOM_ID}" | jq -sRr @uri)"
 localpart="${LEADER_UID%%:*}"
 PROMPT="${localpart} You are the Tiangong Team Leader. Use your tools to do exactly this, then report:
 1. Call team_create_project with projectId \"${PROJECT_ID}\" and roleBindings {designer:\"${DESIGNER}\", implementor:\"${IMPLEMENTOR}\", assessor:\"${ASSESSOR}\", operator:\"${OPERATOR}\"}.
-2. Call team_dispatch_task with projectId \"${PROJECT_ID}\", taskId \"${TASK_ID}\", taskKind \"design\", revisionIndex 0, assignee \"${DESIGNER}\".
+2. Call team_dispatch_task with projectId \"${PROJECT_ID}\", taskId \"${TASK_ID}\", taskKind \"design\", revisionIndex 0, assignee \"${DESIGNER}\", objective \"Define the exact bounded implementation and independent verification commands for the runner-isolation fixture.\".
 Reply with LEADER_DONE and a one-line summary."
 FORMATTED="<a href=\"https://matrix.to/#/${LEADER_UID}\">${localpart}</a> ${PROMPT#"${localpart}" }"
 body="$(jq -cn --arg b "${PROMPT}" --arg fb "${FORMATTED}" --arg u "${LEADER_UID}" \

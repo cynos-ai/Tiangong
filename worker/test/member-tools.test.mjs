@@ -219,6 +219,8 @@ test("Implementor command runs only through the Task-bound broker and projects m
       const request = JSON.parse(options.body);
       assert.equal(request.taskId, task.taskId);
       assert.deepEqual(request.command, ["node", "test.mjs"]);
+      assert.match(request.env.TIANGONG_FORBIDDEN_ENV_NAMES, /OPENAI_API_KEY/u);
+      assert.match(request.env.TIANGONG_FORBIDDEN_NETWORK_TARGETS, /agentteams-controller/u);
       return new Response(JSON.stringify({
         status: "completed",
         exitCode: 0,

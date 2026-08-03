@@ -5,6 +5,7 @@ import {
   assertCheckpointApprovalPolicyWellFormed,
   assertExplicitSubjectApproval,
   assertOperationApprovalSubject,
+  deploymentApproverForWorker,
   isMatrixUserId,
   resolveDeploymentApprover,
 } from "../agent/gates/explicit-subject-policy.mjs";
@@ -15,9 +16,19 @@ const OTHER = "@someone-else:tiangong.example";
 test("isMatrixUserId accepts well-formed Matrix user ids and rejects others", () => {
   assert.equal(isMatrixUserId(ADMIN), true);
   assert.equal(isMatrixUserId("@user:server.com"), true);
+  assert.equal(isMatrixUserId("@admin:matrix-local.agentteams.io:18080"), true);
+  assert.equal(isMatrixUserId("@admin:matrix-local.agentteams.io:999999"), false);
   assert.equal(isMatrixUserId("not-an-id"), false);
   assert.equal(isMatrixUserId(""), false);
   assert.equal(isMatrixUserId(null), false);
+});
+
+test("AgentTeams Workers discover the fixed admin approver without unsupported custom env", () => {
+  assert.equal(deploymentApproverForWorker({
+    env: { AGENTTEAMS_WORKER_NAME: "operator", AGENTTEAMS_MATRIX_DOMAIN: "matrix-local.agentteams.io:18080" },
+  }), "@admin:matrix-local.agentteams.io:18080");
+  assert.equal(deploymentApproverForWorker({ env: {} }), undefined);
+  assert.throws(() => deploymentApproverForWorker({ configured: "admin", env: {} }), /Matrix user id/u);
 });
 
 test("resolveDeploymentApprover resolves the configured admin and fails closed otherwise", () => {

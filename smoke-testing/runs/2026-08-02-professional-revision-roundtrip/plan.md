@@ -1,6 +1,6 @@
 # Focused run — real Implementor → Assessor ChangeRevision roundtrip
 
-> Status: FAILED — AgentTeams v1.2.0 dropped the Worker `spec.env` broker endpoint
+> Status: FUNCTIONAL PASS / OVERALL FAIL (upstream Team cleanup)
 > Date: 2026-08-02
 > Branch: `feat/43-agentteams-v1.2-and-leader-spike`
 
@@ -104,3 +104,33 @@ Active Team or its five Worker members, matching the known AgentTeams v1.2.0
 cleanup defect. Broker-owned containers and volumes were removed. A subsequent
 explicit whole-stack reset is remediation for the development environment and
 does not upgrade this run's verdict.
+
+## Observed result — successful fresh Project
+
+A fresh Active Team and Project `professional-35eee163` completed the real
+Implementor → Assessor path after the broker supplied the two non-secret Runner
+policy declaration variables required by the isolation probe. Both professional
+turns came from the configured model over Matrix and used their own closed tool
+surfaces.
+
+- Implementor Task `professional-35eee163-implement-0` executed exactly one
+  broker invocation, exited 0 with `runner_probe=pass`, sealed artifact digest
+  `5b38a3123ef7417e73e9892bc260a4d9f362096c548c0e9e5139c6ff181dbd62`,
+  and was accepted against Result digest
+  `c048f6beaebb33f6d0a11084513ae52bd2d806c546acf0211da1f08fa124c8c1`.
+- Assessor Task `professional-35eee163-assess-0` independently materialized the
+  same digest read-only, executed exactly one broker invocation, exited 0 with
+  `runner_probe=pass`, returned the exact same `ChangeRevisionRef`, and was
+  accepted against Result digest
+  `2cc291217cf6f98d40e4680e536161a82b059331ba4a1f6c820c2ed7db5a32a3`.
+- Broker journals contain one completed invocation for each Task. Assessor
+  `runnerEvidence.fixtureDigest` equals the sealed artifact digest. The Leader
+  then created, but did not accept, the release Task; this focused run makes no
+  deployment or `DELIVERED` claim.
+
+Functional result: **PASS** for the scoped real professional revision
+roundtrip. Cleanup result: **FAIL**: broker containers and all three owned
+volumes were removed, but `agt delete team` left the Team and all five members.
+Therefore the overall smoke verdict remains failed despite the functional
+proof. A subsequent exact whole-stack reset removed the preserved Team/Worker
+resources; that remediation does not retroactively upgrade the run verdict.

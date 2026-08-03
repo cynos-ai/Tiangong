@@ -7,6 +7,7 @@ import { findRoleForWorker } from "../playbook/transition-policy.mjs";
 import { TiangongToolRegistry } from "../tools/registry.mjs";
 import { createGatedTool } from "../tools/wrapper.mjs";
 import { createRunnerBrokerExecutor } from "../runner/broker-client.mjs";
+import { FORBIDDEN_ENV_KEYS, FORBIDDEN_NETWORK_TARGETS } from "../runner/runner-policy.mjs";
 import { runCommand, runnerRunIdForTask } from "../runner/runner-port.mjs";
 import { readProjectBinding } from "../team/manifest-store.mjs";
 import { assertProjectLeaderActor, loadWorkerIdentity } from "../team/team-context.mjs";
@@ -177,7 +178,14 @@ function registerRunnerTool(registry, deps) {
         cwd: role === "implementor" ? "scratch/revision" : "fixture",
         timeoutMs: params.timeoutMs,
         outputLimitBytes: params.outputLimitBytes ?? RUNNER_OUTPUT_MAX,
-      }, { executor, journal: deps.runnerJournal, env: {} });
+      }, {
+        executor,
+        journal: deps.runnerJournal,
+        env: {
+          TIANGONG_FORBIDDEN_ENV_NAMES: FORBIDDEN_ENV_KEYS.join(","),
+          TIANGONG_FORBIDDEN_NETWORK_TARGETS: FORBIDDEN_NETWORK_TARGETS.join(","),
+        },
+      });
       if (result.outcome !== "completed") {
         const error = new Error(`Runner command outcome is uncertain (${result.reason})`);
         error.code = "TIANGONG_RUNNER_OUTCOME_UNCERTAIN";

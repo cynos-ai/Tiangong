@@ -19,7 +19,7 @@ import {
   parseApprovalCommand,
 } from "./gates/approval-command.mjs";
 import { assertApprovalSubject } from "./gates/approval-subject.mjs";
-import { assertOperationApprovalSubject } from "./gates/explicit-subject-policy.mjs";
+import { assertOperationApprovalSubject, deploymentApproverForWorker } from "./gates/explicit-subject-policy.mjs";
 import { PolicyGate } from "./gates/policy-gate.mjs";
 import { ReviewerPracticeGate } from "./gates/reviewer-practice-gate.mjs";
 import { IdempotencyStore } from "./idempotency/store.mjs";
@@ -133,7 +133,10 @@ export class TiangongAgentRuntime {
   #sessions = new Map();
   #stores = new Map();
 
-  constructor({ configPath, provider, profileBundle, deploymentApprover = process.env.TIANGONG_DEPLOYMENT_APPROVER }) {
+  constructor({ configPath, provider, profileBundle, deploymentApprover = deploymentApproverForWorker({
+    configured: process.env.TIANGONG_DEPLOYMENT_APPROVER,
+    env: process.env,
+  }) }) {
     this.#gateway = new ModelGateway({ configPath, provider });
     this.#profileBundle = profileBundle ? Promise.resolve(profileBundle) : null;
     this.#approvalConfig = Object.freeze({ deploymentApprover });
