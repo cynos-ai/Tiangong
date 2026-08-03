@@ -391,6 +391,37 @@ test("Runner plan rejection occurs before the immutable Worker invocation journa
   });
 });
 
+test("Runner plan transport causes are reduced to stable sanitized Evidence codes", async () => {
+  await withRoot(async (root) => {
+    const boundProject = project("proj-plan-network-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    const task = professionalTask(boundProject, "task-implement-network", {
+      taskKind: "implement",
+      assignee: "tiangong-implementor",
+      role: "implementor",
+    });
+    await createProject(boundProject, depsFor(LEADER, root));
+    await dispatchTask(task, depsFor(LEADER, root));
+    const journalPath = join(root, "plan-network-runner.jsonl");
+    const deps = depsFor("tiangong-implementor", root);
+    deps.professionalRole = "implementor";
+    deps.sourceSkillId = "implementor-v1";
+    deps.runnerBrokerEndpoint = "http://runner-broker:18090/v1/execute";
+    deps.runnerJournal = new RunnerJournal({ filePath: journalPath });
+    deps.runnerFetch = async () => {
+      const cause = Object.assign(new Error("getaddrinfo failed"), { code: "ENOTFOUND" });
+      throw Object.assign(new TypeError("fetch failed"), { cause });
+    };
+    const command = createMemberToolRegistry({ deps }).definitions().find((tool) => tool.name === "run_command");
+    await assert.rejects(
+      () => command.execute("run-plan-network", { taskId: task.taskId }),
+      (error) => error?.code === "TIANGONG_RUNNER_PLAN_UNAVAILABLE",
+    );
+    const planFailed = deps.evidence.events.find((event) => event.type === "runner.plan.failed");
+    assert.equal(planFailed.errorCode, "RUNNER_BROKER_DNS_UNAVAILABLE");
+    await assert.rejects(() => access(journalPath), (error) => error?.code === "ENOENT");
+  });
+});
+
 test("member tools reject a non-Leader Matrix actor and unavailable Runner", async () => {
   await withRoot(async (root) => {
     const boundProject = project("proj-auth-aaaa-4aaa-8aaa-aaaaaaaaaaaa");

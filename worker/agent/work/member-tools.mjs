@@ -63,13 +63,27 @@ const RUNNER_PLAN_FAILURE_CODES = new Set([
   "RUNNER_BROKER_RESPONSE_INVALID",
   "RUNNER_BROKER_RESPONSE_TOO_LARGE",
 ]);
+const RUNNER_PLAN_TRANSPORT_CODES = new Map([
+  ["EAI_AGAIN", "RUNNER_BROKER_DNS_TEMPORARY_FAILURE"],
+  ["ENOTFOUND", "RUNNER_BROKER_DNS_UNAVAILABLE"],
+  ["ECONNREFUSED", "RUNNER_BROKER_CONNECTION_REFUSED"],
+  ["ECONNRESET", "RUNNER_BROKER_CONNECTION_RESET"],
+  ["EHOSTUNREACH", "RUNNER_BROKER_NETWORK_UNREACHABLE"],
+  ["ENETUNREACH", "RUNNER_BROKER_NETWORK_UNREACHABLE"],
+  ["ETIMEDOUT", "RUNNER_BROKER_PLAN_TIMEOUT"],
+  ["UND_ERR_CONNECT_TIMEOUT", "RUNNER_BROKER_PLAN_TIMEOUT"],
+]);
 
 function runnerPlanFailureCode(error) {
-  const values = [error?.code, error?.message, error?.cause?.code, error?.cause?.message];
-  for (const value of values) {
-    if (RUNNER_PLAN_FAILURE_CODES.has(value)) return value;
+  let current = error;
+  for (let depth = 0; current && depth < 4; depth += 1, current = current.cause) {
+    if (RUNNER_PLAN_FAILURE_CODES.has(current.code) || RUNNER_PLAN_FAILURE_CODES.has(current.message)) {
+      return RUNNER_PLAN_FAILURE_CODES.has(current.code) ? current.code : current.message;
+    }
+    const transportCode = RUNNER_PLAN_TRANSPORT_CODES.get(current.code);
+    if (transportCode) return transportCode;
+    if (current.name === "AbortError") return "RUNNER_BROKER_PLAN_TIMEOUT";
   }
-  if (error?.name === "AbortError" || error?.cause?.name === "AbortError") return "RUNNER_BROKER_PLAN_TIMEOUT";
   return "RUNNER_BROKER_PLAN_NETWORK_ERROR";
 }
 
