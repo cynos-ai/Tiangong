@@ -65,6 +65,13 @@ async function recordEvidence(deps, type, body) {
   await deps.evidence.append({ type, ...body, at: now(deps) });
 }
 
+async function waitForTeamIdentity(deps, expectedRole) {
+  if (typeof deps.channel.waitForTeamIdentity === "function") {
+    return deps.channel.waitForTeamIdentity(expectedRole);
+  }
+  return deps.channel.assertTeamIdentity(expectedRole);
+}
+
 function decisionIdentity(input) {
   return {
     projectId: input.projectId,
@@ -227,7 +234,7 @@ export async function createProject(projectBinding, deps) {
   const identity = loadWorkerIdentity(deps);
   assertLeaderForProject(identity, projectBinding);
   if (!identity.roomId) throw new Error("Authenticated Leader room is unavailable");
-  await deps.channel.assertTeamIdentity("team_leader");
+  await waitForTeamIdentity(deps, "team_leader");
   const roster = await deps.channel.assertTeamRoster(Object.values(projectBinding.roleBindings));
   await deps.sync.beforeRead();
   let stored = projectBinding;
@@ -253,7 +260,7 @@ export async function dispatchTask(taskBinding, deps) {
   requirePortDependencies(deps, { channel: true });
   const identity = loadWorkerIdentity(deps);
   if (!identity.roomId) throw new Error("Authenticated Leader room is unavailable");
-  await deps.channel.assertTeamIdentity("team_leader");
+  await waitForTeamIdentity(deps, "team_leader");
   await deps.sync.beforeRead();
   const project = await readProjectBinding(taskBinding.projectId, deps);
   assertLeaderForProject(identity, project);
@@ -292,7 +299,7 @@ export async function dispatchTask(taskBinding, deps) {
 
 export async function resolveAssignedTask(taskId, deps) {
   requirePortDependencies(deps, { channel: true });
-  await deps.channel.assertTeamIdentity("worker");
+  await waitForTeamIdentity(deps, "worker");
   await deps.sync.beforeRead();
   const taskBinding = await readTaskBinding(taskId, deps);
   const identity = loadWorkerIdentity(deps);
@@ -303,7 +310,7 @@ export async function resolveAssignedTask(taskId, deps) {
 export async function submitResult(result, deps) {
   requirePortDependencies(deps, { channel: true });
   const identity = loadWorkerIdentity(deps);
-  await deps.channel.assertTeamIdentity("worker");
+  await waitForTeamIdentity(deps, "worker");
   await deps.sync.beforeRead();
   const taskBinding = await readTaskBinding(result.taskId, deps);
   assertAssignee(identity, taskBinding);
@@ -344,7 +351,7 @@ export async function submitResult(result, deps) {
 export async function checkResult(taskId, deps) {
   requirePortDependencies(deps, { channel: true });
   const identity = loadWorkerIdentity(deps);
-  await deps.channel.assertTeamIdentity("team_leader");
+  await waitForTeamIdentity(deps, "team_leader");
   await deps.sync.beforeRead();
   const taskBinding = await readTaskBinding(taskId, deps);
   const project = await readProjectBinding(taskBinding.projectId, deps);
@@ -360,7 +367,7 @@ export async function checkResult(taskId, deps) {
 export async function recordTaskDecision(decision, deps) {
   requirePortDependencies(deps, { channel: true });
   const identity = loadWorkerIdentity(deps);
-  await deps.channel.assertTeamIdentity("team_leader");
+  await waitForTeamIdentity(deps, "team_leader");
   await deps.sync.beforeRead();
   const taskBinding = await readTaskBinding(decision.taskId, deps);
   const project = await readProjectBinding(taskBinding.projectId, deps);

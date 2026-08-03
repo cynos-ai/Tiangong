@@ -87,6 +87,30 @@ test("createTeamChannel delivers idempotent authenticated Matrix mentions and re
   assert.ok(!JSON.stringify(events).includes("secret-token"));
 });
 
+test("waitForTeamIdentity gates task access until a transient AgentTeams phase is ready", async () => {
+  let attempts = 0;
+  const channel = createTeamChannel({
+    evidence: { async append() {} },
+    env: CHANNEL_ENV,
+    fetchImpl: async (url) => {
+      if (url.endsWith("/api/v1/workers/tiangong-leader")) {
+        attempts += 1;
+        return response({
+          name: "tiangong-leader",
+          role: "worker",
+          team: "team-1",
+          matrixUserID: "@tiangong-leader:example.test",
+          phase: attempts === 1 ? "Starting" : "Running",
+        });
+      }
+      throw new Error("unexpected readiness request");
+    },
+  });
+  const identity = await channel.waitForTeamIdentity("worker", { timeoutMs: 100, pollMs: 0 });
+  assert.equal(identity.role, "worker");
+  assert.equal(attempts, 2);
+});
+
 test("createTeamChannel fails closed when no unique authenticated Team room exists", async () => {
   const evidence = { async append() { throw new Error("must not record"); } };
   const fetchImpl = async (url) => {

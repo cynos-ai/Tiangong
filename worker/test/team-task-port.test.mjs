@@ -352,6 +352,25 @@ test("ResultEnvelope source and every binding digest fail closed", async () => {
   });
 });
 
+test("assigned Task resolution uses the bounded pre-task Team identity gate", async () => {
+  await withRoot(async (root) => {
+    const { task } = await setup(root);
+    const deps = depsFor(DESIGNER, root);
+    let readinessCalls = 0;
+    deps.channel = {
+      ...deps.channel,
+      async waitForTeamIdentity(role) {
+        readinessCalls += 1;
+        assert.equal(role, "worker");
+        return { team: "team-1", role };
+      },
+    };
+    const resolved = await resolveAssignedTask(task.taskId, deps);
+    assert.equal(resolved.taskBinding.taskId, task.taskId);
+    assert.equal(readinessCalls, 1);
+  });
+});
+
 test("non-assignee and forged Leader decision identities are rejected", async () => {
   await withRoot(async (root) => {
     const { project, task } = await setup(root);

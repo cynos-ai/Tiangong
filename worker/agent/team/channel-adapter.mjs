@@ -6,6 +6,8 @@
 // uses deterministic Matrix transaction IDs so operation replay cannot emit
 // duplicate events. Tokens and message content never enter Evidence.
 
+import { setTimeout as delay } from "node:timers/promises";
+
 import { canonicalJson, sha256 } from "../canonical-json.mjs";
 
 const MATRIX_USER_ID = /^@[A-Za-z0-9._=\/-]+:[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/u;
@@ -14,6 +16,8 @@ const DIGEST = /^[0-9a-f]{64}$/u;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_JOINED_ROOMS = 16;
 const MAX_JOINED_MEMBERS = 64;
+const TEAM_IDENTITY_READY_TIMEOUT_MS = 30_000;
+const TEAM_IDENTITY_READY_POLL_MS = 250;
 
 function requireString(value, name, pattern) {
   if (typeof value !== "string" || value === "" || (pattern && !pattern.test(value))) {
@@ -210,6 +214,31 @@ export function createTeamChannel({ evidence, env = process.env, fetchImpl = glo
         throw new Error("Authenticated AgentTeams Team identity does not match the required role");
       }
       return { team: resource.team, role: resource.role, matrixUserIdDigest: sha256(resource.matrixUserID) };
+    },
+    async waitForTeamIdentity(expectedRole, {
+      timeoutMs = TEAM_IDENTITY_READY_TIMEOUT_MS,
+      pollMs = TEAM_IDENTITY_READY_POLL_MS,
+    } = {}) {
+      if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > TEAM_IDENTITY_READY_TIMEOUT_MS) {
+        throw new TypeError("Team identity readiness timeout is outside the bounded contract");
+      }
+      if (!Number.isSafeInteger(pollMs) || pollMs < 0 || pollMs > TEAM_IDENTITY_READY_POLL_MS) {
+        throw new TypeError("Team identity readiness poll is outside the bounded contract");
+      }
+      const deadline = Date.now() + timeoutMs;
+      while (true) {
+        try {
+          return await this.assertTeamIdentity(expectedRole);
+        } catch {
+          const remaining = deadline - Date.now();
+          if (remaining <= 0) {
+            const error = new Error("AgentTeams Team identity did not become ready before the bounded pre-task gate");
+            error.code = "AGENTTEAMS_TEAM_IDENTITY_NOT_READY";
+            throw error;
+          }
+          await delay(Math.min(pollMs, remaining));
+        }
+      }
     },
     async assertTeamRoster(workerNames) {
       if (!Array.isArray(workerNames) || workerNames.length !== 5 || new Set(workerNames).size !== 5) {

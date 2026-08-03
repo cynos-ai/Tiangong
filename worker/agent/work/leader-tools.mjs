@@ -271,7 +271,11 @@ export function createLeaderToolRegistry({ playbook, deps }) {
       if (authoritative !== params.disposition) {
         throw new Error("Requested report disposition does not match authoritative machine state");
       }
-      await deps.channel.assertTeamIdentity("team_leader");
+      if (typeof deps.channel.waitForTeamIdentity === "function") {
+        await deps.channel.waitForTeamIdentity("team_leader");
+      } else {
+        await deps.channel.assertTeamIdentity("team_leader");
+      }
       await deps.sync.beforeRead();
       const project = await readProjectBinding(params.projectId, deps);
       const identity = loadWorkerIdentity(deps);
