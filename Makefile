@@ -12,12 +12,14 @@ PEER_MENTION_SMOKE_TEST := ./scripts/test-peer-mention-smoke.sh
 RUNNER_ISOLATION_SPIKE := ./smoke-testing/support/run-runner-isolation-spike.sh
 RUNNER_EXECUTOR_SMOKE := node ./smoke-testing/support/run-runner-executor-smoke.mjs
 RUNNER_BROKER_SMOKE := node ./smoke-testing/support/run-runner-broker-smoke.mjs
+RUNNER_BROKER := ./scripts/runner-broker.sh
+RUNNER_PREPARATION_SMOKE := ./smoke-testing/support/run-runner-preparation-smoke.sh
 DEPLOYMENT_SERVICE_SMOKE := node ./smoke-testing/support/run-deployment-service-smoke.mjs
 SKILL_CHECK := node ./scripts/check-skills.mjs
 REVIEWER_SMOKE_CONTRACT := node ./scripts/test-reviewer-smoke-oracle.mjs
 PAUSE_WORKER_BOUNDARY_TEST := ./scripts/test-pause-worker-boundary.sh
 
-.PHONY: help init up start stop down status verify config logs login uninstall check-skills build-worker-image test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-runner-isolation test-runner-executor test-runner-broker test-deployment-service test-reviewer-smoke-contract test-reviewer-image-basic test-reviewer-image-git test-reviewer-image test-reviewer-journey-canary test-peer-mention-smoke-contract test-peer-mention-smoke test-pause-worker-boundary
+.PHONY: help init up start stop down status verify config logs login uninstall check-skills build-worker-image test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-runner-isolation test-runner-executor test-runner-broker test-runner-preparation start-runner-broker status-runner-broker stop-runner-broker test-deployment-service test-reviewer-smoke-contract test-reviewer-image-basic test-reviewer-image-git test-reviewer-image test-reviewer-journey-canary test-peer-mention-smoke-contract test-peer-mention-smoke test-pause-worker-boundary
 
 help: ## Show available commands
 	@printf '%s\n' 'Tiangong local development commands:'
@@ -78,6 +80,18 @@ test-runner-executor: ## Run the production Docker executor against the isolatio
 
 test-runner-broker: ## Prove the closed container-identity Runner broker path
 	@$(RUNNER_BROKER_SMOKE)
+
+test-runner-preparation: ## Prove broker registration precedes fixed Worker plan access
+	@$(RUNNER_PREPARATION_SMOKE)
+
+start-runner-broker: ## Start the fixed shared Runner broker and preparation boundary
+	@$(RUNNER_BROKER) start
+
+status-runner-broker: ## Verify the fixed shared Runner broker boundary
+	@$(RUNNER_BROKER) status
+
+stop-runner-broker: ## Stop the shared Runner broker; use PURGE=1 to remove its state
+	@$(RUNNER_BROKER) stop $(if $(PURGE),--purge,)
 
 test-deployment-service: ## Prove the disposable deployment target state and authorization contract
 	@$(DEPLOYMENT_SERVICE_SMOKE)

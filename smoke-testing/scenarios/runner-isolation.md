@@ -74,6 +74,36 @@
   - `runner_broker_cleanup=pass`.
 - Skip/block rules: block if Docker, any required immutable local image, or socket access for the controlled broker is unavailable. This proves the closed container identity, execution, and local revision-materialization topology, not an official AgentTeams/Matrix Worker turn.
 
+### B4: Broker preparation precedes professional Task notification
+
+- Purpose: prove the production registration boundary that prevents an
+  Implementor or Assessor Worker from consuming a Task before its exact broker
+  binding is present and reachable.
+- Setup: run `make up`, build the pinned role images, then run
+  `make test-runner-preparation`. The code-owned `scripts/runner-broker.sh`
+  starts the fixed `tiangong-runner-broker` service before the disposable exact
+  Worker identities are created.
+- Prompt: none. This is a deterministic Docker boundary test; it does not use a
+  model turn or Matrix notification.
+- Expected observations:
+  - the preparation caller is authenticated as the exact Leader container and
+    Project role binding;
+  - Implementor registration returns one ready receipt, exact replay returns
+    the same binding digest without a second registration, and Assessor
+    registration requires the exact same-revision Implementor input;
+  - each exact source Worker obtains one immutable plan with command
+    `["node", "probe.mjs"]`, role-derived cwd, 30000ms timeout, and 65536-byte
+    output limit;
+  - no Worker has the Docker socket, and cleanup removes the broker, its
+    registration/config/fixture/state volumes, the three disposable Workers,
+    and temporary request files.
+- Required evidence: preparation/receipt digests, replay status, plan
+  command/bounds, socket absence, and exact cleanup absence. The focused test
+  does not execute the command or prove `DELIVERED`.
+- Skip/block rules: block if the AgentTeams network, fixed images, Docker
+  authority, or broker readiness is unavailable. Any binding, identity, plan,
+  endpoint, or cleanup mismatch is fail-closed; never resend a failed Task.
+
 ## Full smoke
 
 ### F1: Production executor preserves the same boundary
