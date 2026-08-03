@@ -54,6 +54,23 @@ grep -q 'pause_worker_until_file=pass' "${output}"
 [[ "$(cat "${state}")" == "unpaused" ]] || { printf 'FAIL: helper did not unpause after readiness.\n' >&2; exit 1; }
 rm -f "${ready}" "${pause_marker}"
 
+start="/tmp/tiangong-smoke-pause-boundary-start-${RANDOM}"
+output="${TEST_ROOT}/triggered.out"
+PATH="${TEST_ROOT}/bin:${PATH}" "${HELPER}" agentteams-test-worker worker-test 10 "${ready}" "${start}" >"${output}" 2>&1 &
+pid=$!
+sleep 0.2
+[[ ! -e "${pause_marker}" ]] || { printf 'FAIL: trigger mode paused before preparation.\n' >&2; exit 1; }
+printf 'ready=pass\n' >"${start}"
+for _ in {1..20}; do
+  [[ -e "${pause_marker}" ]] && break
+  sleep 0.1
+done
+[[ -e "${pause_marker}" ]] || { printf 'FAIL: trigger mode did not pause after preparation.\n' >&2; exit 1; }
+printf 'ready=pass\n' >"${ready}"
+wait "${pid}"
+grep -q 'pause_worker_until_file=pass' "${output}"
+rm -f "${ready}" "${start}" "${pause_marker}"
+
 output="${TEST_ROOT}/timeout.out"
 if PATH="${TEST_ROOT}/bin:${PATH}" "${HELPER}" agentteams-test-worker worker-test 1 "${ready}" >"${output}" 2>&1; then
   printf 'FAIL: readiness timeout returned success.\n' >&2
