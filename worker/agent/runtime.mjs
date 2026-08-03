@@ -238,7 +238,7 @@ export class TiangongAgentRuntime {
           env: process.env,
         }),
         runnerJournal: ["implementor", "assessor"].includes(profileBundle.profile.roleId)
-          ? new RunnerJournal({ filePath: persisted.paths.runnerJournalFilePath })
+          ? new RunnerJournal({ filePath: sharedPaths.runnerJournalFilePath })
           : undefined,
       };
       registry = createMemberToolRegistry({ deps: teamDeps });

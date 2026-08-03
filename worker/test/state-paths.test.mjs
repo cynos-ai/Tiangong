@@ -102,8 +102,10 @@ test("worker-scoped approval paths are stable and separate from Matrix sessions"
   assert.equal(worker.sessionHash, WORKER_SCOPE_SESSION_HASH);
   assert.equal(worker.idempotencyFilePath, join(stateDirectory, "idempotency", WORKER_SCOPE_SESSION_HASH, "idempotency.jsonl"));
   assert.equal(worker.pendingOperationDirectory, join(stateDirectory, "pending-operations", WORKER_SCOPE_SESSION_HASH));
+  assert.equal(worker.runnerJournalFilePath, join(stateDirectory, "runner-journals", WORKER_SCOPE_SESSION_HASH, "runner.jsonl"));
   assert.equal(worker.deploymentReceiptFilePath, join(stateDirectory, "deployment-receipts", WORKER_SCOPE_SESSION_HASH, "deployments.jsonl"));
   assert.notEqual(worker.idempotencyFilePath, session.idempotencyFilePath);
+  assert.notEqual(worker.runnerJournalFilePath, session.runnerJournalFilePath);
 });
 
 test("state path resolver rejects untrusted or ambiguous identities", () => {
