@@ -116,10 +116,12 @@ export function validateBrokerConfig(value) {
   if (value.schemaVersion !== 1 || !NETWORK.test(value.network) ||
       !Number.isInteger(value.listenPort) || value.listenPort < 1 || value.listenPort > 65535 ||
       !Array.isArray(value.bindings) || value.bindings.length > 32 ||
-      (value.bindings.length === 0 && value.preparation === undefined)) {
+      (value.bindings.length === 0 && !value.preparation)) {
     throw new Error("Runner broker config is invalid");
   }
-  const preparation = value.preparation === undefined ? null : validatePreparationConfig(value.preparation);
+  const preparation = value.preparation === undefined || value.preparation === null
+    ? null
+    : validatePreparationConfig(value.preparation);
   const workers = new Set();
   const containers = new Set();
   const tasks = new Set();
