@@ -240,6 +240,49 @@ test("Runner preparation completes before an implement Task notification", async
   });
 });
 
+test("Assessor preparation ignores non-Task artifact references while binding its Implementor input", async () => {
+  await withRoot(async (root) => {
+    const project = projectBinding();
+    await createProject(project, depsFor(LEADER, root));
+    const implementTask = taskBinding({
+      taskId: "task-implement-with-artifact",
+      taskKind: "implement",
+      assignee: IMPL,
+      sourceSkillId: "implementor-v1",
+    });
+    await dispatchTask(implementTask, depsFor(LEADER, root));
+    const artifactRef = "c".repeat(64);
+    const assessTask = taskBinding({
+      taskId: "task-assess-with-artifact",
+      taskKind: "assess",
+      assignee: ASSESSOR,
+      sourceSkillId: "assessor-v1",
+      inputRefs: [implementTask.taskId, artifactRef],
+    });
+    const deps = depsFor(LEADER, root);
+    const prepared = [];
+    deps.runnerBrokerPreparation = {
+      async prepare(input) {
+        prepared.push(input);
+        return {
+          schemaVersion: 1,
+          status: "ready",
+          taskId: input.taskBinding.taskId,
+          taskBindingDigest: input.taskBinding.contentDigest,
+          bindingDigest: "d".repeat(64),
+          endpointDigest: RUNNER_BROKER_ENDPOINT_DIGEST,
+          replayed: false,
+        };
+      },
+    };
+    await dispatchTask(assessTask, deps);
+    assert.equal(prepared.length, 1);
+    assert.equal(prepared[0].inputTaskBinding.taskId, implementTask.taskId);
+    assert.equal(deps.channel.calls.filter((call) => call.kind === "notifyAssignee").length, 1);
+    assert.equal(deps.evidence.events.some((event) => event.type === "runner.broker.preparation.failed"), false);
+  });
+});
+
 test("Runner preparation failure leaves the Task durable but does not notify the assignee", async () => {
   await withRoot(async (root) => {
     const project = projectBinding();

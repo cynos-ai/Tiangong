@@ -146,10 +146,16 @@ async function prepareRunnerBinding(taskBinding, project, deps) {
         let input;
         try {
           input = await readTaskBinding(inputRef, deps);
-        } catch {
-          const error = new Error("Assessor Runner preparation input is unavailable");
-          error.code = "RUNNER_BROKER_PREPARATION_INPUT_INVALID";
-          throw error;
+        } catch (error) {
+          // Assessor inputRefs may contain an immutable ChangeRevision artifact
+          // reference as well as the Implement Task ID. Only Task bindings are
+          // eligible Runner inputs; an absent non-Task reference is ignored,
+          // while malformed or unreadable Task state still fails closed.
+          if (error?.code === "ENOENT") continue;
+          const invalid = new Error("Assessor Runner preparation input is unavailable");
+          invalid.code = "RUNNER_BROKER_PREPARATION_INPUT_INVALID";
+          invalid.cause = error;
+          throw invalid;
         }
         if (input.projectId === taskBinding.projectId && input.taskKind === "implement" &&
             input.revisionIndex === taskBinding.revisionIndex) candidates.push(input);

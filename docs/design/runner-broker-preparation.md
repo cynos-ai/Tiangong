@@ -44,7 +44,7 @@ The request has exactly these fields:
   "schemaVersion": 1,
   "projectBinding": "verified immutable Project binding",
   "taskBinding": "verified immutable Implementor or Assessor binding",
-  "inputTaskBinding": "null for Implementor; accepted Implementor binding for Assessor"
+  "inputTaskBinding": "null for Implementor; the one accepted Implementor binding for Assessor"
 }
 ```
 
@@ -87,7 +87,9 @@ binding in its broker-owned append/replace-atomic state. The fixed execution
 contract is code-owned: `["node", "probe.mjs"]`, role-derived cwd,
 30-second timeout, and 65536-byte output limit. An Assessor registration is
 allowed only after its exact Implementor binding is registered for the same
-revision.
+revision. Assessor `inputRefs` may also carry a
+ChangeRevision artifact reference; only the single matching Implement Task
+binding is used for preparation, while malformed Task references fail closed.
 
 Registration is idempotent for the exact Task binding and rejects a different
 binding for the same Task. After registration, the broker independently
