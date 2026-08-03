@@ -14,6 +14,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createDeploymentOutcome } from "../agent/deployment/client.mjs";
+import { RUNNER_BROKER_ENDPOINT_DIGEST } from "../agent/runner/preparation-client.mjs";
 import { assertTransitionAllowed, assertResultCurrent, dispositionForRelease, reduceTaskChain } from "../agent/playbook/transition-policy.mjs";
 import { buildProjectBinding, buildTaskBinding, readPlaybookManifest } from "../agent/playbook/resolver.mjs";
 import { projectDisposition } from "../agent/team/project-chain.mjs";
@@ -63,6 +64,19 @@ function depsFor(worker, root, ch) {
     channel: ch,
     sync: { async beforeRead() {}, async afterWrite() {} },
     evidence: evidence(),
+    runnerBrokerPreparation: {
+      async prepare({ taskBinding }) {
+        return {
+          schemaVersion: 1,
+          status: "ready",
+          taskId: taskBinding.taskId,
+          taskBindingDigest: taskBinding.contentDigest,
+          bindingDigest: "a".repeat(64),
+          endpointDigest: RUNNER_BROKER_ENDPOINT_DIGEST,
+          replayed: false,
+        };
+      },
+    },
   };
 }
 function runStore(dir) {

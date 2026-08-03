@@ -71,6 +71,10 @@ export function taskBindingFile(taskId, rootDir) {
   return resolveTeamPath(["tasks", taskId, "tiangong", "task-binding.json"], rootDir);
 }
 
+export function taskDispatchStateFile(taskId, rootDir) {
+  return resolveTeamPath(["tasks", taskId, "tiangong", "dispatch-state.json"], rootDir);
+}
+
 export function taskMetaFile(taskId, rootDir) {
   return resolveTeamPath(["tasks", taskId, "meta.json"], rootDir);
 }

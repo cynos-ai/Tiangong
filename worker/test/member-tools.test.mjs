@@ -7,6 +7,7 @@ import test from "node:test";
 import { sha256 } from "../agent/canonical-json.mjs";
 import { TurnGateState } from "../agent/gates/turn-state.mjs";
 import { RunnerJournal } from "../agent/runner/journal.mjs";
+import { RUNNER_BROKER_ENDPOINT_DIGEST } from "../agent/runner/preparation-client.mjs";
 import { createProjectBinding, createTaskBinding } from "../agent/team/manifest.mjs";
 import { TeamCoordinationGate } from "../agent/team/tool-wrapper.mjs";
 import { createProject, dispatchTask } from "../agent/team/team-task-port.mjs";
@@ -54,6 +55,19 @@ function depsFor(worker, root) {
     channel: channel(),
     sync: { async beforeRead() {}, async afterWrite() {} },
     evidence: ev,
+    runnerBrokerPreparation: {
+      async prepare({ taskBinding }) {
+        return {
+          schemaVersion: 1,
+          status: "ready",
+          taskId: taskBinding.taskId,
+          taskBindingDigest: taskBinding.contentDigest,
+          bindingDigest: "a".repeat(64),
+          endpointDigest: RUNNER_BROKER_ENDPOINT_DIGEST,
+          replayed: false,
+        };
+      },
+    },
     gate: new TeamCoordinationGate(),
     getInvocation: () => ({
       sessionId: `session-${worker}`,
@@ -91,7 +105,7 @@ function project(id) {
     createdAt: T(0),
   });
 }
-function professionalTask(boundProject, id, { taskKind = "design", assignee = DESIGNER, role = "designer" } = {}) {
+function professionalTask(boundProject, id, { taskKind = "design", assignee = DESIGNER, role = "designer", inputRefs = [] } = {}) {
   return createTaskBinding({
     taskId: id,
     projectId: boundProject.projectId,
@@ -104,7 +118,7 @@ function professionalTask(boundProject, id, { taskKind = "design", assignee = DE
     sourceProfileDigest: PROFILE,
     sourceSkillId: `${role}-v1`,
     sourceSkillDigest: SKILL,
-    inputRefs: [],
+    inputRefs,
     createdAt: T(0),
   });
 }
@@ -298,12 +312,19 @@ test("Implementor command runs only through the Task-bound broker and projects m
 test("Assessor test command is independently bound to an assess Task", async () => {
   await withRoot(async (root) => {
     const boundProject = project("proj-assess-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    const sourceTask = professionalTask(boundProject, "task-implement-source", {
+      taskKind: "implement",
+      assignee: "tiangong-implementor",
+      role: "implementor",
+    });
+    await createProject(boundProject, depsFor(LEADER, root));
+    await dispatchTask(sourceTask, depsFor(LEADER, root));
     const task = professionalTask(boundProject, "task-assess-run", {
       taskKind: "assess",
       assignee: "tiangong-assessor",
       role: "assessor",
+      inputRefs: [sourceTask.taskId],
     });
-    await createProject(boundProject, depsFor(LEADER, root));
     await dispatchTask(task, depsFor(LEADER, root));
     const deps = depsFor("tiangong-assessor", root);
     deps.professionalRole = "assessor";

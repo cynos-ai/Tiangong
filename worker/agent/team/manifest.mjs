@@ -182,6 +182,33 @@ export function isTaskBinding(value) {
   }
 }
 
+export function createTaskDispatchState(input) {
+  if (input === null || typeof input !== "object") throw new TypeError("task dispatch state input must be an object");
+  if (input.status !== "preparation_failed" ||
+      typeof input.errorCode !== "string" || !/^[A-Z][A-Z0-9_]{1,63}$/u.test(input.errorCode)) {
+    throw new Error("Task dispatch state is invalid");
+  }
+  return freezeWithDigest({
+    kind: "tiangong.task-dispatch-state",
+    schemaVersion: 1,
+    taskId: demandPattern(input.taskId, "taskId", ID_PATTERN),
+    projectId: demandPattern(input.projectId, "projectId", ID_PATTERN),
+    taskBindingDigest: demandPattern(input.taskBindingDigest, "taskBindingDigest", DIGEST_PATTERN),
+    status: input.status,
+    errorCode: input.errorCode,
+    createdAt: demandTimestamp(input.createdAt, "createdAt"),
+  });
+}
+
+export function isTaskDispatchState(value) {
+  try {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+    return canonicalJson(createTaskDispatchState(value)) === canonicalJson(value);
+  } catch {
+    return false;
+  }
+}
+
 export function createProjectReport(input) {
   if (input === null || typeof input !== "object") throw new TypeError("project report input must be an object");
   if (!["DELIVERED", "FAILED_SAFE", "RECOVERY_REQUIRED"].includes(input.disposition)) {

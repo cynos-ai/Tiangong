@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { sha256 } from "../agent/canonical-json.mjs";
+import { RUNNER_BROKER_ENDPOINT_DIGEST } from "../agent/runner/preparation-client.mjs";
 import { createDeploymentOutcome } from "../agent/deployment/client.mjs";
 import { createProjectBinding, createTaskBinding } from "../agent/team/manifest.mjs";
 import { projectDisposition } from "../agent/team/project-chain.mjs";
@@ -19,6 +20,7 @@ import {
 } from "../agent/team/team-task-port.mjs";
 import { createChangeRevisionRef } from "../agent/work/change-revision-ref.mjs";
 import { createResultEnvelope } from "../agent/work/result-envelope.mjs";
+import { readTaskBinding } from "../agent/team/manifest-store.mjs";
 
 const PLAYBOOK_DIGEST = sha256("playbook-1");
 const CONTRACT_DIGEST = sha256("contract");
@@ -76,6 +78,19 @@ function depsFor(worker, root, extra = {}) {
     channel: channel(),
     sync: sync(),
     evidence: evidence(),
+    runnerBrokerPreparation: {
+      async prepare({ taskBinding }) {
+        return {
+          schemaVersion: 1,
+          status: "ready",
+          taskId: taskBinding.taskId,
+          taskBindingDigest: taskBinding.contentDigest,
+          bindingDigest: "a".repeat(64),
+          endpointDigest: RUNNER_BROKER_ENDPOINT_DIGEST,
+          replayed: false,
+        };
+      },
+    },
     ...extra,
   };
 }
@@ -191,6 +206,82 @@ test("full bound flow writes static-oracle-compatible AgentTeams Project/Task re
   });
 });
 
+test("Runner preparation completes before an implement Task notification", async () => {
+  await withRoot(async (root) => {
+    const project = projectBinding();
+    await createProject(project, depsFor(LEADER, root));
+    const task = taskBinding({ taskId: "task-implement-prepared", taskKind: "implement", assignee: IMPL, sourceSkillId: "implementor-v1" });
+    const order = [];
+    const deps = depsFor(LEADER, root);
+    deps.runnerBrokerPreparation = {
+      async prepare({ taskBinding: prepared }) {
+        order.push("prepare");
+        return {
+          schemaVersion: 1,
+          status: "ready",
+          taskId: prepared.taskId,
+          taskBindingDigest: prepared.contentDigest,
+          bindingDigest: "b".repeat(64),
+          endpointDigest: RUNNER_BROKER_ENDPOINT_DIGEST,
+          replayed: false,
+        };
+      },
+    };
+    deps.channel = {
+      ...deps.channel,
+      async notifyAssignee() {
+        order.push("notify");
+        return { queued: true, delivered: false };
+      },
+    };
+    await dispatchTask(task, deps);
+    assert.deepEqual(order, ["prepare", "notify"]);
+    assert.equal(deps.evidence.events.filter((event) => event.type === "runner.broker.prepared").length, 1);
+  });
+});
+
+test("Runner preparation failure leaves the Task durable but does not notify the assignee", async () => {
+  await withRoot(async (root) => {
+    const project = projectBinding();
+    await createProject(project, depsFor(LEADER, root));
+    const task = taskBinding({ taskId: "task-implement-unprepared", taskKind: "implement", assignee: IMPL, sourceSkillId: "implementor-v1" });
+    const deps = depsFor(LEADER, root);
+    let notifications = 0;
+    let preparations = 0;
+    deps.runnerBrokerPreparation = {
+      async prepare() {
+        preparations += 1;
+        const error = new Error("hidden preparation failure");
+        error.code = "RUNNER_BROKER_PREPARATION_REJECTED";
+        throw error;
+      },
+    };
+    deps.channel = {
+      ...deps.channel,
+      async notifyAssignee() {
+        notifications += 1;
+        return { queued: true, delivered: false };
+      },
+    };
+    await assert.rejects(
+      () => dispatchTask(task, deps),
+      (error) => error.code === "RUNNER_BROKER_PREPARATION_REJECTED",
+    );
+    assert.equal(notifications, 0);
+    assert.equal(preparations, 1);
+    assert.equal((await readTaskBinding(task.taskId, deps)).contentDigest, task.contentDigest);
+    await assert.rejects(
+      () => dispatchTask(task, deps),
+      (error) => error.code === "RUNNER_BROKER_PREPARATION_RETRY_BLOCKED",
+    );
+    assert.equal(preparations, 1);
+    assert.equal(notifications, 0);
+    const failure = deps.evidence.events.find((event) => event.type === "runner.broker.preparation.failed");
+    assert.equal(failure.errorCode, "RUNNER_BROKER_PREPARATION_REJECTED");
+    assert.equal(deps.evidence.events.filter((event) => event.type === "runner.broker.preparation.retry_blocked").length, 1);
+  });
+});
+
 test("an accepted release machine outcome authorizes DELIVERED", async () => {
   await withRoot(async (root) => {
     const project = projectBinding();
@@ -286,6 +377,7 @@ test("Assessor Results must bind the exact accepted Implementor ChangeRevision",
       taskKind: "assess",
       assignee: ASSESSOR,
       sourceSkillId: "assessor-v1",
+      inputRefs: [implementTask.taskId],
     });
     await dispatchTask(assessTask, depsFor(LEADER, root));
     const assessmentInput = {

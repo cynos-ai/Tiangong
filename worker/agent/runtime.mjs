@@ -41,6 +41,7 @@ import { deploymentBrokerEndpointForWorker } from "./deployment/client.mjs";
 import { DeploymentReceiptStore } from "./deployment/receipt-store.mjs";
 import { runnerBrokerEndpointForWorker } from "./runner/broker-client.mjs";
 import { RunnerJournal } from "./runner/journal.mjs";
+import { createRunnerBrokerPreparationClient } from "./runner/preparation-client.mjs";
 import { defaultTiangongRoot } from "./team/shared-fs.mjs";
 import { workerStatePaths } from "./persistence/state-paths.mjs";
 import { createTeamChannel } from "./team/channel-adapter.mjs";
@@ -208,6 +209,9 @@ export class TiangongAgentRuntime {
         getInvocation: turns.current,
         maxRevisionWaves: playbook.maxRevisionWaves,
         getProjectDisposition: (projectId) => projectDisposition(projectId, teamDeps),
+        runnerBrokerPreparation: createRunnerBrokerPreparationClient({
+          endpoint: process.env.TIANGONG_RUNNER_BROKER_PREPARATION_ENDPOINT,
+        }),
       };
       registry = createLeaderToolRegistry({ playbook, deps: teamDeps });
     } else if (["designer", "implementor", "assessor", "operator"].includes(profileBundle.profile.roleId)) {

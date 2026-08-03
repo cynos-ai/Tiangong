@@ -2,11 +2,12 @@ import { mkdir, open, readFile, readdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { canonicalJson } from "../canonical-json.mjs";
-import { isProjectBinding, isProjectReport, isTaskBinding, verifyContentDigest } from "./manifest.mjs";
+import { isProjectBinding, isProjectReport, isTaskBinding, isTaskDispatchState, verifyContentDigest } from "./manifest.mjs";
 import {
   projectBindingFile,
   projectReportFile,
   taskBindingFile,
+  taskDispatchStateFile,
   projectDir,
   taskDir,
   tasksRoot,
@@ -107,6 +108,17 @@ export async function writeTaskBinding(binding, { rootDir } = {}) {
 
 export async function readTaskBinding(taskId, { rootDir } = {}) {
   return readVerified(taskBindingFile(taskId, rootDir), "task binding", isTaskBinding);
+}
+
+export async function writeTaskDispatchState(state, { rootDir } = {}) {
+  if (!isTaskDispatchState(state)) throw new Error("Expected a valid Task dispatch state manifest");
+  const filePath = taskDispatchStateFile(state.taskId, rootDir);
+  await writeImmutable(filePath, state);
+  return filePath;
+}
+
+export async function readTaskDispatchState(taskId, { rootDir } = {}) {
+  return readVerified(taskDispatchStateFile(taskId, rootDir), "task dispatch state", isTaskDispatchState);
 }
 
 export async function writeTaskResult(result, { rootDir } = {}) {

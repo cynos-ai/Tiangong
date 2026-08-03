@@ -8,6 +8,7 @@ import { sha256 } from "../agent/canonical-json.mjs";
 import {
   createProjectBinding,
   createTaskBinding,
+  createTaskDispatchState,
 } from "../agent/team/manifest.mjs";
 import {
   defaultTiangongRoot,
@@ -18,9 +19,11 @@ import {
 import {
   readProjectBinding,
   readTaskBinding,
+  readTaskDispatchState,
   removeTaskTree,
   writeProjectBinding,
   writeTaskBinding,
+  writeTaskDispatchState,
 } from "../agent/team/manifest-store.mjs";
 
 const PLAYBOOK_DIGEST = sha256("playbook-1");
@@ -128,6 +131,23 @@ test("manifest store reports a missing manifest", async () => {
       () => readProjectBinding("proj-missing", { rootDir: root }),
       /No project binding manifest/u,
     );
+  });
+});
+
+test("Task dispatch failure state is immutable and survives a verified read", async () => {
+  await withRoot(async (root) => {
+    const task = sampleTask();
+    const state = createTaskDispatchState({
+      taskId: task.taskId,
+      projectId: task.projectId,
+      taskBindingDigest: task.contentDigest,
+      status: "preparation_failed",
+      errorCode: "RUNNER_BROKER_PREPARATION_REJECTED",
+      createdAt: CREATED_AT,
+    });
+    await writeTaskDispatchState(state, { rootDir: root });
+    assert.deepEqual(await readTaskDispatchState(task.taskId, { rootDir: root }), state);
+    await assert.rejects(() => writeTaskDispatchState(state, { rootDir: root }), /EEXIST|already/u);
   });
 });
 

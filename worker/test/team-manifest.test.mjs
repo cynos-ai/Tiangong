@@ -6,9 +6,11 @@ import {
   createProjectBinding,
   createProjectReport,
   createTaskBinding,
+  createTaskDispatchState,
   isProjectBinding,
   isProjectReport,
   isTaskBinding,
+  isTaskDispatchState,
   verifyBindingDigest,
 } from "../agent/team/manifest.mjs";
 
@@ -164,6 +166,29 @@ test("task binding rejects unsafe objectives, unknown kinds, negative revisions,
     () => sampleTask({ completionContractDigest: "short" }),
     /invalid format/u,
   );
+});
+
+test("Task preparation failure state is immutable, bounded, and digest verified", () => {
+  const state = createTaskDispatchState({
+    taskId: sampleTask().taskId,
+    projectId: sampleTask().projectId,
+    taskBindingDigest: sampleTask().contentDigest,
+    status: "preparation_failed",
+    errorCode: "RUNNER_BROKER_PREPARATION_REJECTED",
+    createdAt: CREATED_AT,
+  });
+  assert.equal(state.kind, "tiangong.task-dispatch-state");
+  assert.equal(isTaskDispatchState(state), true);
+  assert.equal(verifyBindingDigest(state), true);
+  assert.throws(() => createTaskDispatchState({
+    taskId: state.taskId,
+    projectId: state.projectId,
+    taskBindingDigest: state.taskBindingDigest,
+    status: "completed",
+    errorCode: "RUNNER_BROKER_PREPARATION_REJECTED",
+    createdAt: CREATED_AT,
+  }), /invalid/u);
+  assert.equal(isTaskDispatchState({ ...state, errorCode: "raw error" }), false);
 });
 
 test("canonical digest excludes the digest field itself", () => {
