@@ -37,6 +37,8 @@ jobs:
         run: ./scripts/test-agentteams.sh
       - name: Test Worker peer mention smoke contract
         run: make test-peer-mention-smoke-contract
+      - name: Test paused Worker liveness boundary
+        run: make test-pause-worker-boundary
       - name: Test Leader smoke oracle contract
         run: make test-leader-smoke-contract
       - name: Test Reviewer smoke oracle contract
