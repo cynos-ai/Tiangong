@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 ARG AGENTTEAMS_WORKER_IMAGE=higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-worker@sha256:daf587ad042f9564abb2347db5c4205ecc25d1b322e09fdd0d58a2a16c2d5c85
 ARG DOCKER_CLI_IMAGE=docker.io/library/docker@sha256:0135662b510037ea581d99c2e5929c5e01185139c0b86986a418bd4da0b98a44
 FROM ${DOCKER_CLI_IMAGE} AS docker-cli
