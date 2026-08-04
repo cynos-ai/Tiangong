@@ -7,6 +7,7 @@ import { withFileLock } from "../persistence/file-lock.mjs";
 const JOURNAL_VERSION = 2;
 const GENESIS_HASH = "0".repeat(64);
 const KEY_PATTERN = /^[a-f0-9]{64}$/u;
+const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
 const RECONCILIATION_RESOLUTIONS = new Set(["applied", "not_applied", "conflict"]);
 const REASON_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/u;
 
@@ -322,6 +323,20 @@ export class IdempotencyStore {
     });
   }
 
+  async findByOperationDigest(operationDigest) {
+    if (typeof operationDigest !== "string" || !DIGEST_PATTERN.test(operationDigest)) {
+      throw new TypeError("operationDigest must be a lowercase SHA-256 digest");
+    }
+    return this.#read(() => {
+      const matches = Object.entries(this.#state.entries)
+        .filter(([, entry]) => entry.operationDigest === operationDigest);
+      if (matches.length > 1) throw new Error("Multiple idempotency records exist for one operation digest");
+      if (matches.length === 0) return undefined;
+      const [key, entry] = matches[0];
+      return { key, entry: structuredClone(entry) };
+    });
+  }
+
   async listTerminalBefore(before) {
     const cutoff = parseCutoff(before);
     return this.#read(() => Object.entries(this.#state.entries)
@@ -427,7 +442,9 @@ export class IdempotencyStore {
       if (existing?.status === "completed") return { execute: false, entry: structuredClone(existing) };
       if (existing?.status === "executing") return { execute: false, uncertain: true, entry: structuredClone(existing) };
       if (existing && existing.operationDigest !== value.operationDigest) throw new Error("Operation digest mismatch");
-      entries[key] = { ...(existing ?? {}), ...value, status: "executing", startedAt: new Date().toISOString() };
+      entries[key] = existing?.status === "approved"
+        ? { ...existing, status: "executing", startedAt: new Date().toISOString() }
+        : { ...(existing ?? {}), ...value, status: "executing", startedAt: new Date().toISOString() };
       return { execute: true, entry: structuredClone(entries[key]) };
     });
   }

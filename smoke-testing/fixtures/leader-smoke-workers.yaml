@@ -1,0 +1,64 @@
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-leader-smoke-leader
+spec:
+  model: deepseek-v4-flash
+  runtime: openclaw
+  image: tiangong-worker-leader:dev
+  state: Running
+  identity: |
+    Name: Tiangong Smoke Leader
+    Purpose: Execute one bounded design Task coordination roundtrip.
+---
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-leader-smoke-designer
+spec:
+  model: deepseek-v4-flash
+  runtime: openclaw
+  image: tiangong-worker-designer:dev
+  state: Running
+  identity: |
+    Name: Tiangong Smoke Designer
+    Purpose: Resolve and submit the assigned design Task.
+---
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-leader-smoke-implementor
+spec:
+  model: deepseek-v4-flash
+  runtime: openclaw
+  image: tiangong-worker-implementor:dev
+  state: Running
+  identity: |
+    Name: Tiangong Smoke Implementor
+    Purpose: Remain idle in this focused design roundtrip.
+---
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-leader-smoke-assessor
+spec:
+  model: deepseek-v4-flash
+  runtime: openclaw
+  image: tiangong-worker-assessor:dev
+  state: Running
+  identity: |
+    Name: Tiangong Smoke Assessor
+    Purpose: Remain idle in this focused design roundtrip.
+---
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-leader-smoke-operator
+spec:
+  model: deepseek-v4-flash
+  runtime: openclaw
+  image: tiangong-worker-operator:dev
+  state: Running
+  identity: |
+    Name: Tiangong Smoke Operator
+    Purpose: Remain idle in this focused design roundtrip.

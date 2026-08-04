@@ -66,6 +66,26 @@ test("state transitions append and indexed readers observe cross-instance update
   assert.equal((await stat(filePath)).mode & 0o777, 0o600);
 });
 
+test("operation digest lookup reuses one durable approval identity", async (t) => {
+  const filePath = await fixture(t);
+  const store = new IdempotencyStore({ filePath });
+  const value = pending("digest-reuse");
+  const firstKey = key("digest-reuse");
+  await store.putPending(firstKey, value);
+  const found = await store.findByOperationDigest(value.operationDigest);
+  assert.equal(found.key, firstKey);
+  assert.equal(found.entry.approvalId, value.approvalId);
+  const secondKey = key("digest-reuse-second");
+  assert.equal(await store.findByOperationDigest(value.operationDigest).then((entry) => entry.key), firstKey);
+  await store.approve(firstKey, { operationDigest: value.operationDigest, approvedBy: value.requestedBy });
+  await store.beginExecution(firstKey, { ...value, idempotencyKey: secondKey, sessionId: "new-session", turnId: "new-turn", toolCallId: "new-call" });
+  const executing = await store.get(firstKey);
+  assert.equal(executing.status, "executing");
+  assert.equal(executing.sessionId, value.sessionId);
+  assert.equal(executing.turnId, value.turnId);
+  assert.equal(executing.toolCallId, value.toolCallId);
+});
+
 test("invocation and approval indexes reject ambiguous records", async (t) => {
   const filePath = await fixture(t);
   const store = new IdempotencyStore({ filePath });

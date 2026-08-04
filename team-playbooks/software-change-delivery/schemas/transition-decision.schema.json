@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tiangong.invalid/schemas/transition-decision-v1.json",
+  "title": "TransitionDecision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "schemaVersion", "decisionId", "projectId", "playbookDigest", "sourceTaskId", "taskId", "decision", "revisionIndex", "decidedBy", "createdAt", "contentDigest"],
+  "properties": {
+    "kind": { "const": "tiangong.task-decision" },
+    "schemaVersion": { "const": 1 },
+    "decisionId": { "$ref": "#/$defs/id" },
+    "projectId": { "$ref": "#/$defs/id" },
+    "playbookDigest": { "$ref": "#/$defs/digest" },
+    "sourceTaskId": { "$ref": "#/$defs/id" },
+    "taskId": { "$ref": "#/$defs/id" },
+    "decision": { "enum": ["accept", "revision", "blocked"] },
+    "revisionIndex": { "type": "integer", "minimum": 0 },
+    "decidedBy": { "$ref": "#/$defs/id" },
+    "resultDigest": { "$ref": "#/$defs/digest" },
+    "note": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "contentDigest": { "$ref": "#/$defs/digest" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "decision": { "enum": ["accept", "revision"] } }, "required": ["decision"] },
+      "then": { "required": ["resultDigest"] }
+    }
+  ],
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

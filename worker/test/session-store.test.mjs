@@ -87,7 +87,7 @@ test("transcript reset and session-root deletion cannot remove business state", 
   assert.deepEqual(opened.paths, expectedPaths);
 
   const businessFiles = [
-    join(expectedPaths.practiceRunDirectory, "events.jsonl"),
+    join(expectedPaths.workRunDirectory, "run.binding.json"),
     expectedPaths.evidenceFilePath,
     expectedPaths.idempotencyFilePath,
     join(expectedPaths.pendingOperationDirectory, "pending-sentinel"),

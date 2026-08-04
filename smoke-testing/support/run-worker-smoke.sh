@@ -30,12 +30,12 @@ die() {
 }
 
 worker_json() {
-  docker exec "${MANAGER_CONTAINER}" hiclaw get workers "${WORKER_NAME}" -o json 2>/dev/null
+  docker exec "${MANAGER_CONTAINER}" agt get workers "${WORKER_NAME}" -o json 2>/dev/null
 }
 
 purge_smoke_storage() {
   local storage_path="agentteams/agentteams-storage/agents/${WORKER_NAME}/"
-  local mirror_path="/root/hiclaw-fs/agents/${WORKER_NAME}"
+  local mirror_path="/root/agentteams-fs/agents/${WORKER_NAME}"
   docker exec "${CONTROLLER_CONTAINER}" mc rm --recursive --force \
     "${storage_path}" >/dev/null 2>&1
   docker exec "${CONTROLLER_CONTAINER}" rm -rf -- "${mirror_path}"
@@ -75,7 +75,7 @@ cleanup() {
   fi
   if ((created == 1)); then
     log "Deleting temporary Worker ${WORKER_NAME}"
-    docker exec "${MANAGER_CONTAINER}" hiclaw delete worker "${WORKER_NAME}" >/dev/null 2>&1 || cleanup_failed=1
+    docker exec "${MANAGER_CONTAINER}" agt delete worker "${WORKER_NAME}" >/dev/null 2>&1 || cleanup_failed=1
     for _ in $(seq 1 60); do
       if ! worker_json >/dev/null 2>&1 && \
           ! docker ps -a --format '{{.Names}}' | grep -Fqx "${CONTAINER_NAME}"; then
@@ -131,7 +131,7 @@ purge_smoke_storage
 
 docker cp "${MANIFEST}" "${MANAGER_CONTAINER}:${MANAGER_MANIFEST}"
 log "Creating temporary AgentTeams Worker ${WORKER_NAME}"
-docker exec "${MANAGER_CONTAINER}" hiclaw apply -f "${MANAGER_MANIFEST}"
+docker exec "${MANAGER_CONTAINER}" agt apply -f "${MANAGER_MANIFEST}"
 created=1
 
 phase=""
@@ -156,19 +156,19 @@ actual_image="$(docker inspect "${CONTAINER_NAME}" --format '{{.Config.Image}}')
 
 actual_node_version="$(docker exec "${CONTAINER_NAME}" node --version)"
 actual_pi_version="$(docker exec "${CONTAINER_NAME}" pi --version)"
-[[ "${actual_node_version}" == "v22.23.1" ]] || die "Unexpected Node.js version: ${actual_node_version}."
+[[ "${actual_node_version}" == "v22.23.2" ]] || die "Unexpected Node.js version: ${actual_node_version}."
 [[ "${actual_pi_version}" == "0.82.0" ]] || die "Unexpected pi version: ${actual_pi_version}."
 printf 'node_version=%s\npi_version=%s\n' "${actual_node_version}" "${actual_pi_version}"
 
 worker_user_id="$(docker exec "${CONTAINER_NAME}" jq -r \
   '.channels.matrix.userId // empty' \
-  "/root/hiclaw-fs/agents/${WORKER_NAME}/openclaw.json")"
+  "/root/agentteams-fs/agents/${WORKER_NAME}/openclaw.json")"
 room_id="$(docker exec "${CONTAINER_NAME}" printenv AGENTTEAMS_WORKER_ROOM_ID)"
 [[ -n "${worker_user_id}" && -n "${room_id}" ]] || die "Worker Matrix identity is incomplete."
 wait_for_worker_channel 0 || die "Worker Matrix channel did not become ready."
 docker cp "${MATRIX_ROUNDTRIP}" "${MANAGER_CONTAINER}:${MANAGER_MATRIX_ROUNDTRIP}"
 nonce="$(cat /proc/sys/kernel/random/uuid)"
-agent_root="/root/hiclaw-fs/agents/${WORKER_NAME}"
+agent_root="/root/agentteams-fs/agents/${WORKER_NAME}"
 read_target="matrix-read-probe-${nonce}.txt"
 printf '%s' "${nonce}" | docker exec -i "${CONTAINER_NAME}" \
   sh -c 'umask 077; cat >"$1/$2"' _ "${agent_root}" "${read_target}"
@@ -200,7 +200,7 @@ printf 'read_tool_event=pass\nfinal_response=pass\n'
 harness_evidence="$(docker exec "${CONTAINER_NAME}" cat /tmp/tiangong-pi-harness.last-run)"
 grep -Fqx 'harness=tiangong-pi' <<<"${harness_evidence}" || die "Tiangong pi harness was not selected."
 grep -Fqx 'provider=agentteams-gateway' <<<"${harness_evidence}" || die "Unexpected pi harness provider."
-grep -Fqx 'model=qwen3.5-plus' <<<"${harness_evidence}" || die "Unexpected pi harness model."
+grep -Fqx 'model=deepseek-v4-flash' <<<"${harness_evidence}" || die "Unexpected pi harness model."
 grep -Fqx 'status=pass' <<<"${harness_evidence}" || die "Pi harness did not complete successfully."
 printf 'pi_harness_selection=pass\n'
 
@@ -209,8 +209,8 @@ docker exec "${CONTAINER_NAME}" node --input-type=module -e '
   import { readFile, readdir } from "node:fs/promises";
   import { join } from "node:path";
   const worker = process.env.AGENTTEAMS_WORKER_NAME;
-  const configPath = `/root/hiclaw-fs/agents/${worker}/openclaw.json`;
-  const statePath = `/root/hiclaw-fs/agents/${worker}/.tiangong/runtime`;
+  const configPath = `/root/agentteams-fs/agents/${worker}/openclaw.json`;
+  const statePath = `/root/agentteams-fs/agents/${worker}/.tiangong/runtime`;
   const config = JSON.parse(await readFile(configPath, "utf8"));
   const credential = config.models.providers["agentteams-gateway"].apiKey;
   const runtimeDirectories = (await readdir("/tmp", { withFileTypes: true }))

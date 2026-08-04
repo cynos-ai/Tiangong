@@ -4,7 +4,7 @@
 
 ## 项目状态
 
-Tiangong 使用 `v0.y.z` 稳定公开合同。首个公开能力是 Worker-local、static-only Reviewer v1；其明确范围和限制见 [`docs/releases/v0.1.0.md`](docs/releases/v0.1.0.md)。在提交代码前，建议先开 Issue 讨论方向。
+Tiangong 使用 `v0.y.z` 稳定公开合同。`v0.1.0` 是历史 Worker-local 发行版；当前开发线聚焦证据型五角色软件变更交付团队。在提交代码前，建议先开 Issue 讨论方向。
 
 ## 如何贡献
 

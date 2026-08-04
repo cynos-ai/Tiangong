@@ -1,4 +1,6 @@
-ARG AGENTTEAMS_WORKER_IMAGE=higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-worker@sha256:0e91141495af352660b956de49e0581886ac11b38de7381e46e43424b030fdff
+ARG AGENTTEAMS_WORKER_IMAGE=higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-worker@sha256:daf587ad042f9564abb2347db5c4205ecc25d1b322e09fdd0d58a2a16c2d5c85
+ARG DOCKER_CLI_IMAGE=docker.io/library/docker@sha256:0135662b510037ea581d99c2e5929c5e01185139c0b86986a418bd4da0b98a44
+FROM ${DOCKER_CLI_IMAGE} AS docker-cli
 FROM ${AGENTTEAMS_WORKER_IMAGE} AS worker-base
 
 ARG TIANGONG_OTEL_EXPORTER_ENDPOINT=""
@@ -33,10 +35,11 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
     && test "$(stat -c '%F:%u' /usr/lib/git-core)" = "directory:0"
 
 COPY agent/ ./agent/
+COPY --from=team_playbooks . /opt/team-playbooks/
 COPY observability/ ./observability/
 COPY plugin/ ./plugin/
 COPY roles/ ./roles/
-COPY practices/ ./practices/
+COPY skills/ ./skills/
 RUN npm run check-observability \
     && node -e 'import("./plugin/index.mjs").then((module) => { if (module.default?.id !== "tiangong-pi") process.exit(1); })'
 
@@ -49,14 +52,44 @@ ENV PATH="/opt/tiangong-worker/bin:/opt/tiangong-worker/node_modules/.bin:${PATH
     PI_TELEMETRY=0 \
     TIANGONG_OTEL_EXPORTER_ENDPOINT="${TIANGONG_OTEL_EXPORTER_ENDPOINT}"
 
-WORKDIR /root/hiclaw-fs
+WORKDIR /root/agentteams-fs
+
+FROM worker-base AS deployment-service
+WORKDIR /opt/tiangong-worker
+ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/deployment/service.mjs"]
+
+FROM worker-base AS runner-broker
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
+WORKDIR /opt/tiangong-worker
+ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/runner/broker-server.mjs"]
+
+FROM worker-base AS deployment-broker
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
+WORKDIR /opt/tiangong-worker
+ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/deployment/broker-server.mjs"]
 
 FROM worker-base AS kernel
 COPY role-profiles/kernel.json /opt/tiangong-worker/profile.json
 RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role kernel
 
-FROM worker-base AS reviewer
-COPY role-profiles/reviewer.json /opt/tiangong-worker/profile.json
-RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role reviewer
+FROM worker-base AS leader
+COPY role-profiles/leader.json /opt/tiangong-worker/profile.json
+RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role leader
+
+FROM worker-base AS designer
+COPY role-profiles/designer.json /opt/tiangong-worker/profile.json
+RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role designer
+
+FROM worker-base AS implementor
+COPY role-profiles/implementor.json /opt/tiangong-worker/profile.json
+RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role implementor
+
+FROM worker-base AS assessor
+COPY role-profiles/assessor.json /opt/tiangong-worker/profile.json
+RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role assessor
+
+FROM worker-base AS operator
+COPY role-profiles/operator.json /opt/tiangong-worker/profile.json
+RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role operator
 
 FROM kernel AS default

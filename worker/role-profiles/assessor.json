@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "roleId": "assessor",
+  "title": "Tiangong Assessor",
+  "soulId": "assessor-soul-v1",
+  "skillIds": ["assessor-independent-assessment-v1"],
+  "toolIds": ["team_resolve_task", "run_test_command", "team_submit_result"],
+  "gatePolicyId": "assessor-tools-v1"
+}

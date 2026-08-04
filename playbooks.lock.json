@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "playbooks": [
+    {
+      "playbookId": "software-change-delivery",
+      "version": "1.0.0",
+      "contentDigest": "a6ec590c4bbbfbb4370fe33dc8cf4fc26d6acd38988f8e989eec4a4c8f427803",
+      "transitionPolicyId": "software-change-delivery-transition-v1",
+      "transitionPolicyDigest": "e3a292d8dc54e259a3bbe134e43a9f417b311386f30c61ddd246dfb2ad47641f",
+      "fileDigests": {
+        "PLAYBOOK.md": "b7966cad556f5712a6142b9182d73f5bf9f452e6f05e6b022d26fcbcd62bddef",
+        "schemas/project-binding.schema.json": "91e4c87aa6794f92943c8131df4415879a443e62c175544214e41bbc762a57e5",
+        "schemas/task-binding.schema.json": "79fd54a06d17773d22378c200b16556499046f0ced95aaf82fa720eeceac8bc7",
+        "schemas/result-envelope.schema.json": "efbfc8975eff4fa162e714f2332a465f8cce36a2b009b9ee71a2bf6f5ec2cb24",
+        "schemas/transition-decision.schema.json": "dddc9c23b85c000fb8da465a7d1bb3fd179e9f462439b2bf1184c7eabaeda61e",
+        "transition-policy.mjs": "e3a292d8dc54e259a3bbe134e43a9f417b311386f30c61ddd246dfb2ad47641f",
+        "tests/transition-truth-table.json": "dfe0cd7a9aaf588d525dfac0814c5c7e5c87f9a02374f7ffd4e7884ccd53ef02"
+      },
+      "schemaDigests": {
+        "projectBinding": "8c76ec7721dcb57cd95f34ed8b1547f0e257d6e734eb6e6ea664f4ce297e387d",
+        "taskBinding": "9ee0ddba980b7afbc5d7ad81155fbb8be67ae2211b4aa21c5cafecaed32986b3",
+        "resultEnvelope": "44a9134a73b6d15f4b4502762fc887ad3d772b1bd16474a6b1cd160269819282",
+        "transitionDecision": "b2e5de496ad9f691a0fe68971a372a683c1d82d3b0a22f39b0797bbdbe27b040"
+      },
+      "compatibleRoleProfileDigests": {
+        "leader": "cab7c062e9ded86c0fba465ad73b32a57feaa6e7c2a380ac885654f97efdefff",
+        "designer": "232ef7080049e1fae32926caa5bb23c9b758cfc09f7afe83bd3b489e71e5c6b1",
+        "implementor": "ae8dde5f53569dca425b0b050f524aae180c83e6a292c6dfd6311dc77671687e",
+        "assessor": "7894ab0eafc52c4a1620327e9cd1e91c74967387acdc3ad5d4761571284add76",
+        "operator": "42f35bddb4183842c148d4c348506ac5494863646c04b172ea942ceafa2d3ffc"
+      },
+      "compatibleSoulDigests": {
+        "leader-soul-v1": "1e023bd9aa0af90ce044036b81b0976391d03a2831e9578ec00b0ef860a000cb",
+        "designer-soul-v1": "360ff77f2da57456ff9510720176e61db03a0b36de3eeb0f9b1338f28296a3f9",
+        "implementor-soul-v1": "2a206df223179f6557616877e4a96ac0e405b47606f7daee8d5b13f8e8dc7f45",
+        "assessor-soul-v1": "78837abf583f8dcdac3eb3edfc034aff35e9589a9b150915e01a9b861fb9c89c",
+        "operator-soul-v1": "921c2f9ce130fa49c9dbdeaad025f363bb685b6abde11cc3dddc3ce50e416505"
+      },
+      "compatibleSkillDigests": {
+        "leader-coordination-v1": "40bb638aca7292fe5da65ac65071f6d2e70067ac7a50daf2abd7318704a99f34",
+        "designer-design-delivery-v1": "42b3946603971a7ea5d5a6d0fd596698441d06ac149c311c9fe5b4d5832bc477",
+        "implementor-controlled-implementation-v1": "70e3d641f48bb5d509eb9d504bec3174fff58c2de2a8a97f7078e2a5f5abb411",
+        "assessor-independent-assessment-v1": "9cc86efdee42e8d9a72f93dde19034887ab9fff0030875dcda0892e22d29183e",
+        "operator-controlled-release-v1": "7dff663862ff447be965a54f793a3cd0233915bc533cad2431536bc695c4cc8c"
+      },
+      "agentTeamsVersion": "v1.2.0",
+      "teamTaskPortContractVersion": "team-task-port-v1"
+    }
+  ]
+}

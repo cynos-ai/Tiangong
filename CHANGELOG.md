@@ -6,25 +6,20 @@ All notable changes to Tiangong are documented here. Tiangong follows Semantic V
 
 ### Added
 
-- Reviewer ContextPack v2 with a structured advisory `nextAction` derived from the active PracticeRun and validated read Evidence.
-- One practice-owned read-coverage projection shared by completion checkpoint and next-action guidance.
-- Non-model CapturedArtifactStore v1 infrastructure with exact practice-target bindings, canonical envelopes, kernel-locked atomic persistence, bounded replay/read joins, quotas, tamper checks, and a transcript-independent state root.
-- Reviewer v2 with clean-cut append-only `file`, `directory_snapshot`, `commit`, and `git_diff` targets, immutable-at-admission snapshots, target-bound reads, canonical directory/commit manifests, pinned direct textual diffs, and bounded directory/repository inspection.
-- PracticeRun/journal/claim v2, checkpoint `review-v2`, ContextPack v3 target guidance, target-count status/telemetry, and durable Artifact/Evidence replay across restart.
+- Closed five-role Tiangong delivery runtime: Team Leader, Designer, Implementor, Assessor, and Operator.
+- Digest-bound RoleProfiles with code-owned SOUL and Skill resources; environment, prompts, Worker names, and assignment text cannot select authority.
+- Role-neutral WorkRun bindings and guarded hash-chained phase journals for Task-local recovery.
+- Phase 4 revision, approval, rollback, `FAILED_SAFE`/`RECOVERY_REQUIRED`, idempotency, and Leader restart regressions.
 
 ### Security
 
-- Captured Artifact bytes remain outside Evidence and model-visible metadata. They are visible to Worker/storage administrators, have no v1 purge or end-to-end-encryption claim, and grant no authority without the exact current journal/Evidence binding join.
-- Directory admission rejects workspace escape, symlinks, hardlinks, sensitive paths, unsupported text, unstable captures, infeasible coverage, and quota overflow; source change, Artifact tamper, cross-target reuse, stale revision, or lifecycle-lock failure remains fail closed.
-- Local Git admission uses fixed versioned `prlimit`/Git argv, an ambient-config-free synthetic bare mirror, full-OID object verification, bounded pack/loose capture, no shell/network/working-tree/index access, and fail-closed repository, ref, object, patch, Artifact, and inspection checks.
+- Historical Reviewer and Practice code is not an active runtime path or compatibility shim.
+- WorkRun, Evidence, idempotency, pending-operation, and rollback state remain physically separate from pi transcripts; tampering and invalid transitions fail closed.
 
 ### Verification
 
-- Deterministic next-action, fail-closed Evidence, checkpoint regression, restart reconstruction, Reviewer Basic, image/profile, and exact cleanup checks passed.
-- CapturedArtifactStore schema/golden identity, text policy, permission, symlink/tamper, replay/conflict, quota, temporary cleanup, restart/reset, cross-process kernel lock, ID collision, privacy, retention-isolation, and Worker-image lock-binding checks passed.
-- Reviewer v2 deterministic target admission, atomic extension, scope CAS, directory and local-Git ordering/selection, read/inspection replay, coverage, checkpoint, source-race, Artifact-authority, lifecycle-cap, restart, privacy, fixed subprocess-boundary, no-workspace-mutation, and old-schema rejection checks passed.
-- Reviewer v2 fixed image/profile/kind/tool checks, official Matrix directory Basic, local-Git commit/diff Basic, directory journal/Store-derived Recovery Full, Harness, machine oracles, no-source-mutation/external-helper checks, and exact cleanup passed. Local-Git source-removal Recovery Full remains tracked in #41 and is not claimed as passing.
-- The one declared focused Journey canary safely returned `NO_VALID_READ_EVIDENCE`: the model reread A instead of B without false B Evidence, checkpoint, completion, mutation, or a new run.
+- Worker deterministic suite passes 262/262 after the clean cut.
+- RoleProfile/Skill image checks, TeamPlaybook binding checks, Phase 4 recovery tests, deployment recovery tests, and existing Runner/approval boundaries pass.
 
 ## [0.1.0] - 2026-07-31
 

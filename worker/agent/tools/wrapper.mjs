@@ -74,7 +74,7 @@ export function createGatedTool({
       (typeof definition.execute !== "function" && typeof executeOperation !== "function")) {
     throw new TypeError("A tool definition and code-owned executor are required");
   }
-  if (!["read-only", "state-transition", "external-side-effect"].includes(category) ||
+  if (!["read-only", "state-transition", "isolated-execution", "external-side-effect"].includes(category) ||
       sideEffect !== (category === "external-side-effect")) {
     throw new TypeError("Tool execution category conflicts with side-effect semantics");
   }
@@ -114,11 +114,11 @@ export function createGatedTool({
         };
         if (operation?.roleId) {
           Object.assign(common, {
-            practiceRunId: operation.state?.runId ?? null,
+            workRunId: operation.state?.runId ?? operation.workRunId ?? null,
             roleId: operation.roleId,
             profileDigest: operation.profileDigest,
-            practiceId: operation.practiceId,
-            practiceVersion: operation.practiceVersion,
+            skillId: operation.skillId ?? null,
+            skillDigest: operation.skillDigest ?? null,
           });
         }
         await evidence.append({ type: "tool.execution.replayed", ...common, status: "success" });
@@ -168,11 +168,11 @@ export function createGatedTool({
       };
       if (operation?.roleId) {
         Object.assign(common, {
-          practiceRunId: operation.state?.runId ?? null,
+          workRunId: operation.state?.runId ?? operation.workRunId ?? null,
           roleId: operation.roleId,
           profileDigest: operation.profileDigest,
-          practiceId: operation.practiceId,
-          practiceVersion: operation.practiceVersion,
+          skillId: operation.skillId ?? null,
+          skillDigest: operation.skillDigest ?? null,
         });
       }
 
@@ -199,6 +199,35 @@ export function createGatedTool({
       });
 
       if (decision.kind === "deny") throw new GateDeniedError(decision.reason);
+      if (sideEffect && decision.durableExisting) {
+        const durableEntry = await idempotencyStore.get(decision.existingKey);
+        if (!durableEntry || durableEntry.operationDigest !== digest) {
+          throw new Error("Durable approval record does not match the deployment operation");
+        }
+        if (decision.kind === "pending") {
+          const suspended = invocation.turnState.suspend(durableEntry);
+          return pendingResult(
+            { ...decision, approvalId: suspended.approvalId },
+            suspended.idempotencyKey,
+            suspended.operationDigest,
+          );
+        }
+        if (decision.kind === "allow" && durableEntry.status === "completed") {
+          await evidence.append({
+            type: "tool.execution.replayed",
+            ...common,
+            idempotencyKey: durableEntry.idempotencyKey,
+            durable: true,
+          });
+          invocation.observability?.checkpoint("tool.replayed", {
+            "tiangong.tool.name": definition.name,
+          });
+          return resultProjection(structuredClone(durableEntry.replayResult));
+        }
+        key = durableEntry.idempotencyKey;
+        digest = durableEntry.operationDigest;
+        operation = durableEntry.operation;
+      }
       if (decision.kind === "pending") {
         const checkpoint = {
           ...common,
@@ -280,7 +309,8 @@ export function createGatedTool({
               stateEventId: result?.details?.stateEventId ?? null,
               stateEventHash: result?.details?.stateEventHash ?? null,
               stateSequence: result?.details?.stateSequence ?? null,
-              practiceRunId: result?.details?.runId ?? null,
+              workRunId: result?.details?.workRunId ?? result?.details?.runId ?? null,
+              workRunPhase: result?.details?.workRunPhase ?? null,
               runRevision: result?.details?.runRevision ?? null,
             });
           }

@@ -1,0 +1,37 @@
+{
+  "playbookId": "software-change-delivery",
+  "version": "1.0.0",
+  "title": "Software Change Delivery",
+  "summary": "Leader-coordinated, evidence-based delivery of one software change across design, implement, assess, and release.",
+  "roleSlots": [
+    "team_leader",
+    "designer",
+    "implementor",
+    "assessor",
+    "operator"
+  ],
+  "taskKinds": [
+    "design",
+    "implement",
+    "assess",
+    "release"
+  ],
+  "taskKindRoles": {
+    "design": "designer",
+    "implement": "implementor",
+    "assess": "assessor",
+    "release": "operator"
+  },
+  "maxRevisionWaves": 2,
+  "completionSchemaId": "software-change-delivery-result-v1",
+  "schemas": {
+    "projectBinding": "schemas/project-binding.schema.json",
+    "taskBinding": "schemas/task-binding.schema.json",
+    "resultEnvelope": "schemas/result-envelope.schema.json",
+    "transitionDecision": "schemas/transition-decision.schema.json"
+  },
+  "transitionPolicyId": "software-change-delivery-transition-v1",
+  "transitionPolicyPath": "transition-policy.mjs",
+  "transitionTruthTablePath": "tests/transition-truth-table.json",
+  "contentDigest": "a6ec590c4bbbfbb4370fe33dc8cf4fc26d6acd38988f8e989eec4a4c8f427803"
+}

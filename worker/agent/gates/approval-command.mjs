@@ -12,13 +12,14 @@ export function parseApprovalCommand(prompt) {
 
 export function approvalPrompt(checkpoint) {
   const operation = checkpoint.operation;
+  const target = operation.target ?? operation.targetId ?? "bound operation";
   const lines = [
     "Approval required; the tool has not executed.",
     `Approval ID: ${checkpoint.approvalId}`,
     `Policy: ${operation.policyVersion}`,
     `Workspace scope: ${operation.workspaceScope}`,
     `Tool: ${operation.toolName}`,
-    `Target: ${operation.target}`,
+    `Target: ${target}`,
     `Operation digest: ${checkpoint.operationDigest}`,
   ];
   if (operation.input?.contentDigest) {
@@ -35,5 +36,6 @@ export function approvalOutcomeText(action, checkpoint, replayed = false) {
     return `Rejected ${checkpoint.approvalId}. Tool ${checkpoint.operation.toolName} did not execute.`;
   }
   const suffix = replayed ? " The prior completed result was replayed; no duplicate execution occurred." : "";
-  return `Approved and executed ${checkpoint.approvalId}: ${checkpoint.operation.toolName} ${checkpoint.operation.target}.${suffix}`;
+  const target = checkpoint.operation.target ?? checkpoint.operation.targetId ?? "bound operation";
+  return `Approved and executed ${checkpoint.approvalId}: ${checkpoint.operation.toolName} ${target}.${suffix}`;
 }

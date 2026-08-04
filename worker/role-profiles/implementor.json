@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "roleId": "implementor",
+  "title": "Tiangong Implementor",
+  "soulId": "implementor-soul-v1",
+  "skillIds": ["implementor-controlled-implementation-v1"],
+  "toolIds": ["team_resolve_task", "run_command", "team_submit_result"],
+  "gatePolicyId": "implementor-tools-v1"
+}

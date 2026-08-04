@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "playbookId": "software-change-delivery",
+  "version": "1.0.0",
+  "cases": [
+    { "taskKind": "design", "decision": "accept", "revisionIndex": 0, "expected": { "status": "next", "taskKind": "implement", "revisionIndex": 0 } },
+    { "taskKind": "implement", "decision": "accept", "revisionIndex": 0, "expected": { "status": "next", "taskKind": "assess", "revisionIndex": 0 } },
+    { "taskKind": "assess", "decision": "accept", "revisionIndex": 0, "expected": { "status": "next", "taskKind": "release", "revisionIndex": 0 } },
+    { "taskKind": "assess", "decision": "revision", "revisionIndex": 0, "expected": { "status": "next", "taskKind": "implement", "revisionIndex": 1 } },
+    { "taskKind": "assess", "decision": "revision", "revisionIndex": 1, "expected": { "status": "next", "taskKind": "implement", "revisionIndex": 2 } },
+    { "taskKind": "assess", "decision": "revision", "revisionIndex": 2, "expected": { "status": "blocked" } },
+    { "taskKind": "release", "decision": "accept", "revisionIndex": 1, "expected": { "status": "awaiting_deploy", "revisionIndex": 1 } },
+    { "taskKind": "design", "decision": "blocked", "revisionIndex": 0, "expected": { "status": "blocked" } }
+  ]
+}

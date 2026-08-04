@@ -9,9 +9,6 @@ import {
   loadFixedRoleProfileBundle,
 } from "./config/role-profile.mjs";
 import { buildBaseSystemPrompt } from "./context/base-system-prompt.mjs";
-import { CapturedArtifactStore } from "./artifacts/store.mjs";
-import { createReviewerContextExtension } from "./context/reviewer-context.mjs";
-import { projectReviewEvidence } from "./evidence/projection.mjs";
 import { EvidenceRecorder } from "./evidence/recorder.mjs";
 import {
   approvalOutcomeText,
@@ -19,23 +16,35 @@ import {
   parseApprovalCommand,
 } from "./gates/approval-command.mjs";
 import { assertApprovalSubject } from "./gates/approval-subject.mjs";
+import { assertOperationApprovalSubject, deploymentApproverForWorker } from "./gates/explicit-subject-policy.mjs";
 import { PolicyGate } from "./gates/policy-gate.mjs";
-import { ReviewerPracticeGate } from "./gates/reviewer-practice-gate.mjs";
 import { IdempotencyStore } from "./idempotency/store.mjs";
 import { ModelGateway } from "./model-gateway.mjs";
 import { PeerReplyRouter } from "./peer-reply-router.mjs";
 import { parsePeerTransportCommand, PeerTransportProbe } from "./peer-transport-probe.mjs";
 import { createAgentTeamsPendingStorage } from "./pending-operation/agentteams-storage.mjs";
 import { PendingOperationStore } from "./pending-operation/store.mjs";
-import { PracticeRunService } from "./practices/practice-run-service.mjs";
 import {
   assertSessionCapacity,
   defaultStateDirectory,
   PersistentSessionStore,
 } from "./session-store.mjs";
 import { createCoreToolRegistry } from "./tools/registry.mjs";
-import { createReviewerToolRegistry } from "./work/reviewer-tools.mjs";
-import { completedReviewTargetFacts, renderCompletedReview, workStatusForRun } from "./work/status.mjs";
+import { readPlaybookManifest } from "./playbook/resolver.mjs";
+import { deploymentBrokerEndpointForWorker } from "./deployment/client.mjs";
+import { DeploymentReceiptStore } from "./deployment/receipt-store.mjs";
+import { runnerBrokerEndpointForWorker } from "./runner/broker-client.mjs";
+import { RunnerJournal } from "./runner/journal.mjs";
+import { createRunnerBrokerPreparationClient } from "./runner/preparation-client.mjs";
+import { defaultTiangongRoot } from "./team/shared-fs.mjs";
+import { workerStatePaths } from "./persistence/state-paths.mjs";
+import { createTeamChannel } from "./team/channel-adapter.mjs";
+import { projectDisposition } from "./team/project-chain.mjs";
+import { createTeamSync } from "./team/sync-adapter.mjs";
+import { TeamCoordinationGate } from "./team/tool-wrapper.mjs";
+import { createLeaderToolRegistry } from "./work/leader-tools.mjs";
+import { createMemberToolRegistry } from "./work/member-tools.mjs";
+import { WorkRunStore } from "./work/work-run-store.mjs";
 import { createTurnResult } from "./turn-contract.mjs";
 import { TurnContextController } from "./turn-context.mjs";
 import { createPiSessionTraceObserver } from "../observability/pi-session-tracing.mjs";
@@ -48,6 +57,12 @@ function assistantText(message) {
     .filter((part) => part?.type === "text" && typeof part.text === "string")
     .map((part) => part.text)
     .join("");
+}
+
+function stableErrorCode(error, fallback) {
+  return typeof error?.code === "string" && /^[A-Z][A-Z0-9_]{0,63}$/u.test(error.code)
+    ? error.code
+    : fallback;
 }
 
 function usageFromMessage(message) {
@@ -116,12 +131,17 @@ function appendDeterministicAssistantMessage(state, content) {
 export class TiangongAgentRuntime {
   #gateway;
   #profileBundle;
+  #approvalConfig;
   #sessions = new Map();
   #stores = new Map();
 
-  constructor({ configPath, provider, profileBundle }) {
+  constructor({ configPath, provider, profileBundle, deploymentApprover = deploymentApproverForWorker({
+    configured: process.env.TIANGONG_DEPLOYMENT_APPROVER,
+    env: process.env,
+  }) }) {
     this.#gateway = new ModelGateway({ configPath, provider });
     this.#profileBundle = profileBundle ? Promise.resolve(profileBundle) : null;
+    this.#approvalConfig = Object.freeze({ deploymentApprover });
   }
 
   #trustedProfileBundle() {
@@ -140,41 +160,69 @@ export class TiangongAgentRuntime {
     const evidence = new EvidenceRecorder({
       filePath: persisted.paths.evidenceFilePath,
     });
+    const sharedPaths = workerStatePaths(stateDirectory);
     const idempotencyStore = new IdempotencyStore({
-      filePath: persisted.paths.idempotencyFilePath,
+      filePath: sharedPaths.idempotencyFilePath,
     });
     const pendingOperationStore = new PendingOperationStore({
-      directory: persisted.paths.pendingOperationDirectory,
+      directory: sharedPaths.pendingOperationDirectory,
       remoteStorage: createAgentTeamsPendingStorage({ workspaceDir: request.workspaceDir }),
     });
+    const workRunStore = new WorkRunStore({ directory: sharedPaths.workRunDirectory });
     const turns = new TurnContextController();
-    let practiceService = null;
     let gate;
     let registry;
-    if (profileBundle.profile.roleId === "reviewer") {
-      const artifactStore = new CapturedArtifactStore({
-        stateDirectory,
-        sessionId: request.sessionId,
-      });
-      practiceService = new PracticeRunService({
-        sessionId: request.sessionId,
-        workspaceDir: request.workspaceDir,
-        profileBundle,
-        journalPath: persisted.paths.practiceRunJournalPath,
-        snapshotPath: persisted.paths.practiceRunSnapshotPath,
-        protectedDirectory: persisted.paths.practiceRunProtectedDirectory,
-        artifactStore,
-        localGitLockPath: persisted.paths.localGitLockPath,
-      });
-      gate = new ReviewerPracticeGate({ profileBundle });
-      registry = createReviewerToolRegistry({
-        workspaceDir: request.workspaceDir,
-        service: practiceService,
-        gate,
+    if (profileBundle.runtimeKind === "leader") {
+      gate = new TeamCoordinationGate();
+      const playbook = readPlaybookManifest("software-change-delivery");
+      const teamDeps = {
+        rootDir: defaultTiangongRoot(),
+        env: process.env,
+        channel: createTeamChannel({ evidence }),
+        sync: createTeamSync(),
         evidence,
+        gate,
         getInvocation: turns.current,
-        inspectionLockPath: persisted.paths.reviewInspectionLockPath,
-      });
+        maxRevisionWaves: playbook.maxRevisionWaves,
+        getProjectDisposition: (projectId) => projectDisposition(projectId, teamDeps),
+        runnerBrokerPreparation: createRunnerBrokerPreparationClient({
+          endpoint: process.env.TIANGONG_RUNNER_BROKER_PREPARATION_ENDPOINT,
+        }),
+      };
+      registry = createLeaderToolRegistry({ playbook, deps: teamDeps });
+    } else if (profileBundle.runtimeKind === "member") {
+      gate = new TeamCoordinationGate();
+      const teamDeps = {
+        rootDir: defaultTiangongRoot(),
+        env: process.env,
+        channel: createTeamChannel({ evidence }),
+        sync: createTeamSync(),
+        evidence,
+        gate,
+        getInvocation: turns.current,
+        professionalRole: profileBundle.profile.roleId,
+        sourceProfileDigest: profileBundle.profileDigest,
+        sourceSkillId: profileBundle.skills[0].id,
+        sourceSkillDigest: profileBundle.skills[0].digest,
+        idempotencyStore,
+        pendingOperationStore,
+        workRunStore,
+        deploymentBrokerEndpoint: deploymentBrokerEndpointForWorker({
+          role: profileBundle.profile.roleId,
+          env: process.env,
+        }),
+        deploymentReceiptStore: profileBundle.profile.roleId === "operator"
+          ? new DeploymentReceiptStore({ filePath: sharedPaths.deploymentReceiptFilePath })
+          : undefined,
+        runnerBrokerEndpoint: runnerBrokerEndpointForWorker({
+          role: profileBundle.profile.roleId,
+          env: process.env,
+        }),
+        runnerJournal: ["implementor", "assessor"].includes(profileBundle.profile.roleId)
+          ? new RunnerJournal({ filePath: sharedPaths.runnerJournalFilePath })
+          : undefined,
+      };
+      registry = createMemberToolRegistry({ deps: teamDeps });
     } else {
       gate = new PolicyGate({ idempotencyStore });
       registry = createCoreToolRegistry({
@@ -201,15 +249,7 @@ export class TiangongAgentRuntime {
       noPromptTemplates: true,
       noSkills: true,
       noThemes: true,
-      extensionFactories: [
-        providerTrace.extension,
-        ...(practiceService ? [createReviewerContextExtension({
-          service: practiceService,
-          turns,
-          evidence,
-          profileDigest: profileBundle.profileDigest,
-        })] : []),
-      ],
+      extensionFactories: [providerTrace.extension],
       settingsManager,
       systemPrompt: buildBaseSystemPrompt(profileBundle),
     });
@@ -234,7 +274,7 @@ export class TiangongAgentRuntime {
       evidence,
       idempotencyStore,
       pendingOperationStore,
-      practiceService,
+      workRunStore,
       turns,
       registry,
       peerReplies: new PeerReplyRouter(),
@@ -282,7 +322,12 @@ export class TiangongAgentRuntime {
     const match = await state.idempotencyStore.findApproval(command.approvalId);
     if (!match) throw new Error("Approval request not found");
     const checkpoint = match.entry;
-    const actorId = assertApprovalSubject(checkpoint, request.actor.id);
+    const actorId = assertOperationApprovalSubject({
+      checkpoint,
+      actorId: request.actor.id,
+      config: this.#approvalConfig,
+      assertRequester: assertApprovalSubject,
+    });
 
     if (command.action === "reject") {
       await state.idempotencyStore.reject(match.key, {
@@ -321,6 +366,8 @@ export class TiangongAgentRuntime {
       return routedTurnResult(request, state, route, { text });
     }
 
+    const definition = state.registry.definitions().find((tool) => tool.name === checkpoint.toolName);
+    if (!definition) throw new Error("Approved tool is no longer registered");
     const wasCompleted = checkpoint.status === "completed";
     const recovered = wasCompleted
       ? undefined
@@ -339,6 +386,22 @@ export class TiangongAgentRuntime {
       actorId,
     });
     if (wasCompleted) {
+      if (typeof definition.onApprovalResult === "function") {
+        try {
+          await definition.onApprovalResult(checkpoint.replayResult);
+        } catch (error) {
+          await state.evidence.append({
+            type: "approval.completion_handoff_failed",
+            sessionId: checkpoint.sessionId,
+            turnId: checkpoint.turnId,
+            toolCallId: checkpoint.toolCallId,
+            approvalId: checkpoint.approvalId,
+            operationDigest: checkpoint.operationDigest,
+            errorCode: stableErrorCode(error, "APPROVAL_COMPLETION_HANDOFF_FAILED"),
+          }).catch(() => {});
+          throw error;
+        }
+      }
       try {
         await state.pendingOperationStore.remove(match.key);
       } catch {
@@ -371,8 +434,6 @@ export class TiangongAgentRuntime {
       return routedTurnResult(request, state, route, { text, hadPotentialSideEffects: true });
     }
 
-    const definition = state.registry.definitions().find((tool) => tool.name === checkpoint.toolName);
-    if (!definition) throw new Error("Approved tool is no longer registered");
     const params = recovered.arguments;
     state.turns.begin({
       sessionId: checkpoint.sessionId,
@@ -384,7 +445,23 @@ export class TiangongAgentRuntime {
       observability,
     });
     try {
-      await definition.execute(checkpoint.toolCallId, params, request.abortSignal);
+      const executionResult = await definition.execute(checkpoint.toolCallId, params, request.abortSignal);
+      if (typeof definition.onApprovalResult === "function") {
+        try {
+          await definition.onApprovalResult(executionResult);
+        } catch (error) {
+          await state.evidence.append({
+            type: "approval.completion_handoff_failed",
+            sessionId: checkpoint.sessionId,
+            turnId: checkpoint.turnId,
+            toolCallId: checkpoint.toolCallId,
+            approvalId: checkpoint.approvalId,
+            operationDigest: checkpoint.operationDigest,
+            errorCode: stableErrorCode(error, "APPROVAL_COMPLETION_HANDOFF_FAILED"),
+          }).catch(() => {});
+          throw error;
+        }
+      }
     } finally {
       state.turns.end();
     }
@@ -441,20 +518,6 @@ export class TiangongAgentRuntime {
     const command = parseApprovalCommand(request.prompt);
     if (command) return this.#handleApproval(request, state, route, command, observability);
 
-    let runBefore;
-    if (state.practiceService) {
-      try {
-        runBefore = await state.practiceService.latestForActor(request.actor.id);
-        await state.practiceService.activeForActor(request.actor.id, { required: false });
-      } catch (error) {
-        if (!["RUN_REQUESTER_MISMATCH", "AUTHENTICATED_ACTOR_REQUIRED"].includes(error?.code)) throw error;
-        return routedTurnResult(request, state, route, {
-          text: "Request denied: authenticated requester is unavailable or does not own the active work.",
-          workStatus: workStatusForRun(null),
-        });
-      }
-    }
-
     assertSessionCapacity(state.sessionManager.getEntries(), request.prompt);
     state.session.setActiveToolsByName(request.toolsEnabled ? state.registry.names() : []);
     let finalMessage;
@@ -503,39 +566,14 @@ export class TiangongAgentRuntime {
           operationDigest: pending.operationDigest,
           idempotencyKey: pending.idempotencyKey,
         },
-        workStatus: state.practiceService ? workStatusForRun(null) : undefined,
       });
     }
 
-    const runAfter = state.practiceService
-      ? await state.practiceService.latestForActor(request.actor.id)
-      : undefined;
-    let text = assistantText(finalMessage);
-    if (runAfter?.status === "done" && runAfter.lastCheckpoint?.allSatisfied &&
-        (runBefore?.runId !== runAfter.runId || runBefore.status !== "done" ||
-          runAfter.lastCheckpoint.completionTurnId === request.turnId)) {
-      const claim = await state.practiceService.claimForRun(runAfter);
-      const projection = await projectReviewEvidence({
-        evidence: state.evidence,
-        boundary: {
-          sequence: runAfter.lastCheckpoint.evidenceTerminalSequence,
-          hash: runAfter.lastCheckpoint.evidenceTerminalHash,
-        },
-        run: runAfter,
-        targetCapture: state.practiceService.targetCapture,
-        artifactStore: state.practiceService.artifactStore,
-      });
-      text = renderCompletedReview({
-        run: runAfter,
-        claim,
-        targetFacts: completedReviewTargetFacts(runAfter, projection),
-      });
-    }
+    const text = assistantText(finalMessage);
     if (text === "") throw new Error(state.session.agent.state.errorMessage || "pi returned no assistant text");
     return routedTurnResult(request, state, route, {
       text,
       usage: usageFromMessage(finalMessage),
-      workStatus: state.practiceService ? workStatusForRun(runAfter ?? runBefore) : undefined,
     });
   }
 
