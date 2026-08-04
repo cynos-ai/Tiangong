@@ -62,6 +62,14 @@ The report is valid only because it records Project/Task/Result bindings,
 Runner receipts, the deployment journal, approval/idempotency identity,
 requester delivery, and exact cleanup separately.
 
+Before sending the first professional Task notification, run the read-only
+lower-layer readiness probe and require `professional_readiness=pass`:
+
+```bash
+smoke-testing/support/professional-readiness-probe.sh \
+  <team> <leader> <designer> <implementor> <assessor> <operator>
+```
+
 ## Run R: revision and safe rollback
 
 Use different Team, Project, Target, approval, and Evidence identities. Inject

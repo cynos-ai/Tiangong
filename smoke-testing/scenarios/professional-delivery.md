@@ -41,7 +41,11 @@
 - **Setup:** use a fresh five-role Team, a run-owned fixed Runner broker and
   fixture, and a run-owned disposable deployment target initialized with a
   previous digest. The configured provider/model and runner command remain
-  fixed for the run.
+  fixed for the run. Before the first Task notification, run the read-only
+  `smoke-testing/support/professional-readiness-probe.sh` and require its
+  `professional_readiness=pass` result; it verifies AgentTeams phase/roster,
+  Worker containers, OpenClaw health, Worker room bindings, and authenticated
+  Team-room membership without exposing bearer tokens.
 - **Prompt sequence:** the requester starts one Project; the Leader dispatches
   the design, implementation, assessment, and release Tasks. The authenticated
   explicit subject approves the one pending operation; replaying the same
@@ -67,7 +71,9 @@
   previous digest yields `FAILED_SAFE`.
 - **Setup:** use a new Team, Project, target, approval identity, and Evidence
   root. Use a deterministic fault mode in the disposable deployment service;
-  do not ask a model to invent a failure.
+  do not ask a model to invent a failure. Run the read-only
+  `smoke-testing/support/professional-readiness-probe.sh` after all five
+  Workers and the Team report ready and before the first Task notification.
 - **Prompt sequence:** the first Implementor/Assessor wave reaches
   `REVISION_NEEDED`; the Leader creates a new Implementor and Assessor Task
   with a new revision index and digest; the final release enters approval;
@@ -90,7 +96,8 @@
   first run.
 - **Setup:** after F1 and F2 cleanup, start from a clean AgentTeams state and
   create new run-owned identities. Do not reuse Tasks, approvals, journals,
-  artifacts, or target state.
+  artifacts, or target state. Run the same read-only readiness probe before
+  the first Task notification.
 - **Expected observations:** S and R reach equivalent dispositions and the
   same binding/authorization/side-effect invariants. Artifact digests and
   model prose may differ between runs.
