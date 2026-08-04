@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import test from "node:test";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import { join } from "node:path";
 
 import { canonicalJson, sha256 } from "../agent/canonical-json.mjs";
 import {
@@ -77,8 +80,10 @@ test("createWorkRun validates, freezes, and digests the binding", () => {
   assert.match(run.contentDigest, /^[0-9a-f]{64}$/);
 });
 
-test("createWorkRun rejects an unsupported role", () => {
+test("createWorkRun rejects an unsupported role and unsafe identifiers", () => {
   assert.throws(() => createWorkRun(baseRunInput({ role: "wizard" })), /Unsupported role/);
+  assert.throws(() => createWorkRun(baseRunInput({ runId: "../escape" })), /runId has an invalid format/);
+  assert.throws(() => createWorkRun(baseRunInput({ skillId: "../escape" })), /skillId has an invalid format/);
 });
 
 test("the phase machine allows the linear path and rejects illegal jumps", () => {
@@ -186,6 +191,17 @@ test("replay detects a broken hash chain and a tampered event digest", () => {
   // sequence gap
   const gapped = { ...event, sequence: 2 };
   assert.throws(() => replayWorkRun(binding, [gapped]), /sequence gap/);
+  // A forged event with a fresh digest still cannot bypass the phase machine.
+  const forgedTransition = { ...event, toPhase: "finalized" };
+  forgedTransition.contentDigest = recompute(forgedTransition, {});
+  assert.throws(() => replayWorkRun(binding, [forgedTransition]), /digest is invalid/);
+});
+
+test("WorkRunStore rejects unsafe run paths", async () => {
+  const fs = new MemFs();
+  const store = new WorkRunStore({ directory: "/work", fs });
+  await assert.rejects(() => store.read("../escape"), /bounded WorkRun identifier/);
+  await assert.rejects(() => store.latestForTask("../escape"), /bounded WorkRun identifier/);
 });
 
 test("latestForTask returns the most recent run for a task", async () => {
@@ -196,6 +212,39 @@ test("latestForTask returns the most recent run for a task", async () => {
   const latest = await store.latestForTask("task-1");
   assert.equal(latest.binding.runId, "run-b");
   assert.equal(await store.latestForTask("nope"), undefined);
+});
+
+test("latestForTask rejects symlinked and misnamed binding files", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "tiangong-work-run-"));
+  try {
+    const store = new WorkRunStore({ directory });
+    const binding = await store.open(baseRunInput());
+    await symlink(join(directory, "run-1.binding.json"), join(directory, "foreign.binding.json"));
+    await assert.rejects(() => store.latestForTask("task-1"), /regular file/);
+    await rm(join(directory, "foreign.binding.json"));
+    await writeFile(join(directory, "foreign.binding.json"), `${JSON.stringify(binding.binding)}\n`, { mode: 0o600 });
+    await assert.rejects(() => store.latestForTask("task-1"), /file name does not match runId/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("WorkRunStore serializes concurrent transitions", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "tiangong-work-run-lock-"));
+  try {
+    const first = new WorkRunStore({ directory });
+    const second = new WorkRunStore({ directory });
+    await first.open(baseRunInput());
+    const outcomes = await Promise.allSettled([
+      first.transition("run-1", "executing"),
+      second.transition("run-1", "executing"),
+    ]);
+    assert.equal(outcomes.filter((outcome) => outcome.status === "fulfilled").length, 1);
+    assert.equal(outcomes.filter((outcome) => outcome.status === "rejected").length, 1);
+    assert.equal((await first.read("run-1")).events.length, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 function recompute(event, over) {

@@ -185,6 +185,12 @@ test("an assignee resolves its Task and submits a bound ResultEnvelope", async (
     assert.equal(details(resolved).taskKind, "design");
     assert.match(details(resolved).workRunId, /^work-[0-9a-f]{48}$/u);
     assert.equal(details(resolved).workRunPhase, "executing");
+    assert.equal(
+      designerDeps.evidence.events.find((event) =>
+        event.type === "tool.execution.completed" && event.toolName === "team_resolve_task",
+      ).executionCategory,
+      "state-transition",
+    );
 
     const out = await registry.definitions().find((tool) => tool.name === "team_submit_result")
       .execute("submit-1", {
@@ -200,6 +206,36 @@ test("an assignee resolves its Task and submits a bound ResultEnvelope", async (
     assert.equal(workRun.phase, "finalized");
     assert.ok(designerDeps.channel.calls.some((call) => call.kind === "notifyLeader"));
     assert.ok(designerDeps.evidence.events.some((event) => event.type === "gate.decided"));
+  });
+});
+
+test("a WorkRun binding conflict blocks the assigned Task", async () => {
+  await withRoot(async (root) => {
+    const boundProject = project("proj-m3-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    const task = designTask(boundProject, "task-design-m3");
+    await createProject(boundProject, depsFor(LEADER, root));
+    await dispatchTask(task, depsFor(LEADER, root));
+
+    const designerDeps = depsFor(DESIGNER, root);
+    designerDeps.workRunStore = new WorkRunStore({ directory: join(root, "work-runs") });
+    await designerDeps.workRunStore.open({
+      runId: `work-${sha256(task.contentDigest).slice(0, 48)}`,
+      taskId: task.taskId,
+      role: "designer",
+      skillId: task.sourceSkillId,
+      skillDigest: task.sourceSkillDigest,
+      objective: "tampered objective",
+      scope: JSON.stringify({ taskId: task.taskId, inputRefs: task.inputRefs }),
+      completionContractDigest: task.completionContractDigest,
+      inputRefs: task.inputRefs,
+      createdAt: T(1),
+    });
+    const registry = createMemberToolRegistry({ deps: designerDeps });
+    await assert.rejects(
+      () => registry.definitions().find((tool) => tool.name === "team_resolve_task")
+        .execute("resolve-conflict", { taskId: task.taskId }),
+      /WorkRun binding conflicts with the assigned Task/u,
+    );
   });
 });
 

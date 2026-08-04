@@ -55,13 +55,34 @@ function workRunScope(taskBinding) {
   return canonicalJson({ taskId: taskBinding.taskId, inputRefs: taskBinding.inputRefs });
 }
 
+function assertWorkRunBinding(state, taskBinding, sourceRole) {
+  const binding = state?.binding;
+  const expected = {
+    runId: workRunIdForTask(taskBinding),
+    taskId: taskBinding.taskId,
+    role: sourceRole,
+    skillId: taskBinding.sourceSkillId,
+    skillDigest: taskBinding.sourceSkillDigest,
+    objective: taskBinding.objective,
+    scope: workRunScope(taskBinding),
+    completionContractDigest: taskBinding.completionContractDigest,
+    inputRefs: taskBinding.inputRefs,
+  };
+  const matches = Object.entries(expected).every(([field, value]) =>
+    field === "inputRefs"
+      ? canonicalJson(binding?.[field]) === canonicalJson(value)
+      : binding?.[field] === value);
+  if (!matches) throw new Error("Existing WorkRun binding conflicts with the assigned Task");
+  return state;
+}
+
 async function ensureWorkRun(taskBinding, deps, sourceRole) {
   if (!deps.workRunStore) return undefined;
   const existing = await deps.workRunStore.latestForTask(taskBinding.taskId);
   if (existing) {
-    if (existing.binding.role !== sourceRole || existing.binding.skillId !== taskBinding.sourceSkillId ||
-        existing.binding.completionContractDigest !== taskBinding.completionContractDigest) {
-      throw new Error("Existing WorkRun binding conflicts with the assigned Task");
+    assertWorkRunBinding(existing, taskBinding, sourceRole);
+    if (existing.phase === "abandoned" || existing.phase === "conflict") {
+      throw new Error(`WorkRun ${existing.binding.runId} requires recovery before task progress can continue`);
     }
     if (existing.phase === "planned" || existing.phase === "blocked") {
       return deps.workRunStore.transition(existing.binding.runId, "executing", { reason: "task-resolved" });
@@ -85,10 +106,15 @@ async function ensureWorkRun(taskBinding, deps, sourceRole) {
     : opened;
 }
 
-async function finalizeWorkRun(taskBinding, deps) {
+async function finalizeWorkRun(taskBinding, deps, sourceRole) {
   if (!deps.workRunStore) return undefined;
   let state = await deps.workRunStore.latestForTask(taskBinding.taskId);
-  if (!state || state.terminal) return state;
+  if (!state) throw new Error("WorkRun is required before submitting a Task result");
+  assertWorkRunBinding(state, taskBinding, sourceRole);
+  if (state.terminal) return state;
+  if (state.phase === "blocked" || state.phase === "conflict") {
+    throw new Error(`WorkRun ${state.binding.runId} cannot finalize from ${state.phase}`);
+  }
   if (state.phase === "executing" || state.phase === "waiting_approval") {
     state = await deps.workRunStore.transition(state.binding.runId, "verifying", { reason: "result-submitted" });
   }
@@ -199,6 +225,7 @@ function createDeploymentTool(deps) {
     const identity = loadWorkerIdentity(deps);
     const sourceRole = findRoleForWorker(project.roleBindings, identity.workerName);
     if (sourceRole !== "operator") throw new Error("Approved release Result has no operator role binding");
+    await ensureWorkRun(taskBinding, deps, sourceRole);
     const result = createResultEnvelope({
       taskId: taskBinding.taskId,
       projectId: taskBinding.projectId,
@@ -220,7 +247,7 @@ function createDeploymentTool(deps) {
       createdAt: nowISO(deps),
     });
     const submitted = await submitResult(result, deps);
-    await finalizeWorkRun(taskBinding, deps);
+    await finalizeWorkRun(taskBinding, deps, sourceRole);
     await deps.evidence?.append?.({
       type: "deployment.release.result.autosubmitted",
       taskId: result.taskId,
@@ -298,6 +325,7 @@ function registerRunnerTool(registry, deps) {
       if (taskBinding.taskKind !== expectedTaskKind) {
         throw new Error(`${toolName} is not authorized for the assigned Task kind`);
       }
+      await ensureWorkRun(taskBinding, deps, role);
       if (typeof deps.runnerBrokerEndpoint !== "string" || !deps.runnerJournal) throw runnerUnavailable();
       const executor = createRunnerBrokerExecutor({
         endpoint: deps.runnerBrokerEndpoint,
@@ -472,6 +500,7 @@ export function createMemberToolRegistry({ deps }) {
           throw new Error("Release result requires a durable deployment receipt from this Worker");
         }
       }
+      const workRun = await ensureWorkRun(taskBinding, deps, sourceRole);
       const result = createResultEnvelope({
         taskId: taskBinding.taskId,
         projectId: taskBinding.projectId,
@@ -495,12 +524,12 @@ export function createMemberToolRegistry({ deps }) {
         createdAt: nowISO(deps),
       });
       const submitted = await submitResult(result, deps);
-      const workRun = await finalizeWorkRun(taskBinding, deps);
+      const finalizedWorkRun = await finalizeWorkRun(taskBinding, deps, sourceRole);
       return ok({
         taskId: submitted.result.taskId,
         producer: submitted.result.producer,
-        workRunId: workRun?.binding.runId ?? null,
-        workRunPhase: workRun?.phase ?? null,
+        workRunId: (finalizedWorkRun ?? workRun)?.binding.runId ?? null,
+        workRunPhase: (finalizedWorkRun ?? workRun)?.phase ?? null,
         replayed: submitted.replayed,
         notified: submitted.notified,
         notificationQueued: submitted.notificationQueued,
@@ -516,9 +545,9 @@ export function createMemberToolRegistry({ deps }) {
       gate: deps.gate,
       evidence: deps.evidence,
       getInvocation: deps.getInvocation,
-      category: definition.name === "team_resolve_task"
-        ? "read-only"
-        : (["run_command", "run_test_command"].includes(definition.name) ? "isolated-execution" : "state-transition"),
+      category: ["run_command", "run_test_command"].includes(definition.name)
+        ? "isolated-execution"
+        : "state-transition",
     }));
   }
   return wrapped;

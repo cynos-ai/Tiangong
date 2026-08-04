@@ -9,7 +9,7 @@
 import { canonicalJson, sha256 } from "../canonical-json.mjs";
 import { TEAM_ROLES } from "../team/manifest.mjs";
 
-const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+export const WORK_RUN_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/u;
 const ISO_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/u;
 const ROLE_SET = new Set(TEAM_ROLES);
@@ -74,10 +74,10 @@ export function createWorkRun(input) {
   const record = {
     kind: "tiangong.work-run",
     schemaVersion: 1,
-    runId: demandPattern(input.runId, "runId", ID_PATTERN),
-    taskId: demandPattern(input.taskId, "taskId", ID_PATTERN),
+    runId: demandPattern(input.runId, "runId", WORK_RUN_ID_PATTERN),
+    taskId: demandPattern(input.taskId, "taskId", WORK_RUN_ID_PATTERN),
     role: input.role,
-    skillId: demandString(input.skillId, "skillId"),
+    skillId: demandPattern(input.skillId, "skillId", WORK_RUN_ID_PATTERN),
     objective: demandString(input.objective, "objective"),
     scope: demandString(input.scope, "scope"),
     completionContractDigest: demandPattern(input.completionContractDigest, "completionContractDigest", DIGEST_PATTERN),
@@ -102,7 +102,7 @@ export function createPhaseEvent(input) {
   const record = {
     kind: "tiangong.work-run-phase",
     schemaVersion: 1,
-    runId: demandPattern(input.runId, "runId", ID_PATTERN),
+    runId: demandPattern(input.runId, "runId", WORK_RUN_ID_PATTERN),
     sequence: input.sequence,
     fromPhase: input.fromPhase,
     toPhase: input.toPhase,
@@ -139,7 +139,13 @@ export function replayWorkRun(binding, events) {
       throw new Error(`Phase event ${event.sequence} expects from ${event.fromPhase} but run is at ${phase}`);
     }
     const { contentDigest, ...rest } = event;
-    if (contentDigest !== sha256(canonicalJson(rest))) {
+    let verifiedEvent;
+    try {
+      verifiedEvent = createPhaseEvent(rest);
+    } catch {
+      throw new Error(`Phase event ${event.sequence} digest is invalid`);
+    }
+    if (canonicalJson(verifiedEvent) !== canonicalJson(event)) {
       throw new Error(`Phase event ${event.sequence} digest is invalid`);
     }
     if (event.previousHash !== previousHash) {
