@@ -40,7 +40,7 @@ jobs:
           cache: npm
           cache-dependency-path: worker/package-lock.json
       - name: Install locked Worker dependencies for contract checks
-        run: npm ci --prefix worker --omit=dev --ignore-scripts --no-audit --no-fund
+        run: npm ci --prefix worker --omit=dev --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/
       - name: Test AgentTeams bootstrap
         run: ./scripts/test-agentteams.sh
       - name: Test Worker peer mention smoke contract
@@ -82,7 +82,7 @@ jobs:
           cache-dependency-path: worker/package-lock.json
       - name: Install locked Worker dependencies
         run: |
-          npm ci --prefix worker --omit=dev --ignore-scripts --no-audit --no-fund
+          npm ci --prefix worker --omit=dev --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/
           npm run --prefix worker patch-dependencies
       - name: Test Worker runtime
         run: |
@@ -94,7 +94,7 @@ jobs:
       - name: Audit production dependencies
         run: |
           set +e
-          npm audit --prefix worker --omit=dev --json > /tmp/worker-audit.json
+          npm audit --prefix worker --omit=dev --registry=https://registry.npmjs.org/ --json > /tmp/worker-audit.json
           audit_status=$?
           set -e
           if [[ "${audit_status}" -ne 0 ]]; then
