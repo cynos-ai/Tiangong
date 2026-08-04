@@ -13,6 +13,7 @@ import { canonicalJson, sha256 } from "../canonical-json.mjs";
 const MATRIX_USER_ID = /^@[A-Za-z0-9._=\/-]+:[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/u;
 const WORKER_NAME = /^[A-Za-z0-9._:-]{1,128}$/u;
 const DIGEST = /^[0-9a-f]{64}$/u;
+const MATRIX_EVENT_ID = /^\$[^\s]{1,255}$/u;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_JOINED_ROOMS = 16;
 const MAX_JOINED_MEMBERS = 64;
@@ -158,13 +159,16 @@ async function send(config, operation) {
     bindingDigest: operation.bindingDigest,
     recipient: operation.recipient,
   }))}`;
-  await matrixRequest(
+  const response = await matrixRequest(
     config,
     "PUT",
     `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${transactionId}`,
     eventBody(operation),
   );
-  return { roomIdDigest: sha256(roomId), transactionId };
+  if (typeof response.event_id !== "string" || !MATRIX_EVENT_ID.test(response.event_id)) {
+    throw new Error("Matrix send response did not contain a valid event ID");
+  }
+  return { roomIdDigest: sha256(roomId), transactionId, eventIdDigest: sha256(response.event_id) };
 }
 
 export function createTeamChannel({ evidence, env = process.env, fetchImpl = globalThis.fetch } = {}) {
@@ -196,9 +200,15 @@ export function createTeamChannel({ evidence, env = process.env, fetchImpl = glo
       bindingDigest: operation.bindingDigest,
       roomIdDigest: sent.roomIdDigest,
       transactionId: sent.transactionId,
+      eventIdDigest: sent.eventIdDigest,
       delivered: true,
     });
-    return { queued: false, delivered: true, transactionId: sent.transactionId };
+    return {
+      queued: false,
+      delivered: true,
+      transactionId: sent.transactionId,
+      eventIdDigest: sent.eventIdDigest,
+    };
   }
 
   return Object.freeze({

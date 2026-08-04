@@ -78,12 +78,24 @@ test("createTeamChannel delivers idempotent authenticated Matrix mentions and re
     ["team.mention.delivered", "team.mention.delivered", "team.result.notice.delivered", "team.requester.report.delivered"],
   );
   assert.equal(events[0].recipientDigest.length, 64);
+  assert.equal(events[0].eventIdDigest.length, 64);
   assert.equal(events[3].disposition, "DELIVERED");
   assert.deepEqual([assignee.delivered, leader.delivered, report.delivered], [true, true, true]);
   assert.equal(assignee.transactionId, replay.transactionId);
+  assert.equal(assignee.eventIdDigest.length, 64);
   const puts = calls.filter((call) => call.options.method === "PUT");
   assert.equal(puts.length, 4);
   assert.equal(puts[0].url, puts[1].url);
+  const assignmentBody = JSON.parse(puts[0].options.body);
+  assert.deepEqual(assignmentBody["m.mentions"], { user_ids: ["@tiangong-designer:example.test"] });
+  assert.match(assignmentBody.body, /project=proj-1 task=task-1/u);
+  const resultBody = JSON.parse(puts[2].options.body);
+  assert.deepEqual(resultBody["m.mentions"], { user_ids: ["@tiangong-leader:example.test"] });
+  assert.match(resultBody.body, /Result submitted: project=proj-1 task=task-1/u);
+  const requesterBody = JSON.parse(puts[3].options.body);
+  assert.deepEqual(requesterBody["m.mentions"], { user_ids: ["@manager:example.test"] });
+  assert.match(requesterBody.body, /Project terminal: project=proj-1 disposition=DELIVERED/u);
+  assert.ok(!JSON.stringify(events).includes("$event"));
   assert.ok(!JSON.stringify(events).includes("secret-token"));
 });
 
@@ -137,6 +149,26 @@ test("Matrix replay uses the same transaction after an Evidence interruption", a
   const puts = calls.filter((call) => call.options.method === "PUT");
   assert.equal(puts.length, 2);
   assert.equal(puts[0].url, puts[1].url);
+});
+
+test("Matrix delivery fails closed when the server omits its event ID", async () => {
+  const events = [];
+  const calls = [];
+  const baseFetch = matrixFetch(calls);
+  const fetchImpl = async (url, options) => {
+    const result = await baseFetch(url, options);
+    return options.method === "PUT" ? response({}) : result;
+  };
+  const channel = createTeamChannel({
+    evidence: { async append(event) { events.push(event); } },
+    env: CHANNEL_ENV,
+    fetchImpl,
+  });
+  await assert.rejects(
+    () => channel.notifyAssignee("tiangong-designer", "proj-1", "task-1", "a".repeat(64)),
+    /valid event ID/u,
+  );
+  assert.deepEqual(events, []);
 });
 
 test("createTeamChannel fails closed without durable Evidence", () => {

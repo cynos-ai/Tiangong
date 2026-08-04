@@ -20,7 +20,7 @@ import {
 } from "../agent/team/team-task-port.mjs";
 import { createChangeRevisionRef } from "../agent/work/change-revision-ref.mjs";
 import { createResultEnvelope } from "../agent/work/result-envelope.mjs";
-import { readTaskBinding } from "../agent/team/manifest-store.mjs";
+import { readTaskBinding, readTaskResult } from "../agent/team/manifest-store.mjs";
 
 const PLAYBOOK_DIGEST = sha256("playbook-1");
 const CONTRACT_DIGEST = sha256("contract");
@@ -41,12 +41,12 @@ function channel() {
     calls,
     async assertTeamIdentity(role) { return { team: "team-1", role }; },
     async assertTeamRoster() { return { roomId: "!team:example.test", roomIdDigest: "f".repeat(64), memberDigests: [] }; },
-    async notifyAssignee(worker, taskId, digest) {
-      calls.push({ kind: "notifyAssignee", worker, taskId, digest });
+    async notifyAssignee(worker, projectId, taskId, digest) {
+      calls.push({ kind: "notifyAssignee", worker, projectId, taskId, digest });
       return { queued: true, delivered: false };
     },
-    async notifyLeader(taskId, digest) {
-      calls.push({ kind: "notifyLeader", taskId, digest });
+    async notifyLeader(worker, projectId, taskId, digest) {
+      calls.push({ kind: "notifyLeader", worker, projectId, taskId, digest });
       return { queued: true, delivered: false };
     },
     async reportRequester() {
@@ -237,6 +237,63 @@ test("Runner preparation completes before an implement Task notification", async
     await dispatchTask(task, deps);
     assert.deepEqual(order, ["prepare", "notify"]);
     assert.equal(deps.evidence.events.filter((event) => event.type === "runner.broker.prepared").length, 1);
+  });
+});
+
+test("Task notification waits for Team identity readiness before any dispatch side effect", async () => {
+  await withRoot(async (root) => {
+    const project = projectBinding();
+    await createProject(project, depsFor(LEADER, root));
+    const task = taskBinding({ taskId: "task-readiness-gated" });
+    const deps = depsFor(LEADER, root);
+    const readinessError = new Error("Team identity is still starting");
+    readinessError.code = "AGENTTEAMS_TEAM_IDENTITY_NOT_READY";
+    deps.channel = {
+      ...deps.channel,
+      async waitForTeamIdentity() { throw readinessError; },
+    };
+    await assert.rejects(
+      () => dispatchTask(task, deps),
+      (error) => error === readinessError,
+    );
+    assert.deepEqual(deps.channel.calls, []);
+    assert.deepEqual(deps.sync.calls, []);
+    await assert.rejects(
+      () => readTaskBinding(task.taskId, deps),
+      (error) => error.code === "ENOENT",
+    );
+  });
+});
+
+test("Result notification follows durable result persistence and Worker readiness", async () => {
+  await withRoot(async (root) => {
+    const { project, task } = await setup(root);
+    const result = resultEnvelope(task);
+    const order = [];
+    const deps = depsFor(DESIGNER, root);
+    deps.sync = {
+      async beforeRead() { order.push("beforeRead"); },
+      async afterWrite() { order.push("afterWrite"); },
+    };
+    deps.channel = {
+      ...deps.channel,
+      async waitForTeamIdentity(role) {
+        order.push(`identity:${role}`);
+        return { team: "team-1", role };
+      },
+      async notifyLeader(worker, projectId, taskId, digest) {
+        order.push("notify");
+        assert.equal(worker, project.roleBindings.team_leader);
+        assert.equal(projectId, project.projectId);
+        assert.equal(taskId, task.taskId);
+        const persisted = await readTaskResult(task.taskId, deps);
+        assert.equal(persisted.contentDigest, digest);
+        return { queued: true, delivered: false };
+      },
+    };
+    const submitted = await submitResult(result, deps);
+    assert.equal(submitted.notificationQueued, true);
+    assert.deepEqual(order, ["identity:worker", "beforeRead", "afterWrite", "notify"]);
   });
 });
 
