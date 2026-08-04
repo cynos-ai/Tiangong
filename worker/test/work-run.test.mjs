@@ -73,10 +73,11 @@ class MemFs {
 }
 
 test("createWorkRun validates, freezes, and digests the binding", () => {
-  const run = createWorkRun(baseRunInput());
+  const run = createWorkRun(baseRunInput({ inputRefs: ["input-1"] }));
   assert.equal(run.kind, "tiangong.work-run");
   assert.equal(run.phase, "planned");
   assert.equal(Object.isFrozen(run), true);
+  assert.deepEqual(run.inputRefs, ["input-1"]);
   assert.match(run.contentDigest, /^[0-9a-f]{64}$/);
 });
 

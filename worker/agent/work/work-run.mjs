@@ -49,7 +49,7 @@ function demandPattern(value, name, pattern) {
 function frozenStringArray(input, name) {
   if (input === undefined) return Object.freeze([]);
   if (!Array.isArray(input)) throw new TypeError(`${name} must be an array`);
-  const items = input.map((item) => demandPattern(item, `${name} entry`, ID_PATTERN));
+  const items = input.map((item) => demandPattern(item, `${name} entry`, WORK_RUN_ID_PATTERN));
   if (new Set(items).size !== items.length) throw new Error(`${name} contains duplicates`);
   return Object.freeze(items);
 }
