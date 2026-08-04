@@ -13,7 +13,7 @@ LABEL org.opencontainers.image.source="https://github.com/cynos-ai/Tiangong"
 WORKDIR /opt/tiangong-worker
 COPY package.json package-lock.json ./
 COPY scripts/ ./scripts/
-RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/ \
     && npm run patch-dependencies \
     && ln -s /opt/openclaw ./node_modules/openclaw \
     && npm cache clean --force \

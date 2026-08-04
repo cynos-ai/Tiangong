@@ -17,8 +17,8 @@ if (braceExpansionManifest.version !== "5.0.9") {
   throw new Error(`Expected brace-expansion 5.0.9, resolved ${braceExpansionManifest.version}`);
 }
 const undiciManifest = requireFromPi("undici/package.json");
-if (undiciManifest.version !== "8.9.0") {
-  throw new Error(`Expected undici 8.9.0, resolved ${undiciManifest.version}`);
+if (undiciManifest.version !== "8.10.0") {
+  throw new Error(`Expected undici 8.10.0, resolved ${undiciManifest.version}`);
 }
 
-console.log("Verified patched brace-expansion 5.0.9 and undici 8.9.0 resolutions for pi.");
+console.log("Verified patched brace-expansion 5.0.9 and undici 8.10.0 resolutions for pi.");
