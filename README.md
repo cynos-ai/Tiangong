@@ -84,6 +84,8 @@ The Worker resource retains AgentTeams' supported `openclaw` runtime, Node.js ve
 
 Optional, backend-neutral Worker tracing is documented in [`docs/observability.md`](./docs/observability.md). It is disabled by default, exports only allowlisted sanitized OpenTelemetry spans, and remains diagnostic telemetry rather than authorization or hash-chained Evidence. The bounded [`peer transport diagnostic`](./docs/peer-transport-diagnostic.md) keeps exact ping/pong markers in deterministic Worker code while deriving targets only from authenticated effective Matrix allowlists; it is transport-only and is not Team Work or Evidence.
 
+The evidence-first five-role walkthrough is documented in [`docs/demo-script.md`](./docs/demo-script.md). `make check-demo-contract` independently checks the fixed profiles, Skill binding/evaluation boundary, Playbook lock, and Runner fixture before a real smoke run.
+
 The current runtime is intentionally constrained:
 
 - it claims only the Worker-scoped `agentteams-gateway` provider and disables OpenClaw's fallback to another agent harness;
