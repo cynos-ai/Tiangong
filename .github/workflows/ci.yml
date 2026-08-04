@@ -87,19 +87,14 @@ jobs:
           npm audit --prefix worker --omit=dev --json > /tmp/worker-audit.json
           audit_status=$?
           set -e
-          if [[ "${audit_status}" -eq 0 ]]; then
-            exit 0
+          if [[ "${audit_status}" -ne 0 ]]; then
+            jq '{metadata: .metadata.vulnerabilities, vulnerabilities: (.vulnerabilities | keys)}' \
+              /tmp/worker-audit.json >&2 || true
+            exit "${audit_status}"
           fi
-          # pi 0.82.0's published shrinkwrap records brace-expansion 5.0.7.
-          # patch-dependencies removes that nested copy and verifies runtime
-          # resolution to the directly locked 5.0.8 security fix.
-          jq -e '
-            .metadata.vulnerabilities.total == 1 and
-            (.vulnerabilities | keys) == ["brace-expansion"] and
-            .vulnerabilities["brace-expansion"].via[0].url ==
-              "https://github.com/advisories/GHSA-mh99-v99m-4gvg"
-          ' /tmp/worker-audit.json >/dev/null
+          jq -e '.metadata.vulnerabilities.total == 0' /tmp/worker-audit.json >/dev/null
           test ! -e worker/node_modules/@earendil-works/pi-coding-agent/node_modules/brace-expansion
+          test ! -e worker/node_modules/@earendil-works/pi-coding-agent/node_modules/undici
       - name: Build Worker image
         run: ./scripts/build-worker-image.sh
       - name: Test disposable execution and deployment boundaries

@@ -8,11 +8,13 @@ umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
-readonly REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+readonly REPO_ROOT
 readonly BROKER_SCRIPT="${REPO_ROOT}/scripts/runner-broker.sh"
 readonly NETWORK="agentteams-net"
 readonly LABEL="runner-preparation-smoke"
-readonly SUFFIX="$(printf '%s' "$$-${RANDOM}-$(date +%s%N)" | sha256sum | cut -c1-10)"
+SUFFIX="$(printf '%s' "$$-${RANDOM}-$(date +%s%N)" | sha256sum | cut -c1-10)"
+readonly SUFFIX
 readonly LEADER_NAME="prep-smoke-${SUFFIX}-leader"
 readonly IMPLEMENTOR_NAME="prep-smoke-${SUFFIX}-implementor"
 readonly ASSESSOR_NAME="prep-smoke-${SUFFIX}-assessor"
@@ -22,7 +24,8 @@ readonly ASSESSOR_CONTAINER="agentteams-worker-${ASSESSOR_NAME}"
 readonly PROJECT_ID="prep-smoke-${SUFFIX}-project"
 readonly IMPLEMENT_TASK_ID="prep-smoke-${SUFFIX}-implement"
 readonly ASSESS_TASK_ID="prep-smoke-${SUFFIX}-assess"
-readonly TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/tiangong-runner-preparation-smoke.XXXXXX")"
+TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/tiangong-runner-preparation-smoke.XXXXXX")"
+readonly TEMP_ROOT
 readonly IMPLEMENT_REQUEST="${TEMP_ROOT}/implement.json"
 readonly ASSESS_REQUEST="${TEMP_ROOT}/assess.json"
 readonly IMAGE_LEADER="tiangong-worker-leader:dev"

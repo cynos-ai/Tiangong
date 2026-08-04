@@ -88,6 +88,7 @@ unpause_worker() {
     fi
   fi
 }
+# shellcheck disable=SC2317,SC2329
 interrupt_worker() {
   unpause_worker
   exit 130

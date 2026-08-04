@@ -9,7 +9,8 @@ umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
-readonly REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+readonly REPO_ROOT
 readonly NETWORK="agentteams-net"
 readonly BROKER="tiangong-runner-broker"
 readonly BROKER_IMAGE="tiangong-runner-broker:dev"
