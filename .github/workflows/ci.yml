@@ -33,6 +33,14 @@ jobs:
           shell_scripts=(scripts/*.sh smoke-testing/support/*.sh worker/bin/*)
           for script in "${shell_scripts[@]}"; do bash -n "${script}"; done
           shellcheck "${shell_scripts[@]}"
+      - name: Set up Node.js for contract checks
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.23.2
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - name: Install locked Worker dependencies for contract checks
+        run: npm ci --prefix worker --omit=dev --ignore-scripts --no-audit --no-fund
       - name: Test AgentTeams bootstrap
         run: ./scripts/test-agentteams.sh
       - name: Test Worker peer mention smoke contract
