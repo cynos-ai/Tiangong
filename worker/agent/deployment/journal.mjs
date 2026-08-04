@@ -260,7 +260,8 @@ export class DeploymentJournal {
       }
       const requiredDigest = phase === "post_deploy" ? stage.artifactDigest : stage.rollbackDigest;
       if (expectedDigest !== requiredDigest) throw new Error("Deployment verification digest does not match the operation");
-      const injectedFailure = (phase === "post_deploy" && this.#config.faultMode === "post_verify_fail") ||
+      const injectedFailure = (phase === "post_deploy" &&
+        ["post_verify_fail", "rollback_fail", "verify_previous_fail"].includes(this.#config.faultMode)) ||
         (phase === "previous" && this.#config.faultMode === "verify_previous_fail");
       const healthy = state.currentDigest === expectedDigest && !injectedFailure;
       const event = Object.freeze({

@@ -53,6 +53,30 @@ test("deployment broker rolls back a failed post-verification and reports FAILED
   }, "post_verify_fail");
 });
 
+test("deployment broker reports RECOVERY_REQUIRED when rollback fails", async () => {
+  await fixture(async ({ endpoint, journal }) => {
+    const result = await createDeploymentBrokerClient({ brokerEndpoint: endpoint, taskId: "release-a" }).deploy({ actionDigest: ACTION, changeRevisionRef: revision });
+    assert.equal(result.outcome.disposition, "RECOVERY_REQUIRED");
+    assert.equal(result.outcome.postVerifyHealthy, false);
+    assert.equal(result.outcome.rollbackPerformed, false);
+    assert.equal(result.outcome.previousVerifyHealthy, null);
+    assert.equal(result.outcome.currentDigest, ARTIFACT);
+    assert.equal((await journal.status()).currentDigest, ARTIFACT);
+  }, "rollback_fail");
+});
+
+test("deployment broker reports RECOVERY_REQUIRED when the previous digest cannot be verified", async () => {
+  await fixture(async ({ endpoint, journal }) => {
+    const result = await createDeploymentBrokerClient({ brokerEndpoint: endpoint, taskId: "release-a" }).deploy({ actionDigest: ACTION, changeRevisionRef: revision });
+    assert.equal(result.outcome.disposition, "RECOVERY_REQUIRED");
+    assert.equal(result.outcome.postVerifyHealthy, false);
+    assert.equal(result.outcome.rollbackPerformed, true);
+    assert.equal(result.outcome.previousVerifyHealthy, false);
+    assert.equal(result.outcome.currentDigest, PREVIOUS);
+    assert.equal((await journal.status()).currentDigest, PREVIOUS);
+  }, "verify_previous_fail");
+});
+
 test("deployment broker rejects a forged revision without touching the target", async () => {
   await fixture(async ({ endpoint, journal }) => {
     const forged = createChangeRevisionRef({ kind: "tiangong.change-revision-ref", schemaVersion: 1, producerTaskId: "implement-a", artifactPath: "revision.tar", artifactDigest: "e".repeat(64), revision: 0 });
