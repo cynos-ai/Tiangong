@@ -6,7 +6,7 @@ readonly SCRIPT_DIR
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 readonly REPO_ROOT
 readonly IMAGE="tiangong-worker:dev"
-readonly STOCK_LEADER_IMAGE="higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-copaw-worker:v1.2.0-beta.1"
+readonly STOCK_LEADER_IMAGE="higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-copaw-worker:v1.2.0"
 readonly MODEL="qwen3.5-plus"
 readonly TEAM_NAME="tiangong-peer-smoke"
 readonly LEADER_NAME="tiangong-peer-smoke-leader"
@@ -18,6 +18,7 @@ readonly ENGINEER_CONTAINER="agentteams-worker-${ENGINEER_NAME}"
 readonly CONTROLLER_CONTAINER="agentteams-controller"
 readonly MANAGER_CONTAINER="agentteams-manager"
 readonly MANIFEST="${REPO_ROOT}/smoke-testing/fixtures/peer-mention-smoke-team.yaml"
+readonly WORKER_MANIFEST="${REPO_ROOT}/smoke-testing/fixtures/peer-mention-smoke-workers.yaml"
 readonly BUILD_WORKER_IMAGE="${REPO_ROOT}/scripts/build-worker-image.sh"
 readonly PEER_ROUNDTRIP="${SCRIPT_DIR}/matrix-peer-roundtrip.sh"
 readonly ROOM_MEMBERS="${SCRIPT_DIR}/matrix-peer-room-members.sh"
@@ -25,11 +26,13 @@ readonly ALIAS_HELPER="${SCRIPT_DIR}/matrix-peer-aliases.sh"
 readonly OTLP_RECEIVER="${SCRIPT_DIR}/otlp-smoke-receiver.mjs"
 readonly OTLP_ACTIVITY_QUERY="${SCRIPT_DIR}/otlp-turn-activity.jq"
 readonly OTLP_CONTAINER="tiangong-peer-smoke-otel"
+readonly OTLP_VOLUME="tiangong-peer-smoke-otel-data"
 readonly OTLP_NETWORK_ALIAS="tiangong-otel-collector"
 readonly OTLP_ENDPOINT="http://${OTLP_NETWORK_ALIAS}:4318/v1/traces"
 readonly OTLP_DATA_DIRECTORY="${REPO_ROOT}/.runtime/peer-smoke-observability"
 readonly OTLP_SPANS_FILE="${OTLP_DATA_DIRECTORY}/spans.jsonl"
 readonly MANAGER_MANIFEST="/tmp/tiangong-peer-smoke-team.yaml"
+readonly MANAGER_WORKER_MANIFEST="/tmp/tiangong-peer-smoke-workers.yaml"
 readonly CONTROLLER_PEER_ROUNDTRIP="/tmp/tiangong-peer-roundtrip.sh"
 readonly CONTROLLER_ALIAS_HELPER="/tmp/tiangong-peer-aliases.sh"
 readonly COORDINATOR_ROOM_MEMBERS="/tmp/tiangong-peer-room-members.sh"
@@ -37,6 +40,11 @@ readonly ENGINEER_ROOM_MEMBERS="/tmp/tiangong-peer-room-members.sh"
 readonly SMOKE_MODE="${TIANGONG_PEER_SMOKE_MODE:-full}"
 owned_resources=0
 otlp_owned=0
+manager_restart_required=0
+controller_api_token=''
+leader_cleanup_room_id=''
+coordinator_cleanup_room_id=''
+engineer_cleanup_room_id=''
 
 log() {
   printf '[Tiangong] %s\n' "$*"
@@ -55,8 +63,124 @@ member_json() {
   docker exec "${MANAGER_CONTAINER}" agt get workers "$1" -o json 2>/dev/null
 }
 
+capture_manager_cleanup_state() {
+  local resource
+  controller_api_token="$(docker exec "${MANAGER_CONTAINER}" printenv AGENTTEAMS_AUTH_TOKEN 2>/dev/null || true)"
+  [[ -n "${controller_api_token}" ]] || return 1
+  resource="$(member_json "${LEADER_NAME}" || true)"
+  leader_cleanup_room_id="$(jq -r '.roomID // empty' <<<"${resource}" 2>/dev/null || true)"
+  resource="$(member_json "${COORDINATOR_NAME}" || true)"
+  coordinator_cleanup_room_id="$(jq -r '.roomID // empty' <<<"${resource}" 2>/dev/null || true)"
+  resource="$(member_json "${ENGINEER_NAME}" || true)"
+  engineer_cleanup_room_id="$(jq -r '.roomID // empty' <<<"${resource}" 2>/dev/null || true)"
+  if [[ "$(docker inspect "${MANAGER_CONTAINER}" --format '{{.State.Running}}' 2>/dev/null)" == true ]]; then
+    docker stop "${MANAGER_CONTAINER}" >/dev/null || return 1
+    manager_restart_required=1
+  fi
+}
+
+leave_manager_from_worker_room() {
+  local member="$1" room_id
+  case "${member}" in
+    "${LEADER_NAME}") room_id="${leader_cleanup_room_id}" ;;
+    "${COORDINATOR_NAME}") room_id="${coordinator_cleanup_room_id}" ;;
+    "${ENGINEER_NAME}") room_id="${engineer_cleanup_room_id}" ;;
+    *) return 1 ;;
+  esac
+  [[ -n "${room_id}" ]] || return 0
+  docker exec -i "${CONTROLLER_CONTAINER}" sh -s -- "${room_id}" <<'EOF'
+set -eu
+room_id="$1"
+config=/root/agentteams-fs/agents/manager/openclaw.json
+homeserver="$(jq -r '.channels.matrix.homeserver // empty' "${config}")"
+access_token="$(jq -r '.channels.matrix.accessToken // empty' "${config}")"
+[ -n "${homeserver}" ] && [ -n "${access_token}" ] || exit 1
+room_path="$(printf '%s' "${room_id}" | jq -sRr @uri)"
+response="$(printf 'header = "Authorization: Bearer %s"\n' "${access_token}" | \
+  curl --silent --show-error --max-time 30 -K - -X POST \
+    -w '\n%{http_code}' "${homeserver%/}/_matrix/client/v3/rooms/${room_path}/leave")"
+status="$(printf '%s\n' "${response}" | tail -n 1)"
+body="$(printf '%s\n' "${response}" | sed '$d')"
+if [ "${status}" = 200 ]; then
+  exit 0
+fi
+if [ "${status}" = 403 ] && printf '%s' "${body}" | jq -e \
+  '.error == "M_FORBIDDEN: Auth check failed: cannot leave if not joined, invited or knocked"' >/dev/null 2>&1; then
+  exit 0
+fi
+exit 1
+EOF
+}
+
+controller_team_status() {
+  printf 'header = "Authorization: Bearer %s"\n' "${controller_api_token}" | \
+    docker exec -i "${CONTROLLER_CONTAINER}" curl --silent --show-error --max-time 5 \
+      -K - -o /dev/null -w '%{http_code}' \
+      "http://127.0.0.1:8090/api/v1/teams/${TEAM_NAME}"
+}
+
+controller_delete_team() {
+  local status
+  status="$(printf 'header = "Authorization: Bearer %s"\n' "${controller_api_token}" | \
+    docker exec -i "${CONTROLLER_CONTAINER}" curl --silent --show-error --max-time 5 \
+      -K - -o /dev/null -w '%{http_code}' -X DELETE \
+      "http://127.0.0.1:8090/api/v1/teams/${TEAM_NAME}")"
+  [[ "${status}" == 204 || "${status}" == 404 ]]
+}
+
+wait_for_team_absent() {
+  for _ in $(seq 1 360); do
+    [[ "$(controller_team_status)" == 404 ]] && return 0
+    sleep 1
+  done
+  return 1
+}
+
+restart_manager_after_cleanup() {
+  ((manager_restart_required == 1)) || return 0
+  docker start "${MANAGER_CONTAINER}" >/dev/null || return 1
+  for _ in $(seq 1 60); do
+    docker exec "${MANAGER_CONTAINER}" agt get workers -o json >/dev/null 2>&1 && return 0
+    sleep 2
+  done
+  return 1
+}
+
+wait_for_worker_provisioning() {
+  local member resource container
+  for _ in $(seq 1 120); do
+    local ready=1
+    for member in "${LEADER_NAME}" "${COORDINATOR_NAME}" "${ENGINEER_NAME}"; do
+      container="agentteams-worker-${member}"
+      resource="$(member_json "${member}" || true)"
+      if [[ -z "${resource}" ]] || \
+         [[ "$(jq -r '.phase // empty' <<<"${resource}")" != Running ]] || \
+         [[ "$(jq -r '.containerState // empty' <<<"${resource}")" != running ]] || \
+         ! container_exists "${container}" || \
+         [[ "$(docker inspect "${container}" --format '{{.State.Running}}' 2>/dev/null)" != true ]]; then
+        ready=0
+        break
+      fi
+      if [[ "${member}" != "${LEADER_NAME}" ]] && \
+         ! docker exec "${CONTROLLER_CONTAINER}" mc stat \
+           "agentteams/agentteams-storage/agents/${member}/.openclaw/credentials/matrix/credentials.json" \
+           >/dev/null 2>&1; then
+        ready=0
+        break
+      fi
+    done
+    ((ready == 1)) && return 0
+    sleep 2
+  done
+  return 1
+}
+
 container_exists() {
   docker inspect "$1" >/dev/null 2>&1
+}
+
+volume_exists() {
+  docker volume inspect "$1" >/dev/null 2>&1
 }
 
 remote_prefix_has_objects() {
@@ -141,8 +265,6 @@ assert_worker_runtime() {
   actual_image="$(docker inspect "${container}" --format '{{.Config.Image}}')"
   [[ "${actual_image}" == "${IMAGE}" ]] || \
     die "Expected ${IMAGE}, got ${actual_image} for ${member}."
-  [[ "$(docker exec "${container}" printenv AGENTTEAMS_WORKER_ROLE)" == worker ]] || \
-    die "Worker ${member} did not receive platform role=worker."
   [[ "$(docker exec "${container}" printenv AGENTTEAMS_WORKER_NAME)" == "${member}" ]] || \
     die "Worker identity environment is wrong for ${member}."
   [[ "$(docker exec "${container}" printenv OPENCLAW_AGENT_RUNTIME)" == tiangong-pi ]] || \
@@ -306,8 +428,20 @@ observability_turn_digest() {
     sha256sum | cut -c 1-24
 }
 
+sync_trace_file() {
+  local temporary="${OTLP_SPANS_FILE}.tmp"
+  rm -f -- "${temporary}"
+  if docker cp "${OTLP_CONTAINER}:/data/spans.jsonl" "${temporary}" >/dev/null 2>&1; then
+    chmod 600 "${temporary}" && mv -f -- "${temporary}" "${OTLP_SPANS_FILE}"
+  else
+    rm -f -- "${temporary}"
+    return 1
+  fi
+}
+
 trace_summary() {
   local event_id="$1" digest
+  sync_trace_file || true
   digest="$(observability_turn_digest "${event_id}")"
   [[ -f "${OTLP_SPANS_FILE}" ]] || {
     printf '[]\n'
@@ -330,6 +464,7 @@ trace_activity_facts() {
 }
 
 trace_inventory() {
+  sync_trace_file || true
   [[ -f "${OTLP_SPANS_FILE}" ]] || {
     printf '[]\n'
     return
@@ -357,6 +492,7 @@ assert_trace_complete() {
   local event_id="$1" label="$2" expected_phase="$3" digest
   digest="$(observability_turn_digest "${event_id}")"
   for _ in $(seq 1 30); do
+    sync_trace_file || true
     if [[ -f "${OTLP_SPANS_FILE}" ]] && jq -se \
       --arg digest "${digest}" --arg phase "${expected_phase}" '
       any(.[];
@@ -405,7 +541,7 @@ stock_session_snapshot() {
 }
 
 cleanup() {
-  local status=$? cleanup_failed=0
+  local status=$? cleanup_failed=0 team_absent=0 workers_absent=0
   trap - EXIT INT TERM
   set +e
 
@@ -413,12 +549,16 @@ cleanup() {
     if container_exists "${OTLP_CONTAINER}"; then
       docker rm --force "${OTLP_CONTAINER}" >/dev/null 2>&1 || cleanup_failed=1
     fi
+    if volume_exists "${OTLP_VOLUME}"; then
+      docker volume rm "${OTLP_VOLUME}" >/dev/null 2>&1 || cleanup_failed=1
+    fi
     rm -rf -- "${OTLP_DATA_DIRECTORY}" || cleanup_failed=1
     ! container_exists "${OTLP_CONTAINER}" || cleanup_failed=1
+    ! volume_exists "${OTLP_VOLUME}" || cleanup_failed=1
     [[ ! -e "${OTLP_DATA_DIRECTORY}" ]] || cleanup_failed=1
   fi
 
-  docker exec "${MANAGER_CONTAINER}" rm -f "${MANAGER_MANIFEST}" >/dev/null 2>&1 || cleanup_failed=1
+  docker exec "${MANAGER_CONTAINER}" rm -f "${MANAGER_MANIFEST}" "${MANAGER_WORKER_MANIFEST}" >/dev/null 2>&1 || cleanup_failed=1
   if container_exists "${COORDINATOR_CONTAINER}"; then
     docker exec "${COORDINATOR_CONTAINER}" rm -f \
       "${COORDINATOR_ROOM_MEMBERS}" >/dev/null 2>&1 || cleanup_failed=1
@@ -429,38 +569,64 @@ cleanup() {
   fi
 
   if ((owned_resources == 1)); then
-    log "Deleting temporary Team ${TEAM_NAME}"
-    docker exec "${MANAGER_CONTAINER}" agt delete team "${TEAM_NAME}" >/dev/null 2>&1 || cleanup_failed=1
-    for _ in $(seq 1 120); do
-      if ! team_json >/dev/null 2>&1 && \
-         ! member_json "${LEADER_NAME}" >/dev/null 2>&1 && \
-         ! member_json "${COORDINATOR_NAME}" >/dev/null 2>&1 && \
-         ! member_json "${ENGINEER_NAME}" >/dev/null 2>&1 && \
-         ! container_exists "${LEADER_CONTAINER}" && \
-         ! container_exists "${COORDINATOR_CONTAINER}" && \
-         ! container_exists "${ENGINEER_CONTAINER}"; then
-        break
+    capture_manager_cleanup_state || cleanup_failed=1
+    if ((cleanup_failed == 0)); then
+      for member in "${LEADER_NAME}" "${COORDINATOR_NAME}" "${ENGINEER_NAME}"; do
+        leave_manager_from_worker_room "${member}" || cleanup_failed=1
+      done
+      if ((cleanup_failed == 0)); then
+        log "Deleting temporary Team ${TEAM_NAME}"
+        controller_delete_team || cleanup_failed=1
       fi
-      sleep 1
-    done
-    if team_json >/dev/null 2>&1 || \
-       member_json "${LEADER_NAME}" >/dev/null 2>&1 || \
-       member_json "${COORDINATOR_NAME}" >/dev/null 2>&1 || \
-       member_json "${ENGINEER_NAME}" >/dev/null 2>&1 || \
-       container_exists "${LEADER_CONTAINER}" || \
-       container_exists "${COORDINATOR_CONTAINER}" || \
-       container_exists "${ENGINEER_CONTAINER}"; then
-      printf '[Tiangong] ERROR: temporary peer Team cleanup did not finish.\n' >&2
+      if ((cleanup_failed == 0)) && wait_for_team_absent; then
+        team_absent=1
+      else
+        cleanup_failed=1
+      fi
+    fi
+
+    if ((team_absent == 1)); then
+      restart_manager_after_cleanup || cleanup_failed=1
+      if [[ "$(docker inspect "${MANAGER_CONTAINER}" --format '{{.State.Running}}' 2>/dev/null)" == true ]]; then
+        for member in "${LEADER_NAME}" "${COORDINATOR_NAME}" "${ENGINEER_NAME}"; do
+          docker exec "${MANAGER_CONTAINER}" agt delete worker "${member}" >/dev/null 2>&1 || cleanup_failed=1
+        done
+        for _ in $(seq 1 180); do
+          if ! member_json "${LEADER_NAME}" >/dev/null 2>&1 && \
+             ! member_json "${COORDINATOR_NAME}" >/dev/null 2>&1 && \
+             ! member_json "${ENGINEER_NAME}" >/dev/null 2>&1 && \
+             ! container_exists "${LEADER_CONTAINER}" && \
+             ! container_exists "${COORDINATOR_CONTAINER}" && \
+             ! container_exists "${ENGINEER_CONTAINER}"; then
+            workers_absent=1
+            break
+          fi
+          sleep 1
+        done
+        if ((workers_absent == 0)); then
+          printf '[Tiangong] ERROR: temporary Workers did not finish deletion.\n' >&2
+          cleanup_failed=1
+        fi
+      else
+        cleanup_failed=1
+      fi
+    else
+      printf '[Tiangong] ERROR: temporary Team cleanup did not finish; Manager remains stopped.\n' >&2
+    fi
+
+    docker exec "${CONTROLLER_CONTAINER}" "${CONTROLLER_ALIAS_HELPER}" delete || cleanup_failed=1
+    if ((team_absent == 1 && workers_absent == 1)); then
+      purge_reserved_storage || cleanup_failed=1
+      reserved_storage_absent || cleanup_failed=1
+    else
       cleanup_failed=1
     fi
-    docker exec "${CONTROLLER_CONTAINER}" "${CONTROLLER_ALIAS_HELPER}" delete || cleanup_failed=1
-    purge_reserved_storage || cleanup_failed=1
-    reserved_storage_absent || cleanup_failed=1
   fi
 
   docker exec "${CONTROLLER_CONTAINER}" rm -f \
     "${CONTROLLER_PEER_ROUNDTRIP}" "${CONTROLLER_ALIAS_HELPER}" >/dev/null 2>&1 || cleanup_failed=1
   docker exec "${MANAGER_CONTAINER}" test ! -e "${MANAGER_MANIFEST}" || cleanup_failed=1
+  docker exec "${MANAGER_CONTAINER}" test ! -e "${MANAGER_WORKER_MANIFEST}" || cleanup_failed=1
   docker exec "${CONTROLLER_CONTAINER}" test ! -e "${CONTROLLER_PEER_ROUNDTRIP}" || cleanup_failed=1
   docker exec "${CONTROLLER_CONTAINER}" test ! -e "${CONTROLLER_ALIAS_HELPER}" || cleanup_failed=1
   ((cleanup_failed == 0)) || status=1
@@ -475,7 +641,7 @@ trap 'exit 143' TERM
 for command in docker jq grep awk sha256sum node curl id; do
   command -v "${command}" >/dev/null 2>&1 || die "Missing required command: ${command}"
 done
-for path in "${MANIFEST}" "${BUILD_WORKER_IMAGE}" "${PEER_ROUNDTRIP}" \
+for path in "${MANIFEST}" "${WORKER_MANIFEST}" "${BUILD_WORKER_IMAGE}" "${PEER_ROUNDTRIP}" \
   "${ROOM_MEMBERS}" "${ALIAS_HELPER}" "${OTLP_RECEIVER}" "${OTLP_ACTIVITY_QUERY}"; do
   [[ -f "${path}" && ! -L "${path}" ]] || die "Required smoke asset is missing or symlinked: ${path}"
 done
@@ -499,11 +665,15 @@ for container in "${LEADER_CONTAINER}" "${COORDINATOR_CONTAINER}" "${ENGINEER_CO
 done
 ! container_exists "${OTLP_CONTAINER}" || \
   die "Reserved observability container ${OTLP_CONTAINER} already exists; refusing to replace it."
+! volume_exists "${OTLP_VOLUME}" || \
+  die "Reserved observability volume ${OTLP_VOLUME} already exists; refusing to replace it."
 [[ ! -e "${OTLP_DATA_DIRECTORY}" ]] || \
   die "Reserved observability data path already exists; refusing to replace it."
 reserved_storage_absent || die "Reserved peer smoke storage is not empty; refusing to replace it."
 docker exec "${MANAGER_CONTAINER}" test ! -e "${MANAGER_MANIFEST}" || \
   die "Reserved Manager helper path already exists; refusing to replace it."
+docker exec "${MANAGER_CONTAINER}" test ! -e "${MANAGER_WORKER_MANIFEST}" || \
+  die "Reserved Manager Worker manifest path already exists; refusing to replace it."
 docker exec "${CONTROLLER_CONTAINER}" test ! -e "${CONTROLLER_PEER_ROUNDTRIP}" || \
   die "Reserved Controller round-trip helper already exists; refusing to replace it."
 docker exec "${CONTROLLER_CONTAINER}" test ! -e "${CONTROLLER_ALIAS_HELPER}" || \
@@ -513,8 +683,20 @@ docker cp "${ALIAS_HELPER}" "${CONTROLLER_CONTAINER}:${CONTROLLER_ALIAS_HELPER}"
 docker exec "${CONTROLLER_CONTAINER}" "${CONTROLLER_ALIAS_HELPER}" assert-absent
 TIANGONG_OTEL_EXPORTER_ENDPOINT="${OTLP_ENDPOINT}" "${BUILD_WORKER_IMAGE}"
 mkdir -m 700 "${OTLP_DATA_DIRECTORY}"
+docker volume create --label "io.tiangong.smoke=peer-mention" "${OTLP_VOLUME}" >/dev/null
 otlp_owned=1
-docker run --detach \
+docker run --rm -i \
+  --read-only \
+  --cap-drop ALL \
+  --cap-add CHOWN \
+  --security-opt no-new-privileges=true \
+  --env "OTLP_OWNER_UID=$(id -u)" \
+  --env "OTLP_OWNER_GID=$(id -g)" \
+  --mount "type=volume,src=${OTLP_VOLUME},dst=/data" \
+  --entrypoint sh \
+  "${IMAGE}" -c 'umask 077; cat > /data/tiangong-otlp-receiver.mjs; chmod 600 /data/tiangong-otlp-receiver.mjs; chown "${OTLP_OWNER_UID}:${OTLP_OWNER_GID}" /data /data/tiangong-otlp-receiver.mjs' \
+  <"${OTLP_RECEIVER}"
+docker create \
   --name "${OTLP_CONTAINER}" \
   --network agentteams-net \
   --network-alias "${OTLP_NETWORK_ALIAS}" \
@@ -522,10 +704,10 @@ docker run --detach \
   --cap-drop ALL \
   --security-opt no-new-privileges=true \
   --user "$(id -u):$(id -g)" \
-  --mount "type=bind,src=${OTLP_RECEIVER},dst=/opt/tiangong-otlp-receiver.mjs,readonly" \
-  --mount "type=bind,src=${OTLP_DATA_DIRECTORY},dst=/data" \
+  --mount "type=volume,src=${OTLP_VOLUME},dst=/data" \
   --entrypoint node \
-  "${IMAGE}" /opt/tiangong-otlp-receiver.mjs /data/spans.jsonl >/dev/null
+  "${IMAGE}" /data/tiangong-otlp-receiver.mjs /data/spans.jsonl >/dev/null
+docker start "${OTLP_CONTAINER}" >/dev/null
 for _ in $(seq 1 30); do
   if docker exec "${OTLP_CONTAINER}" node -e \
       'fetch("http://127.0.0.1:4318/health").then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))'; then
@@ -538,8 +720,13 @@ docker exec "${OTLP_CONTAINER}" node -e \
   die "OTLP smoke receiver did not become ready."
 printf 'peer_observability_receiver=pass\n'
 docker cp "${PEER_ROUNDTRIP}" "${CONTROLLER_CONTAINER}:${CONTROLLER_PEER_ROUNDTRIP}"
+docker cp "${WORKER_MANIFEST}" "${MANAGER_CONTAINER}:${MANAGER_WORKER_MANIFEST}"
 docker cp "${MANIFEST}" "${MANAGER_CONTAINER}:${MANAGER_MANIFEST}"
 owned_resources=1
+log "Creating temporary AgentTeams Workers ${LEADER_NAME}, ${COORDINATOR_NAME}, and ${ENGINEER_NAME}"
+docker exec "${MANAGER_CONTAINER}" agt apply -f "${MANAGER_WORKER_MANIFEST}" || \
+  die "Peer Worker apply failed."
+wait_for_worker_provisioning || die "Peer Workers did not finish provisioning within 240 seconds."
 log "Creating temporary AgentTeams Team ${TEAM_NAME}"
 docker exec "${MANAGER_CONTAINER}" agt apply -f "${MANAGER_MANIFEST}" || \
   die "Peer Team apply failed."

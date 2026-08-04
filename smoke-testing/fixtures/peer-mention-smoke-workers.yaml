@@ -1,0 +1,50 @@
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-peer-smoke-leader
+spec:
+  model: qwen3.5-plus
+  runtime: copaw
+  image: higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-copaw-worker:v1.2.0
+  state: Running
+  identity: |
+    Name: AgentTeams Stock Leader
+    Purpose: Platform topology only; remain idle unless directly mentioned.
+---
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-peer-smoke-coordinator
+spec:
+  model: qwen3.5-plus
+  runtime: openclaw
+  image: tiangong-worker:dev
+  state: Running
+  channelPolicy:
+    groupAllowExtra:
+      - tiangong-peer-smoke-engineer
+      - tiangong-peer-smoke-leader
+    dmAllowExtra:
+      - tiangong-peer-smoke-leader
+  identity: |
+    Name: Tiangong Peer Smoke Coordinator
+    Purpose: Transport-only test identity; not a trusted professional role.
+---
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-peer-smoke-engineer
+spec:
+  model: qwen3.5-plus
+  runtime: openclaw
+  image: tiangong-worker:dev
+  state: Running
+  channelPolicy:
+    groupAllowExtra:
+      - tiangong-peer-smoke-coordinator
+      - tiangong-peer-smoke-leader
+    dmAllowExtra:
+      - tiangong-peer-smoke-leader
+  identity: |
+    Name: Tiangong Peer Smoke Engineer
+    Purpose: Transport-only test identity; not a trusted professional role.

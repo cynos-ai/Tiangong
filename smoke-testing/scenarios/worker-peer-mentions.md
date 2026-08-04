@@ -19,7 +19,7 @@
 | Leader silence | zero post-baseline Leader messages and unchanged stock Leader session snapshot | absence of a specific expected phrase |
 | Harness | both peer senders have a post-baseline changed, passing Tiangong Harness marker and persistent nonce-bearing session; on failure, a changed `status=running` marker distinguishes Harness entry from completion | a pre-existing marker, container health, or model self-identification alone |
 | Observability | sanitized completed Harness root traces and `peer.transport.start/ping/pong` phases correlate to the three inbound event IDs; a failed run reports only bounded phase/outcome/error-type facts for the Admin start turn | requiring model spans for deterministic controls or treating a UI screenshot, open span absence, model prose, or lossy trace as Evidence |
-| Cleanup | exact Team, three members/containers, two aliases, helper copies, four storage prefixes, OTLP receiver container, and diagnostic trace path are absent | successful delete command alone or broad cleanup paths |
+| Cleanup | exact Team, three members/containers, two aliases, helper copies, four storage prefixes, OTLP receiver container/volume, and diagnostic trace path are absent | successful delete command alone or broad cleanup paths |
 
 ## Basic smoke
 
@@ -31,14 +31,15 @@
   - stock Leader `tiangong-peer-smoke-leader`;
   - ordinary Workers `tiangong-peer-smoke-coordinator` and `tiangong-peer-smoke-engineer`;
   - their exact member/Team storage prefixes and the Team/Leader-DM aliases;
-  - run-owned `tiangong-peer-smoke-otel` receiver and `.runtime/peer-smoke-observability/` trace path.
+  - run-owned `tiangong-peer-smoke-otel` receiver, `tiangong-peer-smoke-otel-data` volume, and `.runtime/peer-smoke-observability/` trace path.
 - Setup:
   1. deterministic peer smoke contract tests pass;
   2. `make verify` passes;
   3. every reserved resource, alias, and storage prefix is absent;
   4. build `tiangong-worker:dev` with the non-secret owned OTLP receiver endpoint and pass its embedded observability contract;
-  5. start the bounded receiver as the run-owned data directory's invoking UID/GID, retaining a read-only root filesystem, all capabilities dropped, and no-new-privileges, then prove readiness;
-  6. apply `smoke-testing/fixtures/peer-mention-smoke-team.yaml` through the supported public CLI path.
+  5. verify the run-owned OTLP receiver volume is absent, create it through the Docker API, and start the bounded receiver as the invoking UID/GID, retaining a read-only root filesystem, all capabilities dropped, and no-new-privileges, then prove readiness;
+  6. apply `smoke-testing/fixtures/peer-mention-smoke-workers.yaml` through the supported public CLI path, then wait for all three standalone Workers to reach `Running` with their remote Matrix credentials present;
+  7. apply `smoke-testing/fixtures/peer-mention-smoke-team.yaml` through the supported public CLI path.
 - Prompt:
   - global Admin sends one Team Room event whose structured mention targets only Coordinator;
   - the body contains only the strict `TG_PEER_START` control and random nonce; it contains no Engineer/Leader identity or model instructions;
@@ -64,10 +65,10 @@
   - on failure, sanitized target-account visibility facts for the exact Admin start and peer ping sender/nonce/visible MXID/`m.mentions`, without unrestricted bodies or credentials;
   - on failure, whether each Harness marker changed after the nonce baseline and its sanitized lifecycle status (`running`, `pass`, or `error`), without prompt, response, or credential data;
   - `peer_coordinator_start_observability=pass`, `peer_engineer_ping_observability=pass`, and `peer_coordinator_pong_observability=pass` on success; otherwise one bounded sanitized start-event trace summary plus fixed boolean peer-transport/pi-turn/request/response/progress/retry/terminal activity facts;
-  - alias cleanup observations plus Team/member/container/storage/receiver/trace-path absence.
+  - alias cleanup observations plus Team/member/container/storage/receiver/receiver-volume/trace-path absence.
 - Skip/block rules:
   - block if Docker, pinned AgentTeams, Matrix, Gateway model, reserved identity ownership, or public Worker image is unavailable;
-  - refuse to replace any existing reserved Team/member/container/alias/storage prefix, receiver container, or diagnostic trace path;
+  - refuse to replace any existing reserved Team/member/container/alias/storage prefix, receiver container/volume, or diagnostic trace path;
   - fail if the stock Leader sends any post-baseline Team Room message or its session snapshot changes;
   - do not use direct CRs, config watcher publication, modified AgentTeams, unreleased images, or test-driver Worker impersonation;
   - do not call the transport messages formal Assignment/Result envelopes or call the test names trusted Role Profiles;
@@ -80,9 +81,11 @@ No Full scenario is defined. Role authorization, Work Ledger, formal Assignment/
 ## Maintenance notes
 
 - **Current pinned-stack/runtime status (2026-07-27): PASS.** Explicit public `groupAllowExtra` establishes the peer allowlist. Issue #11 / Draft PR #12 added deterministic reply targeting, bounded one-reply correlation, and a pre-turn Harness marker. Attempt 16 passed the complete bounded start/ping/pong/terminal transport, both Harness markers, terminal quiescence, and Leader silence, but its required event-correlated trace remained empty. Exact hardened no-model reproduction identified the empty/rejected trace cause as the receiver's image-root identity losing DAC bypass under `--cap-drop ALL` against a host-user-owned mode-`0700` directory. Commit `7922131` runs the receiver as that invoking UID/GID without relaxing its hardening or validator. Attempt 19 then accepted one real Worker export containing nine event-correlated spans with zero rejections and reached the then-named `model.start`, while the Harness remained `status=running` and emitted no ping before the unchanged observer ended. Pinned-source review later showed that old phase represented pi `turn_start` before the provider stream call, so it did not prove request dispatch. Attempt 20 then used the refined oracle: Coordinator showed request readiness, response receipt, stream start/progress, and complete model/Harness operations with no retry/timeout, but its emitted event omitted the required ping marker and never woke Engineer. Issue #15 / Draft PR #16 therefore moves the reserved transport diagnostic into deterministic Worker code: target authority is derived from effective allowlists, the authenticated peer and nonce bind correlation, ordinary prompts retain the model path, and official OpenClaw remains the sender. Attempt 21 passed the exact deterministic four-event chain, both Harness markers, and all three control-phase traces without model spans, then failed because pi defers a new session file until an assistant message exists and the control handler had stored only a custom message. PR #16 commit `aeb089a` now persists the machine-owned output as a zero-usage deterministic assistant entry. Attempt 22 then passed the exact four-event chain, both Harness/session oracles, all three correlated control-phase roots with no model spans, terminal quiescence, Leader silence, and exact cleanup in one bounded run. See `smoke-testing/runs/2026-07-26-worker-peer-mentions/plan.md`.
+- **AgentTeams v1.2.0 clean migration run (2026-08-04): PASS.** Separate standalone Worker provisioning, asynchronous readiness, explicit peer/DM policy, real Matrix Coordinator→Engineer→Coordinator delivery, stock Leader silence, three correlated OTLP control phases, and exact Team/Worker/container/volume/storage/alias cleanup all passed. No model or raw payload content is retained as Evidence.
+- The receiver uses a run-owned Docker volume because Docker Desktop may not expose arbitrary repository-local paths to its daemon; the shell-side trace copy remains under `.runtime/peer-smoke-observability/` and the run removes both exact resources.
 - This scenario is independent of the blocked custom platform Team Leader boundary. It neither weakens nor satisfies that boundary.
-- The stock Leader is intentionally selected by omitting custom Leader runtime/image fields. Both ordinary Workers use the supported inline Worker image/runtime fields.
-- On `v1.2.0-beta.1`, `peerMentions: true` on this legacy inline Team path did not appear in the effective Worker `groupAllowFrom`: each Worker retained only Leader and Admin after a bounded convergence wait. The fixture therefore uses the documented public per-Worker `channelPolicy.groupAllowExtra` field with the peer Worker name, and the runner verifies the effective config before any Harness turn. This is an explicit transport authorization, not a professional Role Profile.
+- AgentTeams v1.2 separates Worker provisioning from Team membership. The smoke applies three standalone Worker CRs first: the Leader explicitly pins the stock CoPaw runtime/image, while both ordinary Workers pin the supported OpenClaw runtime and local Tiangong image; the Team then references those CRs through `spec.workerMembers`.
+- The fixture uses the documented public per-Worker `channelPolicy.groupAllowExtra` and `dmAllowExtra` fields. Group policy grants the peer, stock Leader, and Admin ingress; the Leader is also marked as a DM-allowed identity so Tiangong's peer authority contains exactly the authenticated ordinary peer. The runner verifies the effective config before any Harness turn. This is explicit transport authorization, not a professional Role Profile.
 - The global Admin is already a Team Room member under the released Team contract and sends only the initial event. All peer events must be emitted by the tested Worker Harnesses.
 - The initial body must not contain Engineer's full MXID because the released Matrix channel also recognizes full-MXID text as a mention fallback. It contains no target fragments or model instructions; runtime authority comes only from the effective Matrix allowlists.
 - Exact transport markers are owned by deterministic Tiangong code, not model wording. Event sender, event ID, nonce, structured mentions, Harness markers, session state, and cleanup are separate machine observations.
