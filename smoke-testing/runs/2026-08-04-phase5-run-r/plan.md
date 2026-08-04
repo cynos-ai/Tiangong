@@ -44,13 +44,33 @@ launched without a new lower-level hypothesis and regression evidence.
 - The exact Runner broker, volumes, and temporary files were removed.
 - Exact run-owned Worker containers were removed after their names were
   verified; no other containers were touched.
-- The supported Team deletion command reported deletion, but AgentTeams kept
-  the exact Team and five stopped Worker records in its controller state. The
-  shared Project/Task records are retained because AgentTeams owns that
+- The first supported Team deletion attempt reported deletion, but AgentTeams
+  kept the exact Team and five stopped Worker records in its controller state.
+  The shared Project/Task records are retained because AgentTeams owns that
   namespace and Tiangong must not erase them as speculative cleanup.
-- Overall cleanup is **FAIL** and keeps this run red. This reproduces the
-  known upstream Team member-release/deletion boundary; the residue is
-  explicitly named and no success claim is derived from the cleanup attempt.
+
+### Post-attempt exact-scope remediation
+
+After the failed smoke was preserved, the supported AgentTeams membership
+operation was diagnosed without changing the functional verdict: the Team was
+updated to an empty Worker roster, the four detached Workers were deleted, a
+short-lived exact-scope cleanup Leader was assigned so the original Leader
+could be detached and deleted, and the helper was then deleted. No local
+AgentTeams uninstall, volume deletion, or rebootstrap was performed.
+
+Final machine facts after remediation:
+
+- Team record `tg-p5r-08041721`: absent.
+- Worker records with prefix `tg-p5r-08041721`: absent, including the cleanup
+  helper.
+- Exact run-owned Worker containers: absent.
+- Runner broker and volumes: absent.
+- AgentTeams-owned Project/Task records: retained by boundary.
+
+The original cleanup failure remains part of the run history, but the exact
+Team/Worker residue is now cleared. The overall run remains **FAIL-CLOSED**
+because no Designer ResultEnvelope or terminal delivery evidence was ever
+created.
 
 ## Stop rule
 
