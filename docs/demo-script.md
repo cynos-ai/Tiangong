@@ -16,20 +16,17 @@ make build-worker-image
 `make verify` proves local AgentTeams service readiness. `make check-demo-contract`
 verifies the five fixed profiles, closed tool surfaces, Skill bindings,
 Playbook lock, and the immutable Runner fixture digest. After a run is paused
-for evidence review, verify the preserved shared Project state without trusting
-model prose:
+for evidence review, verify the preserved shared Project state from a
+repository-side diagnostic environment that can read the shared root, without
+trusting model prose:
 
 ```bash
-docker exec agentteams-worker-<leader> \
-  node /opt/tiangong-worker/scripts/verify-professional-state.mjs \
-  --root /root/agentteams-fs/shared \
-  --project <project-id> --expected DELIVERED
+make verify-professional-state ROOT=<shared-root> \
+  PROJECT=<project-id> EXPECTED=DELIVERED
 ```
 
-The same verifier is available from the repository with
-`make verify-professional-state ROOT=<shared-root> PROJECT=<project-id>
-EXPECTED=DELIVERED`. Add repeatable `--evidence <events.jsonl>` arguments to
-verify hash-chained Evidence files. The image build checks
+Add repeatable `EVIDENCE=<file>` arguments through the Make target to verify
+hash-chained Evidence files. The image build checks
 Node/pi versions, profile materialization, Runner and deployment image
 boundaries, and the closed Leader/member registries.
 
