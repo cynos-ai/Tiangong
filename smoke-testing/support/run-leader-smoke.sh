@@ -230,15 +230,20 @@ cleanup() {
 
     if [[ "$(docker inspect "${MANAGER_CONTAINER}" --format '{{.State.Running}}' 2>/dev/null)" == true ]]; then
       for member in "${MEMBERS[@]}"; do
-        docker exec "${MANAGER_CONTAINER}" agt get workers "${member}" -o json >/dev/null 2>&1 && \
+        if docker exec "${MANAGER_CONTAINER}" agt get workers "${member}" -o json >/dev/null 2>&1; then
           docker exec "${MANAGER_CONTAINER}" agt delete worker "${member}" >/dev/null 2>&1 || true
+        fi
         container="agentteams-worker-${member}"
-        container_exists "${container}" && docker rm --force "${container}" >/dev/null 2>&1 || true
+        if container_exists "${container}"; then
+          docker rm --force "${container}" >/dev/null 2>&1 || true
+        fi
       done
       # The Controller delete can release the containers while the Manager's
       # cached Team object remains. Reconcile that exact Team record now that
       # all owned members are gone.
-      team_exists && docker exec "${MANAGER_CONTAINER}" agt delete team "${TEAM_NAME}" >/dev/null 2>&1 || true
+      if team_exists; then
+        docker exec "${MANAGER_CONTAINER}" agt delete team "${TEAM_NAME}" >/dev/null 2>&1 || true
+      fi
       for _ in $(seq 1 120); do
         team_exists || break
         sleep 1
