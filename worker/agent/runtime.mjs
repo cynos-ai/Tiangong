@@ -134,6 +134,7 @@ export class TiangongAgentRuntime {
   #approvalConfig;
   #sessions = new Map();
   #stores = new Map();
+  #sessionOperationTails = new Map();
 
   constructor({ configPath, provider, profileBundle, deploymentApprover = deploymentApproverForWorker({
     configured: process.env.TIANGONG_DEPLOYMENT_APPROVER,
@@ -474,7 +475,29 @@ export class TiangongAgentRuntime {
     return routedTurnResult(request, state, route, { text, hadPotentialSideEffects: true });
   }
 
+  #withSessionOperation(sessionId, operation) {
+    if (typeof sessionId !== "string" || sessionId === "") {
+      throw new TypeError("sessionId is required");
+    }
+    const previous = this.#sessionOperationTails.get(sessionId) ?? Promise.resolve();
+    let release;
+    const current = new Promise((resolve) => {
+      release = resolve;
+    });
+    this.#sessionOperationTails.set(sessionId, current);
+    return previous.then(operation).finally(() => {
+      release();
+      if (this.#sessionOperationTails.get(sessionId) === current) {
+        this.#sessionOperationTails.delete(sessionId);
+      }
+    });
+  }
+
   async runTurn(request, observability) {
+    return this.#withSessionOperation(request.sessionId, () => this.#runTurnUnlocked(request, observability));
+  }
+
+  async #runTurnUnlocked(request, observability) {
     if (request.images.length > 0) throw new Error("The Tiangong agent runtime does not support image input yet");
     const profileBundle = assertRuntimeProfileMaterialized(await this.#trustedProfileBundle());
     observability?.checkpoint("runtime.start");
@@ -578,10 +601,12 @@ export class TiangongAgentRuntime {
   }
 
   async reset(sessionId) {
-    const state = this.#sessions.get(sessionId);
-    state?.session.dispose();
-    this.#sessions.delete(sessionId);
-    if (state) await state.sessionStore.reset(sessionId);
+    return this.#withSessionOperation(sessionId, async () => {
+      const state = this.#sessions.get(sessionId);
+      state?.session.dispose();
+      this.#sessions.delete(sessionId);
+      if (state) await state.sessionStore.reset(sessionId);
+    });
   }
 
   async dispose() {
