@@ -114,11 +114,11 @@ export function createGatedTool({
         };
         if (operation?.roleId) {
           Object.assign(common, {
-            practiceRunId: operation.state?.runId ?? null,
+            workRunId: operation.state?.runId ?? operation.workRunId ?? null,
             roleId: operation.roleId,
             profileDigest: operation.profileDigest,
-            practiceId: operation.practiceId,
-            practiceVersion: operation.practiceVersion,
+            skillId: operation.skillId ?? null,
+            skillDigest: operation.skillDigest ?? null,
           });
         }
         await evidence.append({ type: "tool.execution.replayed", ...common, status: "success" });
@@ -168,11 +168,11 @@ export function createGatedTool({
       };
       if (operation?.roleId) {
         Object.assign(common, {
-          practiceRunId: operation.state?.runId ?? null,
+          workRunId: operation.state?.runId ?? operation.workRunId ?? null,
           roleId: operation.roleId,
           profileDigest: operation.profileDigest,
-          practiceId: operation.practiceId,
-          practiceVersion: operation.practiceVersion,
+          skillId: operation.skillId ?? null,
+          skillDigest: operation.skillDigest ?? null,
         });
       }
 
@@ -309,7 +309,8 @@ export function createGatedTool({
               stateEventId: result?.details?.stateEventId ?? null,
               stateEventHash: result?.details?.stateEventHash ?? null,
               stateSequence: result?.details?.stateSequence ?? null,
-              practiceRunId: result?.details?.runId ?? null,
+              workRunId: result?.details?.workRunId ?? result?.details?.runId ?? null,
+              workRunPhase: result?.details?.workRunPhase ?? null,
               runRevision: result?.details?.runRevision ?? null,
             });
           }

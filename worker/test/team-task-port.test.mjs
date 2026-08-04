@@ -126,7 +126,7 @@ function taskBinding(overrides = {}) {
     objective: "Design the bounded change and acceptance contract.",
     completionContractDigest: CONTRACT_DIGEST,
     sourceProfileDigest: PROFILE_DIGEST,
-    sourceSkillId: "designer-v1",
+    sourceSkillId: "designer-design-delivery-v1",
     sourceSkillDigest: SKILL_DIGEST,
     inputRefs: [],
     createdAt: T1,
@@ -145,7 +145,7 @@ function resultEnvelope(task, overrides = {}) {
     taskBindingDigest: task.contentDigest,
     completionContractDigest: task.completionContractDigest,
     sourceProfileDigest: PROFILE_DIGEST,
-    sourceSkillId: "designer-v1",
+    sourceSkillId: "designer-design-delivery-v1",
     skillDigest: SKILL_DIGEST,
     claim: "design complete",
     artifactRefs: [],
@@ -210,7 +210,7 @@ test("Runner preparation completes before an implement Task notification", async
   await withRoot(async (root) => {
     const project = projectBinding();
     await createProject(project, depsFor(LEADER, root));
-    const task = taskBinding({ taskId: "task-implement-prepared", taskKind: "implement", assignee: IMPL, sourceSkillId: "implementor-v1" });
+    const task = taskBinding({ taskId: "task-implement-prepared", taskKind: "implement", assignee: IMPL, sourceSkillId: "implementor-controlled-implementation-v1" });
     const order = [];
     const deps = depsFor(LEADER, root);
     deps.runnerBrokerPreparation = {
@@ -305,7 +305,7 @@ test("Assessor preparation ignores non-Task artifact references while binding it
       taskId: "task-implement-with-artifact",
       taskKind: "implement",
       assignee: IMPL,
-      sourceSkillId: "implementor-v1",
+      sourceSkillId: "implementor-controlled-implementation-v1",
     });
     await dispatchTask(implementTask, depsFor(LEADER, root));
     const artifactRef = "c".repeat(64);
@@ -313,7 +313,7 @@ test("Assessor preparation ignores non-Task artifact references while binding it
       taskId: "task-assess-with-artifact",
       taskKind: "assess",
       assignee: ASSESSOR,
-      sourceSkillId: "assessor-v1",
+      sourceSkillId: "assessor-independent-assessment-v1",
       inputRefs: [implementTask.taskId, artifactRef],
     });
     const deps = depsFor(LEADER, root);
@@ -344,7 +344,7 @@ test("Runner preparation failure leaves the Task durable but does not notify the
   await withRoot(async (root) => {
     const project = projectBinding();
     await createProject(project, depsFor(LEADER, root));
-    const task = taskBinding({ taskId: "task-implement-unprepared", taskKind: "implement", assignee: IMPL, sourceSkillId: "implementor-v1" });
+    const task = taskBinding({ taskId: "task-implement-unprepared", taskKind: "implement", assignee: IMPL, sourceSkillId: "implementor-controlled-implementation-v1" });
     const deps = depsFor(LEADER, root);
     let notifications = 0;
     let preparations = 0;
@@ -388,18 +388,18 @@ test("an accepted release machine outcome authorizes DELIVERED", async () => {
     await createProject(project, depsFor(LEADER, root));
     const tasks = {
       design: taskBinding({ taskId: "design-delivered", createdAt: "2026-08-01T12:01:00Z" }),
-      implement: taskBinding({ taskId: "implement-delivered", taskKind: "implement", assignee: IMPL, sourceSkillId: "implementor-v1", inputRefs: ["design-delivered"], createdAt: "2026-08-01T12:02:00Z" }),
-      assess: taskBinding({ taskId: "assess-delivered", taskKind: "assess", assignee: ASSESSOR, sourceSkillId: "assessor-v1", inputRefs: ["implement-delivered"], createdAt: "2026-08-01T12:03:00Z" }),
-      release: taskBinding({ taskId: "release-delivered", taskKind: "release", assignee: OPERATOR, sourceSkillId: "operator-v1", inputRefs: ["assess-delivered"], createdAt: "2026-08-01T12:04:00Z" }),
+      implement: taskBinding({ taskId: "implement-delivered", taskKind: "implement", assignee: IMPL, sourceSkillId: "implementor-controlled-implementation-v1", inputRefs: ["design-delivered"], createdAt: "2026-08-01T12:02:00Z" }),
+      assess: taskBinding({ taskId: "assess-delivered", taskKind: "assess", assignee: ASSESSOR, sourceSkillId: "assessor-independent-assessment-v1", inputRefs: ["implement-delivered"], createdAt: "2026-08-01T12:03:00Z" }),
+      release: taskBinding({ taskId: "release-delivered", taskKind: "release", assignee: OPERATOR, sourceSkillId: "operator-controlled-release-v1", inputRefs: ["assess-delivered"], createdAt: "2026-08-01T12:04:00Z" }),
     };
     const revision = createChangeRevisionRef({ producerTaskId: tasks.implement.taskId, artifactPath: "revision.tar", artifactDigest: "9".repeat(64), revision: 0 });
     const results = {
       design: resultEnvelope(tasks.design),
-      implement: resultEnvelope(tasks.implement, { sourceRole: "implementor", sourceSkillId: "implementor-v1", claim: "implemented", changeRevisionRef: revision, evidenceRefs: ["runner-implement"] }),
-      assess: resultEnvelope(tasks.assess, { sourceRole: "assessor", sourceSkillId: "assessor-v1", claim: "verified", changeRevisionRef: revision, evidenceRefs: ["runner-assess"] }),
+      implement: resultEnvelope(tasks.implement, { sourceRole: "implementor", sourceSkillId: "implementor-controlled-implementation-v1", claim: "implemented", changeRevisionRef: revision, evidenceRefs: ["runner-implement"] }),
+      assess: resultEnvelope(tasks.assess, { sourceRole: "assessor", sourceSkillId: "assessor-independent-assessment-v1", claim: "verified", changeRevisionRef: revision, evidenceRefs: ["runner-assess"] }),
     };
     const outcome = createDeploymentOutcome({ taskId: tasks.release.taskId, targetId: "target-a", operationDigest: "8".repeat(64), previousDigest: "7".repeat(64), currentDigest: revision.artifactDigest, changeRevisionRef: revision, disposition: "DELIVERED", postVerifyHealthy: true, rollbackPerformed: false, previousVerifyHealthy: null });
-    results.release = resultEnvelope(tasks.release, { sourceRole: "operator", sourceSkillId: "operator-v1", claim: "deployed and verified", changeRevisionRef: revision, releaseOutcome: outcome, evidenceRefs: ["deployment-receipt"] });
+    results.release = resultEnvelope(tasks.release, { sourceRole: "operator", sourceSkillId: "operator-controlled-release-v1", claim: "deployed and verified", changeRevisionRef: revision, releaseOutcome: outcome, evidenceRefs: ["deployment-receipt"] });
     for (const kind of ["design", "implement", "assess", "release"]) {
       const task = tasks[kind]; const result = results[kind];
       await dispatchTask(task, depsFor(LEADER, root));
@@ -407,6 +407,56 @@ test("an accepted release machine outcome authorizes DELIVERED", async () => {
       await recordTaskDecision(createTaskDecision({ taskId: task.taskId, projectId: project.projectId, playbookDigest: project.playbookDigest, decision: "accept", revisionIndex: 0, decidedBy: LEADER, resultDigest: result.contentDigest, createdAt: T2 }), depsFor(LEADER, root));
     }
     assert.equal(await projectDisposition(project.projectId, { rootDir: root, maxRevisionWaves: 2 }), "DELIVERED");
+  });
+});
+
+test("an accepted RECOVERY_REQUIRED release outcome cannot become FAILED_SAFE", async () => {
+  await withRoot(async (root) => {
+    const project = projectBinding();
+    await createProject(project, depsFor(LEADER, root));
+    const tasks = {
+      design: taskBinding({ taskId: "design-recovery", createdAt: "2026-08-01T12:01:00Z" }),
+      implement: taskBinding({ taskId: "implement-recovery", taskKind: "implement", assignee: IMPL, sourceSkillId: "implementor-controlled-implementation-v1", inputRefs: ["design-recovery"], createdAt: "2026-08-01T12:02:00Z" }),
+      assess: taskBinding({ taskId: "assess-recovery", taskKind: "assess", assignee: ASSESSOR, sourceSkillId: "assessor-independent-assessment-v1", inputRefs: ["implement-recovery"], createdAt: "2026-08-01T12:03:00Z" }),
+      release: taskBinding({ taskId: "release-recovery", taskKind: "release", assignee: OPERATOR, sourceSkillId: "operator-controlled-release-v1", inputRefs: ["assess-recovery"], createdAt: "2026-08-01T12:04:00Z" }),
+    };
+    const revision = createChangeRevisionRef({ producerTaskId: tasks.implement.taskId, artifactPath: "recovery.tar", artifactDigest: "9".repeat(64), revision: 0 });
+    const outcome = createDeploymentOutcome({
+      taskId: tasks.release.taskId,
+      targetId: "target-recovery",
+      operationDigest: "8".repeat(64),
+      previousDigest: "7".repeat(64),
+      currentDigest: revision.artifactDigest,
+      changeRevisionRef: revision,
+      disposition: "RECOVERY_REQUIRED",
+      postVerifyHealthy: false,
+      rollbackPerformed: false,
+      previousVerifyHealthy: null,
+    });
+    const results = {
+      design: resultEnvelope(tasks.design),
+      implement: resultEnvelope(tasks.implement, { sourceRole: "implementor", sourceSkillId: "implementor-controlled-implementation-v1", claim: "implemented", changeRevisionRef: revision }),
+      assess: resultEnvelope(tasks.assess, { sourceRole: "assessor", sourceSkillId: "assessor-independent-assessment-v1", claim: "verified", changeRevisionRef: revision }),
+      release: resultEnvelope(tasks.release, { sourceRole: "operator", sourceSkillId: "operator-controlled-release-v1", claim: "deployment outcome is uncertain", changeRevisionRef: revision, releaseOutcome: outcome }),
+    };
+    for (const kind of ["design", "implement", "assess", "release"]) {
+      const task = tasks[kind];
+      const result = results[kind];
+      await dispatchTask(task, depsFor(LEADER, root));
+      await submitResult(result, depsFor(task.assignee, root));
+      await recordTaskDecision(createTaskDecision({
+        taskId: task.taskId,
+        projectId: project.projectId,
+        playbookDigest: project.playbookDigest,
+        decision: "accept",
+        revisionIndex: 0,
+        decidedBy: LEADER,
+        resultDigest: result.contentDigest,
+        createdAt: T2,
+      }), depsFor(LEADER, root));
+    }
+    assert.equal(await projectDisposition(project.projectId, { rootDir: root }), "RECOVERY_REQUIRED");
+    assert.equal((await readTaskResult(tasks.release.taskId, { rootDir: root })).releaseOutcome.disposition, "RECOVERY_REQUIRED");
   });
 });
 
@@ -445,7 +495,7 @@ test("Assessor Results must bind the exact accepted Implementor ChangeRevision",
       taskId: "task-implement-0",
       taskKind: "implement",
       assignee: IMPL,
-      sourceSkillId: "implementor-v1",
+      sourceSkillId: "implementor-controlled-implementation-v1",
     });
     await dispatchTask(implementTask, depsFor(LEADER, root));
     const revision = {
@@ -456,7 +506,7 @@ test("Assessor Results must bind the exact accepted Implementor ChangeRevision",
     };
     const implementation = resultEnvelope(implementTask, {
       sourceRole: "implementor",
-      sourceSkillId: "implementor-v1",
+      sourceSkillId: "implementor-controlled-implementation-v1",
       claim: "implementation complete",
       changeRevisionRef: revision,
     });
@@ -476,13 +526,13 @@ test("Assessor Results must bind the exact accepted Implementor ChangeRevision",
       taskId: "task-assess-0",
       taskKind: "assess",
       assignee: ASSESSOR,
-      sourceSkillId: "assessor-v1",
+      sourceSkillId: "assessor-independent-assessment-v1",
       inputRefs: [implementTask.taskId],
     });
     await dispatchTask(assessTask, depsFor(LEADER, root));
     const assessmentInput = {
       sourceRole: "assessor",
-      sourceSkillId: "assessor-v1",
+      sourceSkillId: "assessor-independent-assessment-v1",
       claim: "assessment complete",
     };
     const forged = resultEnvelope(assessTask, {

@@ -23,6 +23,7 @@ import {
 import { createChangeRevisionRef } from "../agent/work/change-revision-ref.mjs";
 import { createResultEnvelope } from "../agent/work/result-envelope.mjs";
 import { createMemberToolRegistry } from "../agent/work/member-tools.mjs";
+import { WorkRunStore } from "../agent/work/work-run-store.mjs";
 import { readTaskResult } from "../agent/team/manifest-store.mjs";
 
 const LEADER = "tiangong-leader";
@@ -30,6 +31,12 @@ const DESIGNER = "tiangong-designer";
 const CONTRACT = "c".repeat(64);
 const PROFILE = "e".repeat(64);
 const SKILL = "f".repeat(64);
+const SKILL_IDS = Object.freeze({
+  designer: "designer-design-delivery-v1",
+  implementor: "implementor-controlled-implementation-v1",
+  assessor: "assessor-independent-assessment-v1",
+  operator: "operator-controlled-release-v1",
+});
 const T = (n) => `2026-08-01T12:0${n}:00Z`;
 
 function channel() {
@@ -89,7 +96,7 @@ function depsFor(worker, root) {
     }),
     professionalRole: "designer",
     sourceProfileDigest: PROFILE,
-    sourceSkillId: "designer-v1",
+    sourceSkillId: SKILL_IDS.designer,
     sourceSkillDigest: SKILL,
     now: () => T(1),
   };
@@ -127,7 +134,7 @@ function professionalTask(boundProject, id, { taskKind = "design", assignee = DE
     objective: `Complete the assigned ${taskKind} work.`,
     completionContractDigest: CONTRACT,
     sourceProfileDigest: PROFILE,
-    sourceSkillId: `${role}-v1`,
+    sourceSkillId: SKILL_IDS[role],
     sourceSkillDigest: SKILL,
     inputRefs,
     createdAt: T(0),
@@ -142,19 +149,19 @@ test("createMemberToolRegistry exposes only each professional RoleProfile surfac
   assert.deepEqual(designer.names(), ["team_resolve_task", "team_submit_result"]);
   const implementorDeps = depsFor("tiangong-implementor", "/x");
   implementorDeps.professionalRole = "implementor";
-  implementorDeps.sourceSkillId = "implementor-v1";
+  implementorDeps.sourceSkillId = SKILL_IDS.implementor;
   const implementor = createMemberToolRegistry({ deps: implementorDeps });
   assert.deepEqual(implementor.names(), ["team_resolve_task", "run_command", "team_submit_result"]);
   assert.deepEqual(Object.keys(implementor.definitions().find((tool) => tool.name === "run_command").parameters.properties), ["taskId"]);
   const assessorDeps = depsFor("tiangong-assessor", "/x");
   assessorDeps.professionalRole = "assessor";
-  assessorDeps.sourceSkillId = "assessor-v1";
+  assessorDeps.sourceSkillId = SKILL_IDS.assessor;
   const assessor = createMemberToolRegistry({ deps: assessorDeps });
   assert.deepEqual(assessor.names(), ["team_resolve_task", "run_test_command", "team_submit_result"]);
   assert.deepEqual(Object.keys(assessor.definitions().find((tool) => tool.name === "run_test_command").parameters.properties), ["taskId"]);
   const operatorDeps = depsFor("tiangong-operator", "/x");
   operatorDeps.professionalRole = "operator";
-  operatorDeps.sourceSkillId = "operator-v1";
+  operatorDeps.sourceSkillId = SKILL_IDS.operator;
   operatorDeps.deploymentBrokerEndpoint = "http://tiangong-deployment-broker:8791/v1/deploy";
   operatorDeps.deploymentReceiptStore = { completedOutcome() {}, record() {} };
   operatorDeps.idempotencyStore = { get() {} };
@@ -172,9 +179,12 @@ test("an assignee resolves its Task and submits a bound ResultEnvelope", async (
 
     const designerDeps = depsFor(DESIGNER, root);
     const registry = createMemberToolRegistry({ deps: designerDeps });
+    designerDeps.workRunStore = new WorkRunStore({ directory: join(root, "work-runs") });
     const resolved = await registry.definitions().find((tool) => tool.name === "team_resolve_task")
       .execute("resolve-1", { taskId: task.taskId });
     assert.equal(details(resolved).taskKind, "design");
+    assert.match(details(resolved).workRunId, /^work-[0-9a-f]{48}$/u);
+    assert.equal(details(resolved).workRunPhase, "executing");
 
     const out = await registry.definitions().find((tool) => tool.name === "team_submit_result")
       .execute("submit-1", {
@@ -186,6 +196,8 @@ test("an assignee resolves its Task and submits a bound ResultEnvelope", async (
     assert.equal(details(out).notified, false);
     assert.equal(details(out).notificationQueued, true);
     assert.match(details(out).resultDigest, /^[0-9a-f]{64}$/u);
+    const workRun = await designerDeps.workRunStore.read(details(out).workRunId);
+    assert.equal(workRun.phase, "finalized");
     assert.ok(designerDeps.channel.calls.some((call) => call.kind === "notifyLeader"));
     assert.ok(designerDeps.evidence.events.some((event) => event.type === "gate.decided"));
   });
@@ -232,7 +244,7 @@ test("Implementor command runs only through the Task-bound broker and projects m
     await dispatchTask(task, depsFor(LEADER, root));
     const deps = depsFor("tiangong-implementor", root);
     deps.professionalRole = "implementor";
-    deps.sourceSkillId = "implementor-v1";
+    deps.sourceSkillId = SKILL_IDS.implementor;
     deps.runnerBrokerEndpoint = "http://runner-broker:18090/v1/execute";
     deps.runnerJournal = new RunnerJournal({ filePath: join(root, "runner.jsonl") });
     const revisionRef = createChangeRevisionRef({
@@ -339,7 +351,7 @@ test("Assessor test command is independently bound to an assess Task", async () 
     await dispatchTask(task, depsFor(LEADER, root));
     const deps = depsFor("tiangong-assessor", root);
     deps.professionalRole = "assessor";
-    deps.sourceSkillId = "assessor-v1";
+    deps.sourceSkillId = SKILL_IDS.assessor;
     deps.runnerBrokerEndpoint = "http://runner-broker:18090/v1/execute";
     deps.runnerJournal = new RunnerJournal({ filePath: join(root, "assessor-runner.jsonl") });
     const assessedRevision = createChangeRevisionRef({
@@ -405,7 +417,7 @@ test("Runner plan rejection occurs before the immutable Worker invocation journa
     const journalPath = join(root, "plan-rejected-runner.jsonl");
     const deps = depsFor("tiangong-implementor", root);
     deps.professionalRole = "implementor";
-    deps.sourceSkillId = "implementor-v1";
+    deps.sourceSkillId = SKILL_IDS.implementor;
     deps.runnerBrokerEndpoint = "http://runner-broker:18090/v1/execute";
     deps.runnerJournal = new RunnerJournal({ filePath: journalPath });
     deps.runnerFetch = async () => new Response(JSON.stringify({ error: "rejected" }), { status: 403 });
@@ -436,7 +448,7 @@ test("Runner plan transport causes are reduced to stable sanitized Evidence code
     const journalPath = join(root, "plan-network-runner.jsonl");
     const deps = depsFor("tiangong-implementor", root);
     deps.professionalRole = "implementor";
-    deps.sourceSkillId = "implementor-v1";
+    deps.sourceSkillId = SKILL_IDS.implementor;
     deps.runnerBrokerEndpoint = "http://runner-broker:18090/v1/execute";
     deps.runnerJournal = new RunnerJournal({ filePath: journalPath });
     deps.runnerFetch = async () => {
@@ -466,7 +478,7 @@ test("member tools reject a non-Leader Matrix actor and unavailable Runner", asy
     await dispatchTask(task, depsFor(LEADER, root));
     const deps = depsFor("tiangong-implementor", root);
     deps.professionalRole = "implementor";
-    deps.sourceSkillId = "implementor-v1";
+    deps.sourceSkillId = SKILL_IDS.implementor;
     deps.getInvocation = () => ({
       sessionId: "session-intruder",
       turnId: "turn-intruder",
@@ -596,7 +608,7 @@ test("approved deployment auto-submits one bound release ResultEnvelope", async 
     await dispatchTask(release, depsFor(LEADER, root));
     const operatorDeps = depsFor(release.assignee, root);
     operatorDeps.professionalRole = "operator";
-    operatorDeps.sourceSkillId = "operator-v1";
+    operatorDeps.sourceSkillId = SKILL_IDS.operator;
     operatorDeps.deploymentBrokerEndpoint = "http://deployment-broker:8791/v1/deploy";
     operatorDeps.deploymentReceiptStore = {};
     let operatorTurn = 1;

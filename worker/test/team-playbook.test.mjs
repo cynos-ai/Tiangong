@@ -91,9 +91,9 @@ test("buildProjectBinding and buildTaskBinding carry the verified playbook diges
     createdAt: "2026-08-01T00:00:01Z",
   });
   assert.equal(task.playbookStepId, "software-change-delivery-transition-v1:design");
-  assert.equal(task.sourceProfileDigest, "aad09452ef5976eeee24a1c976eeae93064ed01bb84ba8bc85588586b361e3e6");
-  assert.equal(task.sourceSkillId, "designer-v1");
-  assert.equal(task.sourceSkillDigest, "360ff77f2da57456ff9510720176e61db03a0b36de3eeb0f9b1338f28296a3f9");
+  assert.equal(task.sourceProfileDigest, "232ef7080049e1fae32926caa5bb23c9b758cfc09f7afe83bd3b489e71e5c6b1");
+  assert.equal(task.sourceSkillId, "designer-design-delivery-v1");
+  assert.equal(task.sourceSkillDigest, "42b3946603971a7ea5d5a6d0fd596698441d06ac149c311c9fe5b4d5832bc477");
   assert.equal(project.contentDigest.length, 64);
 });
 
@@ -244,14 +244,31 @@ test("playbooks.lock pins package, policy, schemas, roles, and upstream contract
   assert.equal(entry.agentTeamsVersion, "v1.2.0");
   assert.equal(entry.teamTaskPortContractVersion, "team-task-port-v1");
   assert.deepEqual(Object.keys(entry.compatibleRoleProfileDigests), ["leader", "designer", "implementor", "assessor", "operator"]);
-  assert.deepEqual(Object.keys(entry.compatibleRoleSkillDigests), ["leader-v1", "designer-v1", "implementor-v1", "assessor-v1", "operator-v1"]);
+  assert.deepEqual(Object.keys(entry.compatibleSoulDigests), ["leader-soul-v1", "designer-soul-v1", "implementor-soul-v1", "assessor-soul-v1", "operator-soul-v1"]);
+  assert.deepEqual(Object.keys(entry.compatibleSkillDigests), [
+    "leader-coordination-v1",
+    "designer-design-delivery-v1",
+    "implementor-controlled-implementation-v1",
+    "assessor-independent-assessment-v1",
+    "operator-controlled-release-v1",
+  ]);
   const workerRoot = path.resolve(DEFAULT_PLAYBOOK_ROOT, "../worker");
   for (const [roleId, digest] of Object.entries(entry.compatibleRoleProfileDigests)) {
     assert.equal(sha256(readFileSync(path.join(workerRoot, "role-profiles", `${roleId}.json`))), digest);
   }
-  for (const [skillId, digest] of Object.entries(entry.compatibleRoleSkillDigests)) {
-    const roleId = skillId.replace(/-v1$/u, "");
-    assert.equal(sha256(readFileSync(path.join(workerRoot, "roles", roleId, "role.md"))), digest);
+  for (const [soulId, digest] of Object.entries(entry.compatibleSoulDigests)) {
+    const roleId = soulId.replace(/-soul-v1$/u, "");
+    assert.equal(sha256(readFileSync(path.join(workerRoot, "roles", roleId, "SOUL.md"))), digest);
+  }
+  for (const [skillId, digest] of Object.entries(entry.compatibleSkillDigests)) {
+    const roleId = {
+      "leader-coordination-v1": "leader/coordination",
+      "designer-design-delivery-v1": "designer/design-delivery",
+      "implementor-controlled-implementation-v1": "implementor/controlled-implementation",
+      "assessor-independent-assessment-v1": "assessor/independent-assessment",
+      "operator-controlled-release-v1": "operator/controlled-release",
+    }[skillId];
+    assert.equal(sha256(readFileSync(path.join(workerRoot, "skills", `${roleId}.md`))), digest);
   }
 });
 

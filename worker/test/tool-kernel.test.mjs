@@ -90,11 +90,9 @@ test("core tool registry rejects a non-kernel role profile before creating execu
   assert.throws(
     () => createCoreToolRegistry({
       profile: {
-        roleId: "reviewer",
-        gatePolicyId: "reviewer-v2",
-        toolIds: [
-          "start_work", "extend_scope", "read", "inspect_directory", "inspect_repository", "check_completion", "abandon_work",
-        ],
+        roleId: "designer",
+        gatePolicyId: "professional-tools-v1",
+        toolIds: ["team_resolve_task", "team_submit_result"],
       },
     }),
     /fixed kernel role profile/u,
@@ -178,7 +176,7 @@ test("pending write survives restart, executes once after approval, and replays 
   assert.deepEqual(recovered.arguments, invocation.params);
   const approval = {
     operationDigest: pending.details.operationDigest,
-    approvedBy: "@reviewer:example.test",
+    approvedBy: "@approver:example.test",
   };
   await kernel.store.approve(pending.details.idempotencyKey, approval);
   await kernel.store.approve(pending.details.idempotencyKey, approval);
@@ -335,7 +333,7 @@ test("write rolls back when durable completion evidence fails", async (t) => {
   const pending = await execute(kernel, invocation);
   await kernel.store.approve(pending.details.idempotencyKey, {
     operationDigest: pending.details.operationDigest,
-    approvedBy: "@reviewer:example.test",
+    approvedBy: "@approver:example.test",
   });
 
   await assert.rejects(execute(kernel, invocation), /injected evidence failure/u);

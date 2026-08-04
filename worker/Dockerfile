@@ -40,7 +40,7 @@ COPY --from=team_playbooks . /opt/team-playbooks/
 COPY observability/ ./observability/
 COPY plugin/ ./plugin/
 COPY roles/ ./roles/
-COPY practices/ ./practices/
+COPY skills/ ./skills/
 RUN npm run check-observability \
     && node -e 'import("./plugin/index.mjs").then((module) => { if (module.default?.id !== "tiangong-pi") process.exit(1); })'
 
@@ -72,10 +72,6 @@ ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/deployment/broker-serve
 FROM worker-base AS kernel
 COPY role-profiles/kernel.json /opt/tiangong-worker/profile.json
 RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role kernel
-
-FROM worker-base AS reviewer
-COPY role-profiles/reviewer.json /opt/tiangong-worker/profile.json
-RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role reviewer
 
 FROM worker-base AS leader
 COPY role-profiles/leader.json /opt/tiangong-worker/profile.json

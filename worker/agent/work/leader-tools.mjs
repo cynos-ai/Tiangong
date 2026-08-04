@@ -8,9 +8,9 @@
 //
 // These tools wrap TeamTaskPort operations, which already enforce Leader
 // authorization (TeamContextPort), idempotent replay, and Evidence. Routing
-// them through the unified Tiangong Gate wrapper is part of the Practice clean
-// cut; for the leader roundtrip spike the team operations carry their own
-// authorization, idempotency, and evidence.
+// them through the unified Tiangong Gate wrapper keeps the coordination
+// operations evidence-backed; the team operations also carry their own
+// authorization and idempotency.
 
 import { Type } from "typebox";
 
@@ -22,6 +22,7 @@ import {
   readProjectBinding,
   readProjectReport,
   readTaskBinding,
+  readTaskDecisions,
   readTaskResult,
   writeProjectReport,
 } from "../team/manifest-store.mjs";
@@ -133,7 +134,7 @@ export function createLeaderToolRegistry({ playbook, deps }) {
     async execute(_toolCallId, params) {
       await deps.sync.beforeRead();
       const project = await readProjectBinding(params.projectId, deps);
-      const task = buildTaskBinding({
+      let task = buildTaskBinding({
         playbook,
         taskId: params.taskId,
         projectId: params.projectId,
@@ -145,14 +146,43 @@ export function createLeaderToolRegistry({ playbook, deps }) {
         inputRefs: params.inputRefs,
         createdAt: nowISO(deps),
       });
-      const chain = await projectChain(params.projectId, deps);
-      assertTransitionAllowed({
-        projectBinding: project,
-        taskBinding: task,
-        chain,
-        taskKindRoles: playbook.taskKindRoles,
-        maxRevisionWaves: playbook.maxRevisionWaves,
-      });
+      let existingTask;
+      try {
+        existingTask = await readTaskBinding(params.taskId, deps);
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+      if (existingTask) {
+        // createdAt is part of the immutable Task binding but is not a model
+        // parameter. Rebuild the candidate with the stored timestamp so an
+        // exact replay survives a fresh Leader process.
+        task = buildTaskBinding({
+          playbook,
+          taskId: params.taskId,
+          projectId: params.projectId,
+          taskKind: params.taskKind,
+          revisionIndex: params.revisionIndex,
+          assignee: params.assignee,
+          objective: params.objective,
+          completionContractDigest: params.completionContractDigest ?? playbook.completionSchemaDigest,
+          inputRefs: params.inputRefs,
+          createdAt: existingTask.createdAt,
+        });
+      } else {
+        const chain = await projectChain(params.projectId, deps);
+        assertTransitionAllowed({
+          projectBinding: project,
+          taskBinding: task,
+          chain,
+          taskKindRoles: playbook.taskKindRoles,
+          maxRevisionWaves: playbook.maxRevisionWaves,
+        });
+      }
+      // An exact Task replay must remain available after a Leader restart even
+      // while the durable Task is still awaiting its Worker Result. The
+      // immutable binding check in dispatchTask rejects changed parameters;
+      // requiring a complete projectChain here would incorrectly reject that
+      // safe replay because projectChain intentionally rejects undecided Tasks.
       const dispatched = await dispatchTask(task, deps);
       return ok({
         taskId: dispatched.taskBinding.taskId,
@@ -220,6 +250,9 @@ export function createLeaderToolRegistry({ playbook, deps }) {
         if (error?.code !== "ENOENT" || params.decision !== "blocked") throw error;
       }
       const project = await readProjectBinding(task.projectId, deps);
+      const existingDecisions = await readTaskDecisions(params.taskId, deps);
+      if (existingDecisions.length > 1) throw new Error("Task has conflicting terminal decisions");
+      const existingDecision = existingDecisions[0];
       const decision = createTaskDecision({
         taskId: params.taskId,
         projectId: task.projectId,
@@ -228,8 +261,11 @@ export function createLeaderToolRegistry({ playbook, deps }) {
         revisionIndex: task.revisionIndex,
         decidedBy: leaderName(deps),
         resultDigest: latestResult?.contentDigest ?? params.resultDigest,
-        note: params.note,
-        createdAt: nowISO(deps),
+        note: params.note === undefined ? existingDecision?.note : params.note,
+        // createdAt is part of the immutable transition record but is not a
+        // model parameter. Reuse it for an exact decision replay after a
+        // Leader restart.
+        createdAt: existingDecision?.createdAt ?? nowISO(deps),
       });
       assertDecisionResultCompatible({ decision, taskBinding: task, result: latestResult });
       const recorded = await recordTaskDecision(decision, deps);

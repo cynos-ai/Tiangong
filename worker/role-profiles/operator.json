@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "roleId": "operator",
   "title": "Tiangong Operator",
-  "practiceIds": [],
+  "soulId": "operator-soul-v1",
+  "skillIds": ["operator-controlled-release-v1"],
   "toolIds": ["team_resolve_task", "deploy_release", "team_submit_result"],
-  "gatePolicyId": "deployment-tools-v1",
-  "roleSkillId": "operator-v1"
+  "gatePolicyId": "deployment-tools-v1"
 }

@@ -3,7 +3,7 @@
 Tiangong is an evidence-backed AI software engineering team built on [AgentTeams](https://github.com/agentscope-ai/AgentTeams).
 
 > [!NOTE]
-> v0.1.0 was Tiangong's first public source release with Reviewer v1. The current development line clean-cut upgrades Reviewer to v2 for bounded UTF-8 `file`, `directory_snapshot`, immutable local `commit`, and direct `git_diff` targets. Remote/PR freshness, test execution, workspace repair, Team verification, and the broader multi-role product experience remain unimplemented. See the [release notes](docs/releases/v0.1.0.md) and [changelog](CHANGELOG.md).
+> v0.1.0 is a historical source release. The current development line is the evidence-backed five-role delivery team: Team Leader, Designer, Implementor, Assessor, and Operator. Historical Reviewer experiments are not an active runtime path. See the [release notes](docs/releases/v0.1.0.md) and [changelog](CHANGELOG.md).
 
 ## Vision
 
@@ -65,7 +65,7 @@ Run `make help` for the complete command list. Uninstall removes the Tiangong-ow
 
 ### Pi-enabled Worker image smoke test
 
-The local Worker image extends the public AgentTeams `v1.2.0-beta.1` Worker image at an immutable digest, retains its Node.js `22.23.1` runtime, and installs the public MIT-licensed `@earendil-works/pi-coding-agent` package at exactly `0.82.0` from `worker/package-lock.json`.
+The local Worker image extends the public AgentTeams `v1.2.0-beta.1` Worker image at an immutable digest, retains its pinned Node.js `22.23.2` runtime, and installs the public MIT-licensed `@earendil-works/pi-coding-agent` package at exactly `0.82.0` from `worker/package-lock.json`.
 
 With AgentTeams running, choose the fast channel smoke or the full approval smoke:
 
@@ -80,7 +80,7 @@ The Full smoke additionally asks pi to propose a constrained workspace write, ve
 
 Cleanup removes the temporary Worker and the exact MinIO prefix owned by the reserved smoke identity. It never operates on another Worker prefix. Provider credentials are not copied into the image, repository, model configuration, session, or Evidence.
 
-The Worker resource retains AgentTeams' supported `openclaw` runtime, Node.js version, entrypoint, and gateway. A narrow `openclaw` command wrapper injects the Tiangong plugin path into the generated configuration and then delegates to the upstream executable. OpenClaw continues to own Matrix, configuration retrieval, storage sync, re-login, readiness, channel policy, and reply delivery. Tiangong owns the pi harness and its Evidence, approval, advisory next-action, and Gate behavior.
+The Worker resource retains AgentTeams' supported `openclaw` runtime, Node.js version, entrypoint, and gateway. A narrow `openclaw` command wrapper injects the Tiangong plugin path into the generated configuration and then delegates to the upstream executable. OpenClaw continues to own Matrix, configuration retrieval, storage sync, re-login, readiness, channel policy, and reply delivery. Tiangong owns the pi harness, five closed RoleProfiles, validated SOUL/Skill context, WorkRun state, Evidence, approval, and Gate behavior.
 
 Optional, backend-neutral Worker tracing is documented in [`docs/observability.md`](./docs/observability.md). It is disabled by default, exports only allowlisted sanitized OpenTelemetry spans, and remains diagnostic telemetry rather than authorization or hash-chained Evidence. The bounded [`peer transport diagnostic`](./docs/peer-transport-diagnostic.md) keeps exact ping/pong markers in deterministic Worker code while deriving targets only from authenticated effective Matrix allowlists; it is transport-only and is not Team Work or Evidence.
 
@@ -89,10 +89,9 @@ The current runtime is intentionally constrained:
 - it claims only the Worker-scoped `agentteams-gateway` provider and disables OpenClaw's fallback to another agent harness;
 - OpenClaw parameters cross a stable Tiangong Turn DTO; provider credentials are non-enumerable request data and are injected into pi only in memory;
 - pi extensions, skills, prompt templates, and automatic repository context are disabled;
-- the active kernel image loads a strict, digest-bound profile and static methodology from `/opt/tiangong-worker`; environment variables, Worker names, prompts, and tool arguments cannot select or elevate its role;
-- transcript files live only under `sessions/<session-hash>/pi/`; Evidence, idempotency, pending payload, rollback, local-Git lock, and captured-artifact state use independent per-session roots beneath the synchronized state directory, so transcript reset cannot erase business state;
+- every image loads a strict, digest-bound RoleProfile plus code-owned SOUL and Skill resources from `/opt/tiangong-worker`; environment variables, Worker names, prompts, and tool arguments cannot select or elevate its role;
+- transcript files live only under `sessions/<session-hash>/pi/`; WorkRun, Evidence, idempotency, pending payload, and rollback state use independent roots beneath the synchronized state directory, so transcript reset cannot erase business state;
 - restartable writes persist a digest-bound operation envelope and a separate mode-`600` content payload under that state directory; raw write content never enters Evidence, but is visible to principals with Worker storage administration access and follows explicit operation retention;
-- the image contains a non-model CapturedArtifactStore under `captured-artifacts/<session-hash>/`; Reviewer v2 code uses it for directory and commit manifests, pinned diff artifacts, target-bound reads, and bounded inspection outputs, while persisted bytes remain visible to Worker/storage administrators and have no v1 purge or end-to-end-encryption claim;
 - only gated `read` and path-restricted, atomic `write` are active; `write` requires persisted approval from the same authenticated Matrix sender that requested it, ignores upstream owner assertions for authorization, supports restart recovery, and blocks duplicate execution;
 - runtime state, credential-bearing paths, symlink traversal, workspace escape, image input, and `bash` are unavailable.
 
@@ -103,7 +102,7 @@ make build-worker-image
 docker run --rm --entrypoint pi tiangong-worker:dev --version
 ```
 
-The build also produces `tiangong-worker-reviewer:dev` with fixed Reviewer v2 kinds `file,directory_snapshot,commit,git_diff` and an exact seven-tool surface: `start_work`, `extend_scope`, target-bound text `read`, bounded `inspect_directory`, bounded `inspect_repository`, `check_completion`, and `abandon_work`. Reviewer v2 supports Worker-local, static-only review of immutable-at-admission bounded UTF-8 file/directory snapshots, selected files from pinned local commits, and pinned direct commit-to-commit textual diffs. Local Git runs only after Gate allow through fixed `/usr/bin/prlimit` + `/usr/bin/git` argv against an ephemeral synthetic bare mirror; it does not load repository execution config, inspect working-tree/index state, fetch, use a shell, or run project code. Its append-only target scope, PracticeRun/claim v2, ContextPack v3, checkpoint `review-v2`, Artifact-backed consumption, and structured inspections are enforced in runtime code and covered by deterministic, fixed-image, official Matrix directory/local-Git Basic, and directory journal-derived Recovery checks. Inspection does not count as coverage, Artifact references and OIDs do not grant authority, source or artifact conflicts fail closed, and no v1 schema compatibility shim remains. The capability does not establish remote or PR freshness, commit authorship/signature trust, test results, workspace mutation, Team verification, or guaranteed model progress.
+The build also produces dedicated `tiangong-worker-leader:dev`, `tiangong-worker-designer:dev`, `tiangong-worker-implementor:dev`, `tiangong-worker-assessor:dev`, and `tiangong-worker-operator:dev` images. Each image contains the same controlled runtime but a fixed RoleProfile and closed tool surface. The professional images bind their Task, role, Skill, WorkRun, ResultEnvelope, and Evidence through code; Implementor and Assessor commands use the isolated Runner boundary, while Operator uses only the structured deployment boundary. No historical Reviewer image or Practice compatibility path is built.
 
 ### Interrupted write reconciliation
 

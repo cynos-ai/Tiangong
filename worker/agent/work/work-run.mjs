@@ -3,8 +3,8 @@
 // Role-neutral: every role stores a WorkRun the same way; the store never
 // branches on role. The immutable binding (run/task/role/skill, objective,
 // scope, completion contract, refs) is fixed at open; only the phase evolves
-// through a guarded, hash-chained event journal. This is NOT a rename of
-// PracticeRunStore (architecture §5); it is a new small store.
+// through a guarded, hash-chained event journal. It is independent of any
+// role-specific state model.
 
 import { canonicalJson, sha256 } from "../canonical-json.mjs";
 import { TEAM_ROLES } from "../team/manifest.mjs";
@@ -85,9 +85,7 @@ export function createWorkRun(input) {
     phase: "planned",
     createdAt: demandPattern(input.createdAt, "createdAt", ISO_PATTERN),
   };
-  if (input.skillDigest !== undefined && input.skillDigest !== null) {
-    record.skillDigest = demandPattern(input.skillDigest, "skillDigest", DIGEST_PATTERN);
-  }
+  record.skillDigest = demandPattern(input.skillDigest, "skillDigest", DIGEST_PATTERN);
   return freezeWithDigest(record);
 }
 
@@ -120,7 +118,15 @@ export function createPhaseEvent(input) {
 // Replay an event journal onto the binding to compute the current phase and
 // verify the hash chain (tamper evidence).
 export function replayWorkRun(binding, events) {
+  if (!binding || typeof binding !== "object" || Array.isArray(binding)) {
+    throw new TypeError("binding must be an object");
+  }
   if (!Array.isArray(events)) throw new TypeError("events must be an array");
+  const { contentDigest, ...bindingWithoutDigest } = binding;
+  const verifiedBinding = createWorkRun(bindingWithoutDigest);
+  if (canonicalJson(verifiedBinding) !== canonicalJson(binding)) {
+    throw new Error("WorkRun binding digest is invalid");
+  }
   let phase = binding.phase;
   let previousHash = binding.contentDigest;
   for (let i = 0; i < events.length; i += 1) {

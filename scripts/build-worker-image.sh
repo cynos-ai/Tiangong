@@ -6,7 +6,6 @@ readonly SCRIPT_DIR
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly REPO_ROOT
 readonly IMAGE="tiangong-worker:dev"
-readonly REVIEWER_IMAGE="tiangong-worker-reviewer:dev"
 readonly LEADER_IMAGE="tiangong-worker-leader:dev"
 readonly DESIGNER_IMAGE="tiangong-worker-designer:dev"
 readonly IMPLEMENTOR_IMAGE="tiangong-worker-implementor:dev"
@@ -38,8 +37,6 @@ fi
 
 printf '[Tiangong] Building %s\n' "${IMAGE}"
 docker build "${build_args[@]}" --target default --tag "${IMAGE}" "${REPO_ROOT}/worker"
-printf '[Tiangong] Building trusted profile image %s\n' "${REVIEWER_IMAGE}"
-docker build "${build_args[@]}" --target reviewer --tag "${REVIEWER_IMAGE}" "${REPO_ROOT}/worker"
 printf '[Tiangong] Building leader profile image %s\n' "${LEADER_IMAGE}"
 docker build "${build_args[@]}" --target leader --tag "${LEADER_IMAGE}" "${REPO_ROOT}/worker"
 for role in designer implementor assessor operator; do
@@ -73,12 +70,12 @@ actual_pi_version="$(docker run --rm --entrypoint pi "${IMAGE}" --version)"
   exit 1
 }
 
-actual_git_version="$(docker run --rm --entrypoint /usr/bin/git "${REVIEWER_IMAGE}" --version)"
+actual_git_version="$(docker run --rm --entrypoint /usr/bin/git "${IMAGE}" --version)"
 [[ "${actual_git_version}" == "${EXPECTED_GIT_VERSION}" ]] || {
   printf 'ERROR: expected Git %s, got %s.\n' "${EXPECTED_GIT_VERSION}" "${actual_git_version}" >&2
   exit 1
 }
-actual_prlimit_version="$(docker run --rm --entrypoint /usr/bin/prlimit "${REVIEWER_IMAGE}" --version | head -n 1)"
+actual_prlimit_version="$(docker run --rm --entrypoint /usr/bin/prlimit "${IMAGE}" --version | head -n 1)"
 [[ "${actual_prlimit_version}" == "prlimit from util-linux ${EXPECTED_UTIL_LINUX_VERSION}" ]] || {
   printf 'ERROR: expected prlimit from util-linux %s, got %s.\n' "${EXPECTED_UTIL_LINUX_VERSION}" "${actual_prlimit_version}" >&2
   exit 1
@@ -101,53 +98,6 @@ docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${IMAGE}" \
     const observability = createWorkerObservability({ config });
     await observability.shutdown();
   '
-docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${IMAGE}" \
-  --input-type=module -e '
-    import { mkdir, rm } from "node:fs/promises";
-    import { CapturedArtifactStore } from "./agent/artifacts/store.mjs";
-    import { sha256 } from "./agent/canonical-json.mjs";
-    const stateDirectory = "/tmp/tiangong-artifact-image-contract";
-    await mkdir(stateDirectory, { mode: 0o700 });
-    try {
-      const store = new CapturedArtifactStore({ stateDirectory, sessionId: "image-contract" });
-      const binding = {
-        kind: "practice_target",
-        sessionHash: store.sessionHash,
-        actorId: "@image:example.test",
-        practiceRunId: "run-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-        targetId: "target-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-        invocationIdentity: sha256("image-invocation"),
-        sourceOperationDigest: sha256("image-operation"),
-      };
-      const receipt = await store.put({
-        binding,
-        purpose: "review_target_chunk",
-        ordinal: 0,
-        mediaType: "text/plain;charset=utf-8",
-        encoding: "utf-8",
-        truncated: false,
-        producerId: "review-target-consume",
-        producerVersion: 1,
-        transformVersion: 1,
-        canonicalBytes: Buffer.from("image contract\n"),
-      });
-      const expectedContentIdentity = Object.fromEntries([
-        "purpose", "ordinal", "contentDigest", "contentBytes", "contentLines",
-        "mediaType", "encoding", "truncated", "producerId", "producerVersion",
-        "transformVersion",
-      ].map((key) => [key, receipt[key]]));
-      const resolved = await store.readFromEvidence({
-        artifactRefDigest: receipt.artifactRefDigest,
-        artifactKey: receipt.artifactKey,
-        expectedBinding: binding,
-        expectedContentIdentity,
-      });
-      if (resolved.bytes.toString("utf8") !== "image contract\n") process.exit(1);
-    } finally {
-      await rm(stateDirectory, { recursive: true, force: true });
-    }
-  '
-
 reconciliation_help="$(docker run --rm --entrypoint tiangong-reconcile "${IMAGE}" --help)"
 grep -Fq 'tiangong-reconcile inspect' <<<"${reconciliation_help}" || {
   printf 'ERROR: the Worker reconciliation entrypoint is unavailable.\n' >&2
@@ -161,8 +111,6 @@ grep -Fq 'tiangong-retain compact' <<<"${retention_help}" || {
 
 kernel_profile="$(docker run --rm --entrypoint node "${IMAGE}" \
   /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role kernel)"
-reviewer_profile="$(docker run --rm --entrypoint node "${REVIEWER_IMAGE}" \
-  /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role reviewer)"
 leader_profile="$(docker run --rm --entrypoint node "${LEADER_IMAGE}" \
   /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role leader)"
 designer_profile="$(docker run --rm --entrypoint node "${DESIGNER_IMAGE}" \
@@ -201,51 +149,9 @@ docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${LEADER_IMAGE
     });
     if (registry.names().join(",") !== "team_create_project,team_dispatch_task,team_check_result,team_decide_task,team_report") process.exit(1);
   '
-docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${REVIEWER_IMAGE}" \
-  --input-type=module -e '
-    const [
-      { CapturedArtifactStore },
-      { loadFixedRoleProfileBundle },
-      { EvidenceRecorder },
-      { ReviewerPracticeGate },
-      { PracticeRunService },
-      { TurnContextController },
-      { createReviewerToolRegistry },
-    ] = await Promise.all([
-      import("./agent/artifacts/store.mjs"),
-      import("./agent/config/role-profile.mjs"),
-      import("./agent/evidence/recorder.mjs"),
-      import("./agent/gates/reviewer-practice-gate.mjs"),
-      import("./agent/practices/practice-run-service.mjs"),
-      import("./agent/turn-context.mjs"),
-      import("./agent/work/reviewer-tools.mjs"),
-    ]);
-    const profileBundle = await loadFixedRoleProfileBundle();
-    const turns = new TurnContextController();
-    const stateDirectory = "/tmp/tiangong-image-contract-state";
-    const service = new PracticeRunService({
-      sessionId: "image-contract",
-      workspaceDir: "/root/agentteams-fs",
-      profileBundle,
-      journalPath: "/tmp/tiangong-image-contract/events.jsonl",
-      snapshotPath: "/tmp/tiangong-image-contract/snapshot.json",
-      protectedDirectory: "/tmp/tiangong-image-contract/protected",
-      artifactStore: new CapturedArtifactStore({ stateDirectory, sessionId: "image-contract" }),
-    });
-    const registry = createReviewerToolRegistry({
-      workspaceDir: "/root/agentteams-fs",
-      service,
-      gate: new ReviewerPracticeGate({ profileBundle }),
-      evidence: new EvidenceRecorder({ filePath: "/tmp/tiangong-image-contract/evidence.jsonl" }),
-      getInvocation: turns.current,
-      inspectionLockPath: "/tmp/tiangong-image-contract/review-inspection-lock-target",
-    });
-    if (registry.names().join(",") !== "start_work,extend_scope,read,inspect_directory,inspect_repository,check_completion,abandon_work") process.exit(1);
-  '
 node -e '
-  const [kernel, reviewer, leader, ...professionals] = process.argv.slice(1).map(JSON.parse);
+  const [kernel, leader, ...professionals] = process.argv.slice(1).map(JSON.parse);
   if (kernel.roleId !== "kernel" || kernel.runtimeReady !== true) process.exit(1);
-  if (reviewer.roleId !== "reviewer" || reviewer.runtimeReady !== true) process.exit(1);
   if (leader.roleId !== "leader" || leader.runtimeReady !== true) process.exit(1);
   if (leader.toolIds.join(",") !== "team_create_project,team_dispatch_task,team_check_result,team_decide_task,team_report") process.exit(1);
   if (professionals.map((profile) => profile.roleId).join(",") !== "designer,implementor,assessor,operator") process.exit(1);
@@ -256,16 +162,10 @@ node -e '
     operator: "team_resolve_task,deploy_release,team_submit_result",
   };
   if (professionals.some((profile) => profile.runtimeReady !== true || profile.toolIds.join(",") !== expectedProfessionalTools[profile.roleId])) process.exit(1);
-  if (reviewer.schemaVersion !== 2 || reviewer.targetKindIds.join(",") !== "file,directory_snapshot,commit,git_diff") process.exit(1);
-  if (reviewer.materializedTargetKindIds.join(",") !== "file,directory_snapshot,commit,git_diff") process.exit(1);
-  if (reviewer.toolIds.join(",") !== "start_work,extend_scope,read,inspect_directory,inspect_repository,check_completion,abandon_work") process.exit(1);
-  if (reviewer.materializedToolIds.join(",") !== "start_work,extend_scope,read,inspect_directory,inspect_repository,check_completion,abandon_work") process.exit(1);
-' "${kernel_profile}" "${reviewer_profile}" "${leader_profile}" "${designer_profile}" "${implementor_profile}" "${assessor_profile}" "${operator_profile}"
+' "${kernel_profile}" "${leader_profile}" "${designer_profile}" "${implementor_profile}" "${assessor_profile}" "${operator_profile}"
 
-printf '[Tiangong] Worker image ready: %s (Node.js %s, pi %s, fixed kernel profile)\n' \
+printf '[Tiangong] Worker image ready: %s (Node.js %s, pi %s, fixed core profile)\n' \
   "${IMAGE}" "${actual_node_version}" "${actual_pi_version}"
-printf '[Tiangong] Reviewer profile image validated: %s (runtimeReady=true; deterministic Reviewer slice)\n' \
-  "${REVIEWER_IMAGE}"
 printf '[Tiangong] Leader profile image validated: %s (runtimeReady=true; closed coordination tool surface)\n' \
   "${LEADER_IMAGE}"
 printf '[Tiangong] Professional profile images validated: %s, %s, %s, %s (runtimeReady=true; role-scoped closed tools)\n' \

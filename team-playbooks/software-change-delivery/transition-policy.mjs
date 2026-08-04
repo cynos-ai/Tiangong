@@ -1,8 +1,8 @@
 // Deterministic transition policy for the software-change-delivery TeamPlaybook.
 //
 // Pure functions over task-kind + decision + deploy/verify outcomes. No
-// runtime state, no Practice model: this is the Phase-2-ready core that the
-// closed TeamPlaybook resolver and the Leader wrap with immutable binding
+// runtime state: this is the closed TeamPlaybook core that the resolver and
+// Leader wrap with immutable binding
 // manifests (see worker/agent/team). maxRevisionWaves is fixed at 2; a
 // revision beyond the limit, a blocker, or a timeout enters BLOCKED. A deploy
 // whose post-verify fails rolls back to the previous digest; FAILED_SAFE
@@ -102,7 +102,7 @@ export function reduceTaskChain(decisions, { maxRevisionWaves = MAX_REVISION_WAV
 // binding so the policy can reject an illegal role for a step, a step out of
 // order, and a decision that reuses an expired (prior-revision) result. These
 // take explicit maps (roleBindings, taskKindRoles) so the module stays free
-// of runtime/Practice imports; the closed TeamPlaybook resolver wires them.
+// of runtime imports; the closed TeamPlaybook resolver wires them.
 
 export const DEFAULT_TASK_KIND_ROLES = Object.freeze({
   design: "designer",

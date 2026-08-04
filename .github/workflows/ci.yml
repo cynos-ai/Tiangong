@@ -41,8 +41,8 @@ jobs:
         run: make test-pause-worker-boundary
       - name: Test Leader smoke oracle contract
         run: make test-leader-smoke-contract
-      - name: Test Reviewer smoke oracle contract
-        run: make test-reviewer-smoke-contract
+      - name: Test Phase 4 recovery contract
+        run: make test-phase4-recovery
       - name: Validate project Agent Skills
         run: |
           node --check scripts/check-skills.mjs
@@ -69,7 +69,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22.23.1
+          node-version: 22.23.2
           cache: npm
           cache-dependency-path: worker/package-lock.json
       - name: Install locked Worker dependencies

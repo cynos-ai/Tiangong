@@ -26,6 +26,9 @@ readonly MANAGER_REPORT_CHECK="/tmp/tiangong-requester-report-check.sh"
 PROJECT_ID="leader-smoke-$(head -c 8 /proc/sys/kernel/random/uuid)"
 TASK_ID="${PROJECT_ID}-design-0"
 owned=0
+manager_restart_required=0
+controller_api_token=''
+declare -A cleanup_room_ids=()
 
 log() { printf '[Tiangong] %s\n' "$*"; }
 die() { printf '[Tiangong] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -130,8 +133,76 @@ team_peer_policy_loaded() {
   done
 }
 
+capture_manager_cleanup_state() {
+  local member resource
+  controller_api_token="$(docker exec "${MANAGER_CONTAINER}" printenv AGENTTEAMS_AUTH_TOKEN 2>/dev/null || true)"
+  [[ -n "${controller_api_token}" ]] || return 1
+  for member in "${MEMBERS[@]}"; do
+    resource="$(docker exec "${MANAGER_CONTAINER}" agt get workers "${member}" -o json 2>/dev/null || true)"
+    cleanup_room_ids["${member}"]="$(jq -r '.roomID // empty' <<<"${resource}" 2>/dev/null || true)"
+  done
+  if [[ "$(docker inspect "${MANAGER_CONTAINER}" --format '{{.State.Running}}' 2>/dev/null)" == true ]]; then
+    docker stop "${MANAGER_CONTAINER}" >/dev/null || return 1
+    manager_restart_required=1
+  fi
+}
+
+leave_manager_from_worker_room() {
+  local member="$1" room_id="${cleanup_room_ids[$1]:-}"
+  [[ -n "${room_id}" ]] || return 0
+  docker exec -i "${CONTROLLER_CONTAINER}" sh -s -- "${room_id}" <<'SH'
+set -eu
+room_id="$1"
+config=/root/agentteams-fs/agents/manager/openclaw.json
+homeserver="$(jq -r '.channels.matrix.homeserver // empty' "${config}")"
+access_token="$(jq -r '.channels.matrix.accessToken // empty' "${config}")"
+[ -n "${homeserver}" ] && [ -n "${access_token}" ]
+room_path="$(printf '%s' "${room_id}" | jq -sRr @uri)"
+response="$(printf 'header = "Authorization: Bearer %s"\n' "${access_token}" | curl --silent --show-error --max-time 30 -K - -X POST -w '\n%{http_code}' "${homeserver%/}/_matrix/client/v3/rooms/${room_path}/leave")"
+status="$(printf '%s\n' "${response}" | tail -n 1)"
+body="$(printf '%s\n' "${response}" | sed '$d')"
+if [ "${status}" = 200 ]; then exit 0; fi
+if [ "${status}" = 403 ] && printf '%s' "${body}" | jq -e '.error == "M_FORBIDDEN: Auth check failed: cannot leave if not joined, invited or knocked"' >/dev/null 2>&1; then exit 0; fi
+exit 1
+SH
+}
+
+controller_team_status() {
+  printf 'header = "Authorization: Bearer %s"\n' "${controller_api_token}" | \
+    docker exec -i "${CONTROLLER_CONTAINER}" curl --silent --show-error --max-time 5 \
+      -K - -o /dev/null -w '%{http_code}' \
+      "http://127.0.0.1:8090/api/v1/teams/${TEAM_NAME}"
+}
+
+controller_delete_team() {
+  local status
+  status="$(printf 'header = "Authorization: Bearer %s"\n' "${controller_api_token}" | \
+    docker exec -i "${CONTROLLER_CONTAINER}" curl --silent --show-error --max-time 5 \
+      -K - -o /dev/null -w '%{http_code}' -X DELETE \
+      "http://127.0.0.1:8090/api/v1/teams/${TEAM_NAME}")"
+  [[ "${status}" == 204 || "${status}" == 404 ]]
+}
+
+wait_for_team_absent() {
+  for _ in $(seq 1 360); do
+    [[ "$(controller_team_status)" == 404 ]] && return 0
+    sleep 1
+  done
+  return 1
+}
+
+restart_manager_after_cleanup() {
+  ((manager_restart_required == 1)) || return 0
+  docker start "${MANAGER_CONTAINER}" >/dev/null || return 1
+  for _ in $(seq 1 60); do
+    docker exec "${MANAGER_CONTAINER}" agt get workers -o json >/dev/null 2>&1 && return 0
+    sleep 2
+  done
+  return 1
+}
+
 cleanup() {
-  local status=$? failed=0 member container task_id discovered_id
+  local status=$? failed=0 member container task_id discovered_id gone
   local -a project_tasks=("${TASK_ID}")
   trap - EXIT INT TERM
   set +e
@@ -142,51 +213,83 @@ cleanup() {
   docker exec "${MANAGER_CONTAINER}" rm -f "${MANAGER_WORKERS_MANIFEST}" "${MANAGER_MANIFEST}" \
     "${MANAGER_TURN}" "${MANAGER_REPORT_CHECK}" >/dev/null 2>&1 || failed=1
   if ((owned == 1)); then
-    if team_exists; then
-      docker exec "${MANAGER_CONTAINER}" agt delete team "${TEAM_NAME}" >/dev/null 2>&1 || failed=1
+    # AgentTeams v1.2 releases a Team only after the Manager leaves the
+    # personal Worker rooms. Stop it, use its exact room facts through the
+    # Controller-side config, delete only this Team through the Controller API,
+    # and restart it only after the Team is absent.
+    if capture_manager_cleanup_state; then
+      for member in "${MEMBERS[@]}"; do
+        leave_manager_from_worker_room "${member}" || failed=1
+      done
+      controller_delete_team || failed=1
+      wait_for_team_absent || failed=1
+      restart_manager_after_cleanup || failed=1
     else
-      for member in "${MEMBERS[@]}"; do
-        docker exec "${MANAGER_CONTAINER}" agt delete worker "${member}" >/dev/null 2>&1 || true
-      done
+      failed=1
     fi
-    for _ in $(seq 1 120); do
-      gone=1
-      team_exists && gone=0
+
+    if [[ "$(docker inspect "${MANAGER_CONTAINER}" --format '{{.State.Running}}' 2>/dev/null)" == true ]]; then
       for member in "${MEMBERS[@]}"; do
-        worker_exists "${member}" && gone=0
+        docker exec "${MANAGER_CONTAINER}" agt get workers "${member}" -o json >/dev/null 2>&1 && \
+          docker exec "${MANAGER_CONTAINER}" agt delete worker "${member}" >/dev/null 2>&1 || true
         container="agentteams-worker-${member}"
-        container_exists "${container}" && gone=0
+        container_exists "${container}" && docker rm --force "${container}" >/dev/null 2>&1 || true
       done
-      ((gone == 1)) && break
-      sleep 1
+      # The Controller delete can release the containers while the Manager's
+      # cached Team object remains. Reconcile that exact Team record now that
+      # all owned members are gone.
+      team_exists && docker exec "${MANAGER_CONTAINER}" agt delete team "${TEAM_NAME}" >/dev/null 2>&1 || true
+      for _ in $(seq 1 120); do
+        team_exists || break
+        sleep 1
+      done
+    else
+      failed=1
+    fi
+
+    gone=1
+    team_exists && gone=0
+    if [[ "$(controller_team_status 2>/dev/null || true)" != 404 ]]; then gone=0; fi
+    for member in "${MEMBERS[@]}"; do
+      worker_exists "${member}" && gone=0
+      container_exists "agentteams-worker-${member}" && gone=0
     done
     if ((gone == 0)); then
       printf '[Tiangong] ERROR: AgentTeams did not release the owned Team members; preserving their storage for diagnosis.\n' >&2
       failed=1
-    else
-      for member in "${MEMBERS[@]}"; do
-        docker exec "${CONTROLLER_CONTAINER}" mc rm --recursive --force \
-          "agentteams/agentteams-storage/agents/${member}/" >/dev/null 2>&1 || failed=1
-        docker exec "${CONTROLLER_CONTAINER}" rm -rf -- "/root/agentteams-fs/agents/${member}" >/dev/null 2>&1 || failed=1
+    fi
+
+    for member in "${MEMBERS[@]}"; do
+      docker exec "${CONTROLLER_CONTAINER}" mc rm --recursive --force \
+        "agentteams/agentteams-storage/agents/${member}/" >/dev/null 2>&1 || failed=1
+      docker exec "${CONTROLLER_CONTAINER}" rm -rf -- "/root/agentteams-fs/agents/${member}" >/dev/null 2>&1 || failed=1
+      if [[ "$(docker inspect "${MANAGER_CONTAINER}" --format '{{.State.Running}}' 2>/dev/null)" == true ]]; then
         docker exec "${MANAGER_CONTAINER}" rm -rf -- "/root/agentteams-fs/agents/${member}" >/dev/null 2>&1 || failed=1
-      done
+      else
+        failed=1
+      fi
+    done
+    docker exec "${CONTROLLER_CONTAINER}" mc rm --recursive --force \
+      "agentteams/agentteams-storage/teams/${TEAM_NAME}/" >/dev/null 2>&1 || failed=1
+    docker exec "${CONTROLLER_CONTAINER}" mc rm --recursive --force \
+      "agentteams/agentteams-storage/shared/projects/${PROJECT_ID}/" >/dev/null 2>&1 || failed=1
+    for task_id in "${project_tasks[@]}"; do
       docker exec "${CONTROLLER_CONTAINER}" mc rm --recursive --force \
-        "agentteams/agentteams-storage/teams/${TEAM_NAME}/" >/dev/null 2>&1 || failed=1
-      docker exec "${CONTROLLER_CONTAINER}" mc rm --recursive --force \
-        "agentteams/agentteams-storage/shared/projects/${PROJECT_ID}/" >/dev/null 2>&1 || failed=1
+        "agentteams/agentteams-storage/shared/tasks/${task_id}/" >/dev/null 2>&1 || failed=1
+    done
+    docker exec "${CONTROLLER_CONTAINER}" rm -rf -- "/root/agentteams-fs/teams/${TEAM_NAME}" \
+      "/root/agentteams-fs/shared/projects/${PROJECT_ID}" >/dev/null 2>&1 || failed=1
+    docker exec "${CONTROLLER_CONTAINER}" test ! -e "/root/agentteams-fs/shared/projects/${PROJECT_ID}" || failed=1
+    if [[ "$(docker inspect "${MANAGER_CONTAINER}" --format '{{.State.Running}}' 2>/dev/null)" == true ]]; then
+      docker exec "${MANAGER_CONTAINER}" rm -rf -- "/root/agentteams-fs/teams/${TEAM_NAME}" \
+        "/root/agentteams-fs/shared/projects/${PROJECT_ID}" >/dev/null 2>&1 || failed=1
+      docker exec "${MANAGER_CONTAINER}" test ! -e "/root/agentteams-fs/shared/projects/${PROJECT_ID}" || failed=1
       for task_id in "${project_tasks[@]}"; do
-        docker exec "${CONTROLLER_CONTAINER}" mc rm --recursive --force \
-          "agentteams/agentteams-storage/shared/tasks/${task_id}/" >/dev/null 2>&1 || failed=1
+        docker exec "${MANAGER_CONTAINER}" rm -rf -- "/root/agentteams-fs/shared/tasks/${task_id}" >/dev/null 2>&1 || failed=1
+        docker exec "${MANAGER_CONTAINER}" test ! -e "/root/agentteams-fs/shared/tasks/${task_id}" || failed=1
       done
-      for host in "${CONTROLLER_CONTAINER}" "${MANAGER_CONTAINER}"; do
-        docker exec "${host}" rm -rf -- "/root/agentteams-fs/teams/${TEAM_NAME}" \
-          "/root/agentteams-fs/shared/projects/${PROJECT_ID}" >/dev/null 2>&1 || failed=1
-        docker exec "${host}" test ! -e "/root/agentteams-fs/shared/projects/${PROJECT_ID}" || failed=1
-        for task_id in "${project_tasks[@]}"; do
-          docker exec "${host}" rm -rf -- "/root/agentteams-fs/shared/tasks/${task_id}" >/dev/null 2>&1 || failed=1
-          docker exec "${host}" test ! -e "/root/agentteams-fs/shared/tasks/${task_id}" || failed=1
-        done
-      done
+    else
+      failed=1
     fi
     if ((failed == 0)); then printf 'leader_smoke_cleanup=pass\n'; fi
   fi
@@ -348,16 +451,26 @@ for _ in $(seq 1 120); do
   sleep 3
 done
 [[ -n "${implement_decision}" ]] || die "No Leader decision arrived for the Implementor result"
-implement_result="$(docker exec "${CONTROLLER_CONTAINER}" mc cat "${implement_prefix}/tiangong/result-envelope.json")"
+implement_result="$(docker exec "${CONTROLLER_CONTAINER}" mc cat "${implement_prefix}/tiangong/result-envelope.json" 2>/dev/null || true)"
 implement_task="$(docker exec "${CONTROLLER_CONTAINER}" mc cat "${implement_prefix}/tiangong/task-binding.json")"
 [[ "$(jq -r '.decision' <<<"${implement_decision}")" == blocked ]] || die "Implementor blocker was not decided as blocked"
 [[ "$(jq -r '.decidedBy' <<<"${implement_decision}")" == "${LEADER_NAME}" ]] || die "Implementor decision identity is not the authenticated Leader"
-[[ "$(jq -r '.producer' <<<"${implement_result}")" == "${IMPLEMENTOR_NAME}" ]] || die "Implementor result producer is wrong"
-[[ "$(jq -r '.sourceRole' <<<"${implement_result}")" == implementor ]] || die "Implementor result role is wrong"
-[[ -n "$(jq -r '.blocker // empty' <<<"${implement_result}")" ]] || die "Implementor result did not fail closed with a blocker"
-[[ "$(jq -r '.sourceProfileDigest' <<<"${implement_result}")" == "$(jq -r '.sourceProfileDigest' <<<"${implement_task}")" ]] || die "Implementor result profile is not bound to the Task"
-[[ "$(jq -r '.skillDigest' <<<"${implement_result}")" == "$(jq -r '.sourceSkillDigest' <<<"${implement_task}")" ]] || die "Implementor Result Skill is not bound to the Task"
-[[ "$(jq -r '.resultDigest' <<<"${implement_decision}")" == "$(jq -r '.contentDigest' <<<"${implement_result}")" ]] || die "Blocked decision does not bind the Implementor result"
+if [[ -n "${implement_result}" ]]; then
+  [[ "$(jq -r '.producer' <<<"${implement_result}")" == "${IMPLEMENTOR_NAME}" ]] || die "Implementor result producer is wrong"
+  [[ "$(jq -r '.sourceRole' <<<"${implement_result}")" == implementor ]] || die "Implementor result role is wrong"
+  [[ -n "$(jq -r '.blocker // empty' <<<"${implement_result}")" ]] || die "Implementor result did not fail closed with a blocker"
+  [[ "$(jq -r '.sourceProfileDigest' <<<"${implement_result}")" == "$(jq -r '.sourceProfileDigest' <<<"${implement_task}")" ]] || die "Implementor result profile is not bound to the Task"
+  [[ "$(jq -r '.skillDigest' <<<"${implement_result}")" == "$(jq -r '.sourceSkillDigest' <<<"${implement_task}")" ]] || die "Implementor Result Skill is not bound to the Task"
+  [[ "$(jq -r '.resultDigest' <<<"${implement_decision}")" == "$(jq -r '.contentDigest' <<<"${implement_result}")" ]] || die "Blocked decision does not bind the Implementor result"
+  printf 'leader_smoke_implementor_blocker_result=pass\n'
+else
+  # A blocked decision may be the fail-closed response to an external
+  # prerequisite before a Worker can materialize a ResultEnvelope. In that
+  # branch the immutable decision must not claim a result digest; the terminal
+  # RECOVERY_REQUIRED report remains the authoritative outcome.
+  [[ -z "$(jq -r '.resultDigest // empty' <<<"${implement_decision}")" ]] || die "Missing Implementor Result conflicts with a decision digest"
+  printf 'leader_smoke_implementor_blocker_without_result=pass\n'
+fi
 printf 'leader_smoke_implementor_blocker=pass\n'
 
 report_path="agentteams/agentteams-storage/shared/projects/${PROJECT_ID}/tiangong/terminal-report.json"

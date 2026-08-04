@@ -21,7 +21,8 @@ function baseRunInput(over = {}) {
     runId: "run-1",
     taskId: "task-1",
     role: "implementor",
-    skillId: "implementor-v1",
+    skillId: "implementor-controlled-implementation-v1",
+    skillDigest: "d".repeat(64),
     objective: "implement the change in scope",
     scope: "src/change.mjs",
     completionContractDigest: CONTRACT,
@@ -172,6 +173,10 @@ test("replay detects a broken hash chain and a tampered event digest", () => {
   });
   // well-formed replay
   assert.equal(replayWorkRun(binding, [event]).phase, "executing");
+  assert.throws(
+    () => replayWorkRun({ ...binding, objective: "tampered" }, []),
+    /binding digest is invalid/,
+  );
   // tampered event: change toPhase after digest computed
   const tampered = { ...event, toPhase: "finalized" };
   assert.throws(() => replayWorkRun(binding, [tampered]), /digest is invalid/);

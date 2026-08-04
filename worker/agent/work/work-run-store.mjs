@@ -6,7 +6,7 @@
 // overwrites history. The filesystem is injected so the contract is
 // deterministic and testable without touching real storage.
 
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -30,11 +30,13 @@ export class WorkRunStore {
     }
     this.#directory = directory;
     this.#fs = fs ?? {
+      chmod,
+      lstat,
       mkdir,
       readFile,
       readdir,
       writeFile,
-      appendFile: (file, data) => writeFile(file, data, { flag: "a" }),
+      appendFile: (file, data) => writeFile(file, data, { flag: "a", mode: 0o600 }),
     };
     this.#now = nowFn;
   }
@@ -44,7 +46,28 @@ export class WorkRunStore {
   #now;
 
   async #ensureDir() {
-    await this.#fs.mkdir(this.#directory, { recursive: true });
+    await this.#fs.mkdir(this.#directory, { recursive: true, mode: 0o700 });
+    if (typeof this.#fs.lstat !== "function") return;
+    const stat = await this.#fs.lstat(this.#directory);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error("WorkRun directory must be a real directory");
+    if ((stat.mode & 0o077) !== 0 && typeof this.#fs.chmod === "function") {
+      await this.#fs.chmod(this.#directory, 0o700);
+    }
+  }
+
+  async #assertFile(filePath, label) {
+    if (typeof this.#fs.lstat !== "function") return;
+    let stat;
+    try {
+      stat = await this.#fs.lstat(filePath);
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+      throw error;
+    }
+    if (stat.isSymbolicLink() || !stat.isFile()) throw new Error(`${label} must be a regular file`);
+    if ((stat.mode & 0o077) !== 0 && typeof this.#fs.chmod === "function") {
+      await this.#fs.chmod(filePath, 0o600);
+    }
   }
 
   #bindingPath(runId) {
@@ -56,13 +79,17 @@ export class WorkRunStore {
   }
 
   async #readBinding(runId) {
-    const raw = await this.#fs.readFile(this.#bindingPath(runId), "utf8");
+    const filePath = this.#bindingPath(runId);
+    await this.#assertFile(filePath, "WorkRun binding");
+    const raw = await this.#fs.readFile(filePath, "utf8");
     return JSON.parse(raw);
   }
 
   async #readEvents(runId) {
     try {
-      const raw = await this.#fs.readFile(this.#eventsPath(runId), "utf8");
+      const filePath = this.#eventsPath(runId);
+      await this.#assertFile(filePath, "WorkRun journal");
+      const raw = await this.#fs.readFile(filePath, "utf8");
       return raw
         .split("\n")
         .filter((line) => line.trim() !== "")
@@ -77,7 +104,7 @@ export class WorkRunStore {
     const binding = createWorkRun(input);
     await this.#ensureDir();
     try {
-      await this.#fs.writeFile(this.#bindingPath(binding.runId), `${JSON.stringify(binding)}\n`, { flag: "wx" });
+      await this.#fs.writeFile(this.#bindingPath(binding.runId), `${JSON.stringify(binding)}\n`, { flag: "wx", mode: 0o600 });
     } catch (error) {
       if (error?.code !== "EEXIST") throw error;
       const existing = await this.#readBinding(binding.runId);
@@ -108,7 +135,7 @@ export class WorkRunStore {
       at: now(this),
       reason,
     });
-    await this.#fs.appendFile(this.#eventsPath(runId), `${JSON.stringify(event)}\n`);
+    await this.#fs.appendFile(this.#eventsPath(runId), `${JSON.stringify(event)}\n`, { mode: 0o600 });
     return this.read(runId);
   }
 

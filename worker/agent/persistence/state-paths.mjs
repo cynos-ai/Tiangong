@@ -15,10 +15,8 @@ export function stateRootPaths(stateDirectory) {
   return Object.freeze({
     stateDirectory: root,
     sessionsRoot: join(root, "sessions"),
-    practiceRunsRoot: join(root, "practice-runs"),
+    workRunsRoot: join(root, "work-runs"),
     evidenceRoot: join(root, "evidence"),
-    capturedArtifactsRoot: join(root, "captured-artifacts"),
-    localGitRoot: join(root, "local-git"),
     idempotencyRoot: join(root, "idempotency"),
     runnerJournalsRoot: join(root, "runner-journals"),
     deploymentReceiptsRoot: join(root, "deployment-receipts"),
@@ -33,29 +31,17 @@ export function statePathsForSessionHash({ stateDirectory, sessionHash }) {
   }
   const roots = stateRootPaths(stateDirectory);
   const sessionDirectory = join(roots.sessionsRoot, sessionHash);
-  const practiceRunDirectory = join(roots.practiceRunsRoot, sessionHash);
+  const workRunDirectory = join(roots.workRunsRoot, sessionHash);
   const evidenceDirectory = join(roots.evidenceRoot, sessionHash);
-  const capturedArtifactDirectory = join(roots.capturedArtifactsRoot, sessionHash);
-  const localGitDirectory = join(roots.localGitRoot, sessionHash);
   const idempotencyDirectory = join(roots.idempotencyRoot, sessionHash);
   return Object.freeze({
     ...roots,
     sessionHash,
     sessionDirectory,
     piDirectory: join(sessionDirectory, "pi"),
-    practiceRunDirectory,
-    practiceRunJournalPath: join(practiceRunDirectory, "events.jsonl"),
-    practiceRunSnapshotPath: join(practiceRunDirectory, "snapshot.json"),
-    practiceRunProtectedDirectory: join(practiceRunDirectory, "protected"),
-    reviewInspectionLockPath: join(practiceRunDirectory, "review-inspection-lock-target"),
-    localGitDirectory,
-    localGitLockPath: join(localGitDirectory, "lock-target"),
+    workRunDirectory,
     evidenceDirectory,
     evidenceFilePath: join(evidenceDirectory, "events.jsonl"),
-    capturedArtifactDirectory,
-    capturedArtifactObjectsDirectory: join(capturedArtifactDirectory, "objects"),
-    capturedArtifactTemporaryDirectory: join(capturedArtifactDirectory, "tmp"),
-    capturedArtifactLockPath: join(capturedArtifactDirectory, "store-lock-target"),
     idempotencyDirectory,
     idempotencyFilePath: join(idempotencyDirectory, "idempotency.jsonl"),
     runnerJournalFilePath: join(roots.runnerJournalsRoot, sessionHash, "runner.jsonl"),

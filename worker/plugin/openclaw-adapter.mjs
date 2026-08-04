@@ -3,7 +3,6 @@ import { join } from "node:path";
 
 import { TiangongAgentRuntime } from "../agent/runtime.mjs";
 import { createTurnRequest, normalizeReplyTarget } from "../agent/turn-contract.mjs";
-import { escapeMachineStatusMarker, renderWorkStatus } from "../agent/work/status.mjs";
 import {
   DISABLED_OBSERVABILITY,
   observabilityOutcome,
@@ -47,11 +46,9 @@ function matrixPeerContext(params) {
 }
 
 function projectedText(result) {
-  let text = escapeMachineStatusMarker(result?.text ?? "");
+  let text = result?.text ?? "";
   const target = normalizeReplyTarget(result?.replyTarget);
   if (target && !text.includes(target.id)) text = `${target.id} ${text}`.trim();
-  const status = renderWorkStatus(result?.workStatus);
-  if (status !== "") text = text === "" ? status : `${text}\n\n${status}`;
   return text;
 }
 

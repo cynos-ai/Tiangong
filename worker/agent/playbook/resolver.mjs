@@ -98,8 +98,9 @@ export function buildTaskBinding({
 }) {
   if (!playbook?.contentDigest) throw new Error("buildTaskBinding requires a loaded playbook");
   const role = registryEntry("roles", TASK_KIND_ROLE[taskKind]);
-  const roleSkill = role && registryEntry("roleSkills", role.roleSkillId);
-  if (!role || !roleSkill) throw new Error(`No closed professional profile for Task kind: ${taskKind}`);
+  const sourceSkillId = role?.skillIds?.[0];
+  const sourceSkill = sourceSkillId && registryEntry("skills", sourceSkillId);
+  if (!role || !sourceSkill) throw new Error(`No closed professional profile for Task kind: ${taskKind}`);
   return createTaskBinding({
     taskId,
     projectId,
@@ -110,8 +111,8 @@ export function buildTaskBinding({
     objective,
     completionContractDigest,
     sourceProfileDigest: role.profileDigest,
-    sourceSkillId: roleSkill.id,
-    sourceSkillDigest: roleSkill.digest,
+    sourceSkillId: sourceSkill.id,
+    sourceSkillDigest: sourceSkill.digest,
     inputRefs,
     createdAt,
   });

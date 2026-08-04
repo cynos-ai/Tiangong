@@ -5,7 +5,7 @@
 // assess(accept) -> release -> DELIVERED flow with idempotency and the
 // negative gates. No live stack: every side effect is a fake adapter or an
 // in-memory/injected store. This is the deterministic proof that the contracts
-// compose before the Practice clean cut wires them into the active runtime.
+// compose independently before the runtime wires them into a real Worker turn.
 
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -108,7 +108,17 @@ async function runStep({ pb, project, root, chain, taskKind, revisionIndex, assi
 
   // Worker-local WorkRun lifecycle
   const store = roleStores[assignee];
-  const run = await store.open({ runId: `run-${taskId}`, taskId, role: pb.taskKindRoles[taskKind], skillId: `${taskKind}-v1`, objective: taskKind, scope: taskKind, completionContractDigest: pb.completionSchemaDigest, createdAt: T(1) });
+  const run = await store.open({
+    runId: `run-${taskId}`,
+    taskId,
+    role: pb.taskKindRoles[taskKind],
+    skillId: task.sourceSkillId,
+    skillDigest: task.sourceSkillDigest,
+    objective: taskKind,
+    scope: taskKind,
+    completionContractDigest: pb.completionSchemaDigest,
+    createdAt: T(1),
+  });
   await store.transition(run.binding.runId, "executing");
   await store.transition(run.binding.runId, "verifying");
   await store.transition(run.binding.runId, "finalized");

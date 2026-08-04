@@ -15,6 +15,7 @@ import { wrapTeamTool } from "../team/tool-wrapper.mjs";
 import { acceptedChangeRevisionForRelease, resolveAssignedTask, submitResult } from "../team/team-task-port.mjs";
 import { createChangeRevisionRef } from "./change-revision-ref.mjs";
 import { createResultEnvelope } from "./result-envelope.mjs";
+import { createWorkRun } from "./work-run.mjs";
 
 const ID = Type.String({ pattern: "^[A-Za-z0-9._:-]{1,128}$" });
 const DIGEST = Type.String({ pattern: "^[0-9a-f]{64}$" });
@@ -45,6 +46,58 @@ function nowISO(deps) {
   const value = deps?.now?.();
   return typeof value === "string" ? value : new Date().toISOString();
 }
+
+function workRunIdForTask(taskBinding) {
+  return `work-${sha256(taskBinding.contentDigest).slice(0, 48)}`;
+}
+
+function workRunScope(taskBinding) {
+  return canonicalJson({ taskId: taskBinding.taskId, inputRefs: taskBinding.inputRefs });
+}
+
+async function ensureWorkRun(taskBinding, deps, sourceRole) {
+  if (!deps.workRunStore) return undefined;
+  const existing = await deps.workRunStore.latestForTask(taskBinding.taskId);
+  if (existing) {
+    if (existing.binding.role !== sourceRole || existing.binding.skillId !== taskBinding.sourceSkillId ||
+        existing.binding.completionContractDigest !== taskBinding.completionContractDigest) {
+      throw new Error("Existing WorkRun binding conflicts with the assigned Task");
+    }
+    if (existing.phase === "planned" || existing.phase === "blocked") {
+      return deps.workRunStore.transition(existing.binding.runId, "executing", { reason: "task-resolved" });
+    }
+    return existing;
+  }
+  const opened = await deps.workRunStore.open(createWorkRun({
+    runId: workRunIdForTask(taskBinding),
+    taskId: taskBinding.taskId,
+    role: sourceRole,
+    skillId: taskBinding.sourceSkillId,
+    skillDigest: taskBinding.sourceSkillDigest,
+    objective: taskBinding.objective,
+    scope: workRunScope(taskBinding),
+    completionContractDigest: taskBinding.completionContractDigest,
+    inputRefs: taskBinding.inputRefs,
+    createdAt: nowISO(deps),
+  }));
+  return opened.phase === "planned"
+    ? deps.workRunStore.transition(opened.binding.runId, "executing", { reason: "task-resolved" })
+    : opened;
+}
+
+async function finalizeWorkRun(taskBinding, deps) {
+  if (!deps.workRunStore) return undefined;
+  let state = await deps.workRunStore.latestForTask(taskBinding.taskId);
+  if (!state || state.terminal) return state;
+  if (state.phase === "executing" || state.phase === "waiting_approval") {
+    state = await deps.workRunStore.transition(state.binding.runId, "verifying", { reason: "result-submitted" });
+  }
+  if (state.phase === "verifying") {
+    state = await deps.workRunStore.transition(state.binding.runId, "finalized", { reason: "result-submitted" });
+  }
+  return state;
+}
+
 function ok(details) {
   return { content: [{ type: "text", text: JSON.stringify(details) }], details };
 }
@@ -167,6 +220,7 @@ function createDeploymentTool(deps) {
       createdAt: nowISO(deps),
     });
     const submitted = await submitResult(result, deps);
+    await finalizeWorkRun(taskBinding, deps);
     await deps.evidence?.append?.({
       type: "deployment.release.result.autosubmitted",
       taskId: result.taskId,
@@ -344,7 +398,13 @@ export function createMemberToolRegistry({ deps }) {
     executionMode: "sequential",
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx, invocation) {
       const { taskBinding } = await resolveAssignedTask(params.taskId, deps);
-      await assertLeaderInvocation(taskBinding, invocation, deps);
+      const project = await assertLeaderInvocation(taskBinding, invocation, deps);
+      const identity = loadWorkerIdentity(deps);
+      const sourceRole = findRoleForWorker(project.roleBindings, identity.workerName);
+      if (!sourceRole || sourceRole === "team_leader" || sourceRole !== deps.professionalRole) {
+        throw new Error("Loaded professional RoleProfile does not match the Project role binding");
+      }
+      const workRun = await ensureWorkRun(taskBinding, deps, sourceRole);
       const resolved = ok({
         taskId: taskBinding.taskId,
         projectId: taskBinding.projectId,
@@ -354,6 +414,8 @@ export function createMemberToolRegistry({ deps }) {
         objective: taskBinding.objective,
         completionContractDigest: taskBinding.completionContractDigest,
         inputRefs: taskBinding.inputRefs,
+        workRunId: workRun?.binding.runId ?? null,
+        workRunPhase: workRun?.phase ?? null,
       });
       if (taskBinding.taskKind === "release" && deploymentTool) {
         return deploymentTool.execute(
@@ -433,9 +495,12 @@ export function createMemberToolRegistry({ deps }) {
         createdAt: nowISO(deps),
       });
       const submitted = await submitResult(result, deps);
+      const workRun = await finalizeWorkRun(taskBinding, deps);
       return ok({
         taskId: submitted.result.taskId,
         producer: submitted.result.producer,
+        workRunId: workRun?.binding.runId ?? null,
+        workRunPhase: workRun?.phase ?? null,
         replayed: submitted.replayed,
         notified: submitted.notified,
         notificationQueued: submitted.notificationQueued,

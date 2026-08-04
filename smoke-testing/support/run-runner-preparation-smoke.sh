@@ -115,11 +115,11 @@ const common = {
 };
 const implement = createTaskBinding({
   ...common, taskId: process.env.PREP_SMOKE_IMPLEMENT_TASK_ID, taskKind: "implement",
-  assignee: process.env.PREP_SMOKE_IMPLEMENTOR_NAME, sourceSkillId: "implementor-v1", inputRefs: [],
+  assignee: process.env.PREP_SMOKE_IMPLEMENTOR_NAME, sourceSkillId: "implementor-controlled-implementation-v1", inputRefs: [],
 });
 const assess = createTaskBinding({
   ...common, taskId: process.env.PREP_SMOKE_ASSESS_TASK_ID, taskKind: "assess",
-  assignee: process.env.PREP_SMOKE_ASSESSOR_NAME, sourceSkillId: "assessor-v1", inputRefs: [implement.taskId],
+  assignee: process.env.PREP_SMOKE_ASSESSOR_NAME, sourceSkillId: "assessor-independent-assessment-v1", inputRefs: [implement.taskId],
 });
 await writeFile(process.env.IMPLEMENT_REQUEST, JSON.stringify({
   schemaVersion: 1, projectBinding: project, taskBinding: implement, inputTaskBinding: null,

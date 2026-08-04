@@ -6,7 +6,6 @@ WORKER_IMAGE_BUILD := ./scripts/build-worker-image.sh
 WORKER_IMAGE_TEST := ./smoke-testing/support/run-worker-smoke.sh
 LEADER_SMOKE := ./smoke-testing/support/run-leader-smoke.sh
 LEADER_SMOKE_TEST := ./scripts/test-leader-smoke.sh
-REVIEWER_IMAGE_TEST := ./smoke-testing/support/run-reviewer-smoke.sh
 PEER_MENTION_SMOKE := ./smoke-testing/support/run-peer-mention-smoke.sh
 PEER_MENTION_SMOKE_TEST := ./scripts/test-peer-mention-smoke.sh
 RUNNER_ISOLATION_SPIKE := ./smoke-testing/support/run-runner-isolation-spike.sh
@@ -16,10 +15,10 @@ RUNNER_BROKER := ./scripts/runner-broker.sh
 RUNNER_PREPARATION_SMOKE := ./smoke-testing/support/run-runner-preparation-smoke.sh
 DEPLOYMENT_SERVICE_SMOKE := node ./smoke-testing/support/run-deployment-service-smoke.mjs
 SKILL_CHECK := node ./scripts/check-skills.mjs
-REVIEWER_SMOKE_CONTRACT := node ./scripts/test-reviewer-smoke-oracle.mjs
 PAUSE_WORKER_BOUNDARY_TEST := ./scripts/test-pause-worker-boundary.sh
+PHASE4_RECOVERY_TEST := node ./worker/test/phase4-recovery.test.mjs
 
-.PHONY: help init up start stop down status verify config logs login uninstall check-skills build-worker-image test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-runner-isolation test-runner-executor test-runner-broker test-runner-preparation start-runner-broker status-runner-broker stop-runner-broker test-deployment-service test-reviewer-smoke-contract test-reviewer-image-basic test-reviewer-image-git test-reviewer-image test-reviewer-journey-canary test-peer-mention-smoke-contract test-peer-mention-smoke test-pause-worker-boundary
+.PHONY: help init up start stop down status verify config logs login uninstall check-skills build-worker-image test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-phase4-recovery test-runner-isolation test-runner-executor test-runner-broker test-runner-preparation start-runner-broker status-runner-broker stop-runner-broker test-deployment-service test-peer-mention-smoke-contract test-peer-mention-smoke test-pause-worker-boundary
 
 help: ## Show available commands
 	@printf '%s\n' 'Tiangong local development commands:'
@@ -72,6 +71,9 @@ test-leader-smoke-contract: ## Validate Leader smoke requester-report and in-con
 test-leader-image-basic: ## Run the Leader Matrix coordination (blocked terminal partial) smoke and clean up
 	@$(LEADER_SMOKE)
 
+test-phase4-recovery: ## Run deterministic revision, rollback, recovery, and Leader restart regressions
+	@$(PHASE4_RECOVERY_TEST)
+
 test-runner-isolation: ## Prove the disposable RunnerPort isolation contract and clean up
 	@$(RUNNER_ISOLATION_SPIKE)
 
@@ -95,21 +97,6 @@ stop-runner-broker: ## Stop the shared Runner broker; use PURGE=1 to remove its 
 
 test-deployment-service: ## Prove the disposable deployment target state and authorization contract
 	@$(DEPLOYMENT_SERVICE_SMOKE)
-
-test-reviewer-smoke-contract: ## Validate Reviewer smoke oracle phase semantics
-	@$(REVIEWER_SMOKE_CONTRACT)
-
-test-reviewer-image-basic: ## Run the Reviewer Matrix Basic smoke and clean up
-	@TIANGONG_REVIEWER_SMOKE_LEVEL=basic $(REVIEWER_IMAGE_TEST)
-
-test-reviewer-image-git: ## Run the Reviewer local-Git Matrix Basic smoke and clean up
-	@TIANGONG_REVIEWER_SMOKE_LEVEL=git $(REVIEWER_IMAGE_TEST)
-
-test-reviewer-image: ## Run the hard-gate Reviewer recovery Full smoke and clean up
-	@TIANGONG_REVIEWER_SMOKE_LEVEL=recovery $(REVIEWER_IMAGE_TEST)
-
-test-reviewer-journey-canary: ## Observe non-gating post-restart model progression and clean up
-	@TIANGONG_REVIEWER_SMOKE_LEVEL=journey $(REVIEWER_IMAGE_TEST)
 
 test-peer-mention-smoke-contract: ## Validate the Worker peer mention fixture and event oracle
 	@$(PEER_MENTION_SMOKE_TEST)
