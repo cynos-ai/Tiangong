@@ -40,7 +40,8 @@ The corrected first wave produced the following immutable chain:
   `c5a053cf1165b0c95f7e85aa8f8fd8e8df0850220989bf6d8e4396db17bf91b9`.
 
 The independent verifier passed with `taskCount=7`, chain status `blocked` at
-Assessor revision 2, and expected disposition `RECOVERY_REQUIRED`. No Release
+Assessor revision 2, and expected disposition `RECOVERY_REQUIRED`; its
+sanitized output is `verify.json` in this run directory. No Release
 Task, approval, deployment, or rollback was created, which is the required
 fail-closed result for an exhausted revision chain.
 

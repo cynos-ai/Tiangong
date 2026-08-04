@@ -65,8 +65,9 @@ Machine facts for the corrected Project `p5r2-08050645-project-corrected`:
   `b624c9893f3da1618cefb5c2c9b0e30ccfc87bd4bcddca03e6f2b0d5a4634885`
   and disposition `FAILED_SAFE`; requester delivery Evidence was present.
 
-The independent verifier passed with expected disposition `FAILED_SAFE`.
-However, the Assessor accepted the first revision rather than producing
+The independent verifier passed with expected disposition `FAILED_SAFE`;
+the sanitized output is `verify.json` in this run directory. However, the
+Assessor accepted the first revision rather than producing
 `REVISION_NEEDED`, so this run does **not** close the revision-wave portion of
 Phase 5.
 
