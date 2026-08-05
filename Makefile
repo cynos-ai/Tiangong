@@ -18,7 +18,7 @@ SKILL_CHECK := node ./scripts/check-skills.mjs
 PAUSE_WORKER_BOUNDARY_TEST := ./scripts/test-pause-worker-boundary.sh
 PHASE4_RECOVERY_TEST := node ./worker/test/phase4-recovery.test.mjs
 
-.PHONY: help init up start stop down status verify config logs login uninstall check-skills build-worker-image test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-phase4-recovery test-runner-isolation test-runner-executor test-runner-broker test-runner-preparation start-runner-broker status-runner-broker stop-runner-broker test-deployment-service test-peer-mention-smoke-contract test-peer-mention-smoke test-pause-worker-boundary
+.PHONY: help init up start stop down status verify config logs login uninstall check-skills check-demo-contract verify-professional-state build-worker-image test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-phase4-recovery test-runner-isolation test-runner-executor test-runner-broker test-runner-preparation start-runner-broker status-runner-broker stop-runner-broker test-deployment-service test-peer-mention-smoke-contract test-peer-mention-smoke test-pause-worker-boundary
 
 help: ## Show available commands
 	@printf '%s\n' 'Tiangong local development commands:'
@@ -55,6 +55,13 @@ login: ## Show Element URL and local credential location
 
 check-skills: ## Validate project Agent Skills and trigger cases
 	@$(SKILL_CHECK)
+
+check-demo-contract: ## Validate five-role, Skill, Playbook, and fixture demo contracts
+	@node ./scripts/check-demo-contract.mjs
+
+verify-professional-state: ## Verify a preserved Project/Task/Result state (ROOT, PROJECT, EXPECTED required)
+	@test -n "$(ROOT)" -a -n "$(PROJECT)" -a -n "$(EXPECTED)"
+	@node ./scripts/verify-professional-state.mjs --root "$(ROOT)" --project "$(PROJECT)" --expected "$(EXPECTED)" $(foreach evidence,$(EVIDENCE),--evidence "$(evidence)")
 
 build-worker-image: ## Build the pinned local Tiangong Worker image
 	@$(WORKER_IMAGE_BUILD)

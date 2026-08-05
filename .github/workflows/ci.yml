@@ -51,10 +51,13 @@ jobs:
         run: make test-leader-smoke-contract
       - name: Test Phase 4 recovery contract
         run: make test-phase4-recovery
-      - name: Validate project Agent Skills
+      - name: Validate project Agent Skills and demo contract
         run: |
           node --check scripts/check-skills.mjs
+          node --check scripts/check-demo-contract.mjs
+          node --check scripts/verify-professional-state.mjs
           make check-skills
+          make check-demo-contract
       - name: Install and run actionlint
         env:
           ACTIONLINT_VERSION: 1.7.7
