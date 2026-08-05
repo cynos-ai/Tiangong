@@ -348,7 +348,7 @@ trap 'ACCESS_TOKEN=' EXIT
 }
 DOMAIN="${MATRIX_USER_ID#*:}"
 WORKER_USER_ID="@${TARGET}:${DOMAIN}"
-ROOM_ID="$(docker exec "${MANAGER_CONTAINER}" printenv AGENTTEAMS_WORKER_ROOM_ID)"
+ROOM_ID="$(docker exec "agentteams-worker-${TARGET}" printenv AGENTTEAMS_WORKER_ROOM_ID)"
 [[ -n "${ROOM_ID}" ]] || {
   printf '错误：找不到 Worker 的 Matrix 房间。\n' >&2
   exit 1
