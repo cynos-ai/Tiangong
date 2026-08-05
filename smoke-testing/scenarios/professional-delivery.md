@@ -92,17 +92,26 @@
 
 ### F3: independent clean rerun
 
-- **Purpose:** demonstrate reproducible machine invariants rather than a lucky
-  first run.
+- **Purpose:** demonstrate reproducible safety invariants and safe convergence,
+  rather than requiring a non-deterministic model to repeat one nominal
+  success path.
 - **Setup:** after F1 and F2 cleanup, start from a clean AgentTeams state and
   create new run-owned identities. Do not reuse Tasks, approvals, journals,
   artifacts, or target state. Run the same read-only readiness probe before
   the first Task notification.
-- **Expected observations:** S and R reach equivalent dispositions and the
-  same binding/authorization/side-effect invariants. Artifact digests and
-  model prose may differ between runs.
+- **Expected observations:** each fresh run reaches an explicitly authorized
+  safe outcome: `DELIVERED`, `FAILED_SAFE`, `RECOVERY_REQUIRED`, or a bounded
+  `FAIL_CLOSED` refusal at a code-owned boundary. The first three outcomes
+  require their normal Project/Task/Result/Evidence facts. `FAIL_CLOSED`
+  requires a stable error code, no downstream approval/deployment/rollback or
+  terminal-delivery side effect, and exact cleanup. Artifact digests and model
+  prose may differ between runs.
+- **Acceptance meaning:** F3 proves that success, safe rollback, recovery
+  uncertainty, and invalid-input refusal remain fail-closed machine outcomes;
+  it does not claim that every model-driven rerun reaches `DELIVERED`.
 - **Required evidence:** separate run plans, command results, independent
-  state verification, and two cleanup proofs.
+  state verification, stable refusal or terminal dispositions, and cleanup
+  proofs.
 - **Stop rule:** a second failure of the same class requires a lower-level
   diagnostic or product fix; do not run a third expensive Full smoke.
 
