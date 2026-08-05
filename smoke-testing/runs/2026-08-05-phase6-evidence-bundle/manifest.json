@@ -1,0 +1,92 @@
+{
+  "kind": "tiangong.phase6-evidence-bundle",
+  "schemaVersion": 1,
+  "generatedOn": "2026-08-05",
+  "status": "blocked",
+  "acceptance": "not-accepted",
+  "claimPolicy": "This bundle preserves machine evidence and blockers; it does not claim complete Phase 5/6 acceptance.",
+  "runs": [
+    {
+      "id": "run-s",
+      "path": "smoke-testing/runs/2026-08-04-professional-delivery-full-after-cross-turn-approval-dedupe/plan.md",
+      "machineDisposition": "DELIVERED",
+      "role": "accepted delivery baseline"
+    },
+    {
+      "id": "run-r4",
+      "path": "smoke-testing/runs/2026-08-05-phase5-run-r4/plan.md",
+      "verification": "smoke-testing/runs/2026-08-05-phase5-run-r4/verify.json",
+      "machineDisposition": "FAILED_SAFE",
+      "role": "one revision followed by verified safe rollback"
+    },
+    {
+      "id": "run-r5-clean-rerun",
+      "path": "smoke-testing/runs/2026-08-05-phase5-clean-rerun-r5/plan.md",
+      "machineDisposition": "FAIL_CLOSED",
+      "role": "clean rerun stopped at Runner preparation input validation"
+    }
+  ],
+  "independentVerification": {
+    "runR4": {
+      "status": "pass",
+      "verifier": "scripts/verify-professional-state.mjs",
+      "expectedDisposition": "FAILED_SAFE",
+      "taskCount": 6
+    },
+    "teammateIndependentCleanRerun": "not-run",
+    "reason": "The R5 clean rerun exposed an input-reference contract mismatch; the smoke stop rule requires a lower-level resolution before another expensive Full run."
+  },
+  "deterministicChecks": [
+    { "command": "npm test --prefix worker", "status": "pass", "tests": 271 },
+    { "command": "make verify", "status": "pass" },
+    { "command": "make check-demo-contract", "status": "pass" },
+    { "command": "make check-skills", "status": "pass" },
+    { "command": "./scripts/check-repository.sh", "status": "pass" }
+  ],
+  "cleanup": {
+    "status": "pass",
+    "verifiedAbsent": [
+      "Run-owned professional Team and Workers",
+      "Run-owned Worker containers",
+      "Runner broker and volumes",
+      "Temporary run manifests and cleanup helper"
+    ],
+    "preserved": "AgentTeams-owned Project/Task authority records"
+  },
+  "blockers": [
+    "F3 clean rerun has no passing machine disposition.",
+    "R5 supplied a composite taskId:digest input reference where Runner preparation requires an exact Task ID.",
+    "Gate 2 projectflow/taskflow is absent from stock AgentTeams v1.2.0.",
+    "Non-destructive controller bearer-token revocation remains unsupported."
+  ],
+  "artifacts": [
+    {
+      "path": "smoke-testing/runs/2026-08-04-professional-delivery-full-after-cross-turn-approval-dedupe/plan.md",
+      "sha256": "d0104af9814544aa54aa842724c4e2e8a8bf58b0c44161a426486dc496b26fac"
+    },
+    {
+      "path": "smoke-testing/runs/2026-08-05-phase5-run-r4/plan.md",
+      "sha256": "c78b7e3401e1ae8e95b25aad50f15cae74542376410481d09e9604366a6501e2"
+    },
+    {
+      "path": "smoke-testing/runs/2026-08-05-phase5-run-r4/verify.json",
+      "sha256": "7464c96a9532e8b481c22c03632d014550cc50b117b4c27a1fa88d80890b5acf"
+    },
+    {
+      "path": "smoke-testing/runs/2026-08-05-phase5-clean-rerun-r5/plan.md",
+      "sha256": "67f04e7f7bba7b78b99191c9184e2081b84ab21b7c8184c9595be7fb166d0a9c"
+    },
+    {
+      "path": "smoke-testing/runs/2026-08-05-phase5-run-r2/verify.json",
+      "sha256": "ec6d3be24c06bd81c57d7b00cd2ae965c2ef051daeeefc75b2a9eeb843d9ec82"
+    },
+    {
+      "path": "smoke-testing/runs/2026-08-05-phase5-run-r3/verify.json",
+      "sha256": "8b0d0254d99cd90d4acfad1fac4610b038ade70018709d59726760ed01850972"
+    },
+    {
+      "path": "smoke-testing/runs/2026-08-05-professional-readiness-probe/plan.md",
+      "sha256": "606112889075a20b62edd45c844b778c2cbbcf5edcde961fda76247be87744cd"
+    }
+  ]
+}
