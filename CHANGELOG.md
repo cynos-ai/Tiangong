@@ -4,6 +4,8 @@ All notable changes to Tiangong are documented here. Tiangong follows Semantic V
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-05
+
 ### Added
 
 - Closed five-role Tiangong delivery runtime: Team Leader, Designer, Implementor, Assessor, and Operator.

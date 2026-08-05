@@ -133,6 +133,7 @@ jobs:
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           dco_base="${BASE_SHA}"
+          dco_excluded=()
           if [[ "${BASE_REF}" == "main" && "${HEAD_REF}" == release/* ]]; then
             develop_sha="$(git rev-parse origin/develop)"
             git merge-base --is-ancestor "${develop_sha}" "${HEAD_SHA}" || {
@@ -140,5 +141,10 @@ jobs:
               exit 1
             }
             dco_base="${develop_sha}"
+            # The release branch records main ancestry to make the divergent
+            # v0.1.0 history mergeable. Main's old commits are already covered
+            # by the pull-request base and must not be rechecked against the
+            # current author identity.
+            dco_excluded+=("${BASE_SHA}")
           fi
-          ./scripts/check-dco.sh "${dco_base}" "${HEAD_SHA}"
+          ./scripts/check-dco.sh "${dco_base}" "${HEAD_SHA}" "${dco_excluded[@]}"

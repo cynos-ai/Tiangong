@@ -93,15 +93,29 @@ Cleanup must remove only the exact run-owned Team, Workers, Runner/deployment
 resources, temporary files, and storage prefix. Verify absence afterward. Do
 not delete AgentTeams `projects/` or `tasks/` authority as a shortcut.
 
+F3 acceptance uses safe convergence rather than a promise that a
+non-deterministic model repeats one nominal success path. A fresh independent
+run is accepted only when it reaches one of these code-owned outcomes:
+
+```text
+DELIVERED | FAILED_SAFE | RECOVERY_REQUIRED | FAIL_CLOSED
+```
+
+`FAIL_CLOSED` is not a delivery claim. It requires a stable error code, no
+approval/deployment/rollback or terminal-delivery side effect, and exact
+cleanup. The other three outcomes require their normal Project/Task/Result,
+Evidence, and verification facts.
+
 The following are not delivery evidence:
 
 - a model statement that a tool ran;
 - a native AgentTeams status without Tiangong bindings;
 - a Matrix message without a persisted Result/Evidence record;
 - an OTLP or Dashboard trace without the authoritative state transition;
-- a successful first run without an independent clean rerun.
+- a successful first run without an independent rerun or safe-convergence
+  evidence.
 
 Known local limitations remain explicitly fail-closed: the stock AgentTeams
 v1.2.0 stack has a Team/Worker deletion boundary, and controller bearer-token
-revocation is unproven. Neither limitation may be rewritten as a successful
-Phase 5 claim.
+revocation is unproven. Neither limitation may be rewritten as `DELIVERED` or
+as proof that every model-driven rerun must succeed.
