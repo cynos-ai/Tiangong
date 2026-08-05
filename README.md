@@ -3,7 +3,7 @@
 Tiangong is an evidence-backed AI software engineering team built on [AgentTeams](https://github.com/agentscope-ai/AgentTeams).
 
 > [!NOTE]
-> v0.1.0 is a historical source release. The current development line is the evidence-backed five-role delivery team: Team Leader, Designer, Implementor, Assessor, and Operator. Historical Reviewer experiments are not an active runtime path. See the [release notes](docs/releases/v0.1.0.md) and [changelog](CHANGELOG.md).
+> v0.1.0 is a historical source release. v0.2.0 is the evidence-backed five-role delivery team: Team Leader, Designer, Implementor, Assessor, and Operator. Historical Reviewer experiments are not an active runtime path. See the [v0.2.0 release notes](docs/releases/v0.2.0.md) and [changelog](CHANGELOG.md).
 
 ## Vision
 
