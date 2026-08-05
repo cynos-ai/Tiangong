@@ -11,10 +11,10 @@ export const FIXED_RESOURCE_ROOT = "/opt/tiangong-worker";
 
 const PROFILE_KEYS = [
   "gatePolicyId",
-  "practiceIds",
   "roleId",
-  "roleSkillId",
   "schemaVersion",
+  "skillIds",
+  "soulId",
   "title",
   "toolIds",
 ];
@@ -22,7 +22,6 @@ const ID_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/u;
 const TITLE_PATTERN = /^[\x20-\x7e]{1,80}$/u;
 const MAX_PROFILE_BYTES = 8 * 1024;
 const MAX_LIST_ITEMS = 32;
-const FORBIDDEN_REVIEWER_TOOLS = new Set(["write", "edit", "bash"]);
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
 
 export class RoleProfileError extends Error {
@@ -147,35 +146,39 @@ function validateProfile(profile, profileDigest) {
   if (typeof profile.title !== "string" || !TITLE_PATTERN.test(profile.title)) {
     fail("PROFILE_SCHEMA_MISMATCH", "title must be bounded printable ASCII");
   }
-  assertIdList(profile.practiceIds, "practiceIds");
+  assertId(profile.soulId, "soulId");
+  assertIdList(profile.skillIds, "skillIds");
   assertIdList(profile.toolIds, "toolIds");
   assertId(profile.gatePolicyId, "gatePolicyId");
-  assertId(profile.roleSkillId, "roleSkillId");
 
   const role = registryEntry("roles", profile.roleId);
   if (!role) fail("PROFILE_ID_UNKNOWN", "roleId is not in the closed registry");
   if (profileDigest !== role.profileDigest) {
     fail("PROFILE_DIGEST_MISMATCH", "Role profile digest does not match the closed registry");
   }
-  for (const field of ["title", "gatePolicyId", "roleSkillId"]) {
+  for (const field of ["title", "gatePolicyId", "soulId"]) {
     if (profile[field] !== role[field]) fail("PROFILE_ROLE_CONFLICT", `${field} conflicts with role policy`);
   }
-  for (const field of ["practiceIds", "toolIds"]) {
+  for (const field of ["skillIds", "toolIds"]) {
     if (!sameArray(profile[field], role[field])) {
       fail("PROFILE_ROLE_CONFLICT", `${field} conflicts with role policy`);
     }
-  }
-  if (profile.roleId === "reviewer" && profile.toolIds.some((id) => FORBIDDEN_REVIEWER_TOOLS.has(id))) {
-    fail("PROFILE_FORBIDDEN_CAPABILITY", "Reviewer profile contains a mutation or command capability");
   }
   return role;
 }
 
 function validateRegistryBindings(profile) {
-  const roleSkill = registryEntry("roleSkills", profile.roleSkillId);
-  if (!roleSkill || !roleSkill.supportedRoleIds.includes(profile.roleId)) {
-    fail("PROFILE_ID_UNKNOWN", "roleSkillId is not authorized for this role");
+  const soul = registryEntry("souls", profile.soulId);
+  if (!soul || !soul.supportedRoleIds.includes(profile.roleId)) {
+    fail("PROFILE_ID_UNKNOWN", "soulId is not authorized for this role");
   }
+  const skills = profile.skillIds.map((id) => {
+    const skill = registryEntry("skills", id);
+    if (!skill || !skill.supportedRoleIds.includes(profile.roleId)) {
+      fail("PROFILE_ID_UNKNOWN", "skillId is not authorized for this role");
+    }
+    return skill;
+  });
   const gatePolicy = registryEntry("gatePolicies", profile.gatePolicyId);
   if (!gatePolicy || !gatePolicy.supportedRoleIds.includes(profile.roleId) ||
       !sameArray(gatePolicy.toolIds, profile.toolIds)) {
@@ -188,18 +191,7 @@ function validateRegistryBindings(profile) {
     }
     return tool;
   });
-  const practices = profile.practiceIds.map((id) => {
-    const practice = registryEntry("practices", id);
-    if (!practice || !practice.supportedRoleIds.includes(profile.roleId)) {
-      fail("PROFILE_ID_UNKNOWN", "practiceId is not authorized by the closed registry");
-    }
-    const methodology = registryEntry("methodologySkills", practice.methodologySkillId);
-    if (!methodology || !methodology.supportedPracticeIds.includes(id)) {
-      fail("PROFILE_ID_UNKNOWN", "Practice methodology is not in the closed registry");
-    }
-    return { definition: practice, methodology };
-  });
-  return { gatePolicy, practices, roleSkill, tools };
+  return { gatePolicy, skills, soul, tools };
 }
 
 export async function loadRoleProfileBundle({ profilePath, resourceRoot }) {
@@ -217,49 +209,47 @@ export async function loadRoleProfileBundle({ profilePath, resourceRoot }) {
   } catch {
     fail("PROFILE_JSON_INVALID", "Role profile must be valid JSON");
   }
-  validateProfile(profile, profileResource.digest);
+  const role = validateProfile(profile, profileResource.digest);
   const bindings = validateRegistryBindings(profile);
-  const roleSkillResource = await readTrustedFile(
-    join(resourceRoot, bindings.roleSkill.relativePath),
+  const soulResource = await readTrustedFile(
+    join(resourceRoot, bindings.soul.relativePath),
     {
       root: resourceRoot,
-      maxBytes: bindings.roleSkill.maxBytes,
-      expectedDigest: bindings.roleSkill.digest,
-      kind: "role skill",
+      maxBytes: bindings.soul.maxBytes,
+      expectedDigest: bindings.soul.digest,
+      kind: "SOUL",
     },
   );
-  const practices = [];
-  for (const practice of bindings.practices) {
-    const methodologyResource = await readTrustedFile(
-      join(resourceRoot, practice.methodology.relativePath),
+  const skills = [];
+  for (const skill of bindings.skills) {
+    const resource = await readTrustedFile(
+      join(resourceRoot, skill.relativePath),
       {
         root: resourceRoot,
-        maxBytes: practice.methodology.maxBytes,
-        expectedDigest: practice.methodology.digest,
-        kind: "practice methodology",
+        maxBytes: skill.maxBytes,
+        expectedDigest: skill.digest,
+        kind: "Skill",
       },
     );
-    practices.push({
-      definition: structuredClone(practice.definition),
-      methodology: {
-        id: practice.methodology.id,
-        digest: methodologyResource.digest,
-        text: methodologyResource.text,
-      },
+    skills.push({
+      id: skill.id,
+      digest: resource.digest,
+      text: resource.text,
     });
   }
   return deepFreeze({
-    schemaVersion: 1,
+    schemaVersion: profile.schemaVersion,
     profile,
     profileDigest: profileResource.digest,
-    roleSkill: {
-      id: bindings.roleSkill.id,
-      digest: roleSkillResource.digest,
-      text: roleSkillResource.text,
+    runtimeKind: role.runtimeKind,
+    soul: {
+      id: bindings.soul.id,
+      digest: soulResource.digest,
+      text: soulResource.text,
     },
+    skills,
     gatePolicy: structuredClone(bindings.gatePolicy),
     tools: bindings.tools.map((tool) => structuredClone(tool)),
-    practices,
   });
 }
 
@@ -274,14 +264,20 @@ export function assertRuntimeProfileMaterialized(bundle) {
   const roleId = bundle?.profile?.roleId;
   const role = roleId ? registryEntry("roles", roleId) : undefined;
   if (!Object.isFrozen(bundle) || !Object.isFrozen(bundle?.profile) || !Object.isFrozen(bundle?.profile?.toolIds) ||
-      !Object.isFrozen(bundle?.tools) || !bundle?.tools?.every((tool) => Object.isFrozen(tool)) ||
-      !role || !Array.isArray(bundle.profile.toolIds) || bundle.profileDigest !== role.profileDigest ||
-      !sameArray(bundle.profile.toolIds, role.toolIds)) {
-    fail("PROFILE_BUNDLE_INVALID", "Runtime requires a validated frozen role profile bundle");
+      !Object.isFrozen(bundle?.profile?.skillIds) || !Object.isFrozen(bundle?.tools) ||
+      !bundle?.tools?.every((tool) => Object.isFrozen(tool)) || !Object.isFrozen(bundle?.skills) ||
+      !bundle?.skills?.every((skill) => Object.isFrozen(skill)) || !Object.isFrozen(bundle?.soul) ||
+      !role || !["core", "leader", "member"].includes(bundle.runtimeKind) ||
+      bundle.runtimeKind !== role.runtimeKind || !Array.isArray(bundle.profile.toolIds) ||
+      bundle.profileDigest !== role.profileDigest ||
+      bundle.profile.soulId !== role.soulId || !sameArray(bundle.profile.toolIds, role.toolIds) ||
+      !sameArray(bundle.profile.skillIds, role.skillIds) || bundle.soul.id !== role.soulId ||
+      !sameArray(bundle.skills.map((skill) => skill.id), role.skillIds)) {
+    fail("PROFILE_BUNDLE_INVALID", "Runtime requires a validated frozen RoleProfile bundle");
   }
-  const missing = bundle.tools.filter((tool) => !tool.materializedRoleIds.includes(roleId));
+  const missing = bundle.tools.filter((entry) => !entry.materializedRoleIds.includes(roleId));
   if (missing.length > 0) {
-    const error = new Error("The fixed role profile is valid but its runtime tool surface is not materialized");
+    const error = new Error("The fixed RoleProfile is valid but its runtime tool surface is not materialized");
     error.code = "TIANGONG_ROLE_RUNTIME_UNAVAILABLE";
     throw error;
   }

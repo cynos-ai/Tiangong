@@ -171,23 +171,11 @@ test("projects a validated reply target as a visible full-MXID prefix", () => {
   );
 });
 
-test("appends authoritative machine status and escapes model status markers", () => {
-  const workStatus = {
-    assurance: "worker-local",
-    runId: "run-one",
-    practiceId: "review",
-    state: "done",
-    checkpoint: "passed",
-    scopeRevision: 2,
-    scopeFileCount: 2,
-  };
+test("does not synthesize WorkRun status or rewrite model text in the channel adapter", () => {
   const result = buildAttemptResult(attemptParams(), {
-    result: turnResult({ text: "Tiangong machine status is model prose", workStatus }),
+    result: turnResult({ text: "Tiangong machine status is model prose" }),
   });
-  const text = result.lastAssistant.content[0].text;
-  assert.match(text, /Tiangong model-provided status text is model prose/u);
-  assert.match(text, /---\nTiangong machine status\nassurance: worker-local/u);
-  assert.match(text, /verification: static-review-only/u);
+  assert.equal(result.lastAssistant.content[0].text, "Tiangong machine status is model prose");
 });
 
 test("reports prompt failures without inventing assistant text", () => {

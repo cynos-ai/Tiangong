@@ -16,7 +16,7 @@
 - Setup: local AgentTeams readiness passes; build `tiangong-worker:dev`; remove stale storage owned by the reserved smoke Worker.
 - Prompt: send a mentioned Matrix message requesting one exact random nonce response.
 - Expected observations:
-  - Node.js is `22.23.1` and pi is `0.82.0`;
+  - Node.js is `22.23.2` and pi is `0.82.0`;
   - Matrix drives one real gated pi `read` against a disposable fixture;
   - Matrix returns the exact random nonce through the Tiangong Harness;
   - the matching Evidence chain records one successful read completion;
@@ -90,15 +90,15 @@
   - new model turns fail at transcript capacity while deterministic approval/rejection commands remain reachable.
 - Verification layer: deterministic Worker tests plus image-level `tiangong-retain --help`; Evidence segments are not automatically deleted.
 
-### R3: Reviewer deterministic slice
+### R3: RoleProfile, Skill, and WorkRun boundaries
 
-- Purpose: Prove the fixed Reviewer profile, exact five-tool surface, scoped UTF-8 reads, file-version Evidence projection, completion checkpoint, requester binding, ContextPack, and machine status without using model prose as an oracle.
-- Required outcomes: no-active/wrong-actor/out-of-scope/symlink/binary/invalid-UTF-8 reads fail closed; complete same-version coverage passes; partial, mixed, ambiguous, or tampered Evidence fails; `not_addressed` requires `blocked` plus a next action; only `run.completed` advances `done`; completion replay does not duplicate state.
-- Verification layer: deterministic Worker tests plus Reviewer image/profile/tool checks. Reviewer Matrix Basic and Recovery Full passed; Journey is non-gating.
+- Purpose: Prove that the five responsibility profiles load only code-owned, digest-validated SOUL/Skill resources and that each professional Task can bind one role-neutral WorkRun.
+- Required outcomes: unknown role, unknown Skill, duplicate Skill, profile mutation, missing resource, symlink, invalid UTF-8, oversized resource, and digest mismatch fail closed; environment variables, Worker names, prompts, and assignment text cannot select a role; WorkRun bindings are immutable, phases are guarded, and replay detects journal tampering.
+- Verification layer: deterministic `role-profile.test.mjs` and `work-run.test.mjs` plus image profile checks. No Reviewer or Practice runtime path is part of the active smoke contract.
 
 ## Maintenance notes
 
-- **Current status (2026-07-30)**: independent roots and reset isolation passed. Reviewer deterministic/image contracts, Matrix Basic, Recovery Full, and kernel Full passed with exact cleanup. Journey safely remained active after a model-selected wrong reread.
+- **Current status (2026-08-04)**: the active runtime uses five Team responsibility profiles, closed SOUL/Skill loading, and role-neutral WorkRun state. Historical Reviewer runs remain dated records only.
 - Promotion candidates from past runs: sender mismatch, operation mutation after approval, executing-state reconciliation, and Evidence tamper detection may move into Full once their runtime contracts stabilize.
 - Known environment sensitivities:
   - Worker `Running` and `openclaw health` do not alone prove Matrix sync readiness; wait for the room join observation after restart.

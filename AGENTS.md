@@ -15,7 +15,7 @@ Tiangong is in project initialization. There are no released versions, external 
 - Never commit credentials, private evidence, internal research, strategy, schedules, evaluations, partner information, unpublished plans, or internal reports—even on a non-default branch.
 - Private working material must remain outside this repository and must not become a submodule or runtime, build, test, or release dependency.
 - AgentTeams owns the team/container/Matrix/storage integration layer. Tiangong owns its Worker runtime, professional roles, evidence, approvals, and product experience.
-- Prefer coarse professional roles and cohesive operations over one Worker per practice or file type.
+- Prefer coarse professional roles and cohesive operations over one Worker per Skill or file type.
 - Treat claims, model prose, machine state, and machine-captured evidence as different facts.
 - Put authorization, idempotency, evidence gates, path restrictions, and rollback checks in code rather than prompts, rules, or Skills.
 

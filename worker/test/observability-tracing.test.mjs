@@ -263,18 +263,9 @@ test("rejects unapproved span operations and attributes before export", async (t
     /Unsupported observability attribute/u,
   );
   assert.throws(() => attempt.checkpoint("arbitrary.phase"), /Unsupported observability phase/u);
-  assert.doesNotThrow(() => attempt.checkpoint("practice.run.start", {
-    "tiangong.practice.id": "review",
-    "tiangong.practice.status": "active",
-    "tiangong.practice.scope_count": 2,
-    "tiangong.practice.revision": 1,
-  }));
-  assert.doesNotThrow(() => attempt.checkpoint("practice.checkpoint.pass", {
-    "tiangong.practice.id": "review",
-    "tiangong.practice.status": "done",
-    "tiangong.practice.scope_count": 2,
-    "tiangong.practice.revision": 2,
-    "tiangong.operation.outcome": "accept",
+  assert.doesNotThrow(() => attempt.checkpoint("peer.transport.start"));
+  assert.doesNotThrow(() => attempt.checkpoint("tool.proposed", {
+    "tiangong.tool.name": "team_check_result",
   }));
   attempt.finish("error", Object.assign(new Error("secret"), { code: "INVALID CODE WITH SPACES" }));
   await observability.forceFlush();

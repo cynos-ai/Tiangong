@@ -2,6 +2,29 @@
 
 All notable changes to Tiangong are documented here. Tiangong follows Semantic Versioning and uses `v0.y.z` while public contracts are stabilizing.
 
+## [Unreleased]
+
+## [0.2.0] - 2026-08-05
+
+### Added
+
+- Closed five-role Tiangong delivery runtime: Team Leader, Designer, Implementor, Assessor, and Operator.
+- Digest-bound RoleProfiles with code-owned SOUL and Skill resources; environment, prompts, Worker names, and assignment text cannot select authority.
+- Role-neutral WorkRun bindings and guarded hash-chained phase journals for Task-local recovery.
+- Phase 4 revision, approval, rollback, `FAILED_SAFE`/`RECOVERY_REQUIRED`, idempotency, and Leader restart regressions.
+- Evidence-first professional delivery smoke scenario and demo walkthrough with explicit Run S/Run R/clean-rerun gates.
+- Deterministic with/without Skill evaluation and a checked five-role, Playbook-lock, and Runner-fixture demo contract.
+
+### Security
+
+- Historical Reviewer and Practice code is not an active runtime path or compatibility shim.
+- WorkRun, Evidence, idempotency, pending-operation, and rollback state remain physically separate from pi transcripts; tampering and invalid transitions fail closed.
+
+### Verification
+
+- Worker deterministic suite passes 271/271 after the RoleProfile/WorkRun clean cut and demo-contract check.
+- RoleProfile/Skill image checks, TeamPlaybook binding checks, Phase 4 recovery tests, deployment recovery tests, and existing Runner/approval boundaries pass.
+
 ## [0.1.0] - 2026-07-31
 
 ### Added

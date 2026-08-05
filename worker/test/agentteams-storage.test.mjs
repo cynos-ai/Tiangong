@@ -8,7 +8,7 @@ import { statePathsForSession } from "../agent/persistence/state-paths.mjs";
 
 test("AgentTeams pending storage scopes remote erasure to the Worker workspace", async () => {
   const calls = [];
-  const workspaceDir = "/root/hiclaw-fs/agents/worker-one";
+  const workspaceDir = "/root/agentteams-fs/agents/worker-one";
   const stateDirectory = join(workspaceDir, ".tiangong", "runtime");
   const sessionId = "session-one";
   const operationKey = sha256("operation-one");
@@ -31,7 +31,7 @@ test("AgentTeams pending storage scopes remote erasure to the Worker workspace",
   assert.equal(JSON.stringify(calls).includes("write content"), false);
 
   await assert.rejects(
-    storage.publishErasure({ operationDirectory: "/root/hiclaw-fs/agents/other/operation" }),
+    storage.publishErasure({ operationDirectory: "/root/agentteams-fs/agents/other/operation" }),
     /escapes the Worker workspace/u,
   );
 });

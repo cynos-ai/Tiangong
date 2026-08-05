@@ -29,8 +29,9 @@ async function main() {
     schemaVersion: bundle.schemaVersion,
     roleId: bundle.profile.roleId,
     profileDigest: bundle.profileDigest,
-    roleSkillDigest: bundle.roleSkill.digest,
-    methodologyDigests: bundle.practices.map((practice) => practice.methodology.digest),
+    soulDigest: bundle.soul.digest,
+    skillIds: bundle.skills.map((skill) => skill.id),
+    skillDigests: bundle.skills.map((skill) => skill.digest),
     toolIds: bundle.profile.toolIds,
     materializedToolIds: bundle.tools
       .filter((tool) => tool.materializedRoleIds.includes(bundle.profile.roleId))

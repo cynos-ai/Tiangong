@@ -119,4 +119,75 @@ if ./scripts/agentteams.sh unknown >unknown.out 2>&1; then
 fi
 grep -q 'Unknown command' unknown.out
 
+cat >.runtime/agentteams/manager.env <<EOF
+AGENTTEAMS_DATA_DIR=tiangong-agentteams-data
+AGENTTEAMS_WORKSPACE_DIR=${TEST_ROOT}/.runtime/agentteams/manager
+EOF
+chmod 600 .runtime/agentteams/manager.env
+cat >fake-bin/docker <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  ps) exit 0 ;;
+  volume|network) exit 1 ;;
+  inspect)
+    if [[ "${2:-}" == "agentteams-manager" ]]; then
+      printf 'AGENTTEAMS_MANAGER_MATRIX_TOKEN=test_manager_matrix_token_1234567890\n'
+    fi
+    ;;
+  exec)
+    if [[ "${RECOVERY_SCENARIO:-}" == "forged" ]]; then
+      printf '%s\n' '{"phase":"Running","runtime":"copaw","welcomeSent":false,"matrixUserID":"@manager:matrix-local.agentteams.io:18080","roomID":"!foreign:other.example"}'
+    else
+      printf '%s\n' '{"phase":"Running","runtime":"copaw","welcomeSent":false,"matrixUserID":"@manager:matrix-local.agentteams.io:18080","roomID":"!authoritative:matrix-local.agentteams.io:18080"}'
+    fi
+    ;;
+esac
+EOF
+cat >fake-bin/curl <<'EOF'
+#!/usr/bin/env bash
+cat >/dev/null
+url="${!#}"
+case "${url}" in
+  */joined_rooms)
+    if [[ "${RECOVERY_SCENARIO:-}" == "joined" ]]; then
+      printf '%s\n' '{"joined_rooms":["!authoritative:matrix-local.agentteams.io:18080"]}'
+    else
+      printf '%s\n' '{"joined_rooms":[]}'
+    fi
+    ;;
+  *'/sync?'*) printf '%s\n' '{"rooms":{"invite":{"!authoritative:matrix-local.agentteams.io:18080":{}}}}' ;;
+  */join) touch "${RECOVERY_MARKER}"; printf '%s\n' '{"room_id":"!authoritative:matrix-local.agentteams.io:18080"}' ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x fake-bin/docker fake-bin/curl
+marker_join="${TEST_ROOT}/manager-dm-joined"
+RECOVERY_SCENARIO=invited RECOVERY_MARKER="${marker_join}" PATH="${TEST_ROOT}/fake-bin:${PATH}" \
+  ./scripts/agentteams.sh recover-manager-readiness >recovery.out
+[[ -e "${marker_join}" ]] || {
+  printf 'FAIL: authoritative Manager DM invitation was not recovered.\n' >&2
+  exit 1
+}
+! grep -q 'test_manager_matrix_token' recovery.out || {
+  printf 'FAIL: Manager Matrix token appeared in recovery output.\n' >&2
+  exit 1
+}
+rm -f "${marker_join}"
+RECOVERY_SCENARIO=joined RECOVERY_MARKER="${marker_join}" PATH="${TEST_ROOT}/fake-bin:${PATH}" \
+  ./scripts/agentteams.sh recover-manager-readiness >recovery-joined.out
+[[ ! -e "${marker_join}" ]] || {
+  printf 'FAIL: already-joined Manager DM caused another join.\n' >&2
+  exit 1
+}
+if RECOVERY_SCENARIO=forged RECOVERY_MARKER="${marker_join}" PATH="${TEST_ROOT}/fake-bin:${PATH}" \
+    ./scripts/agentteams.sh recover-manager-readiness >recovery-forged.out 2>&1; then
+  printf 'FAIL: foreign Manager DM was accepted for recovery.\n' >&2
+  exit 1
+fi
+grep -q 'authoritative admin-DM invitation was not observable' recovery-forged.out
+[[ ! -e "${marker_join}" ]] || {
+  printf 'FAIL: foreign Manager DM triggered a join.\n' >&2
+  exit 1
+}
+
 printf 'AgentTeams bootstrap tests passed.\n'

@@ -12,8 +12,8 @@ readonly GENERATED_ENV_FILE="${RUNTIME_ROOT}/manager.env"
 readonly WORKSPACE_DIR="${RUNTIME_ROOT}/manager"
 readonly HOST_SHARE_DIR="${RUNTIME_ROOT}/host-share"
 readonly DATA_VOLUME="tiangong-agentteams-data"
-readonly SUPPORTED_VERSION="v1.2.0-beta.1"
-readonly INSTALLER_SHA256="46e2334f71dfec951b11c32107a99a646dba53adeea0258e2a12c52ef875dfc2"
+readonly SUPPORTED_VERSION="v1.2.0"
+readonly INSTALLER_SHA256="701f53c53dc476d8ca7f33428e231c1706d967ac2b517ec4c1c59d742864331d"
 readonly UNINSTALL_CONFIRMATION="delete-tiangong-agentteams-data"
 
 ACTION="${1:-help}"
@@ -75,7 +75,7 @@ sha256_file() {
 
 is_allowed_config_key() {
   case "$1" in
-    AGENTTEAMS_VERSION|AGENTTEAMS_LANGUAGE|AGENTTEAMS_LLM_PROVIDER|AGENTTEAMS_OPENAI_BASE_URL|AGENTTEAMS_DEFAULT_MODEL|AGENTTEAMS_LLM_API_KEY|AGENTTEAMS_ADMIN_USER|AGENTTEAMS_ADMIN_PASSWORD|AGENTTEAMS_PORT_GATEWAY|AGENTTEAMS_PORT_CONSOLE|AGENTTEAMS_PORT_ELEMENT_WEB|AGENTTEAMS_PORT_MANAGER_CONSOLE|AGENTTEAMS_MANAGER_RUNTIME|AGENTTEAMS_DEFAULT_WORKER_RUNTIME|AGENTTEAMS_MATRIX_E2EE|AGENTTEAMS_WORKER_IDLE_TIMEOUT) return 0 ;;
+    AGENTTEAMS_VERSION|AGENTTEAMS_LANGUAGE|AGENTTEAMS_LLM_PROVIDER|AGENTTEAMS_OPENAI_BASE_URL|AGENTTEAMS_DEFAULT_MODEL|AGENTTEAMS_LLM_API_KEY|AGENTTEAMS_ADMIN_USER|AGENTTEAMS_ADMIN_PASSWORD|AGENTTEAMS_PORT_GATEWAY|AGENTTEAMS_PORT_CONSOLE|AGENTTEAMS_PORT_ELEMENT_WEB|AGENTTEAMS_PORT_MANAGER_CONSOLE|AGENTTEAMS_PORT_DASHBOARD|AGENTTEAMS_MANAGER_RUNTIME|AGENTTEAMS_DEFAULT_WORKER_RUNTIME|AGENTTEAMS_MATRIX_E2EE|AGENTTEAMS_WORKER_IDLE_TIMEOUT|AGENTTEAMS_DASHBOARD|AGENTTEAMS_DASHBOARD_VERSION|AGENTTEAMS_DASHBOARD_IMAGE) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -132,6 +132,8 @@ validate_config() {
     die "Unsupported AGENTTEAMS_VERSION=${AGENTTEAMS_VERSION}; this bootstrap is pinned to ${SUPPORTED_VERSION}."
   [[ "${AGENTTEAMS_MATRIX_E2EE}" =~ ^[01]$ ]] || \
     die "AGENTTEAMS_MATRIX_E2EE must be 0 or 1."
+  [[ "${AGENTTEAMS_DASHBOARD}" =~ ^[01]$ ]] || \
+    die "AGENTTEAMS_DASHBOARD must be 0 or 1."
   [[ "${AGENTTEAMS_WORKER_IDLE_TIMEOUT}" =~ ^[0-9]+$ ]] || \
     die "AGENTTEAMS_WORKER_IDLE_TIMEOUT must be a non-negative integer."
   case "${AGENTTEAMS_MANAGER_RUNTIME}" in
@@ -146,7 +148,8 @@ validate_config() {
   local name value
   declare -A used_ports=()
   for name in AGENTTEAMS_PORT_GATEWAY AGENTTEAMS_PORT_CONSOLE \
-    AGENTTEAMS_PORT_ELEMENT_WEB AGENTTEAMS_PORT_MANAGER_CONSOLE; do
+    AGENTTEAMS_PORT_ELEMENT_WEB AGENTTEAMS_PORT_MANAGER_CONSOLE \
+    AGENTTEAMS_PORT_DASHBOARD; do
     value="${!name}"
     validate_port "${name}" "${value}"
     value="$((10#${value}))"
@@ -184,6 +187,8 @@ load_config() {
   : "${AGENTTEAMS_DEFAULT_WORKER_RUNTIME:=copaw}"
   : "${AGENTTEAMS_MATRIX_E2EE:=0}"
   : "${AGENTTEAMS_WORKER_IDLE_TIMEOUT:=720}"
+  : "${AGENTTEAMS_DASHBOARD:=1}"
+  : "${AGENTTEAMS_PORT_DASHBOARD:=13000}"
 
   AGENTTEAMS_LOCAL_ONLY=1
   AGENTTEAMS_ENV_FILE="${GENERATED_ENV_FILE}"
@@ -198,8 +203,11 @@ load_config() {
   export AGENTTEAMS_PORT_ELEMENT_WEB AGENTTEAMS_PORT_MANAGER_CONSOLE
   export AGENTTEAMS_MANAGER_RUNTIME AGENTTEAMS_DEFAULT_WORKER_RUNTIME
   export AGENTTEAMS_MATRIX_E2EE AGENTTEAMS_WORKER_IDLE_TIMEOUT
+  export AGENTTEAMS_DASHBOARD AGENTTEAMS_PORT_DASHBOARD
   export AGENTTEAMS_ENV_FILE AGENTTEAMS_DATA_DIR
   export AGENTTEAMS_WORKSPACE_DIR AGENTTEAMS_HOST_SHARE_DIR
+  [[ -n "${AGENTTEAMS_DASHBOARD_VERSION:-}" ]] && export AGENTTEAMS_DASHBOARD_VERSION
+  [[ -n "${AGENTTEAMS_DASHBOARD_IMAGE:-}" ]] && export AGENTTEAMS_DASHBOARD_IMAGE
 
   validate_config
   local path
@@ -221,15 +229,14 @@ validate_up_config() {
   fi
 
   export AGENTTEAMS_NON_INTERACTIVE=1
-  # Upstream beta still prompts for an upgrade mode in non-interactive installs
-  # unless this is explicitly set.
+  # Keep an explicit upgrade-mode preference for non-interactive installs.
   export AGENTTEAMS_UPGRADE_KEEP_ALL=1
   export AGENTTEAMS_MOUNT_SOCKET=1
   export AGENTTEAMS_DOCKER_PROXY=0
 }
 
 installer_path() {
-  printf '%s/installers/%s/hiclaw-install.sh\n' \
+  printf '%s/installers/%s/agentteams-install.sh\n' \
     "$(dirname "${AGENTTEAMS_ENV_FILE}")" "${AGENTTEAMS_VERSION}"
 }
 
@@ -238,7 +245,7 @@ download_installer() (
 
   local target url actual
   target="$(installer_path)"
-  url="https://raw.githubusercontent.com/agentscope-ai/AgentTeams/${AGENTTEAMS_VERSION}/install/hiclaw-install.sh"
+  url="https://raw.githubusercontent.com/agentscope-ai/AgentTeams/${AGENTTEAMS_VERSION}/install/agentteams-install.sh"
   mkdir -p "$(dirname "${target}")"
   trap 'rm -f "${target}.tmp"' EXIT INT TERM
 
@@ -314,8 +321,24 @@ validate_stack_ownership() {
   fi
 }
 
+run_installer_sanitized() {
+  # The pinned upstream installer prints generated credentials in its success
+  # banner. Stream only non-sensitive progress; never persist or echo the raw
+  # installer output. Credentials remain solely in the owner-only env file.
+  bash "$@" 2>&1 | awk '
+    BEGIN { IGNORECASE = 1 }
+    /密码|password|credential|api[ _-]*key|access[ _-]*token|secret/ {
+      if (!redacted) print "[Tiangong] Upstream installer credential output redacted."
+      redacted = 1
+      next
+    }
+    { print }
+  '
+}
+
 up() {
   require_command docker
+  require_command jq
   load_config
   validate_up_config
   docker info >/dev/null 2>&1 || die "Docker daemon is not available"
@@ -325,11 +348,78 @@ up() {
   local installer
   installer="$(download_installer | tail -n 1)"
   log "Installing AgentTeams ${AGENTTEAMS_VERSION} from a checksum-verified upstream script"
-  bash "${installer}"
+  run_installer_sanitized "${installer}"
   [[ -f "${AGENTTEAMS_ENV_FILE}" ]] && chmod 600 "${AGENTTEAMS_ENV_FILE}"
+  recover_manager_dm_membership 30
   wait_for_readiness
   log "AgentTeams installation completed"
   print_login
+}
+
+recover_manager_dm_membership() {
+  # AgentTeams v1.2.0 can persist a CoPaw sync cursor before processing the
+  # controller-created admin-DM invitation. Recover only that exact invitation
+  # using the authenticated Manager identity; never join an input-selected room.
+  local attempts="${1:-1}" attempt resource room manager token joined sync encoded response matrix_domain
+  [[ "${attempts}" =~ ^[1-9][0-9]?$ ]] || die "Invalid Manager DM recovery attempt count"
+  [[ -f "${GENERATED_ENV_FILE}" && ! -L "${GENERATED_ENV_FILE}" ]] || \
+    die "Manager DM recovery requires the generated owner-only environment file."
+  [[ "$(stat -c '%a' "${GENERATED_ENV_FILE}" 2>/dev/null || stat -f '%Lp' "${GENERATED_ENV_FILE}")" == "600" ]] || \
+    die "Manager DM recovery requires mode 600 on the generated environment file."
+  if [[ "${AGENTTEAMS_MANAGER_RUNTIME}" != "copaw" ]]; then
+    log "Manager DM recovery is not required for runtime ${AGENTTEAMS_MANAGER_RUNTIME}"
+    return
+  fi
+  token=""
+  matrix_domain="${AGENTTEAMS_MATRIX_DOMAIN:-matrix-local.agentteams.io:18080}"
+
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    resource="$(docker exec agentteams-controller agt get managers default -o json 2>/dev/null || true)"
+    if ! jq -e --arg domain "${matrix_domain}" '
+      .phase == "Running" and .runtime == "copaw" and
+      (.welcomeSent == true or .welcomeSent == false) and
+      .matrixUserID == ("@manager:" + $domain) and
+      (.roomID | type == "string" and startswith("!") and endswith(":" + $domain))
+    ' >/dev/null 2>&1 <<<"${resource}"; then
+      sleep 2
+      continue
+    fi
+    if [[ "$(jq -r .welcomeSent <<<"${resource}")" == "true" ]]; then
+      log "Manager readiness is already complete"
+      return
+    fi
+    if [[ -z "${token}" ]]; then
+      token="$(docker inspect agentteams-manager --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | \
+        awk -F= '$1 == "AGENTTEAMS_MANAGER_MATRIX_TOKEN" {sub(/^[^=]*=/, ""); print; exit}')"
+      [[ "${token}" =~ ^[A-Za-z0-9._~-]{16,512}$ ]] || die "Manager container Matrix token has an invalid format."
+    fi
+    room="$(jq -r .roomID <<<"${resource}")"
+    manager="$(jq -r .matrixUserID <<<"${resource}")"
+    encoded="$(printf '%s' "${room}" | jq -sRr @uri)"
+    joined="$(printf 'header = "Authorization: Bearer %s"\n' "${token}" | \
+      curl --config - --fail --silent --show-error --max-time 10 \
+      "http://127.0.0.1:${AGENTTEAMS_PORT_GATEWAY}/_matrix/client/v3/joined_rooms" 2>/dev/null || true)"
+    if jq -e --arg room "${room}" 'any(.joined_rooms[]?; . == $room)' >/dev/null 2>&1 <<<"${joined}"; then
+      log "Manager identity is already joined to its authoritative admin DM"
+      return
+    fi
+    sync="$(printf 'header = "Authorization: Bearer %s"\n' "${token}" | \
+      curl --config - --fail --silent --show-error --max-time 10 \
+      "http://127.0.0.1:${AGENTTEAMS_PORT_GATEWAY}/_matrix/client/v3/sync?timeout=0&full_state=true" 2>/dev/null || true)"
+    if ! jq -e --arg room "${room}" '(.rooms.invite // {}) | has($room)' >/dev/null 2>&1 <<<"${sync}"; then
+      sleep 2
+      continue
+    fi
+    response="$(printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' "${token}" | \
+      curl --config - --fail --silent --show-error --max-time 10 --request POST --data '{}' \
+      "http://127.0.0.1:${AGENTTEAMS_PORT_GATEWAY}/_matrix/client/v3/rooms/${encoded}/join")" || \
+      die "Manager failed to accept its authoritative admin-DM invitation."
+    [[ "$(jq -r '.room_id // empty' <<<"${response}")" == "${room}" ]] || \
+      die "Manager admin-DM join response did not match the authoritative room."
+    log "Recovered Manager admin-DM membership for ${manager}"
+    return
+  done
+  die "Manager authoritative admin-DM invitation was not observable."
 }
 
 wait_for_readiness() (
@@ -418,6 +508,11 @@ status() {
   printf 'Manager Console:   http://127.0.0.1:%s  [%s]\n' \
     "${AGENTTEAMS_PORT_MANAGER_CONSOLE:-18888}" \
     "$(http_status "http://127.0.0.1:${AGENTTEAMS_PORT_MANAGER_CONSOLE:-18888}/")"
+  if [[ "${AGENTTEAMS_DASHBOARD:-0}" == "1" ]]; then
+    printf 'Dashboard:         http://127.0.0.1:%s  [%s]\n' \
+      "${AGENTTEAMS_PORT_DASHBOARD:-13000}" \
+      "$(http_status "http://127.0.0.1:${AGENTTEAMS_PORT_DASHBOARD:-13000}/")"
+  fi
 }
 
 verify() {
@@ -469,11 +564,10 @@ verify() {
   fi
 
   local manager_json
-  manager_json="$(docker exec agentteams-controller /usr/local/bin/hiclaw \
-    get managers -o json 2>/dev/null || true)"
-  if grep -Eq '"phase"[[:space:]]*:[[:space:]]*"Running"' <<<"${manager_json}" && \
-      grep -Eq '"welcomeSent"[[:space:]]*:[[:space:]]*true' <<<"${manager_json}"; then
-    log "PASS Manager running and welcome message sent"
+  manager_json="$(docker exec agentteams-controller agt \
+    get managers default -o json 2>/dev/null || true)"
+  if printf '%s' "${manager_json}" | tr -d ' \r\n' | grep -q '"welcomeSent":true'; then
+    log "PASS Manager ready and welcome message sent"
   else
     warn "FAIL Manager readiness"
     failed=1
@@ -496,6 +590,9 @@ AGENTTEAMS_ADMIN_PASSWORD=<redacted-or-generated>
 AGENTTEAMS_LOCAL_ONLY=${AGENTTEAMS_LOCAL_ONLY}
 AGENTTEAMS_MANAGER_RUNTIME=${AGENTTEAMS_MANAGER_RUNTIME}
 AGENTTEAMS_DEFAULT_WORKER_RUNTIME=${AGENTTEAMS_DEFAULT_WORKER_RUNTIME}
+AGENTTEAMS_DASHBOARD=${AGENTTEAMS_DASHBOARD}
+AGENTTEAMS_PORT_DASHBOARD=${AGENTTEAMS_PORT_DASHBOARD}
+AGENTTEAMS_DASHBOARD_VERSION=${AGENTTEAMS_DASHBOARD_VERSION:-}
 AGENTTEAMS_ENV_FILE=${AGENTTEAMS_ENV_FILE}
 AGENTTEAMS_DATA_DIR=${AGENTTEAMS_DATA_DIR}
 AGENTTEAMS_WORKSPACE_DIR=${AGENTTEAMS_WORKSPACE_DIR}
@@ -546,7 +643,7 @@ EOF
   export AGENTTEAMS_NON_INTERACTIVE=1
   local installer remaining
   installer="$(download_installer | tail -n 1)"
-  bash "${installer}" uninstall
+  run_installer_sanitized "${installer}" uninstall
 
   remaining="$(container_names)"
   [[ -z "${remaining}" ]] || die "Uninstall left AgentTeams containers behind: ${remaining//$'\n'/, }"
@@ -565,6 +662,7 @@ case "${ACTION}" in
   stop) stop_stack ;;
   status) status ;;
   verify) verify ;;
+  recover-manager-readiness) load_config; validate_stack_ownership; recover_manager_dm_membership 1 ;;
   config) print_config ;;
   logs) show_logs ;;
   login) load_config; print_login ;;

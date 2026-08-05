@@ -16,6 +16,7 @@ import {
 import { buildBaseSystemPrompt } from "../agent/context/base-system-prompt.mjs";
 
 const WORKER_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const TEAM_ROLES = ["leader", "designer", "implementor", "assessor", "operator"];
 
 async function loadSourceProfile(roleId) {
   return loadRoleProfileBundle({
@@ -24,97 +25,73 @@ async function loadSourceProfile(roleId) {
   });
 }
 
-async function profileFixture(t, roleId = "reviewer") {
+async function profileFixture(t, roleId = "leader") {
   const root = await mkdtemp(join(tmpdir(), "tiangong-role-profile-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   await cp(join(WORKER_ROOT, "role-profiles"), join(root, "role-profiles"), { recursive: true });
   await cp(join(WORKER_ROOT, "roles"), join(root, "roles"), { recursive: true });
-  await cp(join(WORKER_ROOT, "practices"), join(root, "practices"), { recursive: true });
-  return {
-    profilePath: join(root, "role-profiles", `${roleId}.json`),
-    resourceRoot: root,
-  };
+  await cp(join(WORKER_ROOT, "skills"), join(root, "skills"), { recursive: true });
+  return { profilePath: join(root, "role-profiles", `${roleId}.json`), resourceRoot: root };
 }
 
-async function rejectsProfile(paths, pattern = /role profile|resource|methodology/iu) {
+async function rejectsProfile(paths, pattern = /role profile|resource|SOUL|Skill/iu) {
   await assert.rejects(
     loadRoleProfileBundle(paths),
     (error) => error instanceof RoleProfileError && pattern.test(error.message),
   );
 }
 
-test("valid fixed profiles load frozen code-owned role context", async () => {
+test("all five responsibility profiles load frozen SOUL and Skill context", async () => {
+  for (const roleId of TEAM_ROLES) {
+    const bundle = await loadSourceProfile(roleId);
+    assert.equal(Object.isFrozen(bundle), true);
+    assert.equal(Object.isFrozen(bundle.profile), true);
+    assert.equal(Object.isFrozen(bundle.soul), true);
+    assert.equal(Object.isFrozen(bundle.skills), true);
+    assert.equal(bundle.profile.roleId, roleId);
+    assert.equal(bundle.runtimeKind, roleId === "leader" ? "leader" : "member");
+    assert.equal(bundle.profile.skillIds.length, 1);
+    assert.equal(bundle.skills[0].id, bundle.profile.skillIds[0]);
+    assert.equal(assertRuntimeProfileMaterialized(bundle), bundle);
+    assert.match(buildBaseSystemPrompt(bundle), new RegExp(bundle.profile.title, "u"));
+    assert.match(buildBaseSystemPrompt(bundle), new RegExp(bundle.skills[0].id, "u"));
+    assert.match(buildBaseSystemPrompt(bundle), new RegExp(bundle.profileDigest, "u"));
+  }
   const kernel = await loadSourceProfile("kernel");
-  const reviewer = await loadSourceProfile("reviewer");
-
-  assert.equal(Object.isFrozen(kernel), true);
-  assert.equal(Object.isFrozen(kernel.profile), true);
-  assert.equal(Object.isFrozen(reviewer.tools), true);
+  assert.equal(kernel.runtimeKind, "core");
   assert.deepEqual(kernel.profile.toolIds, ["read", "write"]);
-  assert.deepEqual(reviewer.profile, {
-    schemaVersion: 1,
-    roleId: "reviewer",
-    title: "Reviewer",
-    practiceIds: ["review"],
-    toolIds: ["start_work", "extend_scope", "read", "check_completion", "abandon_work"],
-    gatePolicyId: "reviewer-v1",
-    roleSkillId: "reviewer-v1",
-  });
-  assert.equal(reviewer.practices[0].definition.id, "review");
-  assert.equal(reviewer.practices[0].methodology.id, "review-v1");
-  assert.match(buildBaseSystemPrompt(reviewer), /static-only review/u);
-  assert.match(buildBaseSystemPrompt(reviewer), new RegExp(reviewer.profileDigest, "u"));
-
   assert.equal(assertRuntimeProfileMaterialized(kernel), kernel);
-  assert.equal(assertRuntimeProfileMaterialized(reviewer), reviewer);
-  assert.throws(
-    () => assertRuntimeProfileMaterialized(Object.freeze({
-      profile: Object.freeze({ roleId: "kernel", toolIds: ["read", "write"] }),
-      profileDigest: kernel.profileDigest,
-      tools: Object.freeze(kernel.tools),
-    })),
-    (error) => error instanceof RoleProfileError && error.reasonCode === "PROFILE_BUNDLE_INVALID",
-  );
 });
 
-test("closed registries deny Reviewer mutation and unknown capability selection", async () => {
+test("closed registries contain no Reviewer or Practice capability", () => {
   const registries = roleRegistrySnapshot();
   assert.equal(Object.isFrozen(registries), true);
-  const reviewer = await loadSourceProfile("reviewer");
-  assert.notEqual(reviewer.gatePolicy, registries.gatePolicies["reviewer-v1"]);
-  assert.notEqual(reviewer.tools[0], registries.tools.start_work);
-  assert.deepEqual(registries.roles.reviewer.toolIds, [
-    "start_work",
-    "extend_scope",
-    "read",
-    "check_completion",
-    "abandon_work",
-  ]);
-  for (const toolId of ["write", "edit", "bash"]) {
-    assert.equal(registries.roles.reviewer.toolIds.includes(toolId), false);
-    assert.equal(registries.gatePolicies["reviewer-v1"].toolIds.includes(toolId), false);
+  assert.equal(Object.hasOwn(registries.roles, "reviewer"), false);
+  assert.equal(Object.hasOwn(registries, "practices"), false);
+  assert.equal(Object.hasOwn(registries, "methodologySkills"), false);
+  assert.deepEqual(Object.keys(registries.roles), ["kernel", ...TEAM_ROLES]);
+  for (const role of TEAM_ROLES) {
+    assert.equal(registries.roles[role].skillIds.length, 1);
+    assert.equal(registries.roles[role].toolIds.includes("bash"), false);
   }
-  assert.equal(Object.hasOwn(registries.tools, "unknown"), false);
-  assert.deepEqual(registries.tools.read.materializedRoleIds, ["kernel", "reviewer"]);
-  assert.deepEqual(registries.tools.write.profileRoleIds, ["kernel"]);
 });
 
-test("profile schema, IDs, duplicates, and digest spoofing fail closed", async (t) => {
+test("profile schema, IDs, duplicate Skills, and digest spoofing fail closed", async (t) => {
   const paths = await profileFixture(t);
   const original = JSON.parse(await readFile(paths.profilePath, "utf8"));
   const variants = [
     { ...original, unexpected: true },
-    Object.fromEntries(Object.entries(original).filter(([key]) => key !== "roleSkillId")),
+    Object.fromEntries(Object.entries(original).filter(([key]) => key !== "soulId")),
     { ...original, schemaVersion: 2 },
     { ...original, roleId: "unknown" },
+    { ...original, skillIds: [...original.skillIds, ...original.skillIds] },
+    { ...original, skillIds: ["unknown-skill"] },
     { ...original, toolIds: [...original.toolIds, "read"] },
-    { ...original, toolIds: [...original.toolIds.slice(0, -1), "write"] },
-    { ...original, roleSkillId: "unknown" },
-    { ...original, title: "Reviewer elevated by prompt" },
+    { ...original, gatePolicyId: "unknown-policy" },
   ];
   for (const variant of variants) {
     await writeFile(paths.profilePath, `${JSON.stringify(variant)}\n`);
-    await rejectsProfile(paths, /profile|role|field|identifier|version/iu);
+    await rejectsProfile(paths, /profile|role|field|identifier|version|Skill/iu);
   }
 });
 
@@ -130,36 +107,33 @@ test("missing, symlinked, oversized, invalid UTF-8, and digest-mismatched resour
   await symlink(originalProfile, linkedProfile.profilePath);
   await rejectsProfile(linkedProfile, /symbolic link/u);
 
-  const missing = await profileFixture(t);
-  await rm(join(missing.resourceRoot, "roles", "reviewer", "role.md"));
-  await rejectsProfile(missing, /missing/u);
+  const missingSoul = await profileFixture(t);
+  await rm(join(missingSoul.resourceRoot, "roles", "leader", "SOUL.md"));
+  await rejectsProfile(missingSoul, /missing/u);
 
-  const linked = await profileFixture(t);
-  const linkedMethodology = join(linked.resourceRoot, "practices", "review", "methodology.md");
-  const originalMethodology = `${linkedMethodology}.original`;
-  await cp(linkedMethodology, originalMethodology);
-  await rm(linkedMethodology);
-  await symlink(originalMethodology, linkedMethodology);
-  await rejectsProfile(linked, /symbolic link/u);
+  const linkedSkill = await profileFixture(t);
+  const skillPath = join(linkedSkill.resourceRoot, "skills", "leader", "coordination.md");
+  const originalSkill = `${skillPath}.original`;
+  await cp(skillPath, originalSkill);
+  await rm(skillPath);
+  await symlink(originalSkill, skillPath);
+  await rejectsProfile(linkedSkill, /symbolic link/u);
 
   const oversized = await profileFixture(t);
-  await writeFile(
-    join(oversized.resourceRoot, "practices", "review", "methodology.md"),
-    "x".repeat(32 * 1024 + 1),
-  );
+  await writeFile(join(oversized.resourceRoot, "skills", "leader", "coordination.md"), "x".repeat(16 * 1024 + 1));
   await rejectsProfile(oversized, /size/u);
 
   const invalidUtf8 = await profileFixture(t);
-  await writeFile(join(invalidUtf8.resourceRoot, "roles", "reviewer", "role.md"), Buffer.from([0xff]));
+  await writeFile(join(invalidUtf8.resourceRoot, "skills", "leader", "coordination.md"), Buffer.from([0xff]));
   await rejectsProfile(invalidUtf8, /digest|UTF-8/iu);
 
   const digestMismatch = await profileFixture(t);
-  const rolePath = join(digestMismatch.resourceRoot, "roles", "reviewer", "role.md");
-  await writeFile(rolePath, `${await readFile(rolePath, "utf8")}tampered\n`);
+  const skillFile = join(digestMismatch.resourceRoot, "skills", "leader", "coordination.md");
+  await writeFile(skillFile, `${await readFile(skillFile, "utf8")}tampered\n`);
   await rejectsProfile(digestMismatch, /digest/u);
 });
 
-test("profile path is fixed and environment or assignment-shaped input cannot select a role", async () => {
+test("profile path is fixed and environment or assignment input cannot select a role", async () => {
   const before = {
     profile: process.env.TIANGONG_PROFILE_PATH,
     role: process.env.TIANGONG_ROLE_ID,
@@ -168,11 +142,11 @@ test("profile path is fixed and environment or assignment-shaped input cannot se
   try {
     process.env.TIANGONG_PROFILE_PATH = "/tmp/spoofed-profile.json";
     process.env.TIANGONG_ROLE_ID = "kernel";
-    process.env.AGENTTEAMS_WORKER_NAME = "reviewer-but-elevated";
+    process.env.AGENTTEAMS_WORKER_NAME = "leader-but-elevated";
     assert.equal(FIXED_PROFILE_PATH, "/opt/tiangong-worker/profile.json");
     assert.equal(FIXED_RESOURCE_ROOT, "/opt/tiangong-worker");
-    const reviewer = await loadSourceProfile("reviewer");
-    assert.equal(reviewer.profile.roleId, "reviewer");
+    const leader = await loadSourceProfile("leader");
+    assert.equal(leader.profile.roleId, "leader");
   } finally {
     for (const [name, value] of Object.entries({
       TIANGONG_PROFILE_PATH: before.profile,

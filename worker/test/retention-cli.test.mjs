@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -62,6 +62,9 @@ test("explicit retention uses only independent roots and compacts expired termin
   const stateDirectory = join(workspaceDir, ".tiangong", "runtime");
   const paths = statePathsForSession({ stateDirectory, sessionId: "session-one" });
   await mkdir(workspaceDir);
+  const workRunSentinel = join(paths.workRunDirectory, "retention-must-ignore");
+  await mkdir(paths.workRunDirectory, { recursive: true });
+  await writeFile(workRunSentinel, "WorkRun root is independently retained\n");
 
   const idempotencyStore = new IdempotencyStore({ filePath: paths.idempotencyFilePath });
   const pendingOperationStore = new PendingOperationStore({
@@ -124,6 +127,7 @@ test("explicit retention uses only independent roots and compacts expired termin
   assert.equal(await idempotencyStore.get(expired.value.idempotencyKey), undefined);
   assert.equal((await idempotencyStore.get(active.value.idempotencyKey)).status, "pending");
   assert.equal((await legacyStore.get(legacy.value.idempotencyKey)).status, "completed");
+  assert.equal(await readFile(workRunSentinel, "utf8"), "WorkRun root is independently retained\n");
   await assert.rejects(
     pendingOperationStore.load(expired.value.idempotencyKey, expired.value),
     { code: "ENOENT" },

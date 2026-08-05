@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tiangong.invalid/schemas/software-change-delivery-result-v1.json",
+  "title": "software-change-delivery-result-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind", "schemaVersion", "taskId", "projectId", "producer", "taskKind",
+    "revisionIndex", "sourceRole", "playbookDigest", "taskBindingDigest",
+    "completionContractDigest", "sourceProfileDigest", "sourceSkillId", "skillDigest",
+    "artifactRefs", "evidenceRefs", "createdAt", "contentDigest"
+  ],
+  "properties": {
+    "kind": { "const": "tiangong.result-envelope" },
+    "schemaVersion": { "const": 1 },
+    "taskId": { "$ref": "#/$defs/id" },
+    "projectId": { "$ref": "#/$defs/id" },
+    "producer": { "$ref": "#/$defs/id" },
+    "taskKind": { "enum": ["design", "implement", "assess", "release"] },
+    "revisionIndex": { "type": "integer", "minimum": 0 },
+    "sourceRole": { "enum": ["designer", "implementor", "assessor", "operator"] },
+    "playbookDigest": { "$ref": "#/$defs/digest" },
+    "taskBindingDigest": { "$ref": "#/$defs/digest" },
+    "completionContractDigest": { "$ref": "#/$defs/digest" },
+    "sourceProfileDigest": { "$ref": "#/$defs/digest" },
+    "sourceSkillId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "skillDigest": { "$ref": "#/$defs/digest" },
+    "claim": { "type": "string", "minLength": 1, "maxLength": 8192 },
+    "blocker": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "artifactRefs": { "$ref": "#/$defs/refs" },
+    "evidenceRefs": { "$ref": "#/$defs/refs" },
+    "changeRevisionRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schemaVersion", "producerTaskId", "artifactPath", "artifactDigest", "revision", "contentDigest"],
+      "properties": {
+        "kind": { "const": "tiangong.change-revision-ref" },
+        "schemaVersion": { "const": 1 },
+        "producerTaskId": { "$ref": "#/$defs/id" },
+        "artifactPath": {
+          "type": "string", "minLength": 1, "maxLength": 1024,
+          "pattern": "^(?!(?:\\.{1,2})(?:/|$))(?!.*\\/(?:\\.{1,2})(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
+        },
+        "artifactDigest": { "$ref": "#/$defs/digest" },
+        "revision": { "type": "integer", "minimum": 0 },
+        "contentDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "releaseOutcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind", "schemaVersion", "taskId", "targetId", "operationDigest",
+        "previousDigest", "currentDigest", "changeRevisionRef", "disposition",
+        "postVerifyHealthy", "rollbackPerformed", "previousVerifyHealthy", "contentDigest"
+      ],
+      "properties": {
+        "kind": { "const": "tiangong.deployment-outcome" },
+        "schemaVersion": { "const": 1 },
+        "taskId": { "$ref": "#/$defs/id" },
+        "targetId": { "$ref": "#/$defs/id" },
+        "operationDigest": { "$ref": "#/$defs/digest" },
+        "previousDigest": { "$ref": "#/$defs/digest" },
+        "currentDigest": { "$ref": "#/$defs/digest" },
+        "changeRevisionRef": { "$ref": "#/properties/changeRevisionRef" },
+        "disposition": { "enum": ["DELIVERED", "FAILED_SAFE", "RECOVERY_REQUIRED"] },
+        "postVerifyHealthy": { "type": "boolean" },
+        "rollbackPerformed": { "type": "boolean" },
+        "previousVerifyHealthy": { "type": ["boolean", "null"] },
+        "contentDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "revisionRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary"],
+      "properties": { "summary": { "type": "string", "minLength": 1, "maxLength": 4096 } }
+    },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "contentDigest": { "$ref": "#/$defs/digest" }
+  },
+  "oneOf": [
+    { "required": ["claim"], "not": { "required": ["blocker"] } },
+    { "required": ["blocker"], "not": { "required": ["claim"] } }
+  ],
+  "allOf": [
+    {
+      "if": { "properties": { "taskKind": { "enum": ["implement", "assess", "release"] } }, "required": ["taskKind"] },
+      "then": {
+        "if": { "not": { "required": ["blocker"] } },
+        "then": { "required": ["changeRevisionRef"] }
+      }
+    },
+    {
+      "if": { "required": ["revisionRequest"] },
+      "then": { "properties": { "taskKind": { "const": "assess" } } }
+    },
+    {
+      "if": {
+        "properties": { "taskKind": { "const": "release" } },
+        "required": ["taskKind"],
+        "not": { "required": ["blocker"] }
+      },
+      "then": { "required": ["releaseOutcome"] }
+    },
+    {
+      "if": { "required": ["releaseOutcome"] },
+      "then": {
+        "properties": { "taskKind": { "const": "release" } },
+        "not": { "required": ["blocker"] }
+      }
+    }
+  ],
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "refs": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/id" },
+      "uniqueItems": true
+    }
+  }
+}

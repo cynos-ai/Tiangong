@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly SCRIPT_DIR REPO_ROOT
 readonly MANIFEST="${REPO_ROOT}/smoke-testing/fixtures/peer-mention-smoke-team.yaml"
+readonly WORKER_MANIFEST="${REPO_ROOT}/smoke-testing/fixtures/peer-mention-smoke-workers.yaml"
 readonly RUNNER="${REPO_ROOT}/smoke-testing/support/run-peer-mention-smoke.sh"
 readonly ROUNDTRIP="${REPO_ROOT}/smoke-testing/support/matrix-peer-roundtrip.sh"
 readonly ROOM_MEMBERS="${REPO_ROOT}/smoke-testing/support/matrix-peer-room-members.sh"
@@ -54,6 +55,20 @@ assert_pattern_count() {
     fail "expected ${expected} manifest ${label} line(s), found ${actual}."
 }
 
+assert_worker_exact_line_count() {
+  local expected="$1" line="$2" actual
+  actual="$(grep -Fxc -- "${line}" "${WORKER_MANIFEST}" || true)"
+  [[ "${actual}" == "${expected}" ]] || \
+    fail "expected ${expected} Worker manifest exact line(s) '${line}', found ${actual}."
+}
+
+assert_worker_pattern_count() {
+  local expected="$1" pattern="$2" label="$3" actual
+  actual="$(grep -Ec -- "${pattern}" "${WORKER_MANIFEST}" || true)"
+  [[ "${actual}" == "${expected}" ]] || \
+    fail "expected ${expected} Worker manifest ${label} line(s), found ${actual}."
+}
+
 expect_validation_failure() {
   local file="$1" label="$2"
   if "${ROUNDTRIP}" validate "${file}" "${ROOM_ID}" "${ADMIN_ID}" "${LEADER_ID}" \
@@ -62,7 +77,7 @@ expect_validation_failure() {
   fi
 }
 
-for path in "${MANIFEST}" "${RUNNER}" "${ROUNDTRIP}" "${ROOM_MEMBERS}" "${ALIASES}" \
+for path in "${MANIFEST}" "${WORKER_MANIFEST}" "${RUNNER}" "${ROUNDTRIP}" "${ROOM_MEMBERS}" "${ALIASES}" \
   "${OTLP_RECEIVER}" "${OTLP_ACTIVITY_QUERY}"; do
   [[ -f "${path}" && ! -L "${path}" ]] || fail "required peer smoke asset is missing or symlinked: ${path}"
 done
@@ -152,25 +167,28 @@ assert_exact_line_count 1 'apiVersion: agentteams.io/v1beta1'
 assert_exact_line_count 1 'kind: Team'
 assert_exact_line_count 1 '  name: tiangong-peer-smoke'
 assert_exact_line_count 1 '  peerMentions: true'
-assert_exact_line_count 1 '    name: tiangong-peer-smoke-leader'
+assert_exact_line_count 1 '    - name: tiangong-peer-smoke-leader'
 assert_exact_line_count 1 '    - name: tiangong-peer-smoke-coordinator'
 assert_exact_line_count 1 '    - name: tiangong-peer-smoke-engineer'
-assert_pattern_count 3 '^[[:space:]]+model: qwen3\.5-plus$' model
-assert_pattern_count 2 '^[[:space:]]+runtime: openclaw$' runtime
-assert_pattern_count 2 '^[[:space:]]+image: tiangong-worker:dev$' image
-assert_pattern_count 3 '^[[:space:]]+state: Running$' state
-assert_pattern_count 2 '^[[:space:]]+groupAllowExtra:$' groupAllowExtra
-assert_exact_line_count 1 '          - tiangong-peer-smoke-coordinator'
-assert_exact_line_count 1 '          - tiangong-peer-smoke-engineer'
-assert_exact_line_count 1 '      enabled: false'
 
-leader_block="$(awk '
-  /^  leader:$/ { in_leader=1; next }
-  /^  workers:$/ { in_leader=0 }
-  in_leader { print }
-' "${MANIFEST}")"
-if grep -Eq '^[[:space:]]+(runtime|image):' <<<"${leader_block}"; then
-  fail 'stock Leader fixture must not request a custom runtime or image.'
+assert_worker_exact_line_count 3 'apiVersion: agentteams.io/v1beta1'
+assert_worker_exact_line_count 3 'kind: Worker'
+assert_worker_exact_line_count 1 '  name: tiangong-peer-smoke-leader'
+assert_worker_exact_line_count 1 '  name: tiangong-peer-smoke-coordinator'
+assert_worker_exact_line_count 1 '  name: tiangong-peer-smoke-engineer'
+assert_worker_pattern_count 3 '^[[:space:]]+model: qwen3\.5-plus$' model
+assert_worker_pattern_count 1 '^[[:space:]]+runtime: copaw$' stock_runtime
+assert_worker_pattern_count 2 '^[[:space:]]+runtime: openclaw$' runtime
+assert_worker_exact_line_count 1 '  image: higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-copaw-worker:v1.2.0'
+assert_worker_pattern_count 2 '^[[:space:]]+image: tiangong-worker:dev$' image
+assert_worker_pattern_count 3 '^[[:space:]]+state: Running$' state
+assert_worker_pattern_count 2 '^[[:space:]]+groupAllowExtra:$' groupAllowExtra
+assert_worker_pattern_count 2 '^[[:space:]]+dmAllowExtra:$' dmAllowExtra
+assert_worker_exact_line_count 1 '      - tiangong-peer-smoke-engineer'
+assert_worker_exact_line_count 1 '      - tiangong-peer-smoke-coordinator'
+assert_worker_exact_line_count 4 '      - tiangong-peer-smoke-leader'
+if grep -Eqi 'apiKey|accessToken|password|secret|token:' "${WORKER_MANIFEST}"; then
+  fail 'peer Worker fixture appears to contain credential-bearing fields.'
 fi
 if grep -Eq '(^|[[:space:]])(package|skills|mcpServers):' "${MANIFEST}"; then
   fail 'peer transport fixture must not enable packages, Skills, or MCP servers.'

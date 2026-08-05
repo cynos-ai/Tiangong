@@ -14,8 +14,11 @@ async function fixture(t) {
 }
 
 const FAST_OPTIONS = {
-  staleMilliseconds: 20,
-  waitMilliseconds: 200,
+  // A live holder intentionally sleeps for 20 ms below. Keep the stale
+  // threshold comfortably above that duration so scheduler jitter cannot
+  // turn the serialization test into a stale-lock reclamation test.
+  staleMilliseconds: 100,
+  waitMilliseconds: 500,
   retryMilliseconds: 2,
 };
 

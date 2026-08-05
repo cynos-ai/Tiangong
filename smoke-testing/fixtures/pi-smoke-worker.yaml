@@ -3,7 +3,7 @@ kind: Worker
 metadata:
   name: tiangong-pi-smoke
 spec:
-  model: qwen3.5-plus
+  model: deepseek-v4-flash
   runtime: openclaw
   image: tiangong-worker:dev
   state: Running
