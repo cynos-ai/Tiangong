@@ -1,8 +1,9 @@
 # Tiangong control architecture overview
 
-> Status: executive summary of the agreed target design. It does not describe
-> the current implementation and does not authorize a delivery claim. The
-> normative contracts are in
+> Status: non-normative executive summary of the accepted superseding target
+> architecture; the contract specification remains under closure. Public v0.2
+> is still the current implementation baseline. This summary does not authorize
+> a delivery claim. The sole normative target source is
 > [`evidence-backed-team-control.md`](evidence-backed-team-control.md).
 
 ## Positioning
@@ -15,16 +16,44 @@ permission, authorization, evidence, completion, and recovery.
 It **constrains rather than orchestrates**. There is no fixed delivery pipeline
 and no general workflow DSL.
 
+## Current and target boundary
+
+The target supersedes the fixed five-role, four-TaskKind, TeamPlaybook path as
+future architecture without pretending it is already implemented. The five
+public v0.2 roles remain the first-party `software-change-delivery` profile, not
+Kernel enumeration. Current WorkRun and AgentTeams Project/Task integration are
+replaced only through vertically complete, fail-closed target slices.
+
+AgentTeams owns actual Team/Worker/container lifecycle and platform storage
+integration; OpenClaw owns Matrix mechanics. Tiangong owns professional
+Work/Task/Result control, TeamDefinition admission, Capability, Context, Gate,
+Evidence, Completion, Approval, quality, and recovery. Platform state proves a
+resource exists; TeamDefinition determines whether its exact generation is
+admitted. Platform files and messages are carriers or projections, never a
+second semantic authority.
+
+A deployment is single-tenant unless it proves end-to-end isolation across
+identity, Matrix, storage, containers, network, credentials, Runner, knowledge,
+model providers, and administration.
+
 ## Core philosophy
 
 - **Two autonomous loops** — an Agent autonomously completes one Task; the
   Leader autonomously plans and adapts the Team's Work.
+- **Unique authority, reentrant execution** — one Leader is the sole coordination
+  authority, but isolated Leader turns and Tasks may progress across several
+  Works within bounded capacity.
+- **Concurrency is constrained machine state** — immutable Work ceilings,
+  live Team capacity, fairness, leases, fencing, and run-scoped isolation bound
+  execution without introducing a workflow graph.
 - **Simple business plane** — users and the Leader reason about
   `Work -> Task -> Result`.
 - **Single source of truth** — immutable records and exact digests replace
   mutable duplicated status.
 - **Claim is not Evidence** — model prose, Artifacts, machine observations,
-  Decisions, Approvals, and external effects remain separate facts.
+  Decisions, Approvals, and external effects remain separate facts. Evidence
+  establishes only that an authorized Recorder recorded its defined bounded
+  observation.
 - **Meaning, legality, and strategy are separate** — a code-owned action says
   what a record means, a Guard decides whether it is legal, and the Leader
   decides why and when to choose it.
@@ -33,6 +62,9 @@ and no general workflow DSL.
   new Task.
 - **Uncertainty is preserved** — an external effect with unknown outcome is not
   retried or described as success until privileged reconciliation proves it.
+- **Knowledge authority is preserved** — exact source Artifacts and slices remain
+  authoritative; indexes, vectors, rankings, retrieved prose, and model summaries
+  are derived untrusted data.
 
 ## Concept layers
 
@@ -52,9 +84,11 @@ flowchart TB
     subgraph Runtime[Runtime closure]
         RWP[ResolvedWorkPolicy]
         RUN[TaskRun]
+        SCH[Team scheduler / leases]
         HI[HumanInteraction]
         HR[HumanResponse]
         RWP --> W
+        SCH --> RUN
         T --> RUN
         HI --> HR
         HR --> D
@@ -65,7 +99,7 @@ flowchart TB
         AD[AgentDefinition]
         CP[CapabilityPolicy]
         S[Skills]
-        K[RAG knowledge]
+        K[Source Artifacts / RetrievalBundles]
         C[Concerns]
         TD --> AD
         AD --> CP
@@ -134,7 +168,14 @@ flowchart TB
 ### Runtime closure
 
 - **TaskRun** is the single immutable runtime binding for one dispatched Task;
-  dynamic Context and tool facts remain Evidence or Artifacts.
+  dynamic Context and tool facts remain Evidence or Artifacts. Every live Run
+  isolates Session, Context, Workspace, tools, budget, cancellation, Completion,
+  and recovery state.
+- A valid undispatched **Task is the durable dispatch authority**. Scheduler
+  capacity shortage creates no TaskRun or blocked Result; deterministic retry
+  needs no DispatchIntent or Leader polling.
+- Leader turns, scheduler queues, capacity, slots, leases, and fencing epochs are
+  machine state and Evidence, not new business aggregates.
 - **HumanInteraction** is an immutable Leader-to-Human contract with authoritative
   `inform`, `decide`, or `authorize` semantics. HumanResponse is a separate
   Artifact and never mutates the request.
@@ -146,12 +187,18 @@ flowchart TB
 ### Trust foundation
 
 - **Artifact** identifies the exact delivered bytes and their provenance.
-- **Evidence** records bounded facts observed by trusted machine boundaries.
+- **Evidence** records that an authorized Recorder made one bounded observation
+  under an exact EventDefinition; it does not independently prove semantic truth
+  or an external effect.
 - **Completion** deterministically checks the minimum machine-provable Task
-  contract. It is necessary, but Leader or Human semantic acceptance is
-  sufficient.
+  contract. An effective Leader or Human-backed Decision is authoritative
+  semantic disposition under exact policy, not proof of objective correctness.
 - One logical Evidence Ledger per Work gives multi-Agent facts a common order.
-  Signed Anchors protect critical Evidence frontiers from whole-chain rewrite.
+  Signed Anchors protect critical frontiers from later rewrite relative to a
+  trusted key; they do not make a compromised Recorder truthful.
+- Human ingress and cross-Work capacity observations use namespace-scoped
+  administrative ledgers with the same genesis, Recorder, anchoring, and
+  fail-closed rules; Work events cite their exact EvidenceRefs.
 
 ### Quality and environment
 
@@ -184,13 +231,17 @@ flowchart TB
 ### Organization and behavior shaping
 
 - **TeamDefinition** binds exactly one Leader and any number of approved
-  professional members to exact Agent definitions.
+  professional members to exact Agent definitions. Multiple pre-bound exact
+  Workers may share one AgentDefinition for horizontal capacity; roster changes
+  require a new TeamDefinition and Work revision.
 - **AgentDefinition** combines stable responsibility instructions, a hard
   CapabilityPolicy, and an allowed Skill catalog.
 - **Skills** teach methods without changing profession or permission. Classic
   multi-Agent methods are Leader coordination Skills.
-- **RAG** supplies provenance-bearing project and organization knowledge as
-  untrusted data, never authority.
+- **RAG** supplies exact provenance-bearing source slices through a
+  policy-filtered RetrievalBundle bound to one TaskRun or fenced Leader turn.
+  Physical indexes and embeddings are rebuildable caches; generated output is
+  not reusable organizational knowledge without separate governed promotion.
 - **Concerns** give Agent- or Team-scoped early guidance. They are advisory; any
   must-block rule belongs in Gate or Completion.
 
@@ -198,19 +249,25 @@ flowchart TB
 
 ```text
 Human request
-  -> authenticated input Evidence
-  -> WorkSpec Artifact
-  -> immutable Work revision
+  -> human-request.received under exact platform or tenant IngressPolicy
+  -> deny, or reserve workId and Work ledger
+  -> atomically/outbox-equivalently commit Work + work.recorded + admitted Evidence
+  -> replay returns that exact Work; execution saturation never discards it
 
 Leader plans
+  -> one fenced Work-scoped turn and Work-head CAS
+  -> optional or required Leader-subject retrieval under exact Work policy
   -> immutable Task bound to Work, assignee, inputs, and resolved policies
   -> exact TeamDefinition and AgentDefinition
-  -> dispatch atomically opens the Task's single immutable TaskRun
+  -> scheduler intersects Work ceilings with live Team and Worker capacity
+  -> dispatch atomically reserves slots and opens the Task's single TaskRun
 
 Agent works autonomously
-  -> selected Skills + provenance-bearing RAG + Agent Concerns
+  -> exact TaskRun-subject knowledge policy and live revocation checks
+  -> exact source snapshots + rebuildable search cache -> sealed RetrievalBundle
+  -> selected Skills + delimited untrusted retrieval + Agent Concerns
   -> tools constrained by Capability and Task policy
-  -> trusted wrappers capture Evidence
+  -> authorized Recorders capture bounded observations under exact definitions
   -> outputs become immutable Artifacts
 
 Agent proposes Result
@@ -220,8 +277,8 @@ Agent proposes Result
   -> external dependency: seal blocked Result and return to Leader
 
 Leader reviews
-  -> Checkpoint pass is required
-  -> semantic accept/reject is an immutable CoordinationDecision
+  -> Completion Check pass is required
+  -> semantic accept/reject is an immutable CoordinationDecision under policy
   -> Human input uses an immutable inform/decide/authorize interaction
   -> scope change creates a new Work revision, never mutation
 
@@ -238,7 +295,7 @@ External effect, when required
   -> authenticated HumanResponse or standing policy produces exact Approval
   -> new Execute Task invokes Gate
   -> Journal begins before backend call
-  -> receipt, postcondition, Evidence, and Artifact prove the outcome
+  -> receipt, postcondition, Evidence, and Artifact establish the bounded outcome
   -> uncertain outcome blocks retry and enters privileged reconciliation
 
 Work termination
@@ -258,7 +315,7 @@ Work termination
 | Effects and authorization | How can Agents safely touch real systems? | Operation, exact Approval, Gate, Journal, reconciliation and compensation |
 | Organization and shaping | Who is an Agent, what may it do, and how is behavior guided? | TeamDefinition, AgentDefinition, Capability, TeamPolicy, Skills, RAG, Concern |
 | Quality and environment | What does a credible test or promotion claim mean? | SystemMap, ImpactAssessment, TestPlan, exact TestRun environment binding, QualityAssessment |
-| Runtime closure | How are immutable contracts composed and safely recovered at runtime? | TaskRun, HumanInteraction, ResolvedWorkPolicy, formal Operation Journal schema |
+| Runtime closure | How are immutable contracts composed and safely recovered at runtime? | TaskRun, HumanInteraction, ResolvedWorkPolicy, formal Operation Journal, bounded scheduling, leases and fencing |
 
 The packages reference one another but do not collapse authority:
 
@@ -312,6 +369,49 @@ Approval authorizes exact effects
     transcripts.
 23. Human-facing claims never exceed accepted Results, available Artifacts, and
     verified Evidence.
+24. Every independent admissible Human objective is durably captured as an
+    independent Work even when execution is saturated.
+25. One Work has at most one current fenced Leader-turn lease; lease ownership
+    never replaces Work-head CAS.
+26. A valid undispatched Task is the dispatch authority; capacity shortage
+    creates no TaskRun and no separate DispatchIntent.
+27. Immutable Work concurrency ceilings and live Team-global capacity are
+    separate authorities; live state can narrow but never exceed Work policy.
+28. Concurrent TaskRuns isolate all mutable runtime axes, and stale fencing
+    epochs cannot append trusted output or reclaim current resources.
+29. Shared mutable resources use isolated Workspaces, deterministic integration,
+    leases, or Operation preconditions—never model cooperation or last writer
+    wins.
+30. KnowledgeSourceSnapshot, KnowledgeIndexManifest, and RetrievalBundle are
+    typed Artifacts; physical indexes, embeddings, and rankings are rebuildable
+    derived state.
+31. Retrieval binds one exact TaskRun or current fenced Leader turn. It never
+    introduces a LeaderRun, expands permission, or substitutes for direct access
+    to current mutable Workspace state.
+32. Agent or model output never becomes reusable organization knowledge without
+    an exact administrative promotion Policy, review, and Evidence.
+33. Context admits only exact authorized source slices under live revocation and
+    deterministic authority-preserving packing; retrieved instructions remain
+    untrusted data.
+34. Required retrieval failure terminates the exact TaskRun or aborts the exact
+    Leader turn; restart reuses the sealed Bundle and never substitutes latest
+    retrieval as equivalent.
+35. AgentTeams platform state and Tiangong TeamDefinition are complementary:
+    actual resource existence never implies admission, and admission never
+    manufactures platform existence.
+36. Every command binds an exact CommandEnvelope and replay identity; hashed and
+    signed JSON uses the fixed versioned JCS and digest contract.
+37. Task MemberRef resolves an exact Worker and AgentDefinition through its Work
+    TeamDefinition. All inputs are committed before Task creation; there is no
+    pending scheduler dependency graph.
+38. Decision revocation is action-specific, open-Work-only, reverse-dependency
+    checked, and cannot reopen terminal Work or erase TaskRun, Human, Approval,
+    Operation, Receipt, Artifact, or Evidence history.
+39. Evidence and Anchors provide bounded Recorder and integrity assurance, not
+    semantic truth; unknown Recorder, key, isolation, or effect state fails
+    closed.
+40. Typed knowledge payloads use their outer ArtifactRef as formal identity;
+    inner logical index coordinates never create a second Artifact identity.
 
 ## Why this is not a workflow platform
 
@@ -322,6 +422,7 @@ Approval authorizes exact effects
 | A process type decides what must happen next | Local Guards decide only whether a proposed action is legal |
 | Templates become runtime authority | Leader Skills and RAG provide non-authoritative methods |
 | Flexibility requires adding branches and loops to the engine | New immutable Tasks naturally express parallelism and revision |
+| Parallelism requires a workflow scheduler | Eligible Tasks, bounded slots, fairness, leases, and local Guards provide scheduling without business-flow authority |
 | Completion is often a stage transition | Completion cross-checks Claims against machine facts |
 | Authorization is attached to a stage | Approval binds one exact external Operation |
 | Recovery guesses where the flow stopped | Immutable records, Evidence, and Journal reconstruct known state |

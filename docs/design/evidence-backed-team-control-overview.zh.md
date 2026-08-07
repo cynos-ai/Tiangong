@@ -1,7 +1,8 @@
 # Tiangong 证据型团队控制架构总览
 
-> 状态：已达成共识的目标设计的执行摘要。本文不描述当前实现，也不授权任何交付声明。规范性合同见
-> [`evidence-backed-team-control.zh.md`](evidence-backed-team-control.zh.md)。
+> 状态：非规范性翻译快照，可能落后于英文总览。本文不描述当前实现，也不授权任何交付声明。唯一权威合同见
+> [`evidence-backed-team-control.md`](evidence-backed-team-control.md)；当前英文总览见
+> [`evidence-backed-team-control-overview.md`](evidence-backed-team-control-overview.md)。
 
 ## 定位
 
