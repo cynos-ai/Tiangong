@@ -64,8 +64,9 @@ Work
 
 Leader 负责与人交互，并在答案或授权被记录后创建新 Task。精确的高风险授权使用两个 Task：
 
-```text
-Prepare Task -> Human 授权 -> Execute Task
+```mermaid
+flowchart LR
+    P["Prepare Task"] --> H["Human 授权"] --> E["Execute Task"]
 ```
 
 ### 2.4 单一事实来源
@@ -105,8 +106,9 @@ Work revision、Task、Result 和 CoordinationDecision 不可变。ready、runni
 
 用户和 Leader 主要围绕以下推理：
 
-```text
-Work -> Task -> Result
+```mermaid
+flowchart LR
+    W[Work] --> T[Task] --> R[Result]
 ```
 
 - Work：为一个 Human 目标的一次持续演进的团队委托。
@@ -921,9 +923,13 @@ Completion 运行在 Task、candidate digest、策略、Artifact、Evidence、fr
 
 包3控制 Task 隔离工作空间之外的持久效果：
 
-```text
-Task 或 HumanInteraction -> Operation -> 精确 Approval -> Gate allow
-                         -> 执行 Evidence -> receipt Artifact
+```mermaid
+flowchart LR
+    S["Task 或 HumanInteraction"] --> O[Operation]
+    O --> AP["精确 Approval"]
+    AP --> G["Gate allow"]
+    G --> EX["执行 Evidence"]
+    EX --> RC["receipt Artifact"]
 ```
 
 Operation 覆盖外部、共享、公开、昂贵、安全敏感或不可逆效果，如 push、publish、deploy、云资源变更、数据库写入、外部通知、工单变更、密钥轮换、生产命令和资源删除。读取、搜索、隔离工作空间编辑、build、test、内部 Artifact 持久化、Evidence append 和只读 reconciliation 不是 Operation。
@@ -1113,11 +1119,11 @@ Task 永不为 Human 审批而挂起。
 
 Standing 策略和有界预授权不需要每个 Operation 的 Human 往返：
 
-```text
-具体 Operation
-  -> 策略或有界 scope 检查
-  -> exact-policy 或 exact-derived Approval
-  -> 执行
+```mermaid
+flowchart LR
+    O["具体 Operation"] --> C["策略或有界 scope 检查"]
+    C --> AP["exact-policy 或 exact-derived Approval"]
+    AP --> E["执行"]
 ```
 
 如果意外需要 Human grant，当前 Task 封存 Operation 和 Proposal，返回 blocked Result 而不执行，并终结。Leader 请求授权并创建新 Execute Task。
@@ -1139,13 +1145,15 @@ Gate 返回 `allow`、`deny`、`approval-required` 或 `reconcile-required`，�
 
 效果生命周期是一个小型的代码拥有的安全协议，不是团队工作流。运行时视图从 Journal 和 Evidence 派生：
 
-```text
-recorded -> authorized -> execution-started
-  -> succeeded
-  -> failed-no-effect
-  -> partial-effect
-  -> uncertain
-  -> compensated 或 recovery-required
+```mermaid
+flowchart TD
+    A0["recorded"] --> A1["authorized"]
+    A1 --> A2["execution-started"]
+    A2 --> T1["succeeded"]
+    A2 --> T2["failed-no-effect"]
+    A2 --> T3["partial-effect"]
+    A2 --> T4["uncertain"]
+    A2 --> T5["compensated 或 recovery-required"]
 ```
 
 执行顺序：
@@ -1711,9 +1719,13 @@ Catalog 更新使用 CAS。Work 保持确切 Team digest。并发相同 Skill �
 
 包5通过绑定确切的测试、subject、配置、数据、环境状态和机器执行事实，使一个测试声明变得有意义。
 
-```text
-SystemMap -> ImpactAssessment -> TestPlan -> TestRun(s)
-          -> QualityAssessment -> Completion 或 Promotion Gate
+```mermaid
+flowchart LR
+    SM[SystemMap] --> IA[ImpactAssessment]
+    IA --> TP[TestPlan]
+    TP --> TR["TestRun(s)"]
+    TR --> QA[QualityAssessment]
+    QA --> G["Completion 或 Promotion Gate"]
 ```
 
 除权威的 EnvironmentDefinition 和版本化的 QualityPolicy 外，包5有八个核心严格 Artifact schema：SystemMap、ImpactAssessment、TestDefinition、TestSet、TestPlan、EnvironmentSnapshot、TestRun 和 QualityAssessment。可选的面向 Human 的 TestReport 是普通类型化 Artifact。这复用 Artifact 身份、provenance、handling 和保留，而非创建并行存储。
