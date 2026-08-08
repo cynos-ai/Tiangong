@@ -292,6 +292,22 @@ Approval for an Operation. A ControlProfile may also require an authenticated
 Human confirmation before Work closure; that confirmation remains a Work
 timeline fact, not an open-ended tool authorization.
 
+For CloseGuard, a confirmation is applicable only when the Tiangong runtime
+records an explicit `human-confirmed` timeline event from an authenticated
+channel action that:
+
+- identifies a platform-authenticated Human whom the current ControlProfile
+  authorizes for that confirmation;
+- is written after the latest `work-spec-changed` event using the observed Work
+  epoch;
+- has a typed scope equal to the requested terminal action or
+  `current-work-spec`, without introducing a WorkSpec version identifier; and
+- is followed by no later `work-spec-changed` event.
+
+A later WorkSpec change therefore invalidates the earlier confirmation. The
+terminal CoordinationDecision does not copy a confirmation identifier or turn
+the confirmation into another Approval object.
+
 A coordination Skill normally helps the Leader's final message identify the
 outcome, formal deliverables, independent verification, external Operations and
 Approvals, and remaining risks. This is communication guidance rather than a
@@ -418,11 +434,24 @@ An independent verification Result may populate:
 }
 ```
 
+`verification.verdict` is `pass`, `fail`, or `inconclusive`. It describes the
+verified subject, not whether the verification Task itself executed to
+completion. `subjectRef` identifies the producing Result's content; it is not a
+deliverable produced by the verification Task.
+
 ### 6.4 Accepting and rejecting Results
 
 The Leader reviews a submitted Result after it passes ResultGuard. A Result has
 at most one disposition: `accept-result` and `reject-result` are mutually
 exclusive and final.
+
+Before `accept-result` may accept a `completed` Result containing formal Git
+commit deliverables, each commit must have an accepted `completed` independent
+verification Result with `verdict: pass`, an exact matching subject, and
+`producerResultId` naming that producing Result. The producing Result may remain
+`submitted` while its verification Result is created and accepted. This is a
+narrow code-safety prerequisite, not a general Result dependency graph or a
+mandatory professional process.
 
 - `accept-result` means the Result is a truthful and useful terminal handoff for
   that Task.
@@ -432,8 +461,13 @@ exclusive and final.
 - A rejected or mistakenly accepted Task remains closed; further work uses a
   new Task.
 
+For Work completion, only accepted `completed` Results are
+completion-qualified. Accepted `blocked` or `failed` Results remain truthful
+terminal facts, but cannot satisfy a completion requirement; their
+`deliverableRefs` are not completion-qualified.
+
 Work completion is a separate Leader decision based on the current WorkSpec,
-accepted Results, and CloseGuard.
+completion-qualified Results, and CloseGuard.
 
 ### 6.5 Task state projection
 
@@ -716,7 +750,12 @@ An independent verifier:
 2. checks out the same repository and commit SHA;
 3. reads and tests that exact commit through controlled tools;
 4. records ToolResults against that commit; and
-5. submits a verification Result whose subject is that commit.
+5. submits a verification Result whose subject is that commit and whose
+   `producerResultId` names the producing Result.
+
+The verification Result can be accepted while the producing Result remains
+submitted. An accepted passing verification then permits acceptance of that
+exact code Result.
 
 A later external release or deployment uses the same verified commit or an
 explicitly verified integration commit. A commit proves content identity, not
@@ -977,6 +1016,8 @@ Machine Evidence regardless of approval mode.
     "expectedCurrentVersion": "release-41",
     "rollbackVersion": "release-41"
   },
+  "protectedPayloadRef": "protected-payload-55",
+  "protectedPayloadDigest": "sha256:...",
   "operationDigest": "sha256:...",
   "requestedBy": "member-11",
   "createdAt": "2026-08-08T12:00:00Z"
@@ -984,19 +1025,32 @@ Machine Evidence regardless of approval mode.
 ```
 
 The runtime, not the model, assigns the Task-scoped invocation identity and
-Operation identity. Creation is unique on `taskId + invocationId`: retrying the
-same invocation with the same digest returns the existing Operation, while a
-different digest is a conflict. A genuinely new invocation is new intent;
-Tiangong does not attempt general semantic deduplication.
+Operation identity. `invocationId` identifies one controlled Operation tool
+call, not a whole model invocation. For a model-originated call, the runtime
+derives it from the persisted model-invocation identity and that invocation's
+tool-call ordinal; the Task identity provides its scope. The ordered tool calls
+are persisted before dispatch, replay retains the same identities, and multiple
+Operation calls in one model response receive different identities.
+
+Operation creation is unique on `taskId + invocationId`: retrying the same tool
+call with the same digest returns the existing Operation, while a different
+digest is a conflict. A fresh model invocation or tool-call ordinal is new
+intent; Tiangong does not attempt general semantic deduplication.
 
 The operation digest covers the exact action, target, non-secret parameters,
-subject, relevant precondition, precise pre-authorized rollback plan, Task and
-workspace scope, and Adapter identity. Tiangong uses one stable serialization
-for this local safety boundary.
+subject, relevant precondition, precise pre-authorized rollback plan, Task,
+invocation and workspace scope, Adapter identity and version, and both
+`protectedPayloadRef` and `protectedPayloadDigest` when present. Tiangong uses
+one stable serialization for this local safety boundary.
 
-Sensitive raw payloads are stored separately with restricted permissions and
-bound to the Operation by digest and stable identity. They are never copied
-into the approval card, model prompt, Execution Record, or Machine Evidence.
+Sensitive raw payloads are stored separately with restricted permissions. The
+two protected-payload fields are absent together when no such payload exists and
+otherwise both required. When present, the runtime resolves the protected
+reference and validates the exact payload against `protectedPayloadDigest`
+before authorization or execution; a missing payload or mismatch is denied. The
+protected payload is storage attached to the Operation, not a second authority
+object. Raw content is never copied into the approval card, model prompt,
+Execution Record, or Machine Evidence.
 
 ### 13.4 Approval
 
@@ -1040,6 +1094,7 @@ that the digest is identical.
 Before every Operation execution, the Gate rechecks:
 
 - Operation identity and integrity;
+- protected payload reference and digest equality when present;
 - current requesting actor and member permission;
 - current ControlProfile;
 - exact target and precondition;
@@ -1121,9 +1176,15 @@ Operation's exact pre-authorized plan or be submitted as a new Operation.
 Reconciliation establishes one of these facts:
 
 - the intended effect was applied;
-- the precondition remains unchanged and a later explicit replay may be safe;
+- no effect occurred and a newly authorized Operation may be safe;
 - the target conflicts with the approved precondition; or
 - the result remains uncertain and requires Human-controlled recovery.
+
+Reconciliation never reopens or re-executes the original forward phase. When it
+proves that no effect occurred, any retry is a new Operation with a new
+invocation identity and Operation identity, evaluated against the current Gate
+and, when required, a new exact Approval. Replay of the original Operation
+always returns its saved terminal result and never repeats the side effect.
 
 While the outcome remains uncertain, Tiangong denies conflicting Operations on
 the same target, direct cancellation of the affected Task, claims that assert a
@@ -1209,7 +1270,9 @@ created. It checks machine-verifiable conditions, including:
 - cited ToolResults belong to the Task, member, and subject;
 - Machine Evidence was generated by the runtime and matches its references;
 - a verification claim names an existing producer Result, uses a different
-  member, and binds a subject in that Result's `deliverableRefs`;
+  member, binds a subject in that Result's `deliverableRefs`, and a `pass`
+  verdict is not contradicted by any validated Profile-required ToolResult or
+  Machine Evidence outcome;
 - applicable Profile minimums are satisfied; and
 - Operation claims agree with known Operation state.
 
@@ -1250,13 +1313,14 @@ ControlProfile requirements.
 
 For `complete-work`, CloseGuard additionally verifies:
 
-- every formal code deliverable in an accepted `completed` Result has
-  independent verification of the exact commit;
+- every formal code deliverable in an accepted `completed` Result has an
+  accepted `completed` independent verification Result with `verdict: pass`,
+  the exact commit, and the matching `producerResultId`;
 - external-effect claims in accepted Results agree with the corresponding
   Operation outcomes; and
 - additional ControlProfile requirements, such as verification for other
   deliverable classes, required test ToolResults, or an authenticated Human
-  confirmation applicable to the current WorkSpec, are satisfied.
+  confirmation applicable under section 5.4, are satisfied.
 
 The Leader decides whether the WorkSpec is semantically satisfied. CloseGuard
 returns machine gaps without inventing another process. Work closure and its
@@ -1372,19 +1436,29 @@ delivery to another system.
 ### 16.2 Command and transaction boundaries
 
 Coordination commands are ordinary typed API calls with schema and API version,
-authenticated actor, and a request identifier where duplicate mutation is
-possible. A Work-mutating command carries `expectedEpoch` as a concurrency
-precondition; the epoch is not a semantic completion reference. Unique record
-constraints and Work epoch checks provide local idempotency. Read-only queries
-do not create idempotency records.
+authenticated actor, and a `requestId` for every mutation. Within the scope of
+an authenticated actor and command type, the first use of a `requestId` binds a
+canonical request digest and a bounded response or output reference in the same
+transaction as the mutation. Repeating the same request and digest returns that
+saved result even if the original response was lost; reusing the key with
+different request content is a conflict. This bounded replay row is local
+infrastructure state, not a business object, completion reference, or graph
+node.
+
+A Work-mutating command carries `expectedEpoch` as a concurrency precondition;
+the epoch prevents stale concurrent writes but is not an idempotency mechanism
+or a semantic completion reference. Unique domain constraints remain a final
+invariant backstop. Read-only queries do not create request replay records.
 
 At minimum, these changes are atomic:
 
 - new Work plus initial message;
 - WorkSpec timeline event plus current projection plus epoch increment;
+- applicable Human confirmation event plus epoch increment;
 - Task plus TaskSpec plus assignment plus `create-task` decision;
 - first and only Result creation;
-- Result disposition plus Work epoch increment;
+- Result disposition, its action-specific preconditions, and Work epoch
+  increment;
 - Task cancellation plus pending-Operation termination;
 - Operation state transition that must precede an external call; and
 - terminal Work decision.
@@ -1414,8 +1488,10 @@ Operation recovery follows durable event order:
 
 - no `execution_started` means the external call is known not to have begun;
 - `execution_started` without a terminal event becomes `uncertain`;
-- `uncertain` requires reconciliation before any replay; and
-- a completed Operation replays its stored safe result.
+- `uncertain` requires reconciliation and the original forward phase never
+  executes again;
+- reconciliation that proves no effect permits only a new Operation; and
+- a terminal Operation replay returns its stored safe result.
 
 ## 17. Security model
 
@@ -1477,7 +1553,9 @@ A conforming Tiangong control plane preserves these invariants:
    non-null current WorkSpec.
 3. WorkSpec is the current projection of complete snapshots in append-only Work
    history.
-4. Work coordination writes use the observed Work epoch.
+4. Work coordination writes use the observed Work epoch for concurrency;
+   mutating command replay uses the authenticated request identity and request
+   digest.
 5. Every Task has one Team-member assignee and one immutable TaskSpec.
 6. TaskSpec, not a historical WorkSpec binding, is the Task's semantic authority.
 7. Natural language cannot expand machine authority.
@@ -1486,28 +1564,33 @@ A conforming Tiangong control plane preserves these invariants:
 9. Every Task has at most one immutable terminal Result.
 10. ResultGuard validates machine claims before Result creation.
 11. Every Result has at most one final, mutually exclusive disposition.
-12. Leader acceptance means acceptance of a terminal handoff, not forced success.
+12. Leader acceptance means acceptance of a terminal handoff, not forced success;
+    only accepted `completed` Results are completion-qualified.
 13. A Task with a Result is accepted or rejected; a Task without a Result may be
     cancelled.
 14. Independent verification names the producer Result, uses a different member,
     and checks the exact same subject.
-15. A formal code deliverable cannot support Work completion or code publication
-    until the exact commit has independent verification.
+15. A Result with a formal code deliverable cannot be accepted, support Work
+    completion, or support code publication until an accepted passing independent
+    verification names that Result and exact commit.
 16. Every controlled tool call produces a bounded ToolResult.
 17. Machine Evidence is created only by trusted runtime code after validation and
     acknowledged retention of its cited ToolResults.
 18. Every external state change is a classified Operation.
 19. Unknown tools, effects, targets, and permissions are denied.
-20. Operation creation is idempotent for one stable Task-scoped invocation.
-21. Human Approval binds one exact operation digest, authorized actor, and the
-    structured safety-relevant view actually presented.
+20. Operation creation is idempotent for one stable Task-scoped controlled tool
+    call; separate calls in one model invocation have separate identities.
+21. Human Approval binds one exact operation digest, including any protected
+    payload reference and digest, authorized actor, and the structured
+    safety-relevant view actually presented.
 22. The runtime persists `execution_started` before an external call.
 23. `succeeded` requires a confirmed postcondition; `failed_no_effect` requires
     confirmed absence of an effect; every ambiguous outcome is `uncertain`.
 24. An uncertain Operation is never automatically retried and prevents Work
     closure until reconciled.
 25. A completed Operation phase is idempotently replayed without repeating the
-    effect; forward and rollback phases have distinct identities.
+    effect; a later forward retry is a new Operation, while forward and rollback
+    phases retain distinct identities.
 26. Pending sensitive payloads are retained only while execution or recovery
     needs them.
 27. CloseGuard derives machine closure scope from the whole Work, not a
