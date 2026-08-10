@@ -177,6 +177,18 @@ Leader actions are commands which append typed Work timeline facts. Each fact
 carries its direct subject, a bounded reason, the authenticated actor, and time.
 There is no generic coordination-decision object or decision ledger.
 
+The authoritative control inputs remain distinct:
+
+| Actor | Controlled input | Durable fact |
+|---|---|---|
+| Leader | `create-task`, `cancel-task`, `complete-work`, or `stop-work` | Typed Work timeline fact |
+| Task assignee | `submitResult` | Immutable Result keyed by Task ID |
+| Authenticated Human | Approve or reject one exact Operation | Operation event |
+| Recovery controller or authenticated Operator | Reconcile an unresolved Operation | Read-only observation and, only when verified, an Operation event |
+
+This table describes actors and fact ownership. It is not a shared action enum
+or workflow.
+
 ## 5. Work, WorkSpec, and Human communication
 
 ### 5.1 Message admission and Work creation
@@ -370,6 +382,10 @@ Adapter rather than add a universal Result subtype.
 A Team may configure several members with similar responsibilities. The Kernel
 does not limit a responsibility to one agent.
 
+One member may execute several Tasks concurrently when current MemberConfig and
+ControlProfile limits permit it. Each Task retains its own logical session and
+execution owner, and concurrent writers use different writable roots.
+
 ### 6.3 Execution ownership
 
 Each Task has at most one active agent turn or execution owner at a time. A
@@ -517,9 +533,12 @@ The runtime binding is a capability handle, not another editable policy.
 Tiangong does not create a resolved Work policy or copy permissions into Tasks.
 
 Every new turn, local tool call, and Adapter call checks current configuration.
-Missing, stale, or conflicting configuration fails closed. Revocation stops or
-isolates unstarted local capability. An already-started Operation retains only
-the restricted recovery path described later.
+Environment activation and every new turn also verify that actual data mounts,
+writable roots, and egress bindings match the current MemberConfig and runtime
+capability binding. Missing, stale, conflicting, or mismatched state fails
+closed. Revocation stops or isolates unstarted local capability. An
+already-started Operation retains only the restricted recovery path described
+later.
 
 ### 7.5 Skills and context
 
@@ -527,18 +546,20 @@ Skills are versioned methods, instructions, and reusable code. They may provide
 strong defaults, but they cannot grant capabilities, append privileged events,
 or change Task and Work facts directly.
 
-For a Task agent, context authority is ordered as follows:
+For a Task agent, context is layered by authority and purpose:
 
 1. hard runtime boundaries and current configuration;
 2. the immutable TaskSpec and runtime binding;
-3. explicitly targeted Leader background;
-4. enabled Skills;
-5. Work messages selected at dispatch or explicitly targeted, plus an
-   explicitly queried current Work summary;
+3. explicitly targeted Leader background and Work or Human messages selected
+   for that Task;
+4. enabled Skills as governed method defaults;
+5. an explicitly queried current Work summary;
 6. optional retrieval; and
 7. older conversational history.
 
-A later WorkSpec is not automatically inserted as a new Task instruction.
+Task-specific background cannot rewrite the TaskSpec. Skills may raise risks or
+suggest a better method, but they do not override the concrete delegation. A
+later WorkSpec is not automatically inserted as a new Task instruction.
 
 For the Leader, the current WorkSpec, Work timeline, Tasks, Results, and
 Operations are the durable recovery context.
@@ -647,8 +668,8 @@ Shell-text analysis may warn, improve UX, or reject an obvious mistake, but it
 is not the filesystem, credential, or network security boundary. Shell grammar
 cannot be reliably allowlisted.
 
-Pi read, edit, and write tools may also be exposed as conveniences. They use the
-same environment capability boundary as Bash.
+Bundled local file tools such as read, edit, and write may also be exposed as
+conveniences. They use the same environment capability boundary as Bash.
 
 ### 9.2 Per-member network capability
 
