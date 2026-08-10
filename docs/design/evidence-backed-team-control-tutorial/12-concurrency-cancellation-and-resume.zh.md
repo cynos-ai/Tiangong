@@ -242,47 +242,4 @@ Leader可以取消、缩小、重派或等待授权管理员调整配置。普�
 
 换模型不会改变 Agent身份、TaskSpec、数据范围或工具能力。
 
-## 动手练习：给四个故障选机制
-
-| 故障 | 应使用 |
-|---|---|
-| 同一 Matrix 事件重复投递 | `platformMessageId` 去重 |
-| 两个 Leader都基于 epoch 7 写入 | Work epoch |
-| `create-task` 成功但响应丢失 | `requestId` replay row |
-| Worker失联后可能仍写 root | 单 active execution + 进程树/写权限隔离 |
-| 部署 started 后 timeout | Operation recovery，不是上述任一协调重试 |
-
-尝试解释为什么不能用 epoch 解决所有五项。
-
-## 累积小结：到这里已经学会什么
-
-从入口到并发恢复，完整模型是：
-
-1. Human消息以平台事件 ID 去重，AgentTeams 与 Tiangong 分别确认资源存在和专业授权；
-2. Work/timeline 保留整件事务与路由纠错，WorkSpec 保存当前目标完整快照；
-3. Leader动态创建不可变 Task/TaskSpec，专业方法不进入固定 Kernel 流程；
-4. 当前能力来自身份、ControlProfile、MemberConfig 与 runtime binding，每次受控动作重检；
-5. prepared environment 隔离控制域与执行域，Bash 可正常开发但没有生产 credential 和任意出口；
-6. ContentRef、Result、ToolResult 分别表达稳定内容、成员终态报告与工具观察；
-7. 外部写由 Adapter形成不可变 Operation，exact Approval只绑定一个 Operation ID；
-8. started-before-call 后，known terminal 由 Adapter确认；uncertain/recovery-needed 只能只读对账和受控恢复；
-9. 平台 message ID、协调 `requestId`、Work epoch 和 `operationId` 各解决不同重复问题；
-10. 每个 Task 同时最多一个 execution owner，同一成员可并发多个 Task，但 session 和 writable root 分离；
-11. Task cancellation 必须先停整棵进程树、释放 writer、终止 unstarted Operation，不能掩盖 started unresolved Operation；
-12. Result 与 cancellation 在数据库中原子竞争；
-13. session 是可释放便利，不是业务事实源；等待 Human 时停止无意义计算并从持久事实恢复；
-14. budget/model故障不生成虚假 Result，fallback必须显式，started Operation继续走恢复合同；
-15. 下一步只剩最后一个问题：在没有 Result accept/reject 和固定状态机时，Leader怎样安全结束整件 Work。
-
-## 自检
-
-1. platformMessageId、requestId、epoch 和 operationId 分别解决什么？
-2. 为什么 timeout 不能证明旧 execution owner 已停止？
-3. 同一成员并发多个 Task 时，单活规则怎样仍然成立？
-4. cancellation 为什么要先停进程和处理 Operation，再写 timeline fact？
-5. Result 与 cancellation 的竞态如何只有一个赢家？
-6. session 丢失后从哪些持久事实恢复？
-7. 预算耗尽为什么不是 Task 的 Result？
-8. fallback 为什么不能静默发生？
-
 继续阅读：[第 13 单元](13-work-closure.zh.md)。

@@ -248,46 +248,4 @@ execution-started 先提交
 
 外部效果由后续 Operation events 记录。
 
-## 动手练习：判断哪条是真正授权
-
-下面哪项可以授权生产部署？
-
-1. 陈晨在群里说“可以上线”；
-2. WorkSpec 写“上线前陈晨确认”；
-3. 林舟 Result 写“用户已同意”；
-4. 认证 Approval action 针对 `op-deploy-production-124`，实际 preview 已交付，policy 与有效期检查通过；
-5. 三天后对已过期 Operation 回复“批准”。
-
-只有第 4 项。第 1–3 项可以作为沟通背景，第 5 项必须拒绝。
-
-## 累积小结：到这里已经学会什么
-
-从需求到精确 Human 授权，完整链条是：
-
-1. 通道只提供认证消息身份，AgentTeams 管平台资源，Tiangong 自己掌握专业授权；
-2. Work 和 timeline 隔离整件事并保留消息、纠错和 Leader typed facts；
-3. WorkSpec 是当前语义目标，不是权限或固定流程；TaskSpec 是一次不可变委托；
-4. Leader动态派 Task，成员在 AgentTeams、ControlProfile、MemberConfig、runtime binding 的交集中行动；
-5. prepared environment 让 Bash 可用但读不到控制/生产 credential，网络与数据范围联合限制；
-6. ContentRef 标识稳定交付，Result 保存 assignee 的唯一终态报告，ToolResult 保存工具观察；
-7. 外部写不能藏在 Bash 或 ToolResult 中，必须由版本化 Adapter创建不可变 Operation；
-8. `operationId` 是唯一业务身份，所有效果字段都在 typed request 和实际 preview 中；
-9. ControlProfile 在使用点决定自动允许、需要 exact Approval 或拒绝；
-10. exact Approval 是认证 Human 针对一个不可变 Operation ID 的 event，不是聊天，也不是第二个 Approval 对象；
-11. pending Approval 暂停同一 Task并释放资源，不创建 blocked Result或额外阶段；
-12. rejection、expiry、执行前取消和失效策略把 Operation 终结为 `operation-not-executed`，Task仍可继续；
-13. approve/reject/expiry/cancel/start 竞态必须串行，不能同时出现“未执行”和“已开始”；
-14. Approval 只允许尝试，不证明外部执行或 Work 完成；
-15. 下一步将处理最危险情况：已经开始调用外部系统，但结果无法确认。
-
-## 自检
-
-1. 实际 preview 为什么必须由 typed request 生成？
-2. 为什么目标设计使用 Approval event 而不是独立 Approval 对象？
-3. 普通聊天即使写了 Operation ID，为什么仍不能授权？
-4. pending Approval 为什么不需要新 Task 或 Result？
-5. rejection 与 expiry 对 Operation 和 Task 分别产生什么结果？
-6. 为什么执行前必须重新检查当前 policy 和 target 前提？
-7. Approval 能证明外部动作成功吗？
-
 继续阅读：[第 11 单元](11-uncertainty-and-recovery.zh.md)。

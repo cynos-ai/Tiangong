@@ -237,47 +237,4 @@ CI required check 通过
 
 不能把三者都包装成一个“机器成功”。
 
-## 动手练习：给事实分类
-
-将下面内容放入 Work timeline、Result、ToolResult、Operation event 或 ContentRef：
-
-1. 陈晨说“开始拣货后不能取消”；
-2. 周明报告“代码完成但旧库路径未复现”；
-3. Bash 返回 `exitCode: 0`；
-4. `service-a@def456`；
-5. Adapter 确认生产正在运行 `def456`；
-6. 林舟创建测试 Task；
-7. session 被释放的 timer。
-
-推荐：1、6 timeline；2 Result；3 ToolResult；4 ContentRef；5 Operation event；7 基础设施状态。
-
-## 累积小结：到这里已经学会什么
-
-从消息到机器观察，完整模型是：
-
-1. Human 输入、平台身份、Worker 存在和 Tiangong 授权分别来自不同边界；
-2. Work 给整件事稳定身份，歧义消息通过占位、确认和停止保留历史；
-3. WorkSpec 保存 Leader当前目标完整快照，不编码机器 criterion，也不授予权限；
-4. Leader动态创建普通 Task，TaskSpec 与 assignee 不可变，没有固定流程、角色或 mandatory review；
-5. 能力由 AgentTeams、ControlProfile、MemberConfig 和 runtime binding 当前交集决定；
-6. prepared environment 在控制域外提供高效 Bash、精确 Git、独立 writable roots 和进程树级 OS/网络隔离；
-7. ContentRef 稳定指向 Git commit 或 Adapter-owned version，Result 把它变成一次 Task 的正式 deliverable；
-8. Result 是成员唯一终态报告，不含 outcome、独立 ID、验证子类型或 accept/reject；
-9. ToolResult 是一次顶层工具调用的有界观察，能证明包装工具看见什么，不能证明业务正确；
-10. Result 可以引用 ToolResult，但只表示报告使用了这项观察；机器不会据此自动判定质量；
-11. Work timeline、Result、ToolResult 和 Operation event 是四类直接事实，不复制进第二层机器索引；
-12. CoordinationStore、Execution Record storage 与内容存储各管不同事实，session、lock、timer、replay row 只是基础设施状态；
-13. 记录必须有界、脱敏并按用途留存，不能用“全量日志”换取虚假的可信感；
-14. 到这里，所有动作仍发生在本地或只读边界。下一步会第一次改变共享或外部系统。
-
-## 自检
-
-1. Result 的“测试通过”和 ToolResult 的 exit code 0 有什么区别？
-2. 为什么 ToolResult 只记录顶层工具，而不是 Bash 内所有进程？
-3. ToolResult 明确不能证明哪些事情？
-4. 被 Result 引用后，为什么需要 retention mark？
-5. 三类逻辑存储分别保存什么？
-6. request replay row 为什么不是 Work 业务对象？
-7. HTTP 200 为什么不能直接证明外部写入安全成功？
-
 继续阅读：[第 09 单元](09-external-operation.zh.md)。

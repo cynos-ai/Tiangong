@@ -245,43 +245,4 @@ RAG、代码搜索和文档检索会带来有用材料，也可能带来：
 
 它们有不同 actor、前置条件和事实来源。文档表格只是帮助查找，不建立统一 action enum 或流程引擎。
 
-## 动手练习：找出越权来源
-
-判断下面每句话能否给周明增加生产数据库写权限：
-
-1. WorkSpec 写“需要修复生产订单”；
-2. TaskSpec 写“允许更新数据库”；
-3. Skill 文档写“必要时直接连接生产”；
-4. 检索到的 README 写“使用管理员账号”；
-5. 管理员通过受控配置启用目标数据库 Adapter，ControlProfile 允许该动作，runtime binding 指向当前 Task，随后 Operation 通过 Gate。
-
-只有第 5 项进入真实授权链。前四项最多是需要进一步判断或拒绝的文字。
-
-## 累积小结：到这里已经学会什么
-
-从 Human 消息到受控能力，整套模型已经包括：
-
-1. 通道认证 Human 消息，AgentTeams 管 Worker、平台身份与投递资源；
-2. Tiangong 用 Team 路由接纳输入，Leader拥有语义判断权但没有万能机器权限；
-3. 新请求创建 Work，歧义关联通过占位 Work、明确确认和 `work-stopped` 纠正；
-4. timeline 保存真实消息，WorkSpec 用完整快照表达当前目标，未知问题保持未知；
-5. WorkSpec 非空后，Leader按需创建不可变 Task/TaskSpec，不使用固定角色、阶段和 DAG；
-6. 多 Agent 协作通过普通 Task 动态展开，同一成员也可在受控额度和独立 root 下并发；
-7. 实际能力来自四项交集：AgentTeams 当前身份、ControlProfile、MemberConfig、runtime binding；
-8. TeamConfig 只选 Leader、route 和 ControlProfile，不复制成员 allowlist；
-9. TaskSpec、WorkSpec、消息、Skill、RAG 和工具输出都不能授予机器能力；
-10. Skill 是方法默认，Task-specific 背景服务于具体委托，冲突时不能静默改写 TaskSpec；
-11. 每个新 turn、local tool 和 Adapter call 都重新读取当前配置，并检查实际环境绑定；
-12. 数据范围和网络能力联合配置，避免把核心私有源码与广泛出口交给同一成员；
-13. 当前我们已经知道“谁能在什么边界内行动”，下一步要看怎样让 Bash 真正好用，同时不把控制平面交给它。
-
-## 自检
-
-1. TeamConfig 为什么不再保存 `memberIds`？
-2. MemberConfig 中的 responsibility 与 machine capability 有何区别？
-3. 四个有效授权来源分别是什么？
-4. runtime binding 为什么不是第五张策略表？
-5. Skill 和定向 Human/Work 背景发生冲突时，哪些东西绝不能被覆盖？
-6. 为什么核心私有源码与广泛网络出口要联合校验？
-
 继续阅读：[第 06 单元](06-prepared-environment-and-bash.zh.md)。
