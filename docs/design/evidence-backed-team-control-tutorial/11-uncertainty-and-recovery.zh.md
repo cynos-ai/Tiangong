@@ -1,270 +1,314 @@
-# 单元 11：请求超时后，为什么不能直接再试一次
+# 单元 11：超时、未知结果与恢复
 
-[上一单元：人批准的必须是即将执行的那一件事](10-exact-approval.zh.md) | [返回课程目录](README.md) | [下一单元：系统怎样区分“Agent 说过”和“机器看到过”](12-records-and-evidence.zh.md)
+[上一单元：Human 批准的必须是精确动作](10-exact-approval.zh.md) | [返回课程目录](README.md) | [下一单元：并发、取消、会话与预算](12-concurrency-cancellation-and-resume.zh.md)
 
-## 先看一次最危险的超时
+## 最危险的不是失败，而是不知道发生了什么
 
-陈晨批准了部署 `operation-deploy-55`。Gate 重新检查通过，Tiangong 调用部署后端。
+陈晨已经批准 `op-deploy-production-124`。执行前当前配置、target 前提和 Approval 都再次通过。Tiangong 调用部署后端，然后连接超时。
 
-随后请求超时。
+同一个 timeout 可能对应：
 
-此时至少有三种可能：
-
-1. 请求根本没有到达后端；
+1. 请求没有到达后端；
 2. 后端已经部署成功，但响应丢失；
-3. 后端只完成一部分，当前状态既不是旧版本也不是完整新版本。
+3. 后端只完成一部分；
+4. 后端返回前已经自动恢复；
+5. 外部状态被另一个操作者同时改变。
 
-模型看见的都是“timeout”，但三种现实需要完全不同的处理。
+如果直接重试，可能重复部署、重复迁移或覆盖新状态。如果直接报失败，又可能掩盖已经生效的生产变化。
 
-如果系统立刻再试一次，第二种情况可能造成重复发布、重复迁移或重复发送；如果系统直接报告失败，第一种情况也许正确，第二种情况却在撒谎。
+核心原则是：
 
-所以第一条规则是：
+> 外部状态不清楚时，不猜、不盲目重放、不靠 Human 或模型声明把未知变成已知。
 
-> 不知道是否产生外部效果时，不猜，不自动重试，也不把它包装成成功或确定失败。
+## 为什么必须先记录 started，再调用后端
 
-## 为什么在调用后端前先写一条记录
-
-执行顺序不能是：
+错误顺序是：
 
 ```text
-先调用后端
-→ 成功后再写“已经开始”
+调用外部后端
+→ 成功后才写“执行过”
 ```
 
-因为进程可能在两步之间崩溃。恢复时数据库里什么都没有，但外部系统可能已经改变。
+如果进程在两步之间崩溃，CoordinationStore 看起来什么都没发生，外部系统却可能已经改变。恢复程序可能再次执行。
 
-Tiangong 使用相反顺序：
+安全顺序是：
 
 ```text
-先持久化 execution_started
-→ 再调用外部后端
+检查当前 Gate
+→ 持久化 operation-execution-started
+→ 调用 Adapter 后端
+→ 观察并记录结果
 ```
 
-这会产生一个刻意保守的结果：即使程序刚写完 `execution_started`、还未来得及真正发送请求就崩溃，恢复时也把结果视为可能不确定。
+这会刻意偏保守：即使写完 started 后、真正发请求前崩溃，恢复时也不能假定没调用。系统需要只读核查。
 
-宁可多做一次只读核查，也不能在证据不足时重复外部效果。
+宁可多一次对账，也不要重复一次可能不可逆的写入。
 
-## 外部执行只有三类直接结论
+## Operation 的三个已知终态
 
-### `succeeded`
+只有三类 event 表示机器已经获得安全已知结论。
 
-不是 HTTP 返回 200 就算成功。Adapter 必须确认自己声明的后置条件。
+### `operation-not-executed`
 
-对部署而言，可能需要重新查询生产环境，确认实际运行的版本就是 `9ab73e...`。
+外部执行没有被进入。例如：
 
-### `failed_no_effect`
+- policy 拒绝；
+- Human 拒绝；
+- Approval 过期；
+- Task 在 start 前取消；
+- 前置条件在 start 前不满足。
 
-Adapter 能够确认请求没有产生任何外部效果。例如后端在接受请求前就因前置条件不匹配而拒绝，并能证明生产仍为 `release-41`。
+它绝不能出现在 `operation-execution-started` 之后。
 
-### `uncertain`
+### `operation-succeeded`
 
-只要不能确认“目标已达到”，也不能确认“完全没有效果”，就进入 uncertain。
+Adapter 代码确认 typed request 声明的后置状态已经达到。
+
+部署例子不是“HTTP 200”，而是：
 
 ```text
-确认达到后置条件      → succeeded
-确认没有外部效果      → failed_no_effect
-其余所有含糊结果      → uncertain
+读取 production-a 当前状态
+→ 确认实际运行 service-a@def456
+→ 其他声明后置条件也满足
+→ append operation-succeeded
 ```
 
-Tiangong 把未知保留为未知，不用模型语言把它填平。
+### `operation-safe-failure`
 
-## 先不用代码，走一遍完整执行
+请求没有成功，但 Adapter 代码确认当前没有未解决的持久效果。
 
-1. 读取不可变 Operation；
-2. Gate 检查当前权限、Approval、目标前提和精确 commit；
-3. 保存 `execution_started`；
-4. 调用 Adapter；
-5. Adapter 查询并确认后置状态；
-6. 保存 succeeded、failed_no_effect 或 uncertain；
-7. 生成受控工具结果和必要机器证据；
-8. 返回有界结果给 Agent。
+它不一定表示“从未发生任何瞬时变化”。例如 request 和 preview 已明确描述立即健康检查与恢复 `release-41`，Adapter 在同一次 invocation 中执行并确认恢复后，可以记录 safe failure。
 
-只有理解这八步，下面的伪代码才有意义。
+关键是当前没有遗留恢复责任，而不是错误信息听起来可控。
 
-## 第一段伪代码：只表达三种结果
+## 两个未解决结果
+
+### `operation-uncertain`
+
+系统无法确认外部状态。例如 timeout 后既不能证明目标版本已运行，也不能证明请求未应用。
+
+### `operation-recovery-needed`
+
+系统已经知道存在错误或部分效果，但尚未修复。例如生产有一半实例运行新版本、一半仍是旧版本。
+
+它比 uncertain 知道得更多，但同样不是安全终态。
+
+Operation 当前状态只是 append-only events 的投影，不是可手工编辑的 status 字段。
+
+## 一张结果判断表
+
+| 当前机器观察 | 应写 event |
+|---|---|
+| 外部执行没有开始 | `operation-not-executed` |
+| Adapter 确认请求后置状态 | `operation-succeeded` |
+| Adapter 确认无未解决持久效果 | `operation-safe-failure` |
+| 当前状态无法确定 | `operation-uncertain` |
+| 已知错误/部分效果仍存在 | `operation-recovery-needed` |
+
+模型说“应该没问题”、Human 说“风险我接受”、HTTP 状态码或乐观 backend acknowledgement 都不足以写 known terminal event。
+
+## 最小执行伪代码
 
 ```text
-如果确认目标状态已经实现：
-    记录 succeeded
-否则如果确认完全没有产生效果：
-    记录 failed_no_effect
+读取不可变 Operation
+重新检查当前 policy、identity、binding、target 和 Approval
+
+原子追加 operation-execution-started
+调用 versioned Adapter
+
+如果 Adapter 确认 declared postcondition：
+    追加 operation-succeeded
+否则如果 Adapter 确认没有 unresolved lasting effect：
+    追加 operation-safe-failure
+否则如果 Adapter 确认存在 residual effect：
+    追加 operation-recovery-needed
 否则：
-    记录 uncertain
+    追加 operation-uncertain
 ```
 
-这段代码没有任何重试。它只负责诚实分类当前已知事实。
+伪代码中没有“遇到 timeout 自动重试”。这是有意缺失。
 
-## 第二段伪代码：加入执行前记录
+## unresolved 时系统必须限制什么
+
+对 `production-a` 的 Operation unresolved 时：
+
+- 阻止同一 Adapter/target 的冲突写；
+- 阻止取消受影响 Task来隐藏责任；
+- 阻止 `complete-work`；
+- 阻止 `stop-work`；
+- 不允许报告已知 success 或 safe failure；
+- 允许无关的安全只读工作继续。
+
+为什么连 `stop-work` 也阻止？因为停止业务目标不能让可能存在的生产效果消失。恢复责任仍属于原 Work。
+
+## reconciliation 是特权只读对账
+
+Tiangong 使用 Adapter 的特权只读接口核查：
+
+- production-a 当前运行哪个 commit；
+- 后端是否保存了 `operationId` 对应请求；
+- 是否存在部分应用；
+- 原 expected state 是否仍成立；
+- 是否已由后端完成内部补偿。
+
+这种把本地 Operation facts 与外部真实状态重新比对的过程叫 **reconciliation**。
+
+它有三个重要限制：
+
+1. 只读，所以本身不是 Operation；
+2. 不作为普通模型工具暴露，避免 Agent拿到恢复凭据；
+3. 由恢复控制器或认证 Operator 触发，Leader只能请求。
+
+对账观察会有受控记录，但只有确认后置状态、确认未应用或确认已恢复时，才可追加 known terminal event。
+
+## 对账后的几条路径
+
+### 确认目标效果已经应用
+
+生产确实运行 `def456`，Adapter确认所有声明后置条件，原 Operation 追加 `operation-succeeded`。
+
+### 确认没有应用且没有遗留效果
+
+原 Operation 追加 `operation-safe-failure`。
+
+如果团队仍要部署，必须创建**新 Operation**，重新经过当前 policy 与 Approval。不能重放原 forward invocation。
+
+### 确认存在部分或错误效果
+
+追加 `operation-recovery-needed`。Operator或团队需要提出受控恢复动作。
+
+### 仍无法确认
+
+保持 `operation-uncertain`。时间和重复提醒不会把它自动转成终态。
+
+## 为什么确认“没应用”后仍不能重试旧 Operation
+
+原 Operation 已经经历过 started 和不确定恢复。再次执行同一个 ID 会模糊：
+
+- 第一次与第二次调用的责任；
+- Human当时批准的时点；
+- 当前 policy 是否变化；
+- target expected state 是否仍相同；
+- 后端幂等记录是否仍有效。
+
+因此“重试”是新的业务意图：
 
 ```text
-检查 Gate
-保存 execution_started
-
-调用后端
-查询后置状态
-
-根据查询结果记录：
-    succeeded
-    failed_no_effect
-    uncertain
+新 operationId
++ 当前 typed request
++ 当前 preview
++ 当前 policy
++ 必要的新 Approval
 ```
 
-逐行解释：
+同一个 Operation 的网络重放只允许读取已经保存的安全结果，不再产生 forward effect。
 
-- “检查 Gate”发生在当前状态下，旧的检查结果不能永久复用；
-- “保存 execution_started”必须早于后端调用；
-- “调用后端”只能通过拥有凭据的 Adapter；
-- “查询后置状态”把 HTTP 响应与真实目标状态分开；
-- 最后三个结果互斥，无法确认就进入 uncertain。
+## 自动对账失败后怎样升级
 
-这仍然不是生产代码，只是把安全顺序翻译成接近代码的形状。
+Repeated reconciliation 仍无法确认时，系统升级到认证 Operator，例如高远。
 
-## 重放与重新尝试不是同一件事
+Operator 可以：
 
-这两个词很容易混淆。
+- 做更深入的只读调查；
+- 创建或发起一项完整受控的 recovery Operation；
+- 转交企业 incident response。
 
-### 重放同一个已完成 Operation
+“已转事故”不是安全终态。工单有人接手也不等于生产状态已确认。原 Work 仍不能关闭，直到实际观察或修复建立 known terminal event。
 
-调用方可能没收到响应，于是再次发送同一个执行请求。
+## rollback 为什么通常是新 Operation
 
-系统识别同一个 Operation 和执行阶段，直接返回以前保存的安全结果，不再调用后端。
-
-### 发起一次新的尝试
-
-如果后来证明上一次没有产生效果，团队仍想部署，就创建新的 Operation。它有新的 invocation identity 和 operation identity，重新经过当前 Gate，并在需要时重新取得 Approval。
-
-旧 Operation 永远不会被“重新打开”再执行一次。
-
-## 幂等先用取餐号理解
-
-餐厅收到订单后给出取餐号。顾客没听清又问一次，餐厅根据同一个号码返回原订单，而不是再做一份。
-
-这种“相同身份的重试回到相同结果，不重复效果”的性质叫 **idempotency**，中文常译为幂等。
-
-案例中有几个不同层次，不要混成一个万能键。
-
-### Operation 创建身份
-
-同一个 Task 中，同一次受控工具调用重放：
+已经终态的部署如果后来需要回滚，回滚本身会改变生产：
 
 ```text
-taskId + invocationId + 相同 operationDigest
-→ 返回原 Operation
+rollback target
+current expected state
+commit/version to restore
+health criteria
 ```
 
-同一 identity 却带不同 digest，说明输入发生冲突，必须拒绝。
+所以它是新 Operation，拥有新 ID，重新经过当前 policy 和 Approval。
 
-### 正向执行阶段身份
+目标设计不建立通用 rollback phase、rollback plan identity 或第二套 phase 幂等协议。
 
-正向部署阶段使用由 Operation identity、digest 和 phase name 派生的稳定键。已完成阶段重放只返回保存结果。
+## 唯一例外：原 invocation 内的立即补偿
 
-### 后端幂等键
+Adapter 可以在原调用内部完成立即补偿，但必须满足：
 
-如果部署后端支持，Adapter 把同一个阶段键传给后端。这样即使网络层重复请求，后端也能识别同一次执行。
+- 原 immutable request 已完整写明条件和精确恢复目标；
+- preview 已向 approver 展示；
+- 补偿只在原 Adapter invocation 内发生；
+- forward 与 compensation 观察都进入原 Operation events；
+- 以后不能把它当成可单独调用的 rollback。
 
-如果后端不支持，就更不能在 uncertain 后自动重试，只能先核查。
-
-### 回滚阶段身份
-
-回滚是另一个外部效果，使用与正向部署不同的阶段键。不能拿正向键同时表示“部署”和“回滚”。
-
-## uncertain 后系统限制什么
-
-当 `operation-deploy-55` uncertain 时，Tiangong 会拒绝：
-
-- 对同一目标有冲突的其他 Operation；
-- 直接取消受影响 Task；
-- 声称生产已成功或已失败的已知结果；
-- 关闭整个 Work。
-
-无关的安全工作仍可继续。例如另一个成员可以补充文档，但不能假装生产状态已经清楚。
-
-界面可以把 Work 显示为 `recovery_required`，意思是需要恢复处理，不是普通等待。
-
-## 怎样查清外部世界
-
-系统需要用部署后端的受保护只读接口查询：
-
-- production-a 当前运行什么版本；
-- 是否存在这次 Operation 的后端请求或回执；
-- 前置状态是否仍未改变；
-- 是否处于部分应用或冲突状态。
-
-这项“把本地记录与外部状态重新对照”的工作叫 **reconciliation**，可以理解为对账或核对。
-
-它由代码拥有的恢复控制器或经过认证的运维命令触发。Leader 可以请求核对，但不能直接得到受保护凭据。
-
-只读 reconciliation 不是 Operation，因为它不改变外部状态；它仍会产生受控工具回执、Operation 事件和运行时验证后的机器证据索引。下一单元会逐个解释这些机器记录。
-
-## 对账可能得到什么
-
-### 目标效果已应用
-
-后端确认生产运行 `9ab73e...`。系统记录已应用事实，原 Operation 不再 uncertain。
-
-### 确认没有效果
-
-生产仍为 `release-41`，后端也确认没有接受原请求。
-
-如果团队仍要部署，创建一个新 Operation，按当前规则重新授权。不能重放旧 Operation。
-
-### 当前状态与原前提冲突
-
-生产已经是另一个版本。系统不能使用旧批准覆盖，需要 Leader 重新理解现状并提出新的精确操作。
-
-### 仍然无法确认
-
-Work 保持 `recovery_required`。Human 说“我愿意承担风险”也不能把未知机器事实变成已知。
-
-如果后端永远无法给出结论，当前设计允许 Work 长期保持打开，而不通过 complete、fail 或 cancel 掩盖可能仍存在的外部影响。
-
-## 第三段伪代码：只读对账后怎么走
+例如：
 
 ```text
-核对外部状态
-
-如果确认效果已应用：
-    记录已应用
-否则如果确认没有效果：
-    允许团队创建新的 Operation
-否则如果发现前提冲突：
-    停止原计划，要求重新规划
-否则：
-    保持 uncertain
+部署 def456
+若 2 分钟内健康检查失败
+立即恢复明确的 release-41
+并确认 production-a 全部实例回到 release-41
 ```
 
-注意第二个分支写的是“允许创建新的 Operation”，不是“再次执行原 Operation”。
+若补偿本身无法确认，则 Operation 仍是 uncertain 或 recovery-needed，不能写 safe failure。
 
-## 回滚为什么也不能临时发挥
+## Operation 记录与 events 为什么永久保留
 
-部署 Operation 可以预先包含精确回滚计划：
+ToolResult 可以按 retention 规则采样，但不可变 Operation 和外部写入 events 必须永久留在 CoordinationStore：
 
-- 回滚到哪个版本；
-- 什么触发条件下执行；
-- 执行前预期什么状态；
-- 回滚后怎样验证。
+- proposed Operation record；
+- Approval/rejection；
+- execution start；
+- success/safe failure；
+- uncertain/recovery-needed；
+- reconciliation 和恢复结论。
 
-如果这些内容进入原 operation digest 和 Approval，运行时可以在原精确授权范围内执行回滚阶段。
+它们直接决定能否冲突写、取消 Task 和关闭 Work，不应因为日志轮转而消失。
 
-任何超出计划的补偿，例如选择另一个版本、修改数据或删除新资源，都是新的 Operation，需要重新过 ControlProfile 和 Approval。
+## 动手练习：给 timeout 分类
 
-回滚本身失败或无法确认时同样进入 uncertain，绝不能报告“已经安全恢复”。
+场景：部署 API timeout。只读查询显示 10 个实例中 7 个运行 `def456`、3 个运行 `release-41`。
 
-## 敏感恢复材料何时删除
+回答：
 
-受保护 payload 不应无限保留。
+1. 应写 uncertain 还是 recovery-needed？
+2. 能否立即重试原 Operation？
+3. 能否 `stop-work`？
+4. Human说“我接受风险”是否足够？
+5. 若要统一恢复到 `release-41`，应怎样表达？
 
-它可以在 Operation 成功、被拒绝、过期、执行前取消，或对账证明不再需要后删除。
+推荐：已知部分效果，写 recovery-needed；不能重试、不能关闭；Human声明不能改变机器事实；恢复是新的精确 Operation并重新 Gate/Approval。
 
-但 uncertain Operation 必须保留完成恢复所需的最小材料。清理任务不能为了满足普通保留期限，让系统失去对外部未知状态的恢复能力。
+## 累积小结：到这里已经学会什么
 
-## 本单元自检
+从 Human 请求到外部恢复，完整模型已经覆盖：
 
-1. 为什么 `execution_started` 必须在后端调用之前持久化？
-2. succeeded、failed_no_effect 和 uncertain 的分界是什么？
-3. 为什么相同 Operation 的重放不能再次调用后端？
-4. 对账证明没有效果后，为什么要创建新 Operation？
-5. Human 愿意承担风险，为什么仍不能关闭 uncertain Work？
-6. 正向执行和回滚为什么需要不同的幂等阶段身份？
+1. 消息身份、平台资源、Team授权和 Agent语义是不同边界；
+2. Work 与 timeline 保留整件事，WorkSpec 保存当前目标完整快照；
+3. Leader动态创建不可变 Task，没有固定角色、DAG 或 mandatory verification；
+4. 当前机器能力来自 AgentTeams、ControlProfile、MemberConfig 和 runtime binding；
+5. prepared environment 提供高效 Bash，同时隔离 control state、credential、writable roots 和网络；
+6. Result 是唯一终态报告，ContentRef 是稳定交付，ToolResult 是顶层工具观察；
+7. 外部写由 versioned Adapter创建不可变 Operation，所有效果字段在 typed request 和 preview 中；
+8. exact Approval 是认证 Human 对一个 Operation ID 的 event，只允许尝试，不证明成功；
+9. runtime 必须先持久化 `operation-execution-started`，再调用外部后端；
+10. known terminal 只有 not-executed、succeeded、safe-failure，后两者必须由 Adapter确认后置事实；
+11. uncertain 和 recovery-needed 会阻止冲突写、Task隐藏性取消以及两种 Work termination；
+12. reconciliation 是特权只读，不暴露给普通模型；Leader可请求，controller/Operator触发；
+13. 对账确认未应用后，后续尝试仍是新 Operation，原 forward 永不盲目重放；
+14. 自动对账失败升级到认证 Operator，但 incident handoff 不是安全终态；
+15. 事后 rollback 是新 Operation；只有完整写入原 request/preview 的立即补偿可留在原 invocation；
+16. Operation events 永久保留，因为它们直接承载外部责任与关闭条件；
+17. 下一步会处理本地协调中的并发、取消、session 恢复和预算耗尽。
 
-下一单元会回头整理课程中已经出现的“声明、工具回执、机器证据、批准和外部状态”，解释它们为什么必须是不同事实。
+## 自检
+
+1. started-before-call 防止哪一个崩溃窗口？
+2. safe failure 与“HTTP 请求失败”为什么不是一回事？
+3. uncertain 和 recovery-needed 的区别是什么？
+4. 为什么 unresolved 同时阻止 complete-work 和 stop-work？
+5. reconciliation 为什么只读且不能作为普通模型工具？
+6. 确认未应用后为什么仍要创建新 Operation？
+7. incident handoff 为什么不允许关闭 Work？
+8. 什么时候立即补偿可以属于原 Operation？
+
+继续阅读：[第 12 单元](12-concurrency-cancellation-and-resume.zh.md)。

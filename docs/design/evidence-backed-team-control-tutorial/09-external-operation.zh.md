@@ -1,220 +1,291 @@
-# 单元 09：本地修改与真正改变外部系统
+# 单元 09：本地动作与外部写入
 
-[上一单元：谁决定接不接受，又怎样结束整件事](08-decisions-and-closure.zh.md) | [返回课程目录](README.md) | [下一单元：人批准的必须是即将执行的那一件事](10-exact-approval.zh.md)
+[上一单元：机器实际看见了什么](08-tool-results-and-storage.zh.md) | [返回课程目录](README.md) | [下一单元：Human 批准的必须是精确动作](10-exact-approval.zh.md)
 
-## 周明一直在“改变东西”，为什么现在才特殊处理
+## 周明一直在改东西，为什么 push 和部署不同
 
-周明在自己的工作区做过很多改变：编辑文件、生成构建产物、运行测试、创建本地 commit。
+周明在 prepared environment 中已经：
 
-这些改变被限制在当前 Task 的隔离空间内。即使代码写坏了，也不会直接覆盖共享仓库或生产服务。
+- 编辑文件；
+- 安装依赖；
+- 运行测试；
+- 生成构建产物；
+- 创建本地 commit。
 
-接下来团队希望：
+这些修改被限制在成员自己的执行区域。写坏后可以丢弃 worktree，不会直接改变其他团队成员或生产用户看到的状态。
 
-- 把 commit 推送到共享 Git 仓库；
-- 创建或合并拉取请求；
-- 部署到测试环境；
-- 最后部署到生产环境。
+接下来团队可能要：
 
-这些动作会改变其他人或外部系统能看到的状态，故障影响也不再局限于当前工作区。
-
-## 先画出边界
-
-```text
-Task 的隔离工作区内部
-  读取文件、编辑、构建、测试、本地 commit
-
-共享或外部世界
-  推送分支、合并 PR、发布制品、部署服务、
-  修改数据库、发外部消息、删除云资源
-```
-
-从第一块越到第二块的动作，需要被系统作为一件独立、可授权、可重放和可恢复的事情管理。
-
-Tiangong 把这种“可能改变 Task 隔离工作区之外的共享或外部状态”的受控动作叫 **Operation**。
-
-## 哪些通常是 Operation
-
-- 推送到共享 Git 仓库；
-- 创建或合并拉取请求；
+- push commit 到共享 Git；
+- 创建或合并 PR；
 - 发布包或镜像；
-- 部署或回滚服务；
-- 修改共享数据库、配置、云资源或工单；
-- 向企业边界外发送消息；
-- 把 Agent 生成内容发布到共享知识库；
-- 删除共享资源；
+- 部署测试或生产；
+- 修改共享数据库或配置；
+- 发送外部通知；
+- 更新工单；
 - 轮换凭据。
 
-哪些目标算共享或外部，不由模型临时判断，而由部署配置和注册 Adapter 的 effect class 确定。
+这些动作越过本地隔离边界，需要另一套身份、授权、幂等和恢复合同。
 
-## 哪些通常不是 Operation
+## 先画出效果边界
 
-- 只读查询；
-- 模型调用；
-- 隔离工作区中的编辑、构建和测试；
-- Tiangong 自己的内部记录写入；
-- Work 内普通消息；
-- 不产生外部修改的状态检查。
+```text
+prepared execution environment 内部
+  本地 edit/build/test/commit/cache
+  失败影响局限于受控 writable root
 
-普通工具调用仍会受权限、超时和记录边界控制，只是不需要进入外部效果协议。
+共享或外部系统
+  Git 写入、发布、部署、数据库写、通知、工单、生产配置
+  失败可能对其他人持续可见
+```
 
-## 把“部署生产”写成一张执行单
+Tiangong 把“一项拟议的外部写入”叫 **Operation**。
 
-按照案例，团队会先把同一 commit 部署到测试环境并验证，再考虑生产环境。两次部署都是外部操作，也会分别拥有自己的执行单。为了把最完整的控制字段一次讲清，下面先展开风险更高的生产执行单；测试环境的执行单结构相同，只是目标、规则判断和批准要求可能不同。
+不是所有网络调用都是 Operation：受控外部只读查询仍然是 read Adapter call。判断关键是它会不会改变共享或外部状态。
 
-下面这张执行单比前面的对象长。第一次阅读时不用猜完所有字段，只先观察五组信息：它属于谁、通过什么接口、要改什么、敏感原文放在哪里，以及整张单据怎样防止被调包。JSON 后会按这五组逐项解释。
+## 为什么 Bash 不能偷偷完成外部写入
+
+如果 Bash 持有 Git push token、生产数据库密码或部署凭据，模型可以绕开所有结构化检查：
+
+```bash
+curl -X POST ...
+git push ...
+psql ...
+```
+
+因此执行域没有这些 credential，也没有通向任意外部写目标的 egress。外部写只能通过 control domain 中受控的 **Adapter**。
+
+凭据隔离解决“有凭据写入”；进程树网络策略限制“不需要凭据也能产生的外部动作”；数据与出口能力分离降低残余泄露风险。
+
+## Adapter 是外部系统的受控边界
+
+一个 Adapter 至少负责：
+
+- 稳定身份和版本；
+- 校验 typed request 与 target；
+- 检查当前成员的数据或动作范围；
+- 把 credential 保留在 Agent 不可见的 control domain；
+- 对 read 返回有界、脱敏观察；
+- 对 write 创建不可变 Operation；
+- 在报告安全终态前用代码确认后置状态；
+- 提供特权只读 reconciliation 接口，以处理未知结果。
+
+MCP 可以作为 Adapter 或本地工具的传输协议，但不会产生新的授权层。MCP server 若持有 credential 或能写外部状态，仍必须遵守 Adapter 与 Operation 规则。MCP 返回文本也只是输入，不能授予权限。
+
+## 哪些是 read，哪些是 Operation
+
+| 调用 | 通常分类 | 说明 |
+|---|---|---|
+| 查询某 commit 的 CI 状态 | Adapter read | 只读，但仍检查 identity、data scope、sanitization |
+| 获取生产当前版本 | Adapter read | 只读；普通成员是否可见由 MemberConfig 决定 |
+| push 共享分支 | Operation | 改变共享 Git |
+| 合并 PR | Operation | 改变目标分支 |
+| 发布镜像 | Operation | 创建共享制品 |
+| 部署测试环境 | Operation | 改变外部环境，即使可能自动允许 |
+| 部署生产环境 | Operation | 通常需要 exact Approval |
+| 发外部消息 | Operation | 无凭据也可能产生不可撤回效果 |
+| 本地 `npm test` | local tool | 只改隔离环境 |
+
+未知外部写类型默认拒绝。模型不能把写动作自称成 read。
+
+## 一份最小而完整的 Operation
+
+林舟创建发布 Task后，发布成员请求部署测试环境：
 
 ```json
 {
-  "operationId": "operation-deploy-55",
-  "workId": "work-order-cancel-001",
-  "taskId": "task-deploy-cancel-01",
-  "invocationId": "invocation-tool-call-88",
-  "adapterId": "deployment-adapter",
-  "adapterVersion": "1",
+  "operationId": "op-deploy-staging-123",
+  "taskId": "task-release-cancel-01",
+  "adapter": "deploy@1",
   "action": "deploy",
-  "target": {
-    "environmentId": "production-a"
+  "request": {
+    "target": "staging-a",
+    "repositoryId": "service-a",
+    "commit": "def456",
+    "expectedCurrentVersion": "staging-41"
   },
-  "parameters": {
-    "subjectRef": {
-      "kind": "git-commit",
-      "repositoryId": "service-a",
-      "commitSha": "9ab73e..."
-    },
-    "expectedCurrentVersion": "release-41",
-    "rollbackVersion": "release-41"
-  },
-  "protectedPayloadRef": "protected-payload-55",
-  "protectedPayloadDigest": "sha256:7d9a...",
-  "operationDigest": "sha256:a120...",
-  "requestedBy": "member-release",
-  "createdAt": "2026-08-10T15:00:00Z"
+  "preview": "将 service-a 的 commit def456 部署到 staging-a；执行前要求当前版本仍为 staging-41。",
+  "createdBy": "member-release",
+  "createdAt": "2026-08-10T14:00:00Z"
 }
 ```
 
-## 第一组：它属于哪次工作和哪次工具调用
+分组理解：
 
-| 字段 | 含义 |
-|---|---|
-| `operationId` | 这项外部操作自己的稳定身份 |
-| `workId` | 它属于哪一整件 Work |
-| `taskId` | 哪一次正式委托提出它 |
-| `invocationId` | 哪一次受控 Operation 工具调用创建它 |
-| `requestedBy` | 哪个成员请求执行 |
+### `operationId`
 
-`invocationId` 不是一整个模型回答的身份。一次模型回答可能包含多个工具调用，每个调用都有不同次序和身份。
+这是该外部写入唯一业务身份。相同 ID 永远表示同一个不可变提议。
 
-运行时先保存“这是哪一次模型调用”，再给这次回答中的工具调用按出现顺序编号。这个顺序号在正式实现中叫 tool-call ordinal。模型调用身份、顺序号和当前 Task 一起推导出 `invocationId`。相同工具调用因网络重试再次到达时，会回到同一个 Operation；相同身份却带来不同内容时，系统报冲突。
+### `taskId`
 
-系统不尝试猜两次真正独立的新请求在业务上是不是“差不多”。通用语义去重既不可靠，也不是这里的目标。
+说明哪一次正式委托提出它。Operation 不能漂浮在没有责任上下文的模型调用中。
 
-## 第二组：通过哪个受控接口做什么
+### `adapter`
 
-| 字段 | 含义 |
-|---|---|
-| `adapterId` 与 `adapterVersion` | 哪个已注册 Adapter 负责解释和执行 |
-| `action` | 精确动作类型，这里是 deploy |
-| `target` | 要改变哪个受控目标，这里是 production-a |
+`deploy@1` 同时固定实现边界与请求解释版本。Adapter 升级不会在原地改变旧 Operation 含义。
 
-模型不能把未知动作自称为“只读”。Adapter 和 ControlProfile 共同给出代码可识别的外部效果分类，正式文档称为 effect classification。
+### `action` 和 `request`
 
-## 第三组：执行对象、前置状态和回滚范围
+它们包含所有决定真实效果的 typed 字段：目标、commit、前置状态、查询或 mutation、配置、收件人、消息正文等。
 
-`parameters` 表示：
+### `preview`
 
-- 部署的精确 commit 是 `9ab73e...`；
-- 只有生产当前版本仍为 `release-41` 才允许执行；
-- 如果预先定义的触发条件出现，允许回到 `release-41`。
+这是风险相关字段的人可读展示。它不是模型自由发挥的摘要，而必须忠实来自 typed request。
 
-`expectedCurrentVersion` 很重要。Human 批准后，如果另一个团队已经把生产更新到 `release-42`，原操作不能继续按旧前提覆盖新状态。
+### `createdBy/createdAt`
 
-## 第四组：为什么有受保护 payload
+由受控 runtime 写入提出者和时间。
 
-有些 Operation 包含不适合出现在模型、聊天或普通日志里的原始内容，例如敏感配置值或受限数据变更参数。后文把一项调用真正携带的这部分内容称为 payload，可以先理解成“载荷”或“随单内容”。
+## Operation 创建后哪些内容不可变
 
-原始内容放入受限存储，Operation 只保存：
+下面内容都不能修改：
 
-- `protectedPayloadRef`：去哪里取；
-- `protectedPayloadDigest`：取回后应匹配哪一个指纹。
+- Operation ID；
+- Adapter 与版本；
+- action；
+- request 与 target；
+- 风险相关 preview；
+- createdBy 与 createdAt。
 
-两个字段要么同时存在，要么同时不存在。运行时在授权和执行前都会重新取回并校验。
+如果 commit、目标、SQL、配置或消息正文改变，就创建新 Operation。
 
-受保护 payload 是附属于 Operation 的存储内容，不是第二份授权对象。
+目标设计直接把可信 CoordinationStore 中这份不可变记录作为授权对象，不再为同一内容增加另一套摘要身份。越少身份，越容易保证 Human 批准和后端执行谈论的是同一件事。
 
-## 第五组：operationDigest 是什么
+## 所有效果内容必须出现在 request 和 preview
 
-可以把 operation digest 想成整张执行单的防调包封条。
+假设模型请求发送通知。下列内容都决定风险：
 
-它覆盖：
+- 收件人；
+- 主题；
+- 正文；
+- 附件或链接；
+- 发送渠道。
 
-- 动作和目标；
-- 非秘密参数；
-- 精确 subject；
-- 执行前提；
-- 预授权回滚计划；
-- Task、tool invocation 和工作区范围；
-- Adapter 身份与版本；
-- 受保护 payload 的引用与 digest。
+它们不能藏在 credential、环境变量、后取 payload 或 Adapter 内部默认中。若某个风险字段不能安全展示，就不能批准这项动作。
 
-任何这些内容变化，都会形成不同 digest。Human 批准旧 digest，不能被拿去执行新目标或新参数。
+Credential 只用于向后端认证，不决定 action 和 target，也不进入：
 
-## 谁决定允许、要批准还是拒绝
+- Operation；
+- prompt；
+- preview；
+- Bash 环境；
+- ToolResult；
+- 普通诊断。
 
-对于已知 Operation 类型和目标，当前 ControlProfile 只返回三种结果之一：
+## 轮换 credential 时随机值怎么办
 
-| 决定 | 含义 |
-|---|---|
-| `auto_allowed` | 当前规则允许自动执行，但仍要记录、幂等和恢复 |
-| `approval_required` | 必须由 Human 对这一项精确操作作出批准 |
-| `denied` | 禁止执行 |
+“生成新密码”看起来需要隐藏内容，但 approver 真正需要决定的是：
 
-未知动作和未知目标一律 denied。
+- 轮换哪个目标；
+- 哪个 principal；
+- 使用什么生成策略；
+- 结果由哪个 secret manager 接管。
+
+这些进入 request 和 preview。随机 secret 值由 Adapter 或外部 secret manager 生成，不由 Agent在隐藏字段中选择。这样隐藏值不会偷偷改变动作含义。
+
+## 当前策略怎样分类 Operation
+
+在使用点，ControlProfile 把不可变 Operation 分类为：
+
+```text
+自动允许
+需要 exact Human Approval
+拒绝
+```
 
 例如：
 
-- 部署临时测试环境可能 auto allowed；
-- 部署 production-a 需要 Human 对这项精确操作作出批准；
-- 删除未经登记的云账号直接 denied。
+- 部署隔离测试环境可能自动允许；
+- 部署 `production-a` 需要 Approval；
+- 删除未知云账号直接拒绝。
 
-是否需要批准与是否需要安全执行协议是两件事。即使 auto allowed，Operation 仍然要有稳定身份、执行前记录、结果确认和不确定状态处理。
+“自动允许”不等于普通工具调用。它仍然：
 
-## 执行前还要过一道硬门
+- 有 Operation ID；
+- 在调用前记录 started；
+- 使用 backend idempotency key；
+- 由 Adapter确认后置状态；
+- 对超时进入不确定恢复路径。
 
-Operation 创建后，不会因为模型已经选好动作就立刻执行。
+Approval 只改变是否允许尝试，不改变安全执行协议。
 
-执行前代码会重新检查：
+## 同一次顶层调用重放怎么办
 
-- Operation 身份和 digest；
-- 受保护 payload 是否匹配；
-- 当前请求成员仍有权限；
-- 当前 ControlProfile 是否仍允许；
-- 目标和前置状态是否未变化；
-- Task 与工作区是否仍有效；
-- 如果是发布或部署代码，同一个 commit 是否已有合格独立验证；
-- 需要 Human 批准时，批准是否确实对应当前这项操作、仍然有效且未过期。
-
-这道执行前机器边界叫 **Gate**。
-
-它和 ResultGuard、CloseGuard 的位置不同：
+runtime 保存一条有限 replay row：
 
 ```text
-ResultGuard：能不能创建这份终态交付
-Gate：       能不能执行这项外部操作
-CloseGuard： 能不能结束整件 Work
+认证 actor + 顶层 tool-call identity
+→ op-deploy-staging-123
 ```
 
-## 环境不是每次都要变成复杂业务对象
+同一调用因响应丢失重放，返回同一 Operation ID，不创建第二项外部提议。replay row 是基础设施状态，不进入 Work 业务图。
 
-`production-a` 由部署配置识别。配置可以说明风险级别、允许的 Adapter、凭据引用、状态查询方式和支持的 Operation。
+如果后端支持幂等键，Adapter 使用 `operationId`。后端返回自己已经为同一 ID 保存的结果，是读取原结果，不是再次产生效果。
 
-Tiangong 不要求每个测试环境、报告和知识对象都拥有一套通用领域模型。只有需要稳定交接或控制的边界才结构化。
+注意：Operation 创建幂等不等于 uncertain 后可以重放外部写。执行开始后的规则在第 11 单元讲。
 
-## 本单元自检
+## Operation 与 ToolResult 不要混淆
 
-1. 为什么本地编辑不是 Operation，推送共享仓库通常是？
-2. `invocationId` 和 `operationId` 各自解决什么问题？
-3. operation digest 为什么必须覆盖受保护 payload 的引用与 digest？
-4. `auto_allowed` 为什么仍然需要幂等和恢复？
-5. Gate、ResultGuard 和 CloseGuard 分别守在哪个位置？
+调用外部 Adapter 时，Agent最终会得到一个有界 tool result，告诉它当前发生了什么。但外部效果的权威历史是 Operation 和 append-only events。
 
-下一单元会停在 `approval_required` 这条分支，仔细看 Human 到底看见什么、批准什么，以及为什么普通群聊中的“可以上线”仍然不够。
+```text
+ToolResult
+  给当前 Agent 看到的有界调用观察，可按规则留存。
+
+Operation events
+  外部写入的永久协调事实，不采样。
+```
+
+Agent不能用一段 ToolResult prose 替换 Operation 的真实状态。
+
+## 动手练习：把部署请求写完整
+
+请为生产部署写 typed request 和 preview，至少包含：
+
+```text
+target:
+repository/commit:
+expected current state:
+任何健康条件或立即补偿条件:
+实际展示 preview:
+```
+
+然后问：
+
+- 有没有风险字段只存在模型脑中？
+- preview 是否忠实包含所有效果字段？
+- credential 是否被误当成 hidden request？
+- 目标改变时是否错误复用旧 Operation？
+- Bash 是否能绕过 Adapter完成同一写入？
+
+## 累积小结：到这里已经学会什么
+
+从一条消息到第一项外部写入提议，整套模型是：
+
+1. Human、通道、AgentTeams、Worker、Agent 和 Leader各自承担不同责任；
+2. Work 隔离整件事务，timeline 保留原始沟通和歧义纠错；
+3. WorkSpec 是当前目标快照，不授予能力，缺少 Human答案时保持等待；
+4. Leader按输入动态创建不可变 Task/TaskSpec，review、测试和发布只是普通 Task；
+5. 当前权限来自 AgentTeams、ControlProfile、MemberConfig 与 runtime binding 的交集；
+6. prepared environment 让成员高效使用 Bash，同时隔离控制凭据、生产 credential、宿主端点和不允许网络；
+7. ContentRef 稳定标识交付内容，Result 是 Task 唯一终态报告，ToolResult 是工具的有界机器观察；
+8. timeline、Result、ToolResult 和 Operation event 分别保存不同事实，不建立重复证据包装；
+9. 本地 edit/build/test/commit 留在 sandbox；任何共享或外部写都必须通过有版本的 Adapter创建 Operation；
+10. Operation 是不可变 typed request，`operationId` 是唯一业务身份；
+11. 所有决定效果的 target、commit、mutation、配置、收件人和正文都必须进入 request 并忠实显示在 preview；
+12. credential 只在 Adapter 中认证，不能成为隐藏动作内容；
+13. ControlProfile 在使用点把 Operation 分为自动允许、需要 Approval 或拒绝；未知写默认拒绝；
+14. 即使自动允许，Operation 仍要幂等、started-before-call、后置状态确认和不确定恢复；
+15. 下一步将停在“需要 Human Approval”分支，解释人究竟批准什么。
+
+## 自检
+
+1. 本地 commit 与 Git push 为什么处在不同边界？
+2. Adapter read 为什么不是 Operation，但仍需要哪些检查？
+3. Operation 的最小字段和唯一业务身份是什么？
+4. 为什么效果字段不能藏在 credential 或后取 payload 中？
+5. 自动允许的 Operation 为什么仍需要完整执行与恢复协议？
+6. replay row 与 Operation event 分别是什么层次？
+7. ToolResult 为什么不能替代 Operation 外部效果历史？
+
+继续阅读：[第 10 单元](10-exact-approval.zh.md)。

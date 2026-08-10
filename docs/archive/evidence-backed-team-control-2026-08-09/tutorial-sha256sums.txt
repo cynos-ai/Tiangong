@@ -1,0 +1,16 @@
+67d382c1b37101accb3109dcbd0fc4a8d862fb66e14dcbe04b5bc0ca5318a676  evidence-backed-team-control-tutorial.zh.md
+fd586eba508561f01ee01c2b231eb83c2560d234cc69a7cffc2d68bf4987939b  evidence-backed-team-control-tutorial/01-message-to-team.zh.md
+763ba45bae63b0f5dc3c51261e7ab8545ad3b1ab1cb2dc6dbb7a723593687afc  evidence-backed-team-control-tutorial/02-one-request-one-work.zh.md
+200a00510ee487a2ba7cd6a86a8670fec0bf80a7ea66a5d391886cc7ac90192b  evidence-backed-team-control-tutorial/03-clarify-the-goal.zh.md
+5fe50265b435fc528fcabebc4f0272d698bdb0dc2afb6443b9d7e72c0962bc24  evidence-backed-team-control-tutorial/04-one-bounded-delegation.zh.md
+028dee160729cf5c75d0481473a5d86eee6e109cef58a2119c7131ba9b8ef0f7  evidence-backed-team-control-tutorial/05-team-tools-and-workspace.zh.md
+3189e91c8c155d449fef4a7c332b406388c9fa05383f5ed75702fff6cf498369  evidence-backed-team-control-tutorial/06-result-and-content.zh.md
+2e95bb06cf625daef49a73678f51a9e4b03ab6c7cf7f55fac7212a2db0f5c1e3  evidence-backed-team-control-tutorial/07-independent-verification.zh.md
+69fa1c83c06646fc27a2c3e7964d2e42f65248b2d97b72169abc74e580eedbc1  evidence-backed-team-control-tutorial/08-decisions-and-closure.zh.md
+1acd4da3cc5257e20f1e21b230f02a06c7de3867ed8ac32f59e27fbb0f5d6199  evidence-backed-team-control-tutorial/09-external-operation.zh.md
+f0d99222883a6e93822287733024b81dd0c006cc79e7dc7b81a8e0fa4263cb0e  evidence-backed-team-control-tutorial/10-exact-approval.zh.md
+0e6a30157a1dcdb9c68752860de3d81eca9d6b991a53fb23604c91c0ee081e09  evidence-backed-team-control-tutorial/11-uncertainty-and-recovery.zh.md
+75b524477f37b47e33eb08999f9ac14a044ec35511c792632e76de6708b41267  evidence-backed-team-control-tutorial/12-records-and-evidence.zh.md
+34e3a280cab74bee55871dc4bbf382a7d6f4d4302962e4ee66f3c2dca13427dd  evidence-backed-team-control-tutorial/13-concurrency-and-resume.zh.md
+35887a618a304912020b4c129b65345b335ca907fd46969e8b5510061f015dbe  evidence-backed-team-control-tutorial/14-complete-walkthrough.zh.md
+c067dee80cecef8677207f855fb0d1e0e15a0ca77642ffb11d7f8ab6ff98a67f  evidence-backed-team-control-tutorial/README.md

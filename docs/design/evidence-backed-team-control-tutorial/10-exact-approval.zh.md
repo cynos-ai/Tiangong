@@ -1,33 +1,58 @@
-# 单元 10：人批准的必须是即将执行的那一件事
+# 单元 10：Human 批准的必须是精确动作
 
-[上一单元：本地修改与真正改变外部系统](09-external-operation.zh.md) | [返回课程目录](README.md) | [下一单元：请求超时后，为什么不能直接再试一次](11-uncertainty-and-recovery.zh.md)
+[上一单元：本地动作与外部写入](09-external-operation.zh.md) | [返回课程目录](README.md) | [下一单元：超时、未知结果与恢复](11-uncertainty-and-recovery.zh.md)
 
-## “可以上线”少了哪些信息
+## 群里一句“可以”为什么不够
 
-林舟在群里说：
+发布成员准备把 `service-a@def456` 部署到生产。林舟问：
 
-> 取消订单已经验证通过，可以上线吗？
+> 取消订单已经在测试环境验证，可以上线吗？
 
-陈晨回复：
+陈晨回答：
 
 > 可以。
 
-人类读上下文时也许知道双方在谈生产部署，但机器仍然无法安全确定：
+人类可能结合上下文猜到双方谈的是生产，但机器仍无法确定：
 
-- 是测试环境还是生产环境？
-- 部署哪个 commit？
-- 生产当前应该处于哪个版本？
-- 是否包含数据库变化？
-- 允许什么回滚？
-- 批准多久有效？
-- 陈晨是否是当前规则认可的批准者？
-- Agent 后来有没有把参数换掉？
+- 哪个环境；
+- 哪个 commit；
+- 生产当前应处于哪个版本；
+- 是否包含数据结构或数据内容变更；
+- 失败时是否有立即补偿；
+- preview 中实际展示了什么；
+- Approval 多久有效；
+- 陈晨是否是当前 ControlProfile 允许的 approver；
+- 回复到达时 Operation 是否已过期或被取消。
 
-所以普通聊天只能作为沟通，不能直接成为外部执行授权。
+普通聊天只能沟通，不能直接授权外部写入。
 
-## 先把机器执行单翻译成人能判断的内容
+## 先创建生产 Operation
 
-上一单元已经有一份结构化 Operation。Human 不应该阅读数据库内部字段猜风险，Adapter 应从经过类型校验的 Operation 生成一张安全预览：
+发布成员通过 `deploy@1` 创建：
+
+```json
+{
+  "operationId": "op-deploy-production-124",
+  "taskId": "task-release-cancel-01",
+  "adapter": "deploy@1",
+  "action": "deploy",
+  "request": {
+    "target": "production-a",
+    "repositoryId": "service-a",
+    "commit": "def456",
+    "expectedCurrentVersion": "release-41"
+  },
+  "preview": "将 service-a 的 commit def456 部署到 production-a；仅当当前版本仍为 release-41 时执行。",
+  "createdBy": "member-release",
+  "createdAt": "2026-08-10T15:00:00Z"
+}
+```
+
+ControlProfile 根据当前目标和 action 判断：需要 exact Human Approval。
+
+## Human 应看见什么
+
+runtime 发送实际有界 preview，而不是让模型临时写一段好听的摘要：
 
 ```text
 准备执行
@@ -37,166 +62,232 @@
   production-a
 
 代码
-  commit 9ab73e...
+  commit def456
 
 执行前提
-  当前生产版本必须仍是 release-41
+  当前生产版本必须仍为 release-41
 
-预授权回滚
-  触发条件满足时恢复 release-41
+授权对象
+  op-deploy-production-124
 
 有效期
-  批准后 30 分钟
+  30 分钟
 ```
 
-预览应展示所有会实质改变风险的内容。对其他 Operation，它还可能显示：
+不同动作还应展示：
 
-- 收件人；
-- 将被删除的资源列表和数量；
-- 数据变更摘要；
-- 精确制品版本；
-- 经过受控展示的敏感字段。
+- SQL 或配置变化；
+- 收件人与通知正文；
+- 将删除的资源和数量；
+- 制品精确版本；
+- 立即补偿条件和目标状态；
+- 其他会实质改变风险的 typed 字段。
 
-如果关键风险信息无法通过授权界面展示，就不能声称 Human 作出了 exact Approval。
+如果无法把所有风险相关属性安全展示，就不能批准。
 
-模型不能自己编写一段听起来安全的摘要来替代这些结构化字段。
+## Approval 是事件，不是独立对象
 
-## Human 实际批准的记录
-
-Tiangong 把这种绑定精确外部操作的 Human 决定叫 **Approval**。陈晨通过受认证的批准动作提交后，记录可以是：
+陈晨通过认证界面的“批准”动作后，系统直接向该 Operation 追加：
 
 ```json
 {
-  "approvalId": "approval-deploy-77",
-  "operationId": "operation-deploy-55",
-  "operationDigest": "sha256:a120...",
-  "viewSchemaVersion": "deployment-approval/v1",
-  "presentedView": {
-    "action": "deploy",
-    "environmentId": "production-a",
-    "subjectCommit": "9ab73e...",
-    "expectedCurrentVersion": "release-41",
-    "rollbackVersion": "release-41"
-  },
-  "channelMessageId": "matrix-event-9300",
-  "decision": "approved",
-  "decidedBy": "human-chen",
-  "decidedAt": "2026-08-10T15:10:00Z",
-  "expiresAt": "2026-08-10T15:40:00Z"
+  "eventType": "operation-approved",
+  "operationId": "op-deploy-production-124",
+  "actorId": "human-chen",
+  "createdAt": "2026-08-10T15:08:00Z"
 }
 ```
 
-## Approval 绑定哪几件事
+runtime 还保存实际 preview 的投递 metadata，例如通道消息身份和发送时间，用于回答 Human 当时看见什么。
 
-### 绑定 Operation 身份
+目标设计不再建立另一份 Approval 业务对象。不可变 Operation 本身已经是精确授权对象；认证 event 只回答这个 Human 对它作了什么决定。
 
-批准的是 `operation-deploy-55`，不是“所有部署”。
+## exact 体现在哪里
 
-### 绑定 operation digest
+Approval event 精确记录：
 
-目标、commit、前置条件、回滚范围或受保护 payload 任一变化，digest 都不同。旧 Approval 不能复用。
+- 一个不可变 `operationId`；
+- 当前认证 Human；
+- 实际发送和存储的 bounded preview 及 delivery metadata；
+- 发生批准这一时间点。
 
-### 绑定被授权的人
+当前 approver policy 和有效期不会复制成另一份 policy snapshot。runtime 在处理 Human action 和真正执行前都读取当前 ControlProfile。因为 Operation 不可变，批准 `op-deploy-production-124` 不可能被拿去执行另一个 commit 或 target；任何效果字段变化都必须创建新 Operation 和新 Approval event。
 
-`decidedBy` 来自经过平台认证的 Human 身份，Tiangong 再按当前 approver policy 判断陈晨是否有权批准 production-a。
+## 普通消息为什么永远不能自动升级
 
-### 绑定实际展示内容
+即使陈晨在聊天中写：
 
-系统保存预览所遵循的数据结构版本、负责把数据呈现成人类界面的程序版本（renderer version）、实际有界视图或安全 ContentRef，以及发送到消息通道的消息身份。
+> 我批准 op-deploy-production-124。
 
-这使审计者能回答“Human 当时看见了什么”，而不把预览变成第二份授权对象。权威仍然是不可变 Operation 与其 digest。
+它仍然只是普通 Work message，除非通过受认证的 Approval action 入口处理。
 
-### 绑定有效期
+原因是 Approval 入口还要代码确认：
 
-批准不是永久票据。过期后，即使 Operation 内容不变，也不能执行。
+- 平台身份；
+- 当前 ControlProfile 的 approver 范围；
+- Operation 是否仍 pending；
+- preview 是否实际交付；
+- 是否过期；
+- Task 和 Work 是否仍允许继续；
+- 是否与 rejection、cancellation 或 execution start 冲突。
 
-## pending Approval 时 Task 发生了什么
+自然语言本身不携带这些机器前置条件。
 
-当前部署 Task 不需要提交 blocked Result，也不需要拆成“准备 Task”和“执行 Task”。
+## pending 时 Task 怎样表现
 
-它会暂停在同一项待执行 Operation 上：
-
-```text
-Operation 已保存
-→ Task 的界面状态显示 waiting_approval
-→ 当前模型调用和 runner 资源释放
-→ Human 在模型循环外作出批准或拒绝
-→ 同一项 Operation 恢复或终止
-```
-
-真正的权威事实是 pending Operation。`waiting_approval` 只是界面根据它推导出的 Task 状态。
-
-等待期间 TaskSpec 没有变化，仍然遵守一个 Task 最多一个 Result。
-
-## 批准后为什么还要重新过 Gate
-
-陈晨批准时生产是 `release-41`，但执行前可能发生：
-
-- 另一个团队已经部署 `release-42`；
-- 周明被移出 Team；
-- ControlProfile 临时禁止生产部署；
-- Approval 已过期；
-- commit 的独立验证记录不可访问；
-- 受保护 payload 被删除或 digest 不匹配。
-
-Approval 表示 Human 对精确计划的许可，不表示世界从此冻结。
-
-所以每次真正执行前，Gate 都重新检查当前权限、策略、目标状态、Task、验证和 Approval。前置状态不再匹配时，旧操作停止；需要重新形成新的 Operation 和新的 Approval。
-
-## 拒绝、过期和撤销分别怎样处理
-
-### Human 拒绝
-
-Operation 在执行前终止。Task 不会自动变成 failed Result。Leader 可以选择其他办法、取消 Task 或结束 Work。
-
-### Approval 过期
-
-pending Operation 终止，迟到的批准命令被拒绝。Task 本身仍可继续寻找其他方案。
-
-### 执行前撤销
-
-已经批准但尚未开始的 Operation 可以被授权撤销。撤销与 `execution_started` 必须在同一个受控状态边界竞争：撤销先提交就不能开始；开始先提交就不能假装从未执行。
-
-### Task 被取消
-
-如果 Operation 仍在等待 Approval，取消 Task 与终止 pending Operation 在一个事务中完成，后来的批准会被拒绝。
-
-如果 Operation 已经开始或结果 uncertain，不能直接取消 Task，必须先把外部影响处理到已知状态。
-
-## 普通消息、关闭确认和 Approval 再辨析一次
-
-| 内容 | 保存在哪里 | 能否直接授权外部操作 |
-|---|---|---|
-| “进度怎么样？” | Work 普通消息 | 不能 |
-| “我认可当前目标，可以结束” | `human-confirmed` 时间线事件 | 不能授权工具，只能满足相应关闭条件 |
-| “批准 operation-deploy-55 的 digest a120...” | Approval | 只能授权这项精确 Operation，并且仍需 Gate 通过 |
-
-一句话在聊天中听起来越明确，不代表它自动获得更高机器权威。权威来自受认证命令、精确对象和代码校验。
-
-## 一个常见误区：Approval 等于执行结果
-
-陈晨批准只表示“允许尝试执行”。它不证明部署已经开始，更不证明部署成功。
-
-后续至少还要区分：
+Operation 等待 Human 时：
 
 ```text
-approved          Human 允许执行
-execution_started 运行时已记录即将调用后端
-succeeded         Adapter 确认目标达到预期状态
-uncertain         可能产生效果，但无法确认
+Operation 已保存并发送 preview
+→ Task UI 投影为 waiting approval
+→ 释放当前模型调用和不需要的本地进程
+→ Human 在模型循环外作决定
+→ 同一 Task 恢复并收到有界工具结果
 ```
 
-最后一种情况会在下一单元展开；到那里我们再正式解释为什么把它叫作 `uncertain`，以及系统为什么不能装作什么都没发生。
+Task 不提交“blocked Result”，也不拆成“申请批准 Task”和“批准后执行 Task”。TaskSpec 没有变化，同一委托只是等待一个外部决定。
 
-下一单元会专门处理最危险的分支：请求发出后超时，系统不知道生产到底有没有变化。
+提醒可以有界、去重，并在到期前发送。提醒 timer 是基础设施状态，不是新的业务对象。
 
-## 本单元自检
+## Human 拒绝时怎样处理
 
-1. 为什么普通聊天里的“可以上线”不能直接授权部署？
-2. 结构化预览必须展示哪些类型的信息？
-3. Approval 为什么同时绑定 Operation 身份和 digest？
-4. Human 批准后，Gate 为什么还要重新检查当前状态？
-5. 等待批准为什么暂停同一个 Task，而不是提交 blocked Result？
-6. Approval 能证明部署成功吗？
+陈晨点击拒绝，系统追加：
 
-下一单元开始出现全课程第一批伪代码。我们会先用时间线和三种结果讲清楚，再把每一步翻译成很短的代码形状。
+```text
+operation-rejected
+operation-not-executed
+```
+
+这项 Operation 到达“没有进入外部执行”的已知终态。它不会自动取消 Task，也不会创建失败 Result。
+
+同一 Task 可以恢复，发布成员可能：
+
+- 把拒绝原因告诉 Leader；
+- 请求另一种方案；
+- 创建目标不同的新 Operation；
+- 由 Leader取消 Task。
+
+旧 Operation 永远不修改，也不重新开启。
+
+## Approval 过期或策略收紧
+
+以下情况同样让 Operation 终止为 `operation-not-executed`：
+
+- Approval 到期仍无人批准；
+- ControlProfile 从允许收紧为拒绝；
+- 当前 approver policy 不再认可该 Human；
+- Task 在执行开始前被安全取消；
+- 使用点 Gate 发现当前路径已经不允许。
+
+这些都只终止 Operation，不自动终止 Task。
+
+## 为什么批准后仍要再次检查
+
+陈晨批准到实际执行之间，世界可能变化：
+
+- 生产已由另一个团队更新为 `release-42`；
+- 发布成员被撤销；
+- ControlProfile 暂停生产部署；
+- Approval 到期；
+- Task 被取消；
+- Adapter target 配置改变。
+
+因此 runtime 在处理 Human action 时检查当前 policy，在真正执行前再次检查。
+
+Approval 表示“Human 允许在这些精确条件下尝试”，不表示条件会冻结，也不证明执行成功。
+
+## 并发竞态怎样处理
+
+下面动作可能同时到达：
+
+- approve；
+- reject；
+- expiry；
+- Task cancellation；
+- `operation-execution-started`。
+
+它们必须在受控存储中串行竞争：
+
+```text
+not-executed 先提交
+→ execution start 必须失败
+
+execution-started 先提交
+→ 不能再声称 not-executed
+```
+
+同一个 Operation 不会既“从未执行”又“已经开始”。
+
+## 三种 Human 互动不要混淆
+
+### 需求澄清
+
+陈晨回答“开始拣货后不能取消”。这是普通 Work communication，帮助 Leader形成 WorkSpec。
+
+### 精确 Operation Approval
+
+陈晨批准 `op-deploy-production-124`。这是认证事件，只授权这一项不可变外部写入尝试。
+
+### 客户验收或满意度
+
+团队可以通过普通消息、Skill 或外部系统请求客户验收。但 Kernel 的 `complete-work`/`stop-work` 是 Leader内部语义决定，不要求建立通用 Human closure signature。
+
+三者都可能由同一个 Human 完成，但机器意义完全不同。
+
+## Approval 不能证明什么
+
+`operation-approved` 不能证明：
+
+- Adapter 已调用后端；
+- 部署已开始；
+- 部署成功；
+- 生产正在运行目标 commit；
+- Work 可以关闭。
+
+它只证明：当前认证 Human 按当前策略对这项不可变 Operation 作出了允许尝试的决定。
+
+外部效果由后续 Operation events 记录。
+
+## 动手练习：判断哪条是真正授权
+
+下面哪项可以授权生产部署？
+
+1. 陈晨在群里说“可以上线”；
+2. WorkSpec 写“上线前陈晨确认”；
+3. 林舟 Result 写“用户已同意”；
+4. 认证 Approval action 针对 `op-deploy-production-124`，实际 preview 已交付，policy 与有效期检查通过；
+5. 三天后对已过期 Operation 回复“批准”。
+
+只有第 4 项。第 1–3 项可以作为沟通背景，第 5 项必须拒绝。
+
+## 累积小结：到这里已经学会什么
+
+从需求到精确 Human 授权，完整链条是：
+
+1. 通道只提供认证消息身份，AgentTeams 管平台资源，Tiangong 自己掌握专业授权；
+2. Work 和 timeline 隔离整件事并保留消息、纠错和 Leader typed facts；
+3. WorkSpec 是当前语义目标，不是权限或固定流程；TaskSpec 是一次不可变委托；
+4. Leader动态派 Task，成员在 AgentTeams、ControlProfile、MemberConfig、runtime binding 的交集中行动；
+5. prepared environment 让 Bash 可用但读不到控制/生产 credential，网络与数据范围联合限制；
+6. ContentRef 标识稳定交付，Result 保存 assignee 的唯一终态报告，ToolResult 保存工具观察；
+7. 外部写不能藏在 Bash 或 ToolResult 中，必须由版本化 Adapter创建不可变 Operation；
+8. `operationId` 是唯一业务身份，所有效果字段都在 typed request 和实际 preview 中；
+9. ControlProfile 在使用点决定自动允许、需要 exact Approval 或拒绝；
+10. exact Approval 是认证 Human 针对一个不可变 Operation ID 的 event，不是聊天，也不是第二个 Approval 对象；
+11. pending Approval 暂停同一 Task并释放资源，不创建 blocked Result或额外阶段；
+12. rejection、expiry、执行前取消和失效策略把 Operation 终结为 `operation-not-executed`，Task仍可继续；
+13. approve/reject/expiry/cancel/start 竞态必须串行，不能同时出现“未执行”和“已开始”；
+14. Approval 只允许尝试，不证明外部执行或 Work 完成；
+15. 下一步将处理最危险情况：已经开始调用外部系统，但结果无法确认。
+
+## 自检
+
+1. 实际 preview 为什么必须由 typed request 生成？
+2. 为什么目标设计使用 Approval event 而不是独立 Approval 对象？
+3. 普通聊天即使写了 Operation ID，为什么仍不能授权？
+4. pending Approval 为什么不需要新 Task 或 Result？
+5. rejection 与 expiry 对 Operation 和 Task 分别产生什么结果？
+6. 为什么执行前必须重新检查当前 policy 和 target 前提？
+7. Approval 能证明外部动作成功吗？
+
+继续阅读：[第 11 单元](11-uncertainty-and-recovery.zh.md)。

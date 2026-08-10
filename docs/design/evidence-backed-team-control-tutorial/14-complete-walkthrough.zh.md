@@ -1,382 +1,688 @@
-# 单元 14：把整个案例从头走到尾
+# 单元 14：把完整案例走一遍
 
-[上一单元：两个执行者、重试和恢复怎样不互相覆盖](13-concurrency-and-resume.zh.md) | [返回课程目录](README.md)
+[上一单元：谁决定整件事结束](13-work-closure.zh.md) | [返回课程目录](README.md)
 
-## 先不看对象，重新讲一遍故事
+## 先不用对象名，完整讲一遍故事
 
-陈晨在团队房间提出取消订单需求。林舟没有立刻让所有成员自由发挥，而是先把它当成一件独立事务保存。
+陈晨在团队通道提出取消订单需求。系统先确认消息来源、目标 Team 和平台事件身份，再把它作为一件独立事务保存。林舟没有让成员立刻开工，而是通过普通消息问清“未发货”、仓库拣货、库存类型和取消原因。
 
-林舟通过普通对话问清“未发货”、仓库拣货和取消原因的含义，把当前共同理解整理成目标说明。目标说清后，林舟才把实现交给周明。
+目标清楚后，林舟按当前需要把调查和实现交给周明。周明在自己的热执行环境里使用 Bash、Git 和测试工具，控制凭据与生产凭据始终不进入他的进程树。他用精确 Git commit 固定代码，再提交唯一终态报告。
 
-周明在自己的隔离工作区修改代码、运行测试，并用 Git commit 固定最终内容。他提交一份终态交接，但系统没有因为“completed”就接受代码。
+林舟没有对报告写 accept/reject，也没有被固定流程强制安排下一阶段。考虑到库存幂等风险，他选择创建普通 review Task。乔安在另一个 worktree 检查精确 commit，发现一个并发缺口。林舟据此创建修复 Task，得到新的最终 commit；随后又按业务要求安排测试环境验证。
 
-林舟让乔安在另一个干净工作区验证同一个 commit。乔安提交验证交接，机器确认成员不同、工作区独立、工具记录与 commit 匹配。林舟先接受通过的验证结果，再接受周明的代码结果。
+共享 Git push 以及测试、生产部署都会改变外部系统，因此不从 Bash 直接执行。版本化 Adapter 为每次写入创建不可变 Operation。新工作分支与测试环境按当前策略自动允许，但仍先记录执行开始并确认后置状态。生产 Operation 展示目标、精确 commit 和前置版本，陈晨通过认证动作只批准这一项 Operation。
 
-代码被接受后，林舟另外派发一次发布委托，避免把周明原来的“只实现代码”悄悄扩大成部署权限。发布成员先把同一 commit 部署到测试环境，系统确认版本并保留测试回执；这些步骤通过后，才为生产部署建立另一张精确操作单。陈晨看见能判断风险的预览并批准同一个 operation digest 后，Gate 在执行前重新检查当前生产版本、成员权限、验证结果和 Approval。
+Adapter 在调用生产后确认实际运行版本，写入成功 event。发布成员提交终态 Result。所有 Task 已有 Result 或取消事实，没有活跃进程、writer、pending Approval 或 unresolved Operation。CloseGuard 通过后，林舟判断当前 WorkSpec 已满足并执行 `complete-work`。
 
-执行开始前先持久化记录。Adapter 调用后端并确认生产已经运行目标 commit，于是 Operation 进入 succeeded。所有 Task 都已有终态处置、所有外部操作结果已知、Human 对当前目标的关闭确认仍有效，CloseGuard 通过。最后由林舟判断当前 WorkSpec 已满足，并提交 complete-work。
+这条路径不是强制软件生命周期。它只是当前案例中 Leader根据风险作出的选择。另一个 Work 可以没有 review、没有代码、没有部署，甚至不需要创建任何 Task。
 
-这就是整套设计的主线。正式对象只是为了让每一步可以准确写入、查询、恢复和限制。
+下面把故事逐步展开，并说明每一步怎样查询和恢复。
 
-## 第一阶段：从消息到当前目标
+## 阶段一：消息进入并建立 Work
 
-### 1. 平台交付经过认证的消息
+### 第 1 步：认证入口
 
 ```text
-Human 陈晨
-→ Matrix 消息事件
-→ OpenClaw 同步
-→ AgentTeams 管理的 Worker
-→ Tiangong 入口
+陈晨发送消息
+→ 通道产生 platformMessageId = message-9001
+→ AgentTeams 确认目标 Worker 与平台身份存在
+→ Tiangong 检查 commerce-team route
+→ 林舟在受控上下文中读取
 ```
 
-平台消息 ID 用于防止同一输入重放时创建两份事务。
+同一个 `message-9001` 重放时返回同一处理结果。
 
-### 2. 创建 Work
+### 第 2 步：原子创建 Work 与首条 timeline
 
 ```json
 {
   "workId": "work-order-cancel-001",
   "teamId": "commerce-team",
   "epoch": 1,
-  "workSpec": null
+  "workSpec": null,
+  "createdBy": "human-chen",
+  "createdAt": "2026-08-10T09:00:00Z"
 }
 ```
 
-Work 先承认“有这整件事”，不编造尚未澄清的目标。
+此刻：
 
-### 3. 通过普通消息澄清
+- 有稳定事务身份；
+- 有原始 Human 消息；
+- 没有 WorkSpec；
+- 不能创建 Task；
+- 没有任何机器能力因为消息而增加。
 
-Human 消息和 Leader 问答进入 Work timeline。普通消息可以改变团队理解，不能自动增加机器权限。
+### 如果消息关联有歧义
 
-### 4. 形成 WorkSpec
+系统会先创建占位 Work。Human确认属于另一个 open Work 后，原消息引用与确认追加到正确 Work，占位 Work 用 `work-stopped` 关闭。历史不删除，也不 merge 已产生的 Task 或外部效果。
 
-系统追加含完整快照的 `work-spec-changed` 事件，同时更新当前投影并推进 epoch。
+主案例关联清楚，所以继续原 Work。
 
-非 null WorkSpec 之后，Leader 才能派发正式 Task。
+## 阶段二：澄清并形成当前 WorkSpec
 
-## 第二阶段：从目标到一次委托
+### 第 3 步：普通消息澄清
 
-### 5. Leader 选择成员和委托范围
+林舟问清：
 
-Leader 结合专业职责判断由周明实现，但机器还要确认：
+- 开始拣货是否禁止取消；
+- 释放哪类库存；
+- 用户和客服原因规则；
+- 生产确认的范围。
 
-- 周明在 AgentTeams 中真实存在；
-- TeamConfig 接纳周明；
-- MemberConfig 允许相应专业与工具范围；
-- ControlProfile 没有禁止；
-- Task 工作区和仓库范围有效。
+等待陈晨时，系统可以释放 session 和计算资源，发送有界提醒，但不能自行填写答案。
 
-### 6. 原子创建 Task
+### 第 4 步：追加完整 `work-spec-changed`
 
-Task、不可变 TaskSpec、唯一 assignee 和 create-task Decision 一起提交。
-
-TaskSpec 是这次委托的完整语义。当前 WorkSpec 以后只作为标注清楚的背景，不会自动改写它。
-
-### 7. 在隔离工作区执行
-
-周明只能通过注册工具和 Adapter 访问允许范围。Skill 可以提供方法，不能授予权限。检索结果是参考材料，不能覆盖 TaskSpec 和代码边界。
-
-## 第三阶段：从自报完成到独立验证
-
-### 8. 固定交付内容
-
-周明把最终代码提交为：
-
-```text
-service-a @ 9ab73e...
+```json
+{
+  "goal": "允许取消未发货且尚未开始拣货的订单，并幂等释放预占库存",
+  "scope": [
+    "repository:service-a",
+    "订单取消接口",
+    "预占库存释放",
+    "取消原因记录"
+  ],
+  "constraints": [
+    "不改变现有下单接口",
+    "用户原因只能使用预设值",
+    "客服内部备注不返回普通用户",
+    "生产部署需要陈晨批准精确 Operation"
+  ],
+  "doneWhen": [
+    "合法取消只释放一次预占库存",
+    "已发货或已开始拣货订单会被拒绝",
+    "授权人员可以查询取消原因",
+    "目标代码已在测试环境验证"
+  ],
+  "unresolvedAssumptions": [
+    "库存服务支持按订单幂等释放"
+  ]
+}
 ```
 
-### 9. ResultGuard 检查并创建生产 Result
+timeline event、当前投影和 epoch `1 → 2` 原子提交。WorkSpec 是语义目标，不是权限表或机器 criterion。
 
-Result 的 completed 是周明声明。ContentRef 指向精确 commit，ToolResult 和 Machine Evidence 提供机器观察支持。
+## 阶段三：动态委托，而不是预建 DAG
 
-生产 Result 暂时保持 submitted。
+### 第 5 步：调查 Task
 
-### 10. 创建独立验证 Task
+林舟不知道库存接口能力，先创建普通调查 Task：
 
-乔安在不同工作区检出同一仓库和 commit。
-
-### 11. 提交 verification Result
-
-```text
-producerResultId = result-implement-cancel-01
-subject          = service-a @ 9ab73e...
-outcome          = completed
-verdict          = pass
+```json
+{
+  "taskId": "task-investigate-inventory-01",
+  "workId": "work-order-cancel-001",
+  "assigneeId": "member-zhou",
+  "taskSpec": {
+    "objective": "确认库存服务是否支持按订单幂等释放预占库存",
+    "inputs": [
+      {
+        "repositoryId": "service-a",
+        "commitSha": "abc123"
+      }
+    ],
+    "constraints": ["只读调查", "不访问生产数据库"]
+  },
+  "createdBy": "leader-lin",
+  "createdAt": "2026-08-10T09:40:00Z"
+}
 ```
 
-outcome 描述验证 Task 是否执行完成，verdict 描述目标 commit 是否通过。
+Task 创建与 `task-created` fact、理由和 epoch 更新一起提交。
 
-### 12. 按顺序接受
+### 第 6 步：当前能力交集
 
-林舟先接受乔安的验证 Result。机器随后允许林舟接受精确匹配的周明 Result。
-
-只有 accepted completed Result 能支持 Work 完成。accepted blocked 或 failed Result 仍是真实交接，但没有完成资格。
-
-## 第四阶段：从本地结果到外部效果
-
-### 13. 创建单独的发布 Task
-
-林舟把已经接受并独立验证的 commit 交给发布成员。TaskSpec 明确要求先验证测试环境，再申请生产部署；它不会修改周明原来的实现 Task。
-
-### 14. 分类工具调用
-
-本地构建仍是普通工具调用。推送共享仓库、合并、发布和部署被分类为 Operation。
-
-模型不能自己把外部写操作改名为只读。
-
-### 15. 先创建并执行测试环境 Operation
-
-测试环境部署拥有独立的 Operation 身份和 digest。即使当前 ControlProfile 把它分类为 auto allowed，它仍要经过 Gate、先写 `execution_started`，并确认测试环境实际运行的是目标 commit。
-
-### 16. 在测试环境验证同一份内容
-
-受控测试工具针对测试环境执行验收，ToolResult 和 Machine Evidence 绑定同一个 commit。测试环境状态或验收结果不符合预期时，生产 Operation 不会继续形成。
-
-### 17. 创建不可变的生产 Operation
-
-Operation 绑定：
-
-- Work、Task 和受控 tool-call invocation；
-- Adapter 及版本；
-- 动作、目标和参数；
-- 精确 commit；
-- 目标前置状态；
-- 预授权回滚；
-- 受保护 payload 引用与 digest；
-- 整体 operation digest。
-
-同一工具调用重放回到同一 Operation，新调用才代表新意图。
-
-### 18. 对生产 Operation 再作规则分类
-
-测试环境操作已经按 auto allowed 路径完成。生产环境得到 approval required；如果目标或动作无法识别，则直接 denied。
-
-### 19. Adapter 生成安全预览
-
-Human 看见目标环境、commit、当前预期版本、回滚范围和有效期。任何无法展示但会改变风险的字段都会阻止 exact Approval。
-
-### 20. Human 批准
-
-Approval 绑定 operation identity、digest、授权 Human、实际展示内容和有效期。
-
-普通聊天中的“可以”不能代替这一动作。
-
-### 21. Gate 重新检查
-
-执行前重新验证当前成员、ControlProfile、目标前置状态、Task、workspace、独立验证、payload digest 和 Approval。
-
-## 第五阶段：执行、恢复与关闭
-
-### 22. 先写 execution_started
-
-持久化成功后才调用外部后端。崩溃后不会把可能已发送的请求误判成未开始。
-
-### 23. Adapter 确认外部状态
+周明开始 turn 前，runtime 检查：
 
 ```text
-后置条件确认达到 → succeeded
-确认完全无效果   → failed_no_effect
-无法确定         → uncertain
+AgentTeams 当前身份和 route
+∩ enterprise ControlProfile
+∩ 周明 enabled MemberConfig
+∩ 当前 Task/cwd/root runtime binding
 ```
 
-### 24. uncertain 时只读对账
+TaskSpec 的“只读调查”约束周明的语义行为，但不会给他生产访问权。
 
-原正向阶段永不自动重试。确认无效果后，如仍需执行，创建新的 Operation 并重新授权。
+### 第 7 步：在 prepared environment 调查
 
-uncertain 会阻止冲突 Operation、Task 取消和 Work 关闭，直到机器事实得到解决。
+周明进入已准备环境：
 
-### 25. 处理所有 Task
+- 精确 fetch/checkout `service-a@abc123`；
+- 复用匹配 image/toolchain/lockfile 的缓存；
+- Bash 进程树看不到模型、通道、session、pending Operation、生产 credential 和 host control；
+- 网络只允许精确 Git fetch、package 与命名测试服务；
+- 工作区由当前 Task 单独持有 writer。
 
-发布成员在测试和生产结果都已知后提交发布 Task 的终态 Result，其中的外部效果声明必须与 Operation 机器状态一致。Leader 对它作出唯一 accept 或 reject；无 Result 的其他 Task 明确取消；没有 Task 仍在运行或等待 Approval。
+他发现库存服务已有合适接口，提交 Result：
 
-### 26. 检查当前 Human confirmation
+```json
+{
+  "taskId": "task-investigate-inventory-01",
+  "summary": "确认库存服务支持按 orderId 幂等释放预占库存；接口和错误语义见文档引用。",
+  "deliverableRefs": [
+    {
+      "adapter": "document-store@1",
+      "ref": "inventory-api-note/version-1"
+    }
+  ],
+  "toolResultRefs": ["tool-result-search-07"],
+  "submittedBy": "member-zhou",
+  "createdAt": "2026-08-10T10:20:00Z"
+}
+```
 
-如果 ControlProfile 要求关闭确认，必须存在最后一次 WorkSpec 变化之后、由授权 Human 通过认证动作写入的 applicable `human-confirmed` 事件。
+没有 outcome，也不需要 Leader accept。
 
-### 27. CloseGuard 扫描整个 Work
+林舟使用这份报告时，不修改 Result，而是把当前 WorkSpec 中已经确认的假设清掉：追加一份完整 `work-spec-changed` 快照，其中 `unresolvedAssumptions` 变为 `[]`，同时更新当前投影并推进 epoch。这样当前目标卡不会继续把已确认事实显示成未知。
 
-它检查所有完成资格 Result、所有 Operation、验证、引用可访问性和当前硬规则，不信任调用者自己挑选一个安全子集。
+### 第 8 步：实现 Task
 
-### 28. Leader 提交 complete-work
+输入真正可用后，林舟创建实现 Task，引用调查内容和基线 commit。周明完成代码与本地测试，形成：
 
-林舟判断当前 WorkSpec 的业务含义已经满足。Decision 和 Work 终结原子提交，之后不可重新打开。
+```text
+service-a@def456
+```
 
-## 一张最终关系图
+ToolResult 记录受控 Bash 的输入摘要、cwd、commit、exit code 和有界结果。Result 把 commit 列为 deliverable：
+
+```json
+{
+  "taskId": "task-implement-cancel-01",
+  "summary": "实现取消条件、幂等库存释放和原因记录；128 项测试通过，未执行任何共享写入。",
+  "deliverableRefs": [
+    {
+      "repositoryId": "service-a",
+      "commitSha": "def456"
+    }
+  ],
+  "toolResultRefs": ["tool-result-unit-test-21"],
+  "submittedBy": "member-zhou",
+  "createdAt": "2026-08-10T12:00:00Z"
+}
+```
+
+ResultGuard 只检查身份、唯一性、Schema、ContentRef、ToolResult 归属与 retention，不判定代码质量。
+
+## 阶段四：按风险选择 review、修复与测试
+
+### 第 9 步：Leader选择普通 review Task
+
+库存释放有明显并发风险。林舟创建：
+
+```text
+objective
+  review service-a@def456 的重复请求、并发更新、权限与错误处理
+
+inputs
+  精确 commit def456
+
+constraints
+  使用独立 worktree；报告明确问题和未覆盖风险
+```
+
+这不是 Kernel mandatory verification，也没有 verification Result 类型。
+
+乔安在自己的 prepared environment 中 review，提交普通 Result：
+
+```json
+{
+  "taskId": "task-review-cancel-01",
+  "summary": "发现同一订单并发取消时，库存释放调用可能在状态写入前执行两次；建议用事务内状态转换和幂等键封住。其他检查未发现阻断问题。",
+  "deliverableRefs": [],
+  "toolResultRefs": ["tool-result-review-tests-31"],
+  "submittedBy": "member-qiao",
+  "createdAt": "2026-08-10T13:00:00Z"
+}
+```
+
+### 第 10 步：修复产生新 commit
+
+林舟认为问题重要，创建修复 Task。周明产生：
+
+```text
+service-a@fed789
+```
+
+旧 `def456` 和旧 Result 保持不变。后续只使用新 commit。
+
+企业若要求 merge 前 review/CI，真实硬门由 branch protection、CI required check 或 Git Adapter检查 `fed789`，而不是由通用 Kernel假设所有 Work 都需要某种验证对象。
+
+### 第 11 步：不预建尚无输入的验收 Task
+
+此时 `fed789` 已经存在，但测试环境还没有运行它。林舟不会先创建一个只能猜测环境状态的等待节点。他先结合最新 Result 和当前 CI 观察决定进入发布；等 staging Operation 真正确认成功后，再创建测试环境验收 Task。
+
+这正是动态委托与预建 DAG 的区别：计划可以先存在，正式 Task 等输入和责任边界真实可用时再创建。
+
+## 阶段五：外部写入都变成 Operation
+
+### 第 12 步：创建发布 Task
+
+发布没有被偷偷塞进周明原实现 Task。林舟创建新 Task，输入是精确 `fed789`，约束先测试环境后生产，并要求生产动作走 exact Approval。
+
+### 第 13 步：把 commit 写入共享 Git
+
+本地 commit 已经是稳定 ContentRef，但共享 Git 写入仍是外部效果。发布成员先创建：
+
+```json
+{
+  "operationId": "op-git-push-200",
+  "taskId": "task-release-cancel-01",
+  "adapter": "git-write@1",
+  "action": "push",
+  "request": {
+    "repositoryId": "service-a",
+    "targetRef": "refs/heads/tiangong/order-cancellation-001",
+    "commit": "fed789",
+    "expectedTargetCommit": null
+  },
+  "preview": "将 service-a@fed789 推送为新的共享分支 refs/heads/tiangong/order-cancellation-001；仅当该分支尚不存在时执行。",
+  "createdBy": "member-release",
+  "createdAt": "2026-08-10T14:05:00Z"
+}
+```
+
+当前策略允许自动创建这个受限工作分支。Git Adapter 仍要先记录 execution start，再使用内部 credential 执行，并确认远端 ref 精确指向 `fed789` 后才能写 success。若企业要求 branch protection 或 required CI，后续合并/发布 Adapter会查询这些系统对同一 commit 的当前结果。
+
+### 第 14 步：测试环境 Operation
+
+```json
+{
+  "operationId": "op-stage-201",
+  "taskId": "task-release-cancel-01",
+  "adapter": "deploy@1",
+  "action": "deploy",
+  "request": {
+    "target": "staging-a",
+    "repositoryId": "service-a",
+    "commit": "fed789",
+    "expectedCurrentVersion": "staging-41"
+  },
+  "preview": "将 service-a@fed789 部署到 staging-a；仅当当前版本为 staging-41 时执行。",
+  "createdBy": "member-release",
+  "createdAt": "2026-08-10T14:20:00Z"
+}
+```
+
+ControlProfile 当前分类为自动允许。自动允许仍执行：
+
+```text
+current Gate checks
+→ append operation-execution-started
+→ Adapter call with op-stage-201 idempotency key
+→ Adapter read-back verifies staging-a runs fed789
+→ append operation-succeeded
+```
+
+staging Operation 确认成功后，林舟才创建测试环境验收 Task，输入明确绑定 `staging-a` 与 `service-a@fed789`。乔安或其他成员通过受控只读/测试工具执行验收并提交普通 Result；角色名不影响 Kernel。
+
+ToolResult 记录测试观察，Operation event 记录部署外部效果，两者不混写。林舟结合专业 Result、ToolResult 和当前 CI 观察决定是否继续生产 Operation。
+
+### 第 15 步：创建生产 Operation
+
+```json
+{
+  "operationId": "op-production-202",
+  "taskId": "task-release-cancel-01",
+  "adapter": "deploy@1",
+  "action": "deploy",
+  "request": {
+    "target": "production-a",
+    "repositoryId": "service-a",
+    "commit": "fed789",
+    "expectedCurrentVersion": "release-41"
+  },
+  "preview": "将 service-a@fed789 部署到 production-a；仅当当前版本仍为 release-41 时执行。",
+  "createdBy": "member-release",
+  "createdAt": "2026-08-10T15:00:00Z"
+}
+```
+
+request 与 preview 包含所有效果字段。部署 credential 只在 Adapter 内认证，不进入 Operation、Bash、prompt 或 ToolResult。
+
+### 第 16 步：exact Approval
+
+runtime 把实际 bounded preview 发送给陈晨并保存 delivery metadata。陈晨通过认证 action批准：
+
+```json
+{
+  "eventType": "operation-approved",
+  "operationId": "op-production-202",
+  "actorId": "human-chen",
+  "createdAt": "2026-08-10T15:08:00Z"
+}
+```
+
+普通聊天“可以上线”不具备这项权威。Approval只允许尝试，不证明部署成功。
+
+### 第 17 步：再次检查并执行
+
+执行前重新确认：
+
+- 当前 identity、Team和 MemberConfig；
+- 当前 ControlProfile 与 approver policy；
+- runtime binding；
+- Operation仍不可变且 pending；
+- production-a 仍为 `release-41`；
+- Approval未过期；
+- Task和 Work仍打开。
+
+然后先 append `operation-execution-started`，再调用后端。
+
+## 阶段六：成功路径与未知路径
+
+### 主路径：Adapter确认成功
+
+部署 API 返回后，Adapter只读查询 production-a，确认所有实例运行 `fed789`，再 append：
+
+```text
+operation-succeeded
+```
+
+发布成员获得有界工具结果，提交发布 Task 的 Result：
+
+```json
+{
+  "taskId": "task-release-cancel-01",
+  "summary": "staging-a 验收完成；production-a 的 Operation op-production-202 已由 Adapter确认运行 service-a@fed789。",
+  "deliverableRefs": [
+    {
+      "repositoryId": "service-a",
+      "commitSha": "fed789"
+    }
+  ],
+  "toolResultRefs": ["tool-result-stage-acceptance-45"],
+  "submittedBy": "member-release",
+  "createdAt": "2026-08-10T15:30:00Z"
+}
+```
+
+Result 的文字不是部署权威；真实外部状态仍由 Operation events 给出。
+
+### 备选路径：调用后 timeout
+
+如果 started 后 timeout：
+
+```text
+无法确认状态
+→ operation-uncertain
+→ 阻止 production-a 冲突写、Task隐藏性取消和 Work termination
+→ recovery controller/Operator 使用特权只读 reconciliation
+```
+
+可能结果：
+
+- 确认 `fed789` 已运行：append succeeded；
+- 确认未应用且无遗留效果：append safe-failure，若仍要部署则创建新 Operation；
+- 确认部分应用：append recovery-needed，创建受控恢复 Operation；
+- 仍未知：保持 uncertain并升级 Operator。
+
+Human说“风险我承担”或工单已转 incident 都不能把未知变成已知。
+
+## 阶段七：关闭 Work
+
+### 第 18 步：检查所有 Task
+
+当前 Task列表：
+
+```text
+调查库存接口        → Result
+初次实现 def456     → Result
+review def456        → Result
+修复为 fed789       → Result
+测试环境验收        → Result
+发布                 → Result
+```
+
+若有不再需要且尚无 Result 的 Task，Leader必须先停止完整进程树并取消。Result与 cancellation不能同时存在。
+
+### 第 19 步：CloseGuard
+
+CloseGuard确认：
+
+- 林舟仍是 Leader，Work仍打开；
+- 当前 WorkSpec 非空；
+- 每个 Task有 Result或 cancellation fact；
+- 没有 active turn/process/writer；
+- `op-git-push-200`、`op-stage-201` 和 `op-production-202` 都是 known terminal；
+- 没有 pending Approval、uncertain、recovery-needed或 unresolved incident；
+- `fed789` 和文档 ContentRef仍可解析。
+
+它不判断取消订单体验是否好，也不判断林舟是否应该继续优化。
+
+### 第 20 步：Leader作语义决定
+
+林舟根据当前 WorkSpec、报告、工具观察和外部状态判断：
+
+- 合法取消行为已交付；
+- 拣货和发货限制已实现；
+- 库存释放幂等缺口已修复；
+- 原下单接口未改变；
+- 测试环境完成验证；
+- 陈晨批准的精确生产动作已确认成功。
+
+于是提交：
+
+```text
+complete-work
+reason: 当前 WorkSpec 已满足，目标 commit fed789 已完成测试环境验证并在 production-a 确认生效。
+```
+
+`work-completed` timeline fact、终结投影和 epoch 原子提交。Work不会重开；新需求创建新 Work。
+
+## 最终关系图
 
 ```mermaid
 flowchart TD
-    H["Human messages"] --> W["Work"]
-    W --> WS["current WorkSpec"]
-    W --> T1["implementation Task"]
-    W --> T2["verification Task"]
-    W --> T3["release Task"]
-    T1 --> R1["producer Result"]
-    T2 --> R2["verification Result"]
-    T3 --> R3["release Result"]
-    R2 --> R1
-    R1 --> C["ContentRef: Git commit"]
-    T1 --> TR1["ToolResults"]
-    T2 --> TR2["ToolResults"]
-    TR1 --> ME["Machine Evidence"]
-    TR2 --> ME
-    W --> D["CoordinationDecisions"]
-    T3 --> O["test and production Operations"]
-    O --> R3
-    O --> ME
-    O --> A["Approval when required"]
-    O --> OS["known external outcome"]
-    D --> END["complete / fail / cancel"]
+    H["Human messages"] --> W["Work + timeline"]
+    W --> WS["current WorkSpec projection"]
+    W --> T1["investigation Task"]
+    W --> T2["implementation Task"]
+    W --> T3["optional review/test Tasks"]
+    W --> T4["release Task"]
+    T1 --> R1["Result"]
+    T2 --> R2["Result"]
+    T3 --> R3["Result"]
+    T4 --> R4["Result"]
+    R1 --> CR1["document ContentRef"]
+    R2 --> CR2["Git commit ContentRef"]
+    T2 --> TR["ToolResults"]
+    T3 --> TR
+    T4 --> O["immutable Operations"]
+    O --> OE["append-only Operation events"]
+    H --> AP["exact approval event"]
+    AP --> O
+    W --> END["complete-work / stop-work"]
 ```
 
-图中箭头表示可查询关系，不表示所有 Work 必须按固定顺序经过每一个节点。
+箭头表示可查询关系，不表示每个 Work必须按固定顺序经过所有节点。
 
-## 拿到一个 ID 后怎样往回找
+## 拿到一个 ID 后怎样查询
 
-### 知道 Work ID，想知道当前在做什么
+### 从 Work ID 开始
 
 ```text
-Work 当前投影
-→ 当前 WorkSpec
-→ timeline
-→ 所有 Task
-→ Result 与 disposition
-→ 所有 Operation 和当前状态
+Work current projection
+├─ current WorkSpec
+├─ timeline：Human/Leader消息、work-spec-changed、task-created、task-cancelled、terminal fact
+├─ all Tasks
+├─ each Task's Result
+└─ all Operations and events
 ```
 
-### 知道 Task ID，想知道成员被要求做什么
+适合回答：当前目标是什么、谁派了哪些工作、为什么尚未关闭。
+
+### 从 Task ID 开始
 
 ```text
 Task
 ├─ immutable TaskSpec
-├─ assigneeId
-├─ executionContext
-├─ 所属 Work
-├─ ToolResults / Machine Evidence
-└─ 最多一个 Result
+├─ assignee
+├─ current runtime/execution observation
+├─ ToolResults
+├─ Operations created by this Task
+└─ zero or one Result / cancellation fact
 ```
 
-### 知道生产 Result，想知道代码是否可接受
+适合回答：成员当时被委托什么、有哪些工具观察、最终如何交接。
+
+### 从 commit 开始
 
 ```text
-Result.deliverableRefs 中的 commit
-→ 查 verification.producerResultId 等于该 Result 的验证 Result
-→ verifier 与 producer 不同
-→ subject 是同一 commit
-→ outcome completed
-→ verdict pass
-→ verification Result 已 accepted
-→ producer Result 才可 accepted
+repositoryId + commitSha
+→ 哪些 Task input 引用它
+→ 哪些 Result deliverable 引用它
+→ 哪些 review/test/release Task 使用它
+→ 哪些 Operation request 准备或已经发布它
 ```
 
-### 知道 Operation，想知道 Human 批准了什么
+commit 只确定内容；质量、CI、报告和部署状态要沿各自来源查询。
+
+### 从 ToolResult ID 开始
 
 ```text
-Operation
-→ operationDigest
-→ Approval.operationDigest
-→ presentedView / secure ContentRef
-→ channelMessageId
-→ decidedBy / expiry
-→ Gate 评估记录
-→ execution / reconciliation / rollback events
+ToolResult
+├─ actor / Work / Task
+├─ tool / requestSummary / resultSummary
+├─ outputRef
+├─ timestamps
+└─ 哪个 Result 引用并延长 retention
 ```
 
-### 看到“测试通过”，想知道机器依据
+适合回答受控工具直接观察了什么，不应外推成业务真理。
+
+### 从 Operation ID 开始
 
 ```text
-Result 或 verification claim
-→ machineEvidenceRefs
-→ Machine Evidence.subjectRef
-→ toolResultRefs
-→ ToolResult 的 actor、Task、workspace、commit、命令和结果
+immutable Operation
+├─ taskId / adapter@version / action
+├─ typed request
+├─ actual risk preview + delivery metadata
+├─ approval/rejection event
+├─ execution-started
+├─ success / safe-failure / uncertain / recovery-needed
+└─ reconciliation or recovery events
 ```
+
+适合回答 Human批准了什么、外部调用是否开始、真实状态如何确认、是否仍有恢复责任。
 
 ## 最终术语表
 
-这些词到现在应该是对已见问题的命名，而不是孤立定义。
-
 | 名称 | 一句话解释 |
 |---|---|
-| Human | 系统外提出请求或作出必要确认的人 |
-| Agent | 由模型驱动、拥有专业职责但受代码边界约束的程序角色 |
-| Worker | Agent 实际运行的进程或容器边界 |
-| AgentTeams | 管理 Team、Worker、容器、平台身份和集成资源的系统 |
-| Matrix / OpenClaw | 消息网络以及使用它的通信客户端边界 |
-| Work | 一整件持续事务的身份和上下文 |
-| WorkSpec | 当前对整件 Work 目标、范围、约束和完成条件的理解 |
-| Task | 一次已经正式派发、有唯一负责人的委托 |
-| TaskSpec | 这次委托的具体目标、输入和约束 |
-| Result | 一个 Task 最多一份的不可变终态交接 |
-| ContentRef | 对精确 Git commit 或存储对象的轻量稳定引用 |
-| CoordinationDecision | Leader 对派发、处置和关闭作出的正式不可变选择 |
-| TeamConfig | Tiangong 对平台身份的团队准入、Leader 和路由授权 |
-| MemberConfig | 成员职责、工具、资源、Skill、模型和容量范围 |
-| ControlProfile | 企业控制、Guard、验证、Approval、预算和保留硬规则 |
-| Skill | 帮助 Agent 做事的方法包，不授予权限 |
-| Adapter | 把具体工具或后端接入统一输入、权限、记录和恢复合同的边界 |
-| ToolResult | 一次受控工具调用的有界机器观察 |
-| Machine Evidence | 运行时验证后，为关键机器事实建立的引用索引 |
-| Operation | 可能改变隔离工作区之外共享或外部状态的受控动作 |
-| Approval | Human 对一个精确 operation digest 作出的执行许可 |
-| Gate | Operation 执行前的硬检查 |
-| ResultGuard | Result 创建前的硬检查 |
-| CloseGuard | Work 终结前扫描整个 Work 的硬检查 |
-| uncertain | 外部效果可能发生、但当前无法确认的安全状态 |
-| reconciliation | 使用受保护只读接口把本地记录与外部状态重新核对 |
+| Human | 系统外提出请求、补充事实或作精确决定的人 |
+| Agent | 由模型驱动、有身份、职责、上下文和受控工具的程序角色 |
+| Worker | Agent控制程序实际运行的受管理单元 |
+| AgentTeams | 管平台 Team、Worker、身份、通道投递和存储集成 |
+| Team | 持续协作的一组 Agent，恰好一个 Leader |
+| Leader | 负责 Work 语义理解、动态委托和最终完成判断的 Agent |
+| Work | 一整件持续事务的稳定身份和 timeline 容器 |
+| WorkSpec | Leader对整件 Work当前目标的完整快照式理解 |
+| Task | 一次已正式派发、绑定一个 assignee 的不可变委托 |
+| TaskSpec | 该 Task 的 objective、inputs 和普通语言 constraints |
+| TeamConfig | Team identity、Leader、route 与 ControlProfile选择 |
+| MemberConfig | 成员实际职责、数据、网络、工具、Adapter、模型、预算和并发能力 |
+| ControlProfile | 企业机器能力与 Operation policy 的上限，不是专业流程图 |
+| runtime binding | 把当前 actor/Task/cwd/root/target 连接到实际能力的句柄 |
+| Skill | 治理过的方法默认和可复用代码，不授予权限 |
+| prepared environment | 与 Worker控制域隔离、可复用并可回收的本地执行环境 |
+| ContentRef | 对精确 Git commit 或 Adapter-owned version 的稳定引用 |
+| Result | 一个 Task最多一份的 assignee不可变终态报告 |
+| ResultGuard | `submitResult` 内只检查机器可确定条件的本地验证逻辑 |
+| ToolResult | 一次顶层工具调用的有界、不可变机器观察 |
+| Adapter | 外部系统的版本化 typed、credential、scope、verification 与 reconciliation 边界 |
+| Operation | 一项不可变、完整可展示的拟议外部写入 |
+| exact Approval | 认证 Human针对一个 Operation ID 的批准或拒绝 event |
+| reconciliation | 使用特权只读 Adapter把本地事件与外部状态对账 |
+| Work epoch | 防止陈旧协调判断覆盖新事实的乐观并发 token |
+| requestId | 协调命令响应丢失时返回原结果的重放身份 |
+| CloseGuard | Work终结前扫描全部机器安全条件的代码检查 |
 
-## 这套设计故意不做什么
+## 系统最重要的保证
 
-为了保持控制模型小而明确，Tiangong 不尝试：
+不用背正式设计中的编号，也应能说清：
 
-- 为所有行业编码一套通用工作流；
-- 把每份报告、测试计划和环境都强制建模；
-- 对所有内容建立通用内容寻址归档平台；
-- 让自然语言、Skill 或检索内容授予机器权限；
-- 用模型判断代替幂等、路径限制和外部效果 Gate；
-- 证明模型在认知意义上真正理解输入；
-- 抵抗被明确纳入信任边界的数据库或主机管理员；
-- 在无法确认外部效果时，用 Human 风险接受掩盖未知事实。
+1. 每个 Work从认证、去重的 Human消息开始；
+2. 歧义输入不会静默混入旧 Work，纠错不删除历史；
+3. WorkSpec变化保存完整 timeline 快照；
+4. WorkSpec为空不能创建 Task；
+5. TaskSpec和 assignee不可变；
+6. Kernel没有固定角色、阶段、DAG或 mandatory verification；
+7. 每个 Task最多一个 active execution owner和一个 Result；
+8. Result与 cancellation原子竞争；
+9. prose、Skill、RAG、tool output和 MCP output不能授予能力；
+10. Bash进程树读不到 control/production credential或 host control；
+11. 同一 writable root永远只有一个 active writer；
+12. 广泛搜索出口与核心私有源码不交给同一成员；
+13. 每个外部写都是 request和风险 preview完整可见的不可变 Operation；
+14. chat不是 Approval，Approval只绑定一个 Operation ID；
+15. 外部调用前先记录 execution start；
+16. success/safe-failure只有 Adapter确认后置事实后才能写；
+17. unresolved Operation不能盲重试、隐藏取消或随 Work关闭；
+18. 后续 retry或 rollback通常是新 Operation；
+19. Operation events永久保留，被 Result引用的 ToolResult按 Work retention保留；
+20. Work closure要求所有 Task、Operation、进程和 writer安全收口；
+21. 语义完成只由 Leader判断；
+22. 新硬控制必须证明具体威胁、机器可验证性和额外摩擦。
 
-## 先知道这套保证建立在哪个信任范围内
+## 怎样继续读正式设计
 
-一套 Tiangong 部署面向一个企业。企业内部可以有多个 Team，但当前设计不把同一部署当作互不信任企业之间的安全隔离边界。
+建议按已经走过的因果顺序阅读：
 
-企业管理员和主机管理员属于信任范围。普通成员和模型不能绕过权限、路径、Approval 与 Guard；但系统不声称能用密码学证明受信数据库管理员从未改过记录，也不声称能阻止主机管理员读取进程内存。
+1. [范围、信任边界与设计原则](../evidence-backed-team-control.md#2-scope-and-trust-boundary)
+2. [Work、WorkSpec 与 Human communication](../evidence-backed-team-control.md#5-work-workspec-and-human-communication)
+3. [Task 与 Result handoff](../evidence-backed-team-control.md#6-task-delegation-and-result-handoff)
+4. [Team、能力、Skill 与上下文](../evidence-backed-team-control.md#7-team-capability-skills-and-context)
+5. [prepared execution environment](../evidence-backed-team-control.md#8-prepared-execution-environments)
+6. [Bash、网络与 Adapter](../evidence-backed-team-control.md#9-tools-network-and-adapters)
+7. [Content 与 ToolResult](../evidence-backed-team-control.md#10-content-and-execution-records)
+8. [Operation 与 exact Approval](../evidence-backed-team-control.md#11-operations-and-exact-approval)
+9. [session、并发、预算与 closure](../evidence-backed-team-control.md#12-sessions-concurrency-budgets-and-closure)
+10. [安全模型](../evidence-backed-team-control.md#13-security-model)
+11. [系统不变量](../evidence-backed-team-control.md#14-system-invariants)
 
-这不是一句附带免责声明，而是决定系统应该承诺什么、测试什么的重要边界。可信架构必须同时写清能防住的错误和明确不承诺的攻击者。
+正式设计定义合同，教程只负责建立心智模型。实现时应按纵向切片同时落下数据、能力检查、事务、恢复和确定性测试，不能只创建同名对象就声称完成。
 
-## 怎样继续阅读正式设计
+## 累积小结：现在可以从头讲完整套系统
 
-现在再读正式文档时，建议按教程经历过的问题顺序，而不是硬背章节：
+完成全课程后，你应能不依赖术语表讲出：
 
-1. [范围、所有权和设计原则](../evidence-backed-team-control.md#2-scope-and-deployment-assumptions)
-2. [Work 与 Human communication](../evidence-backed-team-control.md#5-work-and-human-communication)
-3. [Task、Result 与 handoff](../evidence-backed-team-control.md#6-task-delegation-and-result-handoff)
-4. [Decision 与 Work closure](../evidence-backed-team-control.md#7-coordination-decisions-and-work-closure)
-5. [Team、Skill、Context 与 ContentRef](../evidence-backed-team-control.md#8-team-and-configuration)
-6. [ToolResult 与 Machine Evidence](../evidence-backed-team-control.md#11-execution-records-and-machine-evidence)
-7. [Operation 与 exact Approval](../evidence-backed-team-control.md#13-operations-and-exact-approval)
-8. [ResultGuard 与 CloseGuard](../evidence-backed-team-control.md#14-verification-resultguard-and-closeguard)
-9. [并发、存储、恢复和安全模型](../evidence-backed-team-control.md#15-sessions-models-budgets-and-concurrency)
-10. [最终系统不变量](../evidence-backed-team-control.md#18-system-invariants)
+1. 一条 Human消息如何经过认证通道、AgentTeams 和 Tiangong路由进入正确 Leader；
+2. 为什么先创建 Work而不是直接执行，平台消息如何去重，歧义关联怎样用占位 Work纠正；
+3. Leader怎样通过普通对话形成 WorkSpec，为什么未知答案保持未知，为什么完整快照与当前投影是同一事实；
+4. 为什么 WorkSpec、TaskSpec、消息和 Skill都不能授予机器权限；
+5. Leader怎样根据真实输入动态创建普通 Task，而不是让 Kernel规定固定角色、阶段、DAG和验证流程；
+6. AgentTeams身份、ControlProfile、MemberConfig与 runtime binding怎样共同形成实际能力；
+7. 为什么 Agent可以拥有好用的热环境和 Bash，同时完整进程树仍读不到 control state、生产 credential和任意网络；
+8. 如何用精确 commit和 ContentRef交接内容，用唯一 Result表达成员终态报告，用 ToolResult表达机器观察；
+9. 为什么这些事实不能互相代替，也不需要复制进第二套 evidence ledger；
+10. 为什么所有外部写必须由 Adapter创建不可变 Operation，效果字段必须在 typed request和 preview中完整可见；
+11. Human怎样对一个 Operation ID作 exact Approval，为什么普通聊天、WorkSpec和 Result都不能授权；
+12. 为什么 external call必须 started-before-call，Adapter怎样区分 known terminal与 unresolved；
+13. uncertain/recovery-needed为什么会阻止冲突写、取消和 Work终结，以及 reconciliation、Operator和新 recovery Operation怎样处理；
+14. message ID、requestId、Work epoch、operationId、single active execution和 single writer分别防住哪一种重复或竞态；
+15. Task cancellation、Result竞争、session释放、模型 fallback和 budget耗尽怎样不制造虚假业务事实；
+16. CloseGuard怎样确认机器事实全部安全收口，Leader又怎样独立作出 complete-work或 stop-work的语义判断；
+17. 为什么终结后的 Work不重开，为什么新硬 Gate必须先证明真实威胁与机器可验证性。
 
-正式设计是目标架构，不是当前代码已完全符合的声明。实现时应先选择一个最小纵向切片，同时补齐数据、Guard、事务、恢复和确定性测试，不能只创建几个同名 class 就声称完成迁移。
+如果中间任何一步只能说出对象名、却说不出它防止的具体错误，请回到对应章节的“朴素做法为什么失败”和“累积小结”。
 
 ## 全课程最终自检
 
-尝试完整回答：
+1. 平台认证身份为什么不等于 Tiangong能力？
+2. 一条歧义消息错误新建 Work后，为什么不删除或 merge？
+3. WorkSpec变化后，已经派发的 Task怎样得到必要背景，又为何不能自动改变？
+4. 企业强制 review应该怎样在不膨胀通用 Kernel的情况下落地？
+5. Bash可以运行任意本地命令，为何仍不能 push、部署或泄露核心源码？
+6. ContentRef、Result、ToolResult和 Operation event分别是什么事实？
+7. Result没有 outcome和 accept/reject时，Leader如何表达继续、修复或采用？
+8. exact Approval为什么不需要第二个业务对象或 digest？
+9. timeout 后为什么既不能立即重试，也不能直接报告失败？
+10. safe-failure必须由什么确认？
+11. Work epoch和 requestId为什么不能互相替代？
+12. Task cancellation为什么必须先停止完整进程树并处理 Operation？
+13. Human愿意承担风险为什么不能关闭 uncertain Work？
+14. CloseGuard能检查什么，永远不该替 Leader判断什么？
+15. 什么样的新硬控制才值得进入 Kernel？
 
-1. 一条 Matrix 消息为什么先创建 Work，而不是直接创建 Task？
-2. WorkSpec 更新后，为什么已有 TaskSpec 仍保持不变？
-3. 一个 Agent 为什么不能通过 Task 文字或 Skill 给自己增加权限？
-4. Result completed、ToolResult success、verification pass 和 Leader accept 分别表示什么？
-5. 为什么正式代码 Result 必须等匹配的独立验证 Result 被接受后才能接受？
-6. 本地编辑与 Operation 的边界在哪里？
-7. Approval 为什么不能由普通聊天替代？
-8. 后端超时时，为什么必须进入 uncertain 而不是立即重试？
-9. requestId、Work epoch 和单活执行上下文分别防止哪一种重复？
-10. CloseGuard 能检查什么，又为什么不能替 Leader 判断业务是否完成？
-
-如果这些问题都能用案例回答，你已经不再只是记住对象名，而是建立了这套架构最重要的因果关系。
+如果这些问题都能用“取消订单”案例完整回答，你已经建立了这套目标架构的核心因果模型。
