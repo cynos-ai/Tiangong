@@ -37,7 +37,7 @@ fi
 if grep -Eq 'curl.*(password|access[_-]?token|secret)' "${RUNNER}"; then
   fail 'browser smoke runner must not place credentials in curl arguments.'
 fi
-cleanup_fragment='rm -rf -- "${STATE_DIR}"'
+cleanup_fragment="rm -rf -- \"\${STATE_DIR}\""
 if grep -Eqi 'rm[[:space:]]+-rf[[:space:]]+--[[:space:]]+\$\{[^}]+\}' "${RUNNER}" && \
    ! grep -Fq -- "${cleanup_fragment}" "${RUNNER}"; then
   fail 'browser smoke cleanup must target only its fixed state directory.'
