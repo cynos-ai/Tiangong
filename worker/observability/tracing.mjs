@@ -35,6 +35,7 @@ const PHASES = new Set([
   "peer.transport.start",
   "peer.transport.ping",
   "peer.transport.pong",
+  "handoff.transport.sent",
   "pi.agent_turn.start",
   "pi.turn.start",
   "model.request.ready",

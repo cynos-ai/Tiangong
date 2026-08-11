@@ -264,6 +264,7 @@ test("rejects unapproved span operations and attributes before export", async (t
   );
   assert.throws(() => attempt.checkpoint("arbitrary.phase"), /Unsupported observability phase/u);
   assert.doesNotThrow(() => attempt.checkpoint("peer.transport.start"));
+  assert.doesNotThrow(() => attempt.checkpoint("handoff.transport.sent"));
   assert.doesNotThrow(() => attempt.checkpoint("tool.proposed", {
     "tiangong.tool.name": "team_check_result",
   }));

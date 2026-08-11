@@ -1,0 +1,14 @@
+apiVersion: agentteams.io/v1beta1
+kind: Team
+metadata:
+  name: tiangong-specialist-handoff
+spec:
+  description: Disposable exact Specialist-to-Leader Matrix handoff verification.
+  peerMentions: true
+  workerMembers:
+    - name: tiangong-specialist-handoff-leader
+      role: team_leader
+    - name: tiangong-specialist-handoff-specialist
+      role: worker
+    - name: tiangong-specialist-handoff-observer
+      role: worker
