@@ -679,7 +679,8 @@ docker exec "${CONTROLLER_CONTAINER}" test ! -e "${CONTROLLER_ALIAS_HELPER}" || 
 docker cp "${ALIAS_HELPER}" "${CONTROLLER_CONTAINER}:${CONTROLLER_ALIAS_HELPER}"
 docker exec "${CONTROLLER_CONTAINER}" "${CONTROLLER_ALIAS_HELPER}" assert-absent
 TIANGONG_OTEL_EXPORTER_ENDPOINT="${OTLP_ENDPOINT}" "${BUILD_WORKER_IMAGE}"
-mkdir -p -m 700 "${OTLP_DATA_DIRECTORY}"
+mkdir -p "${OTLP_DATA_DIRECTORY}"
+chmod 700 "${OTLP_DATA_DIRECTORY}"
 docker volume create --label "io.tiangong.smoke=specialist-handoff" "${OTLP_VOLUME}" >/dev/null
 otlp_owned=1
 docker run --rm -i \
@@ -784,7 +785,6 @@ printf 'handoff_worker_runtime_and_channel_readiness=pass\n'
 docker cp "${ROOM_MEMBERS}" "${SPECIALIST_CONTAINER}:${SPECIALIST_ROOM_MEMBERS}"
 docker cp "${ROOM_MEMBERS}" "${OBSERVER_CONTAINER}:${OBSERVER_ROOM_MEMBERS}"
 specialist_config="/root/agentteams-fs/agents/${SPECIALIST_NAME}/openclaw.json"
-observer_config="/root/agentteams-fs/agents/${OBSERVER_NAME}/openclaw.json"
 docker exec "${SPECIALIST_CONTAINER}" "${SPECIALIST_ROOM_MEMBERS}" members \
   "${specialist_config}" "${team_room_id}" \
   "${admin_user_id},${leader_user_id},${specialist_user_id},${observer_user_id}" \

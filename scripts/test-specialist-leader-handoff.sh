@@ -42,9 +42,9 @@ for required in \
   'handoff_specialist_sender_ack=pass' \
   'handoff_invalid_reference_fail_closed=pass' \
   'handoff_leader_receipt=pass' \
-  'assert_no_work_admission "${work_id}" "${intent_id}"' \
+  "assert_no_work_admission \"\${work_id}\" \"\${intent_id}\"" \
   'handoff_agent_communication_not_human_work=pass' \
-  'assert_trace_complete "${source_event_id}" specialist_handoff handoff.transport.sent' \
+  "assert_trace_complete \"\${source_event_id}\" specialist_handoff handoff.transport.sent" \
   'read -r sender_transaction_id handoff_event_id replay_event_id'; do
   grep -Fq -- "${required}" "${RUNNER}" || fail "runner is missing required handoff contract: ${required}"
 done
@@ -75,10 +75,14 @@ if [[ "${TIANGONG_RUN_REAL:-0}" == 1 ]]; then
   value() {
     awk -F= -v key="$1" '$1 == key {sub(/^[^=]*=/, ""); sub(/\r$/, ""); print; exit}' "${GENERATED_ENV}"
   }
-  export AGENTTEAMS_MATRIX_URL="http://127.0.0.1:$(value AGENTTEAMS_PORT_GATEWAY)"
-  export AGENTTEAMS_MATRIX_DOMAIN="$(value AGENTTEAMS_MATRIX_DOMAIN)"
-  export AGENTTEAMS_ADMIN_USER="$(value AGENTTEAMS_ADMIN_USER)"
-  export AGENTTEAMS_ADMIN_PASSWORD="$(value AGENTTEAMS_ADMIN_PASSWORD)"
+  gateway_port="$(value AGENTTEAMS_PORT_GATEWAY)"
+  matrix_domain="$(value AGENTTEAMS_MATRIX_DOMAIN)"
+  admin_user="$(value AGENTTEAMS_ADMIN_USER)"
+  admin_password="$(value AGENTTEAMS_ADMIN_PASSWORD)"
+  export AGENTTEAMS_MATRIX_URL="http://127.0.0.1:${gateway_port}"
+  export AGENTTEAMS_MATRIX_DOMAIN="${matrix_domain}"
+  export AGENTTEAMS_ADMIN_USER="${admin_user}"
+  export AGENTTEAMS_ADMIN_PASSWORD="${admin_password}"
   [[ -n "${AGENTTEAMS_MATRIX_DOMAIN}" && -n "${AGENTTEAMS_ADMIN_USER}" && \
      -n "${AGENTTEAMS_ADMIN_PASSWORD}" ]] || fail 'generated Matrix environment is incomplete.'
   TIANGONG_SPECIALIST_HANDOFF_MODE=full "${RUNNER}"
