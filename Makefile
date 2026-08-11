@@ -8,6 +8,8 @@ LEADER_SMOKE := ./smoke-testing/support/run-leader-smoke.sh
 LEADER_SMOKE_TEST := ./scripts/test-leader-smoke.sh
 PEER_MENTION_SMOKE := ./smoke-testing/support/run-peer-mention-smoke.sh
 PEER_MENTION_SMOKE_TEST := ./scripts/test-peer-mention-smoke.sh
+MATRIX_BROWSER_SMOKE := ./smoke-testing/support/run-matrix-browser-smoke.sh
+MATRIX_BROWSER_SMOKE_TEST := ./scripts/test-matrix-browser-smoke.sh
 RUNNER_ISOLATION_SPIKE := ./smoke-testing/support/run-runner-isolation-spike.sh
 RUNNER_EXECUTOR_SMOKE := node ./smoke-testing/support/run-runner-executor-smoke.mjs
 RUNNER_BROKER_SMOKE := node ./smoke-testing/support/run-runner-broker-smoke.mjs
@@ -18,7 +20,7 @@ SKILL_CHECK := node ./scripts/check-skills.mjs
 PAUSE_WORKER_BOUNDARY_TEST := ./scripts/test-pause-worker-boundary.sh
 PHASE4_RECOVERY_TEST := node ./worker/test/phase4-recovery.test.mjs
 
-.PHONY: help init up start stop down status verify config logs login uninstall check-skills check-demo-contract check-phase6-evidence-bundle verify-professional-state build-worker-image test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-phase4-recovery test-runner-isolation test-runner-executor test-runner-broker test-runner-preparation start-runner-broker status-runner-broker stop-runner-broker test-deployment-service test-peer-mention-smoke-contract test-peer-mention-smoke test-pause-worker-boundary
+.PHONY: help init up start stop down status verify config logs login uninstall check-skills check-demo-contract check-phase6-evidence-bundle verify-professional-state build-worker-image test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-phase4-recovery test-runner-isolation test-runner-executor test-runner-broker test-runner-preparation start-runner-broker status-runner-broker stop-runner-broker test-deployment-service test-peer-mention-smoke-contract test-peer-mention-smoke test-matrix-browser-smoke-contract matrix-browser-start matrix-browser-status matrix-browser-stop test-pause-worker-boundary
 
 help: ## Show available commands
 	@printf '%s\n' 'Tiangong local development commands:'
@@ -113,6 +115,18 @@ test-peer-mention-smoke-contract: ## Validate the Worker peer mention fixture an
 
 test-peer-mention-smoke: ## Run the focused Worker peer mention smoke and clean up
 	@$(PEER_MENTION_SMOKE)
+
+test-matrix-browser-smoke-contract: ## Validate the dependency-free Matrix browser probe contract
+	@$(MATRIX_BROWSER_SMOKE_TEST)
+
+matrix-browser-start: ## Start the disposable Matrix browser probe and print its URL
+	@$(MATRIX_BROWSER_SMOKE) start
+
+matrix-browser-status: ## Show the bounded Matrix browser probe result
+	@$(MATRIX_BROWSER_SMOKE) status
+
+matrix-browser-stop: ## Stop the Matrix browser probe and verify exact cleanup
+	@$(MATRIX_BROWSER_SMOKE) stop
 
 test-pause-worker-boundary: ## Test the bounded paused-Worker smoke orchestration guard
 	@$(PAUSE_WORKER_BOUNDARY_TEST)
