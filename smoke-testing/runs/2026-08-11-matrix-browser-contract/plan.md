@@ -131,4 +131,9 @@ and the server's exact cleanup post-checks.
 This probe does not prove target Work admission, durable PostgreSQL handoff
 outbox, sender-side Matrix acknowledgement, independent Leader receipt,
 transactional reconciliation, or takeover races. Those remain P0.3 and later
-runtime probes. P1 remains blocked until the complete P0 Gate is green.
+runtime probes. The separate Dashboard `body=@displayName` regression and the
+OpenClaw ordinary-assistant delivery-ack decision are also not claimed by this
+run; rich-mention transport prerequisites are recorded separately by public PR
+#64. P0.2 is therefore a set of recorded subcontracts, not a claim that every
+P0.2 item in the private plan is complete. P1 remains blocked until the complete
+P0 Gate is green.
