@@ -6,6 +6,7 @@ import {
   renderProbePage,
   validateBrowserReport,
 } from "./matrix-browser-contract.mjs";
+import { ProbeController } from "./run-matrix-browser-smoke.mjs";
 
 const expected = Object.freeze({
   runId: "11111111-2222-4333-8444-555555555555",
@@ -88,6 +89,21 @@ AGENTTEAMS_PORT_GATEWAY=18080
   assert.equal(parsed.AGENTTEAMS_PORT_GATEWAY, "18080");
   assert.throws(() => parseGeneratedEnvironment("AGENTTEAMS_ADMIN_USER=one\nAGENTTEAMS_ADMIN_USER=two\n"));
   assert.throws(() => parseGeneratedEnvironment("AGENTTEAMS_ADMIN_USER=$(touch /tmp/no)\n"));
+});
+
+test("server status does not retain generated credentials in its public state", () => {
+  const configuration = {
+    domain: "matrix.test",
+    matrixOrigin: "http://127.0.0.1:18080",
+    adminUser: "admin",
+    adminPassword: "fixture-admin-password",
+    appserviceToken: "fixture-appservice-token",
+  };
+  const controller = new ProbeController(configuration);
+  const status = JSON.stringify(controller.status());
+  assert.equal(Object.hasOwn(configuration, "adminPassword"), false);
+  assert.equal(Object.hasOwn(configuration, "appserviceToken"), false);
+  assert.doesNotMatch(status, /fixture-admin-password|fixture-appservice-token/gu);
 });
 
 test("renders a credential-free page with a restrictive browser policy", () => {

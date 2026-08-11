@@ -80,13 +80,17 @@ function createConfiguration(environment) {
   if (/[\s/\\]/u.test(domain) || domain.length > 255) throw new ProbeError("invalid_matrix_domain", 500);
   const matrixOrigin = process.env.TIANGONG_MATRIX_BROWSER_MATRIX_ORIGIN ??
     `http://127.0.0.1:${parsePort(requireValue(environment, "AGENTTEAMS_PORT_GATEWAY"))}`;
-  let origin;
+  let parsedOrigin;
   try {
-    origin = new URL(matrixOrigin).origin;
+    parsedOrigin = new URL(matrixOrigin);
   } catch {
     throw new ProbeError("invalid_matrix_origin", 500);
   }
-  if (!/^https?:$/u.test(new URL(origin).protocol)) throw new ProbeError("invalid_matrix_origin", 500);
+  if (!/^https?:$/u.test(parsedOrigin.protocol) || parsedOrigin.username || parsedOrigin.password ||
+      parsedOrigin.pathname !== "/" || parsedOrigin.search || parsedOrigin.hash) {
+    throw new ProbeError("invalid_matrix_origin", 500);
+  }
+  const origin = parsedOrigin.origin;
   return {
     domain,
     matrixOrigin: origin,

@@ -89,10 +89,10 @@ The deterministic contract passed before the real browser run. A real browser
 run then returned `status=pass` and `phase=cleanup-passed` with:
 
 ```text
-run_id=c21d3119-2948-4509-91c5-0c57f3bdce39
-first_event_id=$ckEqYDKuFf3Sd6nAIYv1XGZGqLA80dzz6cpdoXARrMs
-replay_event_id=$ckEqYDKuFf3Sd6nAIYv1XGZGqLA80dzz6cpdoXARrMs
-relation_event_id=$7JVlJkQ0m9BpUjONNJa3Q73brfXSkrNEpi_Yh3F8740
+run_id=99c6b30d-5dc5-4ff6-962e-c27b2a5d011b
+first_event_id=$J1nf0yjZXmerWr8wtHR1DzpxilMFpTGprB8G0ei_EIE
+replay_event_id=$J1nf0yjZXmerWr8wtHR1DzpxilMFpTGprB8G0ei_EIE
+relation_event_id=$OP-FdpeqPCpQuUQ3zrNsgaxHkHknaV-S_OsyITiMMzo
 media_api=media-v3
 first_event_count=1
 page_console_errors=0
