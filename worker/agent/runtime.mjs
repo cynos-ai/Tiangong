@@ -21,6 +21,7 @@ import { PolicyGate } from "./gates/policy-gate.mjs";
 import { IdempotencyStore } from "./idempotency/store.mjs";
 import { ModelGateway } from "./model-gateway.mjs";
 import { PeerReplyRouter } from "./peer-reply-router.mjs";
+import { parseSpecialistHandoffCommand, SpecialistHandoffProbe } from "./handoff-transport-probe.mjs";
 import { parsePeerTransportCommand, PeerTransportProbe } from "./peer-transport-probe.mjs";
 import { createAgentTeamsPendingStorage } from "./pending-operation/agentteams-storage.mjs";
 import { PendingOperationStore } from "./pending-operation/store.mjs";
@@ -50,6 +51,8 @@ import { TurnContextController } from "./turn-context.mjs";
 import { createPiSessionTraceObserver } from "../observability/pi-session-tracing.mjs";
 import { createProviderTraceBridge } from "../observability/provider-tracing.mjs";
 import { observabilityOutcome } from "../observability/tracing.mjs";
+
+const NO_REPLY_TEXT = '{"action":"NO_REPLY"}';
 
 function assistantText(message) {
   if (message?.role !== "assistant" || !Array.isArray(message.content)) return "";
@@ -173,13 +176,15 @@ export class TiangongAgentRuntime {
     const turns = new TurnContextController();
     let gate;
     let registry;
+    let channel;
     if (profileBundle.runtimeKind === "leader") {
       gate = new TeamCoordinationGate();
       const playbook = readPlaybookManifest("software-change-delivery");
+      channel = createTeamChannel({ evidence });
       const teamDeps = {
         rootDir: defaultTiangongRoot(),
         env: process.env,
-        channel: createTeamChannel({ evidence }),
+        channel,
         sync: createTeamSync(),
         evidence,
         gate,
@@ -193,10 +198,11 @@ export class TiangongAgentRuntime {
       registry = createLeaderToolRegistry({ playbook, deps: teamDeps });
     } else if (profileBundle.runtimeKind === "member") {
       gate = new TeamCoordinationGate();
+      channel = createTeamChannel({ evidence });
       const teamDeps = {
         rootDir: defaultTiangongRoot(),
         env: process.env,
-        channel: createTeamChannel({ evidence }),
+        channel,
         sync: createTeamSync(),
         evidence,
         gate,
@@ -278,8 +284,10 @@ export class TiangongAgentRuntime {
       workRunStore,
       turns,
       registry,
+      channel,
       peerReplies: new PeerReplyRouter(),
       peerTransport: new PeerTransportProbe(),
+      handoffTransport: new SpecialistHandoffProbe(),
       providerTrace,
       profileDigest: profileBundle.profileDigest,
       provider: request.provider,
@@ -317,6 +325,37 @@ export class TiangongAgentRuntime {
     state.peerTransport.commit(plan);
     observability?.checkpoint(`peer.transport.${command.kind}`);
     return result;
+  }
+
+  async #handleSpecialistHandoff(request, state, route, command, observability) {
+    const plan = state.handoffTransport.plan(command, request, route);
+    if (typeof state.channel?.sendSpecialistHandoff !== "function") {
+      throw new Error("Specialist handoff channel is unavailable");
+    }
+    const delivery = await state.channel.sendSpecialistHandoff(plan.recipient.id, {
+      workId: plan.workId,
+      intentId: plan.intentId,
+      sourceEventId: plan.sourceEventId,
+      sourceSender: plan.sourceSender,
+    });
+    const replay = await state.channel.sendSpecialistHandoff(plan.recipient.id, {
+      workId: plan.workId,
+      intentId: plan.intentId,
+      sourceEventId: plan.sourceEventId,
+      sourceSender: plan.sourceSender,
+    });
+    if (delivery.transactionId !== replay.transactionId || delivery.eventId !== replay.eventId) {
+      throw new Error("Specialist handoff replay did not preserve the Matrix event");
+    }
+    appendDeterministicAssistantMessage(
+      state,
+      `TG_HANDOFF_SENDER_ACK transaction_id=${delivery.transactionId} event_id=${delivery.eventId} replay_event_id=${replay.eventId}`,
+    );
+    state.handoffTransport.commit(plan);
+    observability?.checkpoint("handoff.transport.sent");
+    // OpenClaw recognizes this exact bounded envelope as a no-reply result;
+    // returning an empty Harness result would emit its generic error message.
+    return createTurnResult(request, { text: NO_REPLY_TEXT, replyTarget: null });
   }
 
   async #handleApproval(request, state, route, command, observability) {
@@ -534,6 +573,18 @@ export class TiangongAgentRuntime {
     if (state.session.isStreaming) throw new Error("pi session is already processing a request");
 
     const route = state.peerReplies.plan(request.replyTarget);
+    if (state.handoffTransport.hasCommittedTurn(request.turnId)) {
+      return createTurnResult(request, { text: NO_REPLY_TEXT, replyTarget: null });
+    }
+    if (route.replyTarget !== null && /TG_HANDOFF_[A-Z]+/u.test(request.prompt)) {
+      return createTurnResult(request, { text: NO_REPLY_TEXT, replyTarget: null });
+    }
+    const handoffCommand = route.replyTarget === null
+      ? parseSpecialistHandoffCommand(request.prompt)
+      : null;
+    if (handoffCommand) {
+      return this.#handleSpecialistHandoff(request, state, route, handoffCommand, observability);
+    }
     const transportCommand = parsePeerTransportCommand(request.prompt);
     if (transportCommand) {
       return this.#handlePeerTransport(request, state, route, transportCommand, observability);
