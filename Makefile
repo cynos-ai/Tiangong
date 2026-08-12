@@ -11,6 +11,7 @@ PEER_MENTION_SMOKE_TEST := ./scripts/test-peer-mention-smoke.sh
 MATRIX_BROWSER_SMOKE := ./smoke-testing/support/run-matrix-browser-smoke.sh
 MATRIX_BROWSER_SMOKE_TEST := ./scripts/test-matrix-browser-smoke.sh
 SPECIALIST_HANDOFF_SMOKE := ./smoke-testing/support/run-specialist-leader-handoff.sh
+P0_IDENTITY_PG_CONTRACT := ./scripts/test-p0-identity-pg.sh
 SPECIALIST_HANDOFF_SMOKE_TEST := ./scripts/test-specialist-leader-handoff.sh
 RUNNER_ISOLATION_SPIKE := ./smoke-testing/support/run-runner-isolation-spike.sh
 RUNNER_EXECUTOR_SMOKE := node ./smoke-testing/support/run-runner-executor-smoke.mjs
@@ -22,7 +23,7 @@ SKILL_CHECK := node ./scripts/check-skills.mjs
 PAUSE_WORKER_BOUNDARY_TEST := ./scripts/test-pause-worker-boundary.sh
 PHASE4_RECOVERY_TEST := node ./worker/test/phase4-recovery.test.mjs
 
-.PHONY: help init up start stop down status verify config logs login uninstall check-skills check-demo-contract check-phase6-evidence-bundle verify-professional-state build-worker-image test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-phase4-recovery test-runner-isolation test-runner-executor test-runner-broker test-runner-preparation start-runner-broker status-runner-broker stop-runner-broker test-deployment-service test-peer-mention-smoke-contract test-peer-mention-smoke test-matrix-browser-smoke-contract matrix-browser-start matrix-browser-status matrix-browser-stop test-specialist-leader-handoff-contract test-specialist-leader-handoff test-pause-worker-boundary
+.PHONY: help init up start stop down status verify config logs login uninstall check-skills check-demo-contract check-phase6-evidence-bundle verify-professional-state build-worker-image test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-phase4-recovery test-runner-isolation test-runner-executor test-runner-broker test-runner-preparation start-runner-broker status-runner-broker stop-runner-broker test-deployment-service test-peer-mention-smoke-contract test-peer-mention-smoke test-matrix-browser-smoke-contract matrix-browser-start matrix-browser-status matrix-browser-stop test-specialist-leader-handoff-contract test-specialist-leader-handoff test-p0-identity-pg-contract test-pause-worker-boundary
 
 help: ## Show available commands
 	@printf '%s\n' 'Tiangong local development commands:'
@@ -135,6 +136,9 @@ test-specialist-leader-handoff-contract: ## Validate the exact Specialist-to-Lea
 
 test-specialist-leader-handoff: ## Run the focused Specialist-to-Leader handoff smoke and clean up
 	@TIANGONG_RUN_REAL=1 $(SPECIALIST_HANDOFF_SMOKE_TEST)
+
+test-p0-identity-pg-contract: ## Validate the P0.4 identity and PostgreSQL probe fixture contract
+	@$(P0_IDENTITY_PG_CONTRACT)
 
 test-pause-worker-boundary: ## Test the bounded paused-Worker smoke orchestration guard
 	@$(PAUSE_WORKER_BOUNDARY_TEST)
