@@ -117,6 +117,12 @@ stable capture id, and fsyncs each record. The pinned OpenClaw hook exposes only
 agent/session metadata, so this remains an execution-record seam and does not
 invent Work/Task ownership or retention marks.
 
+The live canary probe now exercises that path inside the real Worker container:
+it writes one synthetic bounded record, verifies the Worker-owned path,
+capture id, agent/session metadata, and absence of the raw probe text, then
+removes only the probe file and its empty directory. This is direct container
+state evidence for the capture seam, not evidence of a real model/tool turn.
+
 The current implementation also provides a bounded file-backed admission
 context seam for a credential-free control runtime. It uses an atomic,
 locked, regular-file-only record containing source, binding, and request
