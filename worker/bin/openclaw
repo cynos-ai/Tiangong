@@ -6,6 +6,36 @@ readonly PLUGIN_ID="tiangong-pi"
 readonly PLUGIN_PATH="/opt/tiangong-worker/plugin"
 readonly PREFLIGHT="/opt/tiangong-worker/scripts/openclaw-preflight.mjs"
 
+configure_codex_runtime() {
+  local config_file temporary_file
+  [[ "${TIANGONG_RUNTIME_LANE:-legacy-v0.2}" == "openclaw-canary" ]] || return 0
+  [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]] || return 0
+  config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
+  [[ -f "${config_file}" ]] || {
+    printf '[tiangong-worker] ERROR: OpenClaw config not found: %s\n' "${config_file}" >&2
+    return 1
+  }
+  temporary_file="$(mktemp "${config_file}.tiangong-codex.XXXXXX")"
+  trap 'rm -f "${temporary_file:-}"' RETURN
+  jq '
+    .plugins = (.plugins // {})
+    | .plugins.entries = (.plugins.entries // {})
+    | .plugins.entries.codex = ((.plugins.entries.codex // {}) + {enabled: true})
+    | .plugins.allow = if (.plugins.allow | type) == "array"
+        then ([.plugins.allow[], "codex"] | unique)
+        else .plugins.allow end
+    | .agents = (.agents // {})
+    | .agents.defaults = (.agents.defaults // {})
+    | .agents.defaults.model = {primary: "codex/gpt-5.4", fallbacks: []}
+    | .agents.defaults.models = (.agents.defaults.models // {})
+    | .agents.defaults.models["codex/gpt-5.4"] = ((.agents.defaults.models["codex/gpt-5.4"] // {}) + {alias: "codex"})
+    | .agents.defaults.embeddedHarness = {runtime: "codex", fallback: "none"}
+  ' "${config_file}" >"${temporary_file}"
+  chmod 600 "${temporary_file}"
+  mv "${temporary_file}" "${config_file}"
+  trap - RETURN
+}
+
 configure_tiangong_plugin() {
   local config_file temporary_file runtime_lane
   config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
@@ -42,8 +72,13 @@ configure_tiangong_plugin() {
 
 if [[ "${1:-}" == "gateway" && "${2:-}" == "run" ]]; then
   configure_tiangong_plugin
+  configure_codex_runtime
   /usr/bin/node "${PREFLIGHT}"
-  printf '[tiangong-worker] Starting upstream OpenClaw with the Tiangong pi harness.\n' >&2
+  if [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" && "${TIANGONG_RUNTIME_LANE:-legacy-v0.2}" == "openclaw-canary" ]]; then
+    printf '[tiangong-worker] Starting upstream OpenClaw with the native Codex harness.\n' >&2
+  else
+    printf '[tiangong-worker] Starting upstream OpenClaw with the Tiangong pi harness.\n' >&2
+  fi
 fi
 
 exec "${UPSTREAM_OPENCLAW}" "$@"

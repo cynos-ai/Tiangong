@@ -23,7 +23,10 @@ grep -Fqx '  image: tiangong-worker-canary:dev' "${FIXTURE}" || fail 'Canary fix
 grep -Fq 'FROM worker-base AS canary' "${DOCKERFILE}" || fail 'Canary Docker target is missing.'
 grep -Fq 'TIANGONG_RUNTIME_LANE=openclaw-canary' "${DOCKERFILE}" || fail 'Canary image lane is not explicit.'
 grep -Fq 'TIANGONG_CANARY_REQUIRED=1' "${DOCKERFILE}" || fail 'Canary image does not require explicit lane binding.'
+grep -Fq 'OPENCLAW_AGENT_RUNTIME=codex' "${DOCKERFILE}" || fail 'Canary image does not force the native Codex runtime.'
+grep -Fq 'OPENCLAW_AGENT_HARNESS_FALLBACK=none' "${DOCKERFILE}" || fail 'Canary image permits a hidden harness fallback.'
 grep -Fq 'CANARY_IMAGE="tiangong-worker-canary:dev"' "${BUILDER}" || fail 'Canary image is not built by the image builder.'
+grep -Fqx '  model: codex/gpt-5.4' "${FIXTURE}" || fail 'Canary fixture must use a Codex model reference.'
 
 if grep -Eqi 'password|access_token|apiKey|secret|token:' "${FIXTURE}"; then
   fail 'Canary fixture contains credential-bearing fields.'
