@@ -12,8 +12,8 @@ readonly GENERATED_ENV_FILE="${RUNTIME_ROOT}/manager.env"
 readonly WORKSPACE_DIR="${RUNTIME_ROOT}/manager"
 readonly HOST_SHARE_DIR="${RUNTIME_ROOT}/host-share"
 readonly DATA_VOLUME="tiangong-agentteams-data"
-readonly SUPPORTED_VERSION="v1.2.0"
-readonly INSTALLER_SHA256="701f53c53dc476d8ca7f33428e231c1706d967ac2b517ec4c1c59d742864331d"
+readonly SUPPORTED_VERSION="v1.2.2"
+readonly INSTALLER_SHA256="8ef28c5bf239a0af2d6b57b946ecee977bf39e6c874cd786b85c7bd094668f9d"
 readonly UNINSTALL_CONFIRMATION="delete-tiangong-agentteams-data"
 
 ACTION="${1:-help}"
@@ -357,7 +357,7 @@ up() {
 }
 
 recover_manager_dm_membership() {
-  # AgentTeams v1.2.0 can persist a CoPaw sync cursor before processing the
+  # AgentTeams CoPaw runtime can persist a sync cursor before processing the
   # controller-created admin-DM invitation. Recover only that exact invitation
   # using the authenticated Manager identity; never join an input-selected room.
   local attempts="${1:-1}" attempt resource room manager token joined sync encoded response matrix_domain

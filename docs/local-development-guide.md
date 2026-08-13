@@ -40,10 +40,10 @@ AGENTTEAMS_LLM_API_KEY=你的key
 ```
 
 **坑 1：`AGENTTEAMS_VERSION` 必须与当前代码 pin 一致。**
-当前代码 pin `v1.2.0`（见 `scripts/agentteams.sh` 的 `SUPPORTED_VERSION`）。旧 `.env` 里的 `v1.2.0-beta.1` 会让加载 `.env` 的栈命令报 `Unsupported AGENTTEAMS_VERSION`：
+当前代码 pin `v1.2.2`（见 `scripts/agentteams.sh` 的 `SUPPORTED_VERSION`）。旧 `.env` 里的 `v1.2.0-beta.1` 会让加载 `.env` 的栈命令报 `Unsupported AGENTTEAMS_VERSION`：
 
 ```bash
-sed -i.bak 's/^AGENTTEAMS_VERSION=.*/AGENTTEAMS_VERSION=v1.2.0/' .env
+sed -i.bak 's/^AGENTTEAMS_VERSION=.*/AGENTTEAMS_VERSION=v1.2.2/' .env
 rm -f .env.bak
 ```
 
@@ -429,7 +429,7 @@ docker exec agentteams-worker-tiangong-demo-leader sh -c '
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| 栈命令报 `Unsupported AGENTTEAMS_VERSION` | `.env` 版本与代码 pin 不一致 | 改为 `AGENTTEAMS_VERSION=v1.2.0` |
+| 栈命令报 `Unsupported AGENTTEAMS_VERSION` | `.env` 版本与代码 pin 不一致 | 改为 `AGENTTEAMS_VERSION=v1.2.2` |
 | Dashboard 13000 不通 | Dashboard tag 被清空、容器未启动或端口被占用 | 固定 `AGENTTEAMS_DASHBOARD_VERSION`，执行 `make up`，再用 `curl` 检查 |
 | `npm ci` 超时 | npmjs.org 网络不通 | 临时换 npmmirror，构建后确认 Dockerfile 已还原 |
 | 构建报 docker.io digest 404 | 加速器缺该镜像 | `docker pull` 预拉，再用不带 `--pull` 的 9 个目标命令构建 |
