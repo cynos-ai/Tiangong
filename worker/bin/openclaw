@@ -61,9 +61,10 @@ configure_tiangong_plugin() {
         enabled: true,
         config: ((.plugins.entries[$plugin_id].config // {}) + {runtimeLane: $runtime_lane})
       })
-    | if (.plugins.allow | type) == "array" then
-        .plugins.allow = ([.plugins.allow[], $plugin_id] | unique)
-      else . end
+    | .plugins.allow = if (.plugins.allow | type) == "array"
+        then ([.plugins.allow[], $plugin_id] | unique)
+        else [$plugin_id]
+      end
   ' "${config_file}" >"${temporary_file}"
   chmod 600 "${temporary_file}"
   mv "${temporary_file}" "${config_file}"
