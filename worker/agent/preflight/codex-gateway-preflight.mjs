@@ -4,6 +4,7 @@ export const CODEX_GATEWAY_PROVIDER = "agentteams-gateway";
 export const CODEX_GATEWAY_MODEL = "deepseek-v4-pro";
 export const DEFAULT_CODEX_GATEWAY_HOST = "agentteams-controller";
 const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
+const CODEX_MODEL_ALIAS_PREFIX = "codex/";
 
 export class CodexGatewayPreflightError extends Error {
   constructor(code, message) {
@@ -26,6 +27,14 @@ function allowedHosts(env) {
   return new Set((configured || DEFAULT_CODEX_GATEWAY_HOST).split(",").map((value) => value.trim()).filter(Boolean));
 }
 
+function hasAllowedModel(provider, modelId) {
+  if (!Array.isArray(provider.models)) return false;
+  return provider.models.some((model) => {
+    if (!model || typeof model !== "object") return false;
+    return model.id === modelId || model.id === `${CODEX_MODEL_ALIAS_PREFIX}${modelId}`;
+  });
+}
+
 export function assertCodexGatewayConfiguration(config, {
   env = process.env,
   providerId = nonEmptyString(env.TIANGONG_CODEX_PROVIDER) || CODEX_GATEWAY_PROVIDER,
@@ -44,7 +53,7 @@ export function assertCodexGatewayConfiguration(config, {
   if (!nonEmptyString(provider.apiKey)) {
     fail("gateway-consumer-token-missing", "The Worker consumer token is missing from the AgentTeams provider.");
   }
-  if (!Array.isArray(provider.models) || !provider.models.some((model) => model && typeof model === "object" && model.id === modelId)) {
+  if (!hasAllowedModel(provider, modelId)) {
     fail("gateway-model-config-missing", `The OpenClaw provider configuration does not include ${modelId}.`);
   }
 

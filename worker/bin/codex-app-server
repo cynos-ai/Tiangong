@@ -5,6 +5,7 @@ set -Eeuo pipefail
 : "${OPENAI_API_KEY:?OPENAI_API_KEY is required}"
 
 readonly CODEX_PATH="/opt/tiangong-worker/node_modules/.bin/codex"
+readonly CODEX_PROXY="/opt/tiangong-worker/scripts/codex-app-server-proxy.mjs"
 [[ -x "${CODEX_PATH}" ]] || {
   printf 'codex app-server executable is unavailable.\n' >&2
   exit 127
@@ -18,4 +19,8 @@ exec env -i \
   "CODEX_HOME=${CODEX_HOME}" \
   "OPENAI_API_KEY=${OPENAI_API_KEY}" \
   "TMPDIR=${TMPDIR:-/tmp}" \
-  "${CODEX_PATH}" "$@"
+  "CODEX_PATH=${CODEX_PATH}" \
+  /usr/bin/node "${CODEX_PROXY}" \
+  --disable responses_websockets \
+  --disable responses_websockets_v2 \
+  "$@"

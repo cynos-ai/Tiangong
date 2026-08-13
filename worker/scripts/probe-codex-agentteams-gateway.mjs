@@ -19,11 +19,15 @@ const events = [];
 let buffer = "";
 let child;
 try {
-  await writeFile(join(home, "config.toml"), `model_provider = "openai"\nopenai_base_url = ${JSON.stringify(input.baseUrl)}\n`, { mode: 0o600 });
+  await writeFile(join(home, "config.toml"), `model_provider = "agentteams-gateway"\n\n[model_providers.agentteams-gateway]\nname = "agentteams-gateway"\nbase_url = ${JSON.stringify(input.baseUrl)}\nenv_key = "OPENAI_API_KEY"\nwire_api = "responses"\nsupports_websockets = false\n\n[features]\nresponses_websockets = false\nresponses_websockets_v2 = false\n`, { mode: 0o600 });
   const env = { ...process.env, CODEX_HOME: home, OPENAI_API_KEY: input.consumerToken };
   delete env.DEEPSEEK_API_KEY;
   delete env.OPENAI_BASE_URL;
-  child = spawn("codex", ["app-server", "--listen", "stdio://"], {
+  child = spawn("codex", [
+    "--disable", "responses_websockets",
+    "--disable", "responses_websockets_v2",
+    "app-server", "--listen", "stdio://",
+  ], {
     env,
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -43,7 +47,7 @@ try {
   });
   const send = (message) => child.stdin.write(`${JSON.stringify(message)}\n`);
   send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { clientInfo: { name: "tiangong-gateway-probe", title: "Tiangong Gateway Probe", version: "0" }, capabilities: { experimentalApi: true } } });
-  send({ jsonrpc: "2.0", id: 2, method: "thread/start", params: { model: "deepseek-v4-pro", modelProvider: "openai", approvalPolicy: "never", cwd: "/tmp" } });
+  send({ jsonrpc: "2.0", id: 2, method: "thread/start", params: { model: "deepseek-v4-pro", modelProvider: "agentteams-gateway", approvalPolicy: "never", cwd: "/tmp" } });
   await new Promise((resolve) => setTimeout(resolve, 3_000));
   const threadResponse = events.find((message) => message.id === 2);
   const thread = threadResponse?.result?.thread?.id ?? threadResponse?.result?.id;

@@ -29,6 +29,12 @@ test("accepts the scoped AgentTeams gateway consumer-token route", () => {
   });
 });
 
+test("accepts the OpenClaw codex-prefixed alias for the selected coding model", () => {
+  const aliasedConfig = structuredClone(config);
+  aliasedConfig.models.providers["agentteams-gateway"].models = [{ id: "codex/deepseek-v4-pro" }];
+  assert.equal(assertCodexGatewayConfiguration(aliasedConfig).model, "deepseek-v4-pro");
+});
+
 test("fails closed when the local provider omits the selected model", () => {
   assert.throws(
     () => assertCodexGatewayConfiguration({

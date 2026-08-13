@@ -213,6 +213,39 @@ the complete native OpenClaw turn through that route and prove native tool
 admission, `apply_patch` handling, ToolResult capture, restart, and recovery.
 The Web console remains the read-only continuity witness throughout.
 
+### HTTP Responses fallback and tool turn (2026-08-14)
+
+The native OpenClaw/Codex route is now proven through a canary-only local
+provider bridge. Codex 0.120.0 reserves the built-in `openai` provider and
+normalizes OpenClaw's Codex provider to that name, so configuration alone
+could not select the AgentTeams provider. The Worker launcher now starts a
+credential-scoped JSON-RPC proxy which rewrites only `thread/start` and
+`thread/resume` provider fields from the reserved `openai` alias to the
+allowlisted `agentteams-gateway` provider. Codex then reads
+`wire_api = "responses"` and `supports_websockets = false`; the real key stays
+behind AgentTeams/Higress and only the Worker consumer token enters the child
+environment.
+
+Direct evidence from the disposable v1.2.2 canary:
+
+- the focused Codex gateway probe returned bounded `status=ok` for
+  `deepseek-v4-pro`;
+- a Matrix mention produced an exact `OK` event from the Worker; the session
+  completed with `embedded run done` and no Responses WebSocket 401;
+- a second Matrix turn caused `apply_patch` to create the owned canary file,
+  synchronized a 7-byte object to the canary MinIO prefix, and returned an
+  exact `TOOL_DONE` event;
+- Matrix sync observed the Worker message and the storage stat observed the
+  owned file; the run finished with `gate_a_cleanup=pass`.
+
+This is a viable AgentTeams + OpenClaw + Codex server + DeepSeek route while
+keeping the Web/Matrix surface. Native Responses WebSocket transport remains
+unsupported by the current AgentTeams gateway; the supported contract is
+Codex Responses over HTTP with the Worker-local provider rewrite. The bridge
+is canary-scoped and does not change the legacy Worker lane. Gate B still must
+prove durable Work/Task/Result, approvals, recovery, and data-structure
+migration before any default-lane cutover.
+
 ### Native Matrix turn probe (2026-08-13)
 
 The real disposable canary accepted a Matrix mention, passed the local

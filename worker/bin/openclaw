@@ -33,7 +33,7 @@ configure_codex_gateway() {
   unset DEEPSEEK_API_KEY DEEPSEEK_BASE_URL CODEX_API_KEY OPENAI_BASE_URL
   codex_home="$(mktemp -d "${TMPDIR:-/tmp}/tiangong-codex-home.XXXXXX")"
   chmod 700 "${codex_home}"
-  printf 'model_provider = "openai"\nopenai_base_url = %s\n' \
+  printf 'model_provider = "agentteams-gateway"\n\n[model_providers.agentteams-gateway]\nname = "agentteams-gateway"\nbase_url = %s\nenv_key = "OPENAI_API_KEY"\nwire_api = "responses"\nsupports_websockets = false\n\n[features]\nresponses_websockets = false\nresponses_websockets_v2 = false\n' \
     "$(printf '%s' "${provider_base_url}" | jq -Rsa .)" >"${codex_home}/config.toml"
   chmod 600 "${codex_home}/config.toml"
   export CODEX_HOME="${codex_home}"

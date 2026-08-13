@@ -58,6 +58,28 @@ canary; it is not an in-place production upgrade.
   OpenClaw Gate A records remain the source for the separate Codex
   gateway/WebSocket compatibility result.
 
+## OpenClaw/Codex/DeepSeek route (2026-08-14)
+
+- **End-to-end route: PASS in isolated canary.** The v1.2.2 AgentTeams stack
+  created the reserved OpenClaw Worker, kept Matrix and the Web surface
+  available, and used only the Worker-scoped consumer token.
+- **Protocol boundary: explicit HTTP fallback.** AgentTeams' Responses
+  WebSocket path still returns 401. Codex 0.120.0's built-in `openai` provider
+  is reserved, so the Worker uses a tiny JSON-RPC provider rewrite to select
+  `agentteams-gateway`; Codex then uses the configured Responses HTTP route
+  (`wire_api=responses`, `supports_websockets=false`).
+- **Model turn: PASS.** Matrix mention produced exact `OK`; Matrix sync saw one
+  Worker message and the Codex session logged `embedded run done`.
+- **Tool turn: PASS.** Matrix mention caused `apply_patch`, produced the
+  canary-owned 7-byte file, synchronized it to the canary storage prefix, and
+  produced exact `TOOL_DONE`.
+- **Cleanup: PASS.** The reserved Worker, container, storage prefix, mirror,
+  and local run state were removed by the bounded driver.
+
+The route is suitable for a canary/Gate B implementation slice. Do not claim
+native AgentTeams WebSocket support or change the default Worker lane until
+the remaining Work/Task/Result, Approval, recovery, and migration gates pass.
+
 ## OpenClaw Gate A follow-up (2026-08-13)
 
 - **Canary creation: PASS.** The reserved `tiangong-openclaw-canary` Worker was
