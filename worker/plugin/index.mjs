@@ -6,6 +6,7 @@ import {
 } from "../observability/tracing.mjs";
 import { registerAdmissionHooks } from "../agent/gates/admission-hooks.mjs";
 import { createControlAdmissionResolver } from "../agent/gates/admission-context.mjs";
+import { createToolResultCaptureHook } from "../agent/gates/tool-result-capture.mjs";
 import { assertPluginApi } from "../agent/preflight/openclaw-preflight.mjs";
 import { createTiangongPiHarness } from "./openclaw-adapter.mjs";
 
@@ -28,6 +29,9 @@ export default definePluginEntry({
               throw new Error("Tiangong admission Control API is not configured");
             },
       });
+      api.on("tool_result_persist", createToolResultCaptureHook({
+        filePath: process.env.TIANGONG_TOOL_RESULT_CAPTURE_FILE || "/tmp/tiangong-tool-results.jsonl",
+      }), { priority: 100 });
     }
     const observability = createWorkerObservability({
       config: resolveObservabilityConfig(api.pluginConfig),

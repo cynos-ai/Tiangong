@@ -20,5 +20,7 @@ grep -Fqx 'before_dispatch (priority 100)' <<<"${info}" ||
   fail 'The pinned OpenClaw before_dispatch admission hook is not registered.'
 grep -Fqx 'before_tool_call (priority 100)' <<<"${info}" ||
   fail 'The pinned OpenClaw before_tool_call admission hook is not registered.'
+grep -Fqx 'tool_result_persist (priority 100)' <<<"${info}" ||
+  fail 'The pinned OpenClaw tool_result_persist capture hook is not registered.'
 
 printf 'OpenClaw Gate A live hook contract passed.\n'
