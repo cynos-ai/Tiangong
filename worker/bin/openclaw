@@ -21,14 +21,19 @@ configure_tiangong_plugin() {
     printf '[tiangong-worker] ERROR: unsupported runtime lane: %s\n' "${runtime_lane}" >&2
     return 1
   }
-  jq --arg plugin_id "${PLUGIN_ID}" --arg plugin_path "${PLUGIN_PATH}" --arg runtime_lane "${runtime_lane}" '
+  local canary_required=false
+  [[ "${runtime_lane}" == "openclaw-canary" ]] && canary_required=true
+  jq --arg plugin_id "${PLUGIN_ID}" --arg plugin_path "${PLUGIN_PATH}" \
+    --arg runtime_lane "${runtime_lane}" --argjson canary_required "${canary_required}" '
     .plugins = (.plugins // {})
     | .plugins.load = (.plugins.load // {})
     | .plugins.load.paths = ([((.plugins.load.paths // [])[]), $plugin_path] | unique)
     | .plugins.entries = (.plugins.entries // {})
     | .plugins.entries[$plugin_id] = ((.plugins.entries[$plugin_id] // {}) + {
         enabled: true,
-        config: ((.plugins.entries[$plugin_id].config // {}) + {runtimeLane: $runtime_lane})
+        config: ((.plugins.entries[$plugin_id].config // {}) + {runtimeLane: $runtime_lane}),
+        hooks: ((.plugins.entries[$plugin_id].hooks // {}) +
+          (if $canary_required then {allowConversationAccess: true} else {} end))
       })
     | if (.plugins.allow | type) == "array" then
         .plugins.allow = ([.plugins.allow[], $plugin_id] | unique)

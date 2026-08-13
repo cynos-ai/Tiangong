@@ -58,11 +58,20 @@ export function assertPluginConfig(config, {
   if (configuredLane !== requestedLane) {
     fail("runtime-lane-mismatch", "The requested runtime lane does not match the Worker configuration.");
   }
+  if (requestedLane === CANARY_RUNTIME_LANE && entry.hooks?.allowConversationAccess !== true) {
+    fail("conversation-hooks-not-enabled", "The canary lane must explicitly enable conversation hook access.");
+  }
   if (env.TIANGONG_CANARY_REQUIRED === "1" && requestedLane !== CANARY_RUNTIME_LANE) {
     fail("canary-lane-required", "The canary probe requires an explicitly configured OpenClaw lane.");
   }
 
-  return { pluginId, pluginPath, pluginEnabled: true, runtimeLane: requestedLane };
+  return {
+    pluginId,
+    pluginPath,
+    pluginEnabled: true,
+    runtimeLane: requestedLane,
+    conversationHooks: requestedLane === CANARY_RUNTIME_LANE,
+  };
 }
 
 export async function checkControlApi({
