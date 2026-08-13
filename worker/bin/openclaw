@@ -4,6 +4,7 @@ set -Eeuo pipefail
 readonly UPSTREAM_OPENCLAW="/usr/local/bin/openclaw"
 readonly PLUGIN_ID="tiangong-pi"
 readonly PLUGIN_PATH="/opt/tiangong-worker/plugin"
+readonly PREFLIGHT="/opt/tiangong-worker/scripts/openclaw-preflight.mjs"
 
 configure_tiangong_plugin() {
   local config_file temporary_file
@@ -32,6 +33,7 @@ configure_tiangong_plugin() {
 
 if [[ "${1:-}" == "gateway" && "${2:-}" == "run" ]]; then
   configure_tiangong_plugin
+  /usr/bin/node "${PREFLIGHT}"
   printf '[tiangong-worker] Starting upstream OpenClaw with the Tiangong pi harness.\n' >&2
 fi
 

@@ -24,7 +24,7 @@ SKILL_CHECK := node ./scripts/check-skills.mjs
 PAUSE_WORKER_BOUNDARY_TEST := ./scripts/test-pause-worker-boundary.sh
 PHASE4_RECOVERY_TEST := node ./worker/test/phase4-recovery.test.mjs
 
-.PHONY: help init up start stop down status verify config logs login uninstall check-skills check-demo-contract check-phase6-evidence-bundle verify-professional-state build-worker-image test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-phase4-recovery test-runner-isolation test-runner-executor test-runner-broker test-runner-preparation start-runner-broker status-runner-broker stop-runner-broker test-deployment-service test-peer-mention-smoke-contract test-peer-mention-smoke test-matrix-browser-smoke-contract matrix-browser-start matrix-browser-status matrix-browser-stop test-specialist-leader-handoff-contract test-specialist-leader-handoff test-p0-identity-pg-contract test-p0-2-mention-contract test-pause-worker-boundary
+.PHONY: help init up start stop down status verify config logs login uninstall check-skills check-demo-contract check-phase6-evidence-bundle verify-professional-state build-worker-image test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-phase4-recovery test-runner-isolation test-runner-executor test-runner-broker test-runner-preparation start-runner-broker status-runner-broker stop-runner-broker test-deployment-service test-peer-mention-smoke-contract test-peer-mention-smoke test-matrix-browser-smoke-contract matrix-browser-start matrix-browser-status matrix-browser-stop test-specialist-leader-handoff-contract test-specialist-leader-handoff test-p0-identity-pg-contract test-p0-2-mention-contract test-pause-worker-boundary test-openclaw-gate-a-contract
 
 help: ## Show available commands
 	@printf '%s\n' 'Tiangong local development commands:'
@@ -146,6 +146,9 @@ test-p0-2-mention-contract: ## Validate the P0.2 mention-gating and delivery pro
 
 test-pause-worker-boundary: ## Test the bounded paused-Worker smoke orchestration guard
 	@$(PAUSE_WORKER_BOUNDARY_TEST)
+
+test-openclaw-gate-a-contract: ## Validate the deterministic OpenClaw Gate A preflight contract
+	@./scripts/test-openclaw-gate-a.sh
 
 uninstall: ## Delete local AgentTeams data; requires CONFIRM=delete-tiangong-agentteams-data
 	@CONFIRM="$(CONFIRM)" $(AGENTTEAMS) uninstall

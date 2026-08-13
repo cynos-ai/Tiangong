@@ -2,12 +2,12 @@
 
 ## Status and ownership
 
-- Status: **PLANNED — no run has passed yet**.
+- Status: **IN IMPLEMENTATION — no Gate A canary run has passed yet**.
 - Scope: public, credential-free compatibility and fail-closed probes for an
   isolated OpenClaw Worker lane.
-- Product code enabled by this plan: none until the implementation slice adds
-  the candidate image, required plugin, and canary driver.
-- Driver to be added with the implementation: `smoke-testing/support/run-openclaw-gate-a.sh`.
+- Product code enabled by this plan: the deterministic plugin/control-API
+  preflight contract in `worker/agent/preflight/` and the Gateway wrapper hook.
+- Driver still to be added: `smoke-testing/support/run-openclaw-gate-a.sh`.
 - This plan is the public S0.1 inventory and Gate A test contract. It does not
   copy private research, schedules, credentials, or internal reports.
 
@@ -86,9 +86,10 @@ make openclaw-gate-a-status
 make openclaw-gate-a-stop
 ```
 
-The command names above are a contract for the implementation slice; until
-that slice lands they are intentionally unavailable. A missing command is a
-blocked implementation item, not a passing result.
+`make test-openclaw-gate-a-contract` is now available and proves the
+credential-free A2 preflight contract. The `start`, `status`, and `stop`
+commands remain unavailable until the isolated Worker/Team/room driver lands;
+a missing command is a blocked implementation item, not a passing result.
 
 The driver must:
 
