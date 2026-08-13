@@ -182,6 +182,8 @@ The pinned `2026.4.14 (2f35b6f)` image reports the bundled `codex` plugin
 this is the reviewed image addition for the native Codex route. The canary
 route uses `codex/gpt-5.4`, `OPENCLAW_AGENT_RUNTIME=codex`, and
 `OPENCLAW_AGENT_HARNESS_FALLBACK=none`.
+The real focused Gate A run also exercises this route through AgentTeams and
+keeps the Web/Matrix surface available as the continuity witness.
 
 The public Worker model gateway now has a credential-free configuration seam
 for the proposed DeepSeek V4 Pro target: `openai-responses`,
