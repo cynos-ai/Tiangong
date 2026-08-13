@@ -5,6 +5,7 @@ import {
   resolveObservabilityConfig,
 } from "../observability/tracing.mjs";
 import { registerAdmissionHooks } from "../agent/gates/admission-hooks.mjs";
+import { createControlAdmissionResolver } from "../agent/gates/admission-context.mjs";
 import { assertPluginApi } from "../agent/preflight/openclaw-preflight.mjs";
 import { createTiangongPiHarness } from "./openclaw-adapter.mjs";
 
@@ -15,11 +16,17 @@ export default definePluginEntry({
   register(api) {
     assertPluginApi(api);
     if (process.env.TIANGONG_CANARY_REQUIRED === "1") {
+      const admissionUrl = process.env.TIANGONG_CONTROL_API_ADMISSION_URL;
       registerAdmissionHooks(api, {
         required: true,
-        resolveContext: () => {
-          throw new Error("Tiangong admission binding resolver is not configured");
-        },
+        resolveContext: admissionUrl
+          ? createControlAdmissionResolver({
+              url: admissionUrl,
+              timeoutMs: Number(process.env.TIANGONG_CONTROL_API_TIMEOUT_MS || 1500),
+            })
+          : async () => {
+              throw new Error("Tiangong admission Control API is not configured");
+            },
       });
     }
     const observability = createWorkerObservability({

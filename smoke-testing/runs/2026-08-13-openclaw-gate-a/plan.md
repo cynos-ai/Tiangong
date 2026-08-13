@@ -11,8 +11,10 @@
   two-stage admission contract in `worker/agent/gates/admission-boundary.mjs`
   and its fail-closed OpenClaw hook registration.
 - Driver: `smoke-testing/support/run-openclaw-gate-a.sh` (start/status/stop/run).
-- This plan is the public S0.1 inventory and Gate A test contract. It does not
-  copy private research, schedules, credentials, or internal reports.
+- This plan is the public S0.1 inventory and Gate A test contract. The W0
+  read-only Runtime Console shell now exists under `app/` and reports unknown
+  until direct runtime facts are configured. It does not copy private research,
+  schedules, credentials, or internal reports.
 
 ## Why this gate exists
 

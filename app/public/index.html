@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Tiangong Runtime Console</title>
+    <style>
+      :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #0b1020; color: #e8ecf4; }
+      body { max-width: 960px; margin: 0 auto; padding: 48px 24px; }
+      .card { border: 1px solid #2d3852; border-radius: 12px; padding: 20px; background: #121a2d; }
+      .muted { color: #9da9bf; }
+      code { color: #a9d4ff; }
+    </style>
+  </head>
+  <body>
+    <h1>Tiangong Runtime Console</h1>
+    <p class="muted">A read-only witness over direct runtime facts. Unknown is a valid state.</p>
+    <section class="card" aria-live="polite">
+      <h2 id="status">Loading runtime facts…</h2>
+      <pre id="facts">{}</pre>
+    </section>
+    <script>
+      fetch('/api/runtime', { cache: 'no-store' }).then((response) => response.json()).then((facts) => {
+        document.querySelector('#status').textContent = facts.status === 'observed' ? 'Runtime facts observed' : 'Runtime facts unavailable';
+        document.querySelector('#facts').textContent = JSON.stringify(facts, null, 2);
+      }).catch(() => { document.querySelector('#status').textContent = 'Runtime facts unavailable'; });
+    </script>
+  </body>
+</html>
