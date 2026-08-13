@@ -89,6 +89,10 @@ make openclaw-gate-a-status
 make openclaw-gate-a-stop
 ```
 
+While the disposable Worker is running, `make test-openclaw-gate-a-live-hooks`
+queries OpenClaw's own plugin registry and proves the pinned typed-hook names
+and priorities, rather than treating source inspection as runtime evidence.
+
 `make test-openclaw-gate-a-contract`, `make test-openclaw-gate-a-fixture`,
 `make test-openclaw-admission-contract`, and
 `make test-openclaw-admission-hooks` are now available and prove the
