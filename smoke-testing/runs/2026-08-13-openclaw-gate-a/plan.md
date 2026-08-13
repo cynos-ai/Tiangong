@@ -104,6 +104,13 @@ commands exercise the isolated Worker/Team/room driver. A real run requires
 `TIANGONG_RUN_REAL=1` and owns a fixed disposable Worker, storage prefix,
 Matrix room, and local state file.
 
+`make test-openclaw-admission-replay` proves the deterministic A4 allow, stale
+binding replay, changed-request, and revoked-tool paths. `make
+test-openclaw-tool-result-capture-matrix` proves bounded success, error, denied,
+and replay metadata capture without retaining raw ToolResult payloads. These
+focused checks advance the seams only; they do not claim a durable Control API
+or AgentTeams ToolResult retention/reference implementation.
+
 The driver must:
 
 1. validate the immutable image pin and required plugin before creating a
