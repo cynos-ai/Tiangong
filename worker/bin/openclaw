@@ -6,7 +6,6 @@ readonly PLUGIN_ID="tiangong-pi"
 readonly PLUGIN_PATH="/opt/tiangong-worker/plugin"
 readonly PREFLIGHT="/opt/tiangong-worker/scripts/openclaw-preflight.mjs"
 readonly CODEX_GATEWAY_PREFLIGHT="/opt/tiangong-worker/agent/preflight/codex-gateway-preflight.mjs"
-
 codex_home=""
 
 cleanup_codex_home() {
@@ -34,11 +33,13 @@ configure_codex_gateway() {
   unset DEEPSEEK_API_KEY DEEPSEEK_BASE_URL CODEX_API_KEY OPENAI_BASE_URL
   codex_home="$(mktemp -d "${TMPDIR:-/tmp}/tiangong-codex-home.XXXXXX")"
   chmod 700 "${codex_home}"
-  printf 'model_provider = "openai"\nopenai_base_url = %s\n' "$(printf '%s' "${provider_base_url}" | jq -Rsa .)" >"${codex_home}/config.toml"
+  printf 'model_provider = "openai"\nopenai_base_url = %s\n' \
+    "$(printf '%s' "${provider_base_url}" | jq -Rsa .)" >"${codex_home}/config.toml"
   chmod 600 "${codex_home}/config.toml"
   export CODEX_HOME="${codex_home}"
   # This is the scoped AgentTeams consumer token. The real DeepSeek key stays in the gateway.
   export OPENAI_API_KEY="${provider_api_key}"
+  export OPENCLAW_CODEX_APP_SERVER_BIN="/opt/tiangong-worker/bin/codex-app-server"
   trap cleanup_codex_home EXIT INT TERM
 }
 
@@ -57,6 +58,12 @@ configure_codex_runtime() {
     .plugins = (.plugins // {})
     | .plugins.entries = (.plugins.entries // {})
     | .plugins.entries.codex = ((.plugins.entries.codex // {}) + {enabled: true})
+    | .plugins.entries.codex.config = ((.plugins.entries.codex.config // {}) + {
+        appServer: ((.plugins.entries.codex.config.appServer // {}) + {
+          transport: "stdio",
+          command: "/opt/tiangong-worker/bin/codex-app-server"
+        })
+      })
     | .plugins.allow = if (.plugins.allow | type) == "array"
         then ([.plugins.allow[], "codex"] | unique)
         else .plugins.allow end

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+: "${CODEX_HOME:?CODEX_HOME is required}"
+: "${OPENAI_API_KEY:?OPENAI_API_KEY is required}"
+
+readonly CODEX_PATH="/opt/tiangong-worker/node_modules/.bin/codex"
+[[ -x "${CODEX_PATH}" ]] || {
+  printf 'codex app-server executable is unavailable.\n' >&2
+  exit 127
+}
+
+# OpenClaw launches this child with its full environment. Keep the native
+# Codex process limited to the scoped gateway token and runtime paths.
+exec env -i \
+  "PATH=/opt/tiangong-worker/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+  "HOME=${HOME:-/tmp}" \
+  "CODEX_HOME=${CODEX_HOME}" \
+  "OPENAI_API_KEY=${OPENAI_API_KEY}" \
+  "TMPDIR=${TMPDIR:-/tmp}" \
+  "${CODEX_PATH}" "$@"

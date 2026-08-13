@@ -206,6 +206,21 @@ the complete native OpenClaw turn through that route and prove native tool
 admission, `apply_patch` handling, ToolResult capture, restart, and recovery.
 The Web console remains the read-only continuity witness throughout.
 
+### Native Matrix turn probe (2026-08-13)
+
+The real disposable canary accepted a Matrix mention, passed the local
+allowlisted canary admission resolver, and started the pinned native Codex
+app-server with only the Worker-scoped AgentTeams consumer token. The turn did
+not complete: OpenClaw's 2026.4.14 Codex harness attempted the Responses
+WebSocket at `ws://agentteams-controller:8080/v1/responses` and received HTTP
+401. A bounded direct HTTP `POST /responses` probe using the same model and
+consumer-token route returned 200, so this is a gateway protocol-adapter gap,
+not evidence of an invalid key or model. The Worker now includes a canary-only
+Codex launcher that keeps the native child environment to runtime paths and the
+scoped consumer token; the legacy lane is unchanged. Promotion is blocked until
+the gateway supports the harness's WebSocket handshake or the OpenClaw/Codex
+route can be explicitly pinned to the gateway's supported HTTP transport.
+
 On 2026-08-13, a user-provided DeepSeek key was used only in a transient
 process environment. Direct machine observations: `GET /models` returned 200
 and listed `deepseek-v4-pro`; `POST /responses` returned 200 with model

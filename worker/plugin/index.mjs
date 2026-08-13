@@ -7,6 +7,7 @@ import {
 import { registerAdmissionHooks } from "../agent/gates/admission-hooks.mjs";
 import { createControlAdmissionResolver } from "../agent/gates/admission-context.mjs";
 import { createFileAdmissionResolver } from "../agent/gates/admission-context-file.mjs";
+import { createCanaryAdmissionResolver } from "../agent/gates/canary-admission.mjs";
 import { createToolResultCaptureHook, defaultToolResultCapturePath } from "../agent/gates/tool-result-capture.mjs";
 import { assertPluginApi } from "../agent/preflight/openclaw-preflight.mjs";
 import { createTiangongPiHarness } from "./openclaw-adapter.mjs";
@@ -20,9 +21,14 @@ export default definePluginEntry({
     if (process.env.TIANGONG_CANARY_REQUIRED === "1") {
       const admissionUrl = process.env.TIANGONG_CONTROL_API_ADMISSION_URL;
       const admissionFile = process.env.TIANGONG_CONTROL_API_ADMISSION_FILE;
+      const canaryAdmission = process.env.TIANGONG_CANARY_ADMISSION === "local";
       registerAdmissionHooks(api, {
         required: true,
-        resolveContext: admissionUrl
+        resolveContext: canaryAdmission
+          ? createCanaryAdmissionResolver({
+              configPath: process.env.OPENCLAW_CONFIG_PATH ?? `${process.env.HOME}/openclaw.json`,
+            })
+          : admissionUrl
           ? createControlAdmissionResolver({
               url: admissionUrl,
               timeoutMs: Number(process.env.TIANGONG_CONTROL_API_TIMEOUT_MS || 1500),

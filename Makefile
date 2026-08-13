@@ -169,7 +169,7 @@ test-openclaw-recovery: ## Validate one durable Runner owner and completed-resul
 	@node ./worker/test/openclaw-recovery.test.mjs
 
 test-openclaw-admission-context-file: ## Validate the bounded file-backed admission context provider
-	@node ./worker/test/admission-context-file.test.mjs ./worker/test/admission-context.test.mjs
+	@node ./worker/test/admission-context-file.test.mjs ./worker/test/admission-context.test.mjs ./worker/test/canary-admission.test.mjs
 
 test-openclaw-gate-a-live-hooks: ## Inspect the hooks registered by the running pinned canary
 	@./scripts/test-openclaw-gate-a-live-hooks.sh
