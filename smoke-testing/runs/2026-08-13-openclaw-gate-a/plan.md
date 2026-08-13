@@ -176,12 +176,12 @@ cannot prove readiness, authorization, idempotency, capture, or cleanup.
 
 ### Coding runtime/provider feasibility checkpoint
 
-The pinned `2026.4.14 (2f35b6f)` image reports both the bundled `codex` plugin
-(`agent-harness: codex`, Codex app-server) and the bundled `deepseek` provider
-as loaded. The image does not contain a `codex` executable, so its default
-stdio Codex app-server transport cannot start in this image. A remote
-WebSocket app-server or a reviewed image addition is therefore required before
-the Codex runtime can be live-tested.
+The pinned `2026.4.14 (2f35b6f)` image reports the bundled `codex` plugin
+(`agent-harness: codex`, Codex app-server). The public canary image now bundles
+`@openai/codex` `0.120.0` and probes its stdio app-server initialize handshake;
+this is the reviewed image addition for the native Codex route. The canary
+route uses `codex/gpt-5.4`, `OPENCLAW_AGENT_RUNTIME=codex`, and
+`OPENCLAW_AGENT_HARNESS_FALLBACK=none`.
 
 The public Worker model gateway now has a credential-free configuration seam
 for the proposed DeepSeek V4 Pro target: `openai-responses`,
@@ -191,12 +191,17 @@ for the proposed DeepSeek V4 Pro target: `openai-responses`,
 metadata, and never serializes provider credentials. This is a configuration
 contract, not a live model result or a Gate A promotion.
 
-Live validation remains blocked until a DeepSeek API key is injected through
-the Worker credential path and a Codex app-server binary/endpoint is available.
-The test must use a disposable coding task, record only bounded machine facts,
-and separately verify Codex-native tool admission, `apply_patch` handling,
-ToolResult capture, restart, and recovery. The Web console remains the
-read-only continuity witness throughout.
+The isolated Codex app-server probe also completed a real DeepSeek V4 Pro
+Responses turn with a transient key, using a temporary `CODEX_HOME` and
+`model_providers.deepseek` (`wire_api = "responses"`). The bounded result was a
+successful `thread/start`/`turn/completed` sequence for `deepseek-v4-pro`.
+This proves Codex-to-DeepSeek protocol compatibility, not OpenClaw production
+promotion: OpenClaw's current native Codex provider catalog is still
+`codex/gpt-5.4`. The next coding slice must inject a per-Worker, credential-free
+provider descriptor and key reference into the Codex app-server boundary, then
+prove native tool admission, `apply_patch` handling, ToolResult capture,
+restart, and recovery. The Web console remains the read-only continuity witness
+throughout.
 
 On 2026-08-13, a user-provided DeepSeek key was used only in a transient
 process environment. Direct machine observations: `GET /models` returned 200
@@ -238,21 +243,13 @@ for typed hooks; the adapter must not assume the newer `before_agent_run` or
 `allowConversationAccess` contracts.
 
 On 2026-08-13, the isolated Worker resource was created with
-`tiangong-worker-canary:dev` and its own storage prefix. The first attempt
-failed before OpenClaw startup because the Windows checkout supplied CRLF to
-the shell entrypoint (`/usr/bin/env: 'bash\\r'`); the image was rebuilt after
-normalizing the wrapper to LF. The next attempt reached the AgentTeams Worker
-container, but the container exited with code `127` before readiness. The
-bounded container log identified the remaining local-stack blocker:
-
-```text
-/usr/bin/env: 'bash\\r': No such file or directory
-```
-
-The canary Worker, container, run state, and owned storage prefix were then
-removed and verified absent. This is a failed/blocked run, not Gate A pass
-evidence. The next run must rebuild from the normalized shell assets and must
-record the first post-entrypoint exit reason before promotion.
+`tiangong-worker-canary:dev` and its own storage prefix. After rebuilding the
+canary image with the normalized wrapper and the `plugins.allow` array fix, the
+real focused run completed `gate_a_preflight=pass`,
+`gate_a_readiness=pass`, and `gate_a_cleanup=pass`. A separate same-container
+restart probe retained `Running`, `openclaw-canary`, and fallback `none` and
+reported `gate_a_restart=pass`. The earlier CRLF and null-allowlist failures
+are retained as diagnostic history; they are not promotion evidence.
 
 Gate A promotes only to Gate B design/implementation review. It does **not**
 authorize deleting the pi harness, migrating existing data structures,
