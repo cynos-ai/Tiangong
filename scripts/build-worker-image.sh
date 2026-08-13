@@ -6,6 +6,7 @@ readonly SCRIPT_DIR
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly REPO_ROOT
 readonly IMAGE="tiangong-worker:dev"
+readonly CANARY_IMAGE="tiangong-worker-canary:dev"
 readonly LEADER_IMAGE="tiangong-worker-leader:dev"
 readonly DESIGNER_IMAGE="tiangong-worker-designer:dev"
 readonly IMPLEMENTOR_IMAGE="tiangong-worker-implementor:dev"
@@ -37,6 +38,8 @@ fi
 
 printf '[Tiangong] Building %s\n' "${IMAGE}"
 docker build "${build_args[@]}" --target default --tag "${IMAGE}" "${REPO_ROOT}/worker"
+printf '[Tiangong] Building isolated OpenClaw canary image %s\n' "${CANARY_IMAGE}"
+docker build "${build_args[@]}" --target canary --tag "${CANARY_IMAGE}" "${REPO_ROOT}/worker"
 printf '[Tiangong] Building leader profile image %s\n' "${LEADER_IMAGE}"
 docker build "${build_args[@]}" --target leader --tag "${LEADER_IMAGE}" "${REPO_ROOT}/worker"
 for role in designer implementor assessor operator; do

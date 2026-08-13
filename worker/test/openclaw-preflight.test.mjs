@@ -30,11 +30,34 @@ test("requires the Tiangong plugin to be loaded and enabled", () => {
     pluginId: "tiangong-pi",
     pluginPath: "/opt/tiangong-worker/plugin",
     pluginEnabled: true,
+    runtimeLane: "legacy-v0.2",
   });
   assert.throws(() => assertPluginConfig({}), (error) =>
     error instanceof PreflightError && error.code === "required-plugin-not-loaded");
   assert.throws(() => assertPluginConfig({ plugins: { load: { paths: ["/opt/tiangong-worker/plugin"] }, entries: { "tiangong-pi": { enabled: false } } } }), (error) =>
     error instanceof PreflightError && error.code === "required-plugin-disabled");
+});
+
+test("binds the canary lane explicitly and rejects cross-lane configuration", () => {
+  const canary = {
+    plugins: {
+      load: { paths: ["/opt/tiangong-worker/plugin"] },
+      entries: { "tiangong-pi": { enabled: true, config: { runtimeLane: "openclaw-canary" } } },
+    },
+  };
+  assert.equal(assertPluginConfig(canary, { env: { TIANGONG_CANARY_REQUIRED: "1" } }).runtimeLane, "openclaw-canary");
+  assert.throws(
+    () => assertPluginConfig(config, { env: { TIANGONG_CANARY_REQUIRED: "1" } }),
+    (error) => error instanceof PreflightError && error.code === "canary-lane-required",
+  );
+  assert.throws(
+    () => assertPluginConfig(canary, { env: { TIANGONG_RUNTIME_LANE: "legacy-v0.2" } }),
+    (error) => error instanceof PreflightError && error.code === "runtime-lane-mismatch",
+  );
+  assert.throws(
+    () => assertPluginConfig({ plugins: { load: { paths: ["/opt/tiangong-worker/plugin"] }, entries: { "tiangong-pi": { enabled: true, config: { runtimeLane: "unknown" } } } } }),
+    (error) => error instanceof PreflightError && error.code === "runtime-lane-invalid",
+  );
 });
 
 test("keeps the control API optional for the legacy lane", async () => {
@@ -81,6 +104,7 @@ test("accepts only a bounded 2xx control API readiness response", async () => {
     pluginId: "tiangong-pi",
     pluginPath: "/opt/tiangong-worker/plugin",
     pluginEnabled: true,
+    runtimeLane: "legacy-v0.2",
     controlApi: "healthy",
   });
 });

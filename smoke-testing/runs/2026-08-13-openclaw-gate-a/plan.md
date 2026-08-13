@@ -6,7 +6,8 @@
 - Scope: public, credential-free compatibility and fail-closed probes for an
   isolated OpenClaw Worker lane.
 - Product code enabled by this plan: the deterministic plugin/control-API
-  preflight contract in `worker/agent/preflight/` and the Gateway wrapper hook.
+  preflight contract in `worker/agent/preflight/`, the Gateway wrapper hook,
+  and the isolated `tiangong-worker-canary:dev` image target.
 - Driver still to be added: `smoke-testing/support/run-openclaw-gate-a.sh`.
 - This plan is the public S0.1 inventory and Gate A test contract. It does not
   copy private research, schedules, credentials, or internal reports.
@@ -61,7 +62,7 @@ allowed path, a denied path, and its nearest replay/race or failure path.
 | Boundary | Allowed path | Denied/failure path | Direct machine fact |
 |---|---|---|---|
 | A1 pinned image | the declared OpenClaw image/version is immutable and starts the canary Worker | mutable/unresolved image, missing executable, or image drift | image digest/version, container id, and startup manifest match the run input |
-| A2 required plugin and preflight | required Tiangong plugin loads before readiness and reports its bounded identity/capabilities | plugin absent, load error, or control API timeout keeps Worker not-ready | readiness is absent/false and the startup record names the failing preflight; no turn is admitted |
+| A2 required plugin and preflight | required Tiangong plugin loads before readiness, reports its bounded identity/capabilities, and binds the explicit runtime lane | plugin absent, load error, lane mismatch, or control API timeout keeps Worker not-ready | readiness is absent/false and the startup record names the failing preflight; no turn is admitted |
 | A3 AgentTeams entrypoint/storage/Matrix | entrypoint mirrors only the owned prefix, renders config, restores Matrix credentials, and reaches channel readiness | wrong prefix, missing config, stale login, or restart before channel readiness | bounded storage-prefix, config-hash, Matrix identity/room, and readiness observations |
 | A4 two-stage admission | a permitted source passes the pre-model gate and then the pre-tool gate under the active binding | ordinary chat, stale policy, wrong source, changed request, or revoked binding is denied before model/tool execution | admission decision, source, binding revision, and zero model/tool invocation on denial |
 | A5 ToolResult capture | built-in, local-coding, and other tools each produce a bounded ToolResult record | tool-result persistence hook is absent, malformed, or loses the result | per-tool capture matrix with success/error/denied/replay rows and no credential-bearing payload |
@@ -86,7 +87,8 @@ make openclaw-gate-a-status
 make openclaw-gate-a-stop
 ```
 
-`make test-openclaw-gate-a-contract` is now available and proves the
+`make test-openclaw-gate-a-contract` and `make test-openclaw-gate-a-fixture` are
+now available and prove the
 credential-free A2 preflight contract. The `start`, `status`, and `stop`
 commands remain unavailable until the isolated Worker/Team/room driver lands;
 a missing command is a blocked implementation item, not a passing result.
@@ -122,6 +124,25 @@ UI screenshots may be retained as secondary evidence of continuity, but they
 cannot prove readiness, authorization, idempotency, capture, or cleanup.
 
 ## Promotion and non-claims
+
+## Recorded Gate A attempt
+
+On 2026-08-13, the isolated Worker resource was created with
+`tiangong-worker-canary:dev` and its own storage prefix. The first attempt
+failed before OpenClaw startup because the Windows checkout supplied CRLF to
+the shell entrypoint (`/usr/bin/env: 'bash\\r'`); the image was rebuilt after
+normalizing the wrapper to LF. The next attempt reached the AgentTeams Worker
+container, but the container exited with code `127` before readiness. The
+bounded container log identified the remaining local-stack blocker:
+
+```text
+/usr/bin/env: 'bash\\r': No such file or directory
+```
+
+The canary Worker, container, run state, and owned storage prefix were then
+removed and verified absent. This is a failed/blocked run, not Gate A pass
+evidence. The next run must rebuild from the normalized shell assets and must
+record the first post-entrypoint exit reason before promotion.
 
 Gate A promotes only to Gate B design/implementation review. It does **not**
 authorize deleting the pi harness, migrating existing data structures,

@@ -7,7 +7,7 @@ readonly PLUGIN_PATH="/opt/tiangong-worker/plugin"
 readonly PREFLIGHT="/opt/tiangong-worker/scripts/openclaw-preflight.mjs"
 
 configure_tiangong_plugin() {
-  local config_file temporary_file
+  local config_file temporary_file runtime_lane
   config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
   [[ -f "${config_file}" ]] || {
     printf '[tiangong-worker] ERROR: OpenClaw config not found: %s\n' "${config_file}" >&2
@@ -16,12 +16,20 @@ configure_tiangong_plugin() {
 
   temporary_file="$(mktemp "${config_file}.tiangong.XXXXXX")"
   trap 'rm -f "${temporary_file:-}"' RETURN
-  jq --arg plugin_id "${PLUGIN_ID}" --arg plugin_path "${PLUGIN_PATH}" '
+  runtime_lane="${TIANGONG_RUNTIME_LANE:-legacy-v0.2}"
+  [[ "${runtime_lane}" == "legacy-v0.2" || "${runtime_lane}" == "openclaw-canary" ]] || {
+    printf '[tiangong-worker] ERROR: unsupported runtime lane: %s\n' "${runtime_lane}" >&2
+    return 1
+  }
+  jq --arg plugin_id "${PLUGIN_ID}" --arg plugin_path "${PLUGIN_PATH}" --arg runtime_lane "${runtime_lane}" '
     .plugins = (.plugins // {})
     | .plugins.load = (.plugins.load // {})
     | .plugins.load.paths = ([((.plugins.load.paths // [])[]), $plugin_path] | unique)
     | .plugins.entries = (.plugins.entries // {})
-    | .plugins.entries[$plugin_id] = ((.plugins.entries[$plugin_id] // {}) + {enabled: true})
+    | .plugins.entries[$plugin_id] = ((.plugins.entries[$plugin_id] // {}) + {
+        enabled: true,
+        config: ((.plugins.entries[$plugin_id].config // {}) + {runtimeLane: $runtime_lane})
+      })
     | if (.plugins.allow | type) == "array" then
         .plugins.allow = ([.plugins.allow[], $plugin_id] | unique)
       else . end

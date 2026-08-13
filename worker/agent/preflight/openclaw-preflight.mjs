@@ -2,6 +2,9 @@ import { readFile } from "node:fs/promises";
 
 export const TIANGONG_PLUGIN_ID = "tiangong-pi";
 export const DEFAULT_PLUGIN_PATH = "/opt/tiangong-worker/plugin";
+export const LEGACY_RUNTIME_LANE = "legacy-v0.2";
+export const CANARY_RUNTIME_LANE = "openclaw-canary";
+const RUNTIME_LANES = new Set([LEGACY_RUNTIME_LANE, CANARY_RUNTIME_LANE]);
 
 export class PreflightError extends Error {
   constructor(code, message) {
@@ -29,6 +32,7 @@ export function assertPluginApi(api) {
 export function assertPluginConfig(config, {
   pluginId = TIANGONG_PLUGIN_ID,
   pluginPath = DEFAULT_PLUGIN_PATH,
+  env = process.env,
 } = {}) {
   if (!config || typeof config !== "object" || Array.isArray(config)) {
     fail("config-invalid", "OpenClaw config must be a JSON object.");
@@ -44,7 +48,21 @@ export function assertPluginConfig(config, {
     fail("required-plugin-disabled", "The required Tiangong plugin is not enabled.");
   }
 
-  return { pluginId, pluginPath, pluginEnabled: true };
+  const configuredLane = entry.config?.runtimeLane ?? LEGACY_RUNTIME_LANE;
+  const requestedLane = typeof env.TIANGONG_RUNTIME_LANE === "string" && env.TIANGONG_RUNTIME_LANE !== ""
+    ? env.TIANGONG_RUNTIME_LANE
+    : configuredLane;
+  if (!RUNTIME_LANES.has(configuredLane) || !RUNTIME_LANES.has(requestedLane)) {
+    fail("runtime-lane-invalid", "The Tiangong runtime lane is not recognized.");
+  }
+  if (configuredLane !== requestedLane) {
+    fail("runtime-lane-mismatch", "The requested runtime lane does not match the Worker configuration.");
+  }
+  if (env.TIANGONG_CANARY_REQUIRED === "1" && requestedLane !== CANARY_RUNTIME_LANE) {
+    fail("canary-lane-required", "The canary probe requires an explicitly configured OpenClaw lane.");
+  }
+
+  return { pluginId, pluginPath, pluginEnabled: true, runtimeLane: requestedLane };
 }
 
 export async function checkControlApi({
@@ -103,7 +121,7 @@ export async function runOpenClawPreflight({
   fetchImpl = globalThis.fetch,
   pluginPath = env.TIANGONG_PLUGIN_PATH || DEFAULT_PLUGIN_PATH,
 } = {}) {
-  const plugin = assertPluginConfig(config, { pluginPath });
+  const plugin = assertPluginConfig(config, { pluginPath, env });
   const control = await checkControlApi({ env, fetchImpl });
   return { ...plugin, ...control };
 }

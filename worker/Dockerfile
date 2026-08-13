@@ -93,3 +93,7 @@ COPY role-profiles/operator.json /opt/tiangong-worker/profile.json
 RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role operator
 
 FROM kernel AS default
+
+FROM worker-base AS canary
+ENV TIANGONG_RUNTIME_LANE=openclaw-canary \
+    TIANGONG_CANARY_REQUIRED=1
