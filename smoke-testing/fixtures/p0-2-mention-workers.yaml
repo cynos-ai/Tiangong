@@ -1,0 +1,25 @@
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-p0-2-mention-leader
+spec:
+  model: qwen3.5-plus
+  runtime: copaw
+  image: higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-copaw-worker:v1.2.0
+  state: Running
+  identity: |
+    Name: P0.2 Mention Leader
+    Purpose: Disposable team leader; only used to form a bound team room for the mention-gating probe.
+---
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-p0-2-mention-target
+spec:
+  model: qwen3.5-plus
+  runtime: openclaw
+  image: tiangong-worker-designer:dev
+  state: Running
+  identity: |
+    Name: Tiangong P0.2 Target Worker
+    Purpose: Disposable requireMention target for the Dashboard mention-gating and delivery probe.
