@@ -174,6 +174,30 @@ cannot prove readiness, authorization, idempotency, capture, or cleanup.
 
 ## Promotion and non-claims
 
+### Coding runtime/provider feasibility checkpoint
+
+The pinned `2026.4.14 (2f35b6f)` image reports both the bundled `codex` plugin
+(`agent-harness: codex`, Codex app-server) and the bundled `deepseek` provider
+as loaded. The image does not contain a `codex` executable, so its default
+stdio Codex app-server transport cannot start in this image. A remote
+WebSocket app-server or a reviewed image addition is therefore required before
+the Codex runtime can be live-tested.
+
+The public Worker model gateway now has a credential-free configuration seam
+for the proposed DeepSeek V4 Pro target: `openai-responses`,
+`https://api.deepseek.com`, model `deepseek-v4-pro`, and the documented
+`apply_patch` custom-tool boundary. The seam rejects the existing
+`openai-completions` path for this model, retains only bounded compatibility
+metadata, and never serializes provider credentials. This is a configuration
+contract, not a live model result or a Gate A promotion.
+
+Live validation remains blocked until a DeepSeek API key is injected through
+the Worker credential path and a Codex app-server binary/endpoint is available.
+The test must use a disposable coding task, record only bounded machine facts,
+and separately verify Codex-native tool admission, `apply_patch` handling,
+ToolResult capture, restart, and recovery. The Web console remains the
+read-only continuity witness throughout.
+
 ## Recorded Gate A attempt
 
 On 2026-08-13, after the wrapper was normalized to LF and the pinned
