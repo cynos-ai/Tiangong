@@ -198,6 +198,16 @@ and separately verify Codex-native tool admission, `apply_patch` handling,
 ToolResult capture, restart, and recovery. The Web console remains the
 read-only continuity witness throughout.
 
+On 2026-08-13, a user-provided DeepSeek key was used only in a transient
+process environment. Direct machine observations: `GET /models` returned 200
+and listed `deepseek-v4-pro`; `POST /responses` returned 200 with model
+`deepseek-v4-pro`; and a custom `apply_patch` tool returned a bounded
+`custom_tool_call` containing a patch-shaped input. An unknown custom tool
+returned 400. With thinking enabled, forcing `tool_choice: required` returned
+400, while automatic tool choice returned the custom call; the adapter must
+preserve this distinction. No patch was applied and no key or project content
+was persisted.
+
 ## Recorded Gate A attempt
 
 On 2026-08-13, after the wrapper was normalized to LF and the pinned

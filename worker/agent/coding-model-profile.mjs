@@ -45,6 +45,8 @@ export function codingModelProfile({ provider, model }) {
     api: "openai-responses",
     baseUrl: DEEPSEEK_BASE_URL,
     customTool: "apply_patch",
+    toolChoice: "auto",
+    thinkingToolChoice: "do-not-force-required",
     stateless: true,
   };
 }

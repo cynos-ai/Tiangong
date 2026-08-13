@@ -16,6 +16,8 @@ test("describes the DeepSeek V4 Pro Codex target without credentials", () => {
     api: "openai-responses",
     baseUrl: "https://api.deepseek.com",
     customTool: "apply_patch",
+    toolChoice: "auto",
+    thinkingToolChoice: "do-not-force-required",
     stateless: true,
   });
 });
