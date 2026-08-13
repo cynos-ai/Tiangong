@@ -17,6 +17,7 @@ readonly DEPLOYMENT_SERVICE_IMAGE="tiangong-deployment-service:dev"
 readonly DEPLOYMENT_BROKER_IMAGE="tiangong-deployment-broker:dev"
 readonly EXPECTED_NODE_VERSION="v22.23.2"
 readonly EXPECTED_PI_VERSION="0.82.0"
+readonly EXPECTED_CODEX_VERSION="codex-cli 0.120.0"
 readonly EXPECTED_GIT_VERSION="git version 2.43.0"
 readonly EXPECTED_UTIL_LINUX_VERSION="2.39.3"
 readonly EXPECTED_DOCKER_CLI_VERSION="28.3.3"
@@ -72,6 +73,14 @@ actual_pi_version="$(docker run --rm --entrypoint pi "${IMAGE}" --version)"
   printf 'ERROR: expected pi %s, got %s.\n' "${EXPECTED_PI_VERSION}" "${actual_pi_version}" >&2
   exit 1
 }
+
+actual_codex_version="$(docker run --rm --entrypoint codex "${CANARY_IMAGE}" --version)"
+[[ "${actual_codex_version}" == "${EXPECTED_CODEX_VERSION}" ]] || {
+  printf 'ERROR: expected managed Codex %s, got %s.\n' "${EXPECTED_CODEX_VERSION}" "${actual_codex_version}" >&2
+  exit 1
+}
+docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${CANARY_IMAGE}" \
+  scripts/probe-codex-app-server.mjs
 
 actual_git_version="$(docker run --rm --entrypoint /usr/bin/git "${IMAGE}" --version)"
 [[ "${actual_git_version}" == "${EXPECTED_GIT_VERSION}" ]] || {
