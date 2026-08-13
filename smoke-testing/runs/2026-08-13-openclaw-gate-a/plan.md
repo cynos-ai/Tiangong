@@ -7,7 +7,8 @@
   isolated OpenClaw Worker lane.
 - Product code enabled by this plan: the deterministic plugin/control-API
   preflight contract in `worker/agent/preflight/`, the Gateway wrapper hook,
-  and the isolated `tiangong-worker-canary:dev` image target.
+  the isolated `tiangong-worker-canary:dev` image target, and the pure
+  two-stage admission contract in `worker/agent/gates/admission-boundary.mjs`.
 - Driver still to be added: `smoke-testing/support/run-openclaw-gate-a.sh`.
 - This plan is the public S0.1 inventory and Gate A test contract. It does not
   copy private research, schedules, credentials, or internal reports.
@@ -87,8 +88,8 @@ make openclaw-gate-a-status
 make openclaw-gate-a-stop
 ```
 
-`make test-openclaw-gate-a-contract` and `make test-openclaw-gate-a-fixture` are
-now available and prove the
+`make test-openclaw-gate-a-contract`, `make test-openclaw-gate-a-fixture`, and
+`make test-openclaw-admission-contract` are now available and prove the
 credential-free A2 preflight contract. The `start`, `status`, and `stop`
 commands remain unavailable until the isolated Worker/Team/room driver lands;
 a missing command is a blocked implementation item, not a passing result.
