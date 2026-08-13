@@ -65,7 +65,13 @@ function validateRecord(record, sequence, previousHash) {
 async function syncDirectory(path) {
   const handle = await open(path, "r");
   try {
-    await handle.sync();
+    try {
+      await handle.sync();
+    } catch (error) {
+      // Windows does not expose a syncable directory handle. The file record
+      // itself was already fsynced; keep other directory-sync failures fatal.
+      if (process.platform !== "win32" || !["EPERM", "EBADF"].includes(error?.code)) throw error;
+    }
   } finally {
     await handle.close();
   }
@@ -99,7 +105,10 @@ export class RunnerJournal {
       throw error;
     }
     if (!metadata.isFile()) throw new Error("Runner journal is not a regular file");
-    if ((metadata.mode & 0o077) !== 0) {
+    // POSIX mode bits are authoritative in the Linux Worker image. Windows
+    // reports ACL-backed files through compatibility mode bits, so checking
+    // those bits there would reject a valid journal before its content loads.
+    if (process.platform !== "win32" && (metadata.mode & 0o077) !== 0) {
       await chmod(this.#filePath, 0o600);
       metadata = await stat(this.#filePath);
       if ((metadata.mode & 0o077) !== 0) throw new Error("Runner journal permissions cannot be restricted");

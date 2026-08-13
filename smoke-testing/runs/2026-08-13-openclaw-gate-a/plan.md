@@ -111,6 +111,12 @@ and replay metadata capture without retaining raw ToolResult payloads. These
 focused checks advance the seams only; they do not claim a durable Control API
 or AgentTeams ToolResult retention/reference implementation.
 
+`make test-openclaw-recovery` exercises the existing durable RunnerJournal and
+RunnerPort boundary: one concurrent owner executes, a second caller is not
+retried, and a reopened journal replays the completed result without invoking
+the executor. This is the deterministic A6 owner/replay proof; the real
+Canary restart remains a separate container identity/readiness observation.
+
 The driver must:
 
 1. validate the immutable image pin and required plugin before creating a
