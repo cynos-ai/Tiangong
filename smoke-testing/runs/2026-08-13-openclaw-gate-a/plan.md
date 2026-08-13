@@ -111,6 +111,12 @@ and replay metadata capture without retaining raw ToolResult payloads. These
 focused checks advance the seams only; they do not claim a durable Control API
 or AgentTeams ToolResult retention/reference implementation.
 
+The capture hook now defaults to the Worker-owned state root (or an explicit
+test path), appends bounded `openclaw.tool_result_persist` metadata with a
+stable capture id, and fsyncs each record. The pinned OpenClaw hook exposes only
+agent/session metadata, so this remains an execution-record seam and does not
+invent Work/Task ownership or retention marks.
+
 The current implementation also provides a bounded file-backed admission
 context seam for a credential-free control runtime. It uses an atomic,
 locked, regular-file-only record containing source, binding, and request

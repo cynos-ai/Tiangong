@@ -23,9 +23,12 @@ test("captures success, error, denied, and replay observations without raw paylo
     { label: "replay", event: { toolName: "read", toolCallId: "call-success", message: { role: "toolResult", content: [{ type: "text", text: "ok" }] } } },
   ];
 
-  for (const { event } of cases) hook(event);
+  for (const { event } of cases) hook(event, { agentId: "agent-1", sessionKey: "session-1" });
   const records = (await readFile(filePath, "utf8")).trim().split("\n").map(JSON.parse);
   assert.equal(records.length, cases.length);
+  assert.equal(new Set(records.map((record) => record.captureId)).size, cases.length);
+  assert.ok(records.every((record) => record.source === "openclaw.tool_result_persist"));
+  assert.ok(records.every((record) => record.agentId === "agent-1" && record.sessionKey === "session-1"));
   assert.deepEqual(records.map((record) => record.toolCallId), [
     "call-success", "call-error", "call-denied", "call-success",
   ]);
