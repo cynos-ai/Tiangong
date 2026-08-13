@@ -98,5 +98,8 @@ FROM worker-base AS canary
 ENV TIANGONG_RUNTIME_LANE=openclaw-canary \
     TIANGONG_CANARY_REQUIRED=1 \
     TIANGONG_CODEX_RUNTIME=1 \
+    TIANGONG_CODEX_GATEWAY_HOSTS=agentteams-controller \
+    TIANGONG_CODEX_PROVIDER=agentteams-gateway \
+    TIANGONG_CODEX_MODEL=deepseek-v4-pro \
     OPENCLAW_AGENT_RUNTIME=codex \
     OPENCLAW_AGENT_HARNESS_FALLBACK=none

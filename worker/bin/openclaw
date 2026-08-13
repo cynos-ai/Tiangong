@@ -5,6 +5,42 @@ readonly UPSTREAM_OPENCLAW="/usr/local/bin/openclaw"
 readonly PLUGIN_ID="tiangong-pi"
 readonly PLUGIN_PATH="/opt/tiangong-worker/plugin"
 readonly PREFLIGHT="/opt/tiangong-worker/scripts/openclaw-preflight.mjs"
+readonly CODEX_GATEWAY_PREFLIGHT="/opt/tiangong-worker/agent/preflight/codex-gateway-preflight.mjs"
+
+codex_home=""
+
+cleanup_codex_home() {
+  [[ -n "${codex_home}" ]] || return 0
+  rm -rf -- "${codex_home}"
+  codex_home=""
+}
+
+configure_codex_gateway() {
+  local config_file provider_base_url provider_api_key
+  [[ "${TIANGONG_RUNTIME_LANE:-legacy-v0.2}" == "openclaw-canary" ]] || return 0
+  [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]] || return 0
+  config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
+  [[ -f "${config_file}" ]] || {
+    printf '[tiangong-worker] ERROR: OpenClaw config not found: %s\n' "${config_file}" >&2
+    return 1
+  }
+  /usr/bin/node --input-type=module -e '
+    const { runCodexGatewayPreflightFromFile } = await import(process.argv[1]);
+    const result = await runCodexGatewayPreflightFromFile({ configPath: process.argv[2] });
+    console.log(`codex_gateway_preflight=pass provider=${result.provider} model=${result.model} gateway_model_probe=${result.gatewayModelProbe} credential_source=${result.credentialSource}`);
+  ' "${CODEX_GATEWAY_PREFLIGHT}" "${config_file}"
+  provider_base_url="$(jq -er '.models.providers["agentteams-gateway"].baseUrl' "${config_file}")"
+  provider_api_key="$(jq -er '.models.providers["agentteams-gateway"].apiKey' "${config_file}")"
+  unset DEEPSEEK_API_KEY DEEPSEEK_BASE_URL CODEX_API_KEY OPENAI_BASE_URL
+  codex_home="$(mktemp -d "${TMPDIR:-/tmp}/tiangong-codex-home.XXXXXX")"
+  chmod 700 "${codex_home}"
+  printf 'model_provider = "openai"\nopenai_base_url = %s\n' "$(printf '%s' "${provider_base_url}" | jq -Rsa .)" >"${codex_home}/config.toml"
+  chmod 600 "${codex_home}/config.toml"
+  export CODEX_HOME="${codex_home}"
+  # This is the scoped AgentTeams consumer token. The real DeepSeek key stays in the gateway.
+  export OPENAI_API_KEY="${provider_api_key}"
+  trap cleanup_codex_home EXIT INT TERM
+}
 
 configure_codex_runtime() {
   local config_file temporary_file
@@ -26,9 +62,9 @@ configure_codex_runtime() {
         else .plugins.allow end
     | .agents = (.agents // {})
     | .agents.defaults = (.agents.defaults // {})
-    | .agents.defaults.model = {primary: "codex/gpt-5.4", fallbacks: []}
+    | .agents.defaults.model = {primary: "codex/deepseek-v4-pro", fallbacks: []}
     | .agents.defaults.models = (.agents.defaults.models // {})
-    | .agents.defaults.models["codex/gpt-5.4"] = ((.agents.defaults.models["codex/gpt-5.4"] // {}) + {alias: "codex"})
+    | .agents.defaults.models["codex/deepseek-v4-pro"] = ((.agents.defaults.models["codex/deepseek-v4-pro"] // {}) + {alias: "deepseek"})
     | .agents.defaults.embeddedHarness = {runtime: "codex", fallback: "none"}
   ' "${config_file}" >"${temporary_file}"
   chmod 600 "${temporary_file}"
@@ -74,9 +110,14 @@ configure_tiangong_plugin() {
 if [[ "${1:-}" == "gateway" && "${2:-}" == "run" ]]; then
   configure_tiangong_plugin
   configure_codex_runtime
+  configure_codex_gateway
   /usr/bin/node "${PREFLIGHT}"
   if [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" && "${TIANGONG_RUNTIME_LANE:-legacy-v0.2}" == "openclaw-canary" ]]; then
     printf '[tiangong-worker] Starting upstream OpenClaw with the native Codex harness.\n' >&2
+    "${UPSTREAM_OPENCLAW}" "$@"
+    status=$?
+    cleanup_codex_home
+    exit "${status}"
   else
     printf '[tiangong-worker] Starting upstream OpenClaw with the Tiangong pi harness.\n' >&2
   fi

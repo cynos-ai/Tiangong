@@ -142,6 +142,7 @@ wait_for_ready() {
        [[ "$(docker inspect "${CONTAINER_NAME}" --format '{{.State.Running}}' 2>/dev/null)" == true ]] &&
        docker exec "${CONTAINER_NAME}" openclaw health >/dev/null 2>&1 &&
        grep -Fq "tiangong_preflight=pass plugin=tiangong-pi lane=openclaw-canary" <<<"${logs}" &&
+       grep -Fq "codex_gateway_preflight=pass provider=agentteams-gateway model=deepseek-v4-pro gateway_model_probe=pass credential_source=agentteams-consumer-token" <<<"${logs}" &&
        grep -Fq "worker/${WORKER_NAME} reported ready" <<<"${logs}"; then
       return 0
     fi
@@ -164,6 +165,7 @@ wait_for_ready_since() {
        [[ "$(docker inspect "${CONTAINER_NAME}" --format '{{.State.Running}}' 2>/dev/null)" == true ]] &&
        docker exec "${CONTAINER_NAME}" openclaw health >/dev/null 2>&1 &&
        grep -Fq "tiangong_preflight=pass plugin=tiangong-pi lane=openclaw-canary" <<<"${logs}" &&
+       grep -Fq "codex_gateway_preflight=pass provider=agentteams-gateway model=deepseek-v4-pro gateway_model_probe=pass credential_source=agentteams-consumer-token" <<<"${logs}" &&
        grep -Fq "worker/${WORKER_NAME} reported ready" <<<"${logs}"; then
       return 0
     fi

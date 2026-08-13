@@ -180,30 +180,31 @@ The pinned `2026.4.14 (2f35b6f)` image reports the bundled `codex` plugin
 (`agent-harness: codex`, Codex app-server). The public canary image now bundles
 `@openai/codex` `0.120.0` and probes its stdio app-server initialize handshake;
 this is the reviewed image addition for the native Codex route. The canary
-route uses `codex/gpt-5.4`, `OPENCLAW_AGENT_RUNTIME=codex`, and
+route now uses `codex/deepseek-v4-pro`, `OPENCLAW_AGENT_RUNTIME=codex`, and
 `OPENCLAW_AGENT_HARNESS_FALLBACK=none`.
 The real focused Gate A run also exercises this route through AgentTeams and
 keeps the Web/Matrix surface available as the continuity witness.
 
-The public Worker model gateway now has a credential-free configuration seam
-for the proposed DeepSeek V4 Pro target: `openai-responses`,
-`https://api.deepseek.com`, model `deepseek-v4-pro`, and the documented
-`apply_patch` custom-tool boundary. The seam rejects the existing
-`openai-completions` path for this model, retains only bounded compatibility
-metadata, and never serializes provider credentials. This is a configuration
-contract, not a live model result or a Gate A promotion.
+The canary now configures Codex through the existing AgentTeams gateway: Codex
+uses the OpenAI-compatible provider with model `deepseek-v4-pro` and the
+Worker-scoped consumer token from the generated Worker config. The real
+DeepSeek key remains in Higress/AgentTeams; it is never copied into the image,
+Codex config, command line, session, or diagnostics. A fail-closed preflight
+checks the provider API, exact model advertisement, HTTP(S) URL safety, and an
+explicit internal gateway host allowlist. This is the intended credential
+boundary, not a claim that arbitrary direct-key configuration is safe.
 
 The isolated Codex app-server probe also completed a real DeepSeek V4 Pro
 Responses turn with a transient key, using a temporary `CODEX_HOME` and
 `model_providers.deepseek` (`wire_api = "responses"`). The bounded result was a
 successful `thread/start`/`turn/completed` sequence for `deepseek-v4-pro`.
-This proves Codex-to-DeepSeek protocol compatibility, not OpenClaw production
-promotion: OpenClaw's current native Codex provider catalog is still
-`codex/gpt-5.4`. The next coding slice must inject a per-Worker, credential-free
-provider descriptor and key reference into the Codex app-server boundary, then
-prove native tool admission, `apply_patch` handling, ToolResult capture,
-restart, and recovery. The Web console remains the read-only continuity witness
-throughout.
+The local AgentTeams gateway was also probed without printing credentials:
+its `/models` response advertises `deepseek-v4-pro`, and its `/responses`
+endpoint returned 200 using the existing Worker consumer token. This proves
+the gateway can be the Codex transport boundary. The next slice must exercise
+the complete native OpenClaw turn through that route and prove native tool
+admission, `apply_patch` handling, ToolResult capture, restart, and recovery.
+The Web console remains the read-only continuity witness throughout.
 
 On 2026-08-13, a user-provided DeepSeek key was used only in a transient
 process environment. Direct machine observations: `GET /models` returned 200

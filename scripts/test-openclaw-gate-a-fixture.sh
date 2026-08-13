@@ -25,8 +25,11 @@ grep -Fq 'TIANGONG_RUNTIME_LANE=openclaw-canary' "${DOCKERFILE}" || fail 'Canary
 grep -Fq 'TIANGONG_CANARY_REQUIRED=1' "${DOCKERFILE}" || fail 'Canary image does not require explicit lane binding.'
 grep -Fq 'OPENCLAW_AGENT_RUNTIME=codex' "${DOCKERFILE}" || fail 'Canary image does not force the native Codex runtime.'
 grep -Fq 'OPENCLAW_AGENT_HARNESS_FALLBACK=none' "${DOCKERFILE}" || fail 'Canary image permits a hidden harness fallback.'
+grep -Fq 'TIANGONG_CODEX_GATEWAY_HOSTS=agentteams-controller' "${DOCKERFILE}" || fail 'Canary image does not constrain the Codex gateway host.'
+grep -Fq 'TIANGONG_CODEX_PROVIDER=agentteams-gateway' "${DOCKERFILE}" || fail 'Canary image does not use the AgentTeams gateway provider.'
+grep -Fq 'TIANGONG_CODEX_MODEL=deepseek-v4-pro' "${DOCKERFILE}" || fail 'Canary image does not select DeepSeek V4 Pro.'
 grep -Fq 'CANARY_IMAGE="tiangong-worker-canary:dev"' "${BUILDER}" || fail 'Canary image is not built by the image builder.'
-grep -Fqx '  model: codex/gpt-5.4' "${FIXTURE}" || fail 'Canary fixture must use a Codex model reference.'
+grep -Fqx '  model: codex/deepseek-v4-pro' "${FIXTURE}" || fail 'Canary fixture must use the AgentTeams-routed DeepSeek Codex model reference.'
 
 if grep -Eqi 'password|access_token|apiKey|secret|token:' "${FIXTURE}"; then
   fail 'Canary fixture contains credential-bearing fields.'

@@ -3,7 +3,7 @@ kind: Worker
 metadata:
   name: tiangong-openclaw-canary
 spec:
-  model: codex/gpt-5.4
+  model: codex/deepseek-v4-pro
   runtime: openclaw
   image: tiangong-worker-canary:dev
   state: Running
