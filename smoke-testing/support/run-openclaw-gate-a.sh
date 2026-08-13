@@ -155,6 +155,28 @@ wait_for_ready() {
   return 1
 }
 
+wait_for_ready_since() {
+  local since="$1" logs phase=''
+  for _ in $(seq 1 90); do
+    logs="$(docker logs --since "${since}" "${CONTAINER_NAME}" 2>&1 || true)"
+    phase="$(worker_json | jq -r '.phase // empty' 2>/dev/null || true)"
+    if [[ "${phase}" == Running ]] &&
+       [[ "$(docker inspect "${CONTAINER_NAME}" --format '{{.State.Running}}' 2>/dev/null)" == true ]] &&
+       docker exec "${CONTAINER_NAME}" openclaw health >/dev/null 2>&1 &&
+       grep -Fq "tiangong_preflight=pass plugin=tiangong-pi lane=openclaw-canary" <<<"${logs}" &&
+       grep -Fq "worker/${WORKER_NAME} reported ready" <<<"${logs}"; then
+      return 0
+    fi
+    if [[ "${phase}" == Failed ]]; then
+      printf '%s\n' "${logs}" >&2
+      return 1
+    fi
+    sleep 2
+  done
+  printf '%s\n' "${logs}" >&2
+  return 1
+}
+
 start_canary() {
   require_real_run
   require_commands
@@ -187,6 +209,26 @@ status_canary() {
     "${phase}" "${running}" "${lane}" "${fallback}"
   [[ "${phase}" == Running && "${running}" == true && "${lane}" == openclaw-canary && "${fallback}" == none ]] || \
     die 'Gate A canary is not in the required isolated ready state.'
+}
+
+restart_canary() {
+  require_real_run
+  require_commands
+  load_state
+  local before_id before_started after_id after_started
+  before_id="$(docker inspect "${CONTAINER_NAME}" --format '{{.Id}}')"
+  before_started="$(docker inspect "${CONTAINER_NAME}" --format '{{.State.StartedAt}}')"
+  docker restart "${CONTAINER_NAME}" >/dev/null || die 'Canary container restart failed.'
+  for _ in $(seq 1 30); do
+    after_started="$(docker inspect "${CONTAINER_NAME}" --format '{{.State.StartedAt}}' 2>/dev/null || true)"
+    [[ -n "${after_started}" && "${after_started}" != "${before_started}" ]] && break
+    sleep 1
+  done
+  after_id="$(docker inspect "${CONTAINER_NAME}" --format '{{.Id}}' 2>/dev/null || true)"
+  [[ "${after_id}" == "${before_id}" ]] || die 'Canary restart replaced the container identity.'
+  wait_for_ready_since "${before_started}" || die 'Canary did not re-establish readiness after restart.'
+  status_canary
+  printf 'gate_a_restart=pass\n'
 }
 
 stop_canary() {
@@ -236,6 +278,7 @@ start_command() {
 case "${1:-run}" in
   start) start_command ;;
   status) status_canary ;;
+  restart) restart_canary ;;
   stop) stop_canary ;;
   run) run_canary ;;
   *) die "Usage: $0 {run|start|status|stop}" ;;

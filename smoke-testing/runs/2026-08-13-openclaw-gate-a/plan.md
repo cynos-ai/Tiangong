@@ -88,6 +88,7 @@ make verify
 make test-openclaw-gate-a-contract
 make openclaw-gate-a-start
 make openclaw-gate-a-status
+make openclaw-gate-a-restart
 make openclaw-gate-a-stop
 ```
 
@@ -155,7 +156,9 @@ gate_a_cleanup=pass
 This proves the pinned image, Tiangong plugin/preflight, AgentTeams storage
 entrypoint, OpenClaw Gateway, Matrix readiness, isolated lane, and cleanup
 boundary. It does **not** prove A4 admission, A5 ToolResult capture, or A6
-restart/recovery; those remain the next implementation slices. The pinned
+full recovery/ownership proof; a same-container restart/readiness probe is
+now available, while duplicate-owner and durable replay cases remain open.
+The pinned
 image uses `api.on("before_dispatch", ...)` and `api.on("before_tool_call", ...)`
 for typed hooks; the adapter must not assume the newer `before_agent_run` or
 `allowConversationAccess` contracts.
