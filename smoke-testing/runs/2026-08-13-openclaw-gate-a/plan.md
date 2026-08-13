@@ -111,6 +111,14 @@ and replay metadata capture without retaining raw ToolResult payloads. These
 focused checks advance the seams only; they do not claim a durable Control API
 or AgentTeams ToolResult retention/reference implementation.
 
+The current implementation also provides a bounded file-backed admission
+context seam for a credential-free control runtime. It uses an atomic,
+locked, regular-file-only record containing source, binding, and request
+metadata; it rejects missing, malformed, oversized, broad-permission, and
+symlinked state. The canary does not enable this provider by default, so the
+real run remains fail-closed until a product-owned writer and lifecycle are
+connected.
+
 `make test-openclaw-recovery` exercises the existing durable RunnerJournal and
 RunnerPort boundary: one concurrent owner executes, a second caller is not
 retried, and a reopened journal replays the completed result without invoking

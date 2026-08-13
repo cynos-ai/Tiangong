@@ -21,6 +21,10 @@ test("resolves a bounded admission context through the control API", async () =>
   assert.deepEqual(await resolve({ phase: "model", event: { content: "hello" }, ctx: {} }), context);
   assert.equal(request.url, "http://control.test/admission");
   assert.equal(request.options.method, "POST");
+  const body = JSON.parse(request.options.body);
+  assert.equal(body.admission.event.content, undefined);
+  assert.equal(body.admission.event.contentLength, 5);
+  assert.equal(JSON.stringify(body).includes("hello"), false);
 });
 
 test("fails closed on unavailable, malformed, oversized, and timed-out context", async () => {
