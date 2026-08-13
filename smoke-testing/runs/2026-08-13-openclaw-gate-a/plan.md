@@ -123,6 +123,11 @@ capture id, agent/session metadata, and absence of the raw probe text, then
 removes only the probe file and its empty directory. This is direct container
 state evidence for the capture seam, not evidence of a real model/tool turn.
 
+The W0 Runtime Console now projects the same bounded capture metadata as a
+read-only `toolResults` view and keeps status/ownership unknown when no direct
+runtime facts are configured. The UI exposes observation continuity without
+turning capture metadata into Work/Task authorization or a write endpoint.
+
 The current implementation also provides a bounded file-backed admission
 context seam for a credential-free control runtime. It uses an atomic,
 locked, regular-file-only record containing source, binding, and request

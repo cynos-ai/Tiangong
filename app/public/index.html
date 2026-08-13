@@ -17,11 +17,16 @@
     <p class="muted">A read-only witness over direct runtime facts. Unknown is a valid state.</p>
     <section class="card" aria-live="polite">
       <h2 id="status">Loading runtime facts…</h2>
+      <p id="tool-summary" class="muted">ToolResult observations: unknown</p>
       <pre id="facts">{}</pre>
     </section>
     <script>
       fetch('/api/runtime', { cache: 'no-store' }).then((response) => response.json()).then((facts) => {
         document.querySelector('#status').textContent = facts.status === 'observed' ? 'Runtime facts observed' : 'Runtime facts unavailable';
+        const toolResults = Array.isArray(facts.toolResults) ? facts.toolResults : [];
+        document.querySelector('#tool-summary').textContent = facts.toolResultsSource === 'tool-result-capture-file'
+          ? `Bounded ToolResult observations: ${toolResults.length}`
+          : 'ToolResult observations: unknown';
         document.querySelector('#facts').textContent = JSON.stringify(facts, null, 2);
       }).catch(() => { document.querySelector('#status').textContent = 'Runtime facts unavailable'; });
     </script>
