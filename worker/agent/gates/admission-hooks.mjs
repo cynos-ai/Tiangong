@@ -20,14 +20,14 @@ export function createAdmissionHookHandlers({ resolveContext } = {}) {
   }
 
   return {
-    async beforeAgentRun(event, ctx) {
+    async beforeDispatch(event, ctx) {
       try {
         const context = await resolveContext({ phase: "model", event, ctx });
         admitBeforeModel(context);
         return undefined;
       } catch (error) {
         const decision = denyDecision(error);
-        return { outcome: "block", ...decision };
+        return { handled: true, text: `${decision.reason}: ${BLOCK_MESSAGE}` };
       }
     },
     async beforeToolCall(event, ctx) {
@@ -49,7 +49,9 @@ export function registerAdmissionHooks(api, { resolveContext, required = false }
     return { enabled: false, reason: "hook-api-unavailable" };
   }
   const handlers = createAdmissionHookHandlers({ resolveContext });
-  api.on("before_agent_run", handlers.beforeAgentRun, { priority: 100 });
+  // OpenClaw 2026.4.x has no before_agent_run hook. before_dispatch is the
+  // earliest typed hook that can stop an inbound message before model work.
+  api.on("before_dispatch", handlers.beforeDispatch, { priority: 100 });
   api.on("before_tool_call", handlers.beforeToolCall, { priority: 100 });
-  return { enabled: true, hooks: ["before_agent_run", "before_tool_call"] };
+  return { enabled: true, hooks: ["before_dispatch", "before_tool_call"] };
 }

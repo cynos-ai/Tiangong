@@ -2,7 +2,7 @@
 
 ## Status and ownership
 
-- Status: **IN IMPLEMENTATION — no Gate A canary run has passed yet**.
+- Status: **IN IMPLEMENTATION — A2/A3 readiness is proven; A4-A6 remain open**.
 - Scope: public, credential-free compatibility and fail-closed probes for an
   isolated OpenClaw Worker lane.
 - Product code enabled by this plan: the deterministic plugin/control-API
@@ -10,7 +10,7 @@
   the isolated `tiangong-worker-canary:dev` image target, and the pure
   two-stage admission contract in `worker/agent/gates/admission-boundary.mjs`
   and its fail-closed OpenClaw hook registration.
-- Driver still to be added: `smoke-testing/support/run-openclaw-gate-a.sh`.
+- Driver: `smoke-testing/support/run-openclaw-gate-a.sh` (start/status/stop/run).
 - This plan is the public S0.1 inventory and Gate A test contract. It does not
   copy private research, schedules, credentials, or internal reports.
 
@@ -93,8 +93,9 @@ make openclaw-gate-a-stop
 `make test-openclaw-admission-contract`, and
 `make test-openclaw-admission-hooks` are now available and prove the
 credential-free A2 preflight contract. The `start`, `status`, and `stop`
-commands remain unavailable until the isolated Worker/Team/room driver lands;
-a missing command is a blocked implementation item, not a passing result.
+commands exercise the isolated Worker/Team/room driver. A real run requires
+`TIANGONG_RUN_REAL=1` and owns a fixed disposable Worker, storage prefix,
+Matrix room, and local state file.
 
 The driver must:
 
@@ -129,6 +130,29 @@ cannot prove readiness, authorization, idempotency, capture, or cleanup.
 ## Promotion and non-claims
 
 ## Recorded Gate A attempt
+
+On 2026-08-13, after the wrapper was normalized to LF and the pinned
+OpenClaw `2026.4.14 (2f35b6f)` config contract was corrected, the isolated
+canary reached:
+
+```text
+tiangong_preflight=pass plugin=tiangong-pi lane=openclaw-canary control_api=disabled
+gateway ready (8 plugins: ..., tiangong-pi; 12.9s)
+worker/tiangong-openclaw-canary reported ready
+gate_a_phase=Running
+worker_running=true
+runtime_lane=openclaw-canary
+harness_fallback=none
+gate_a_cleanup=pass
+```
+
+This proves the pinned image, Tiangong plugin/preflight, AgentTeams storage
+entrypoint, OpenClaw Gateway, Matrix readiness, isolated lane, and cleanup
+boundary. It does **not** prove A4 admission, A5 ToolResult capture, or A6
+restart/recovery; those remain the next implementation slices. The pinned
+image uses `api.on("before_dispatch", ...)` and `api.on("before_tool_call", ...)`
+for typed hooks; the adapter must not assume the newer `before_agent_run` or
+`allowConversationAccess` contracts.
 
 On 2026-08-13, the isolated Worker resource was created with
 `tiangong-worker-canary:dev` and its own storage prefix. The first attempt

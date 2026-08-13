@@ -43,11 +43,10 @@ test("binds the canary lane explicitly and rejects cross-lane configuration", ()
   const canary = {
     plugins: {
       load: { paths: ["/opt/tiangong-worker/plugin"] },
-      entries: { "tiangong-pi": { enabled: true, config: { runtimeLane: "openclaw-canary" }, hooks: { allowConversationAccess: true } } },
+      entries: { "tiangong-pi": { enabled: true, config: { runtimeLane: "openclaw-canary" } } },
     },
   };
   assert.equal(assertPluginConfig(canary, { env: { TIANGONG_CANARY_REQUIRED: "1" } }).runtimeLane, "openclaw-canary");
-  assert.equal(assertPluginConfig(canary, { env: { TIANGONG_CANARY_REQUIRED: "1" } }).conversationHooks, true);
   assert.throws(
     () => assertPluginConfig(config, { env: { TIANGONG_CANARY_REQUIRED: "1" } }),
     (error) => error instanceof PreflightError && error.code === "canary-lane-required",
@@ -55,10 +54,6 @@ test("binds the canary lane explicitly and rejects cross-lane configuration", ()
   assert.throws(
     () => assertPluginConfig(canary, { env: { TIANGONG_RUNTIME_LANE: "legacy-v0.2" } }),
     (error) => error instanceof PreflightError && error.code === "runtime-lane-mismatch",
-  );
-  assert.throws(
-    () => assertPluginConfig({ plugins: { load: { paths: ["/opt/tiangong-worker/plugin"] }, entries: { "tiangong-pi": { enabled: true, config: { runtimeLane: "openclaw-canary" } } } } }),
-    (error) => error instanceof PreflightError && error.code === "conversation-hooks-not-enabled",
   );
   assert.throws(
     () => assertPluginConfig({ plugins: { load: { paths: ["/opt/tiangong-worker/plugin"] }, entries: { "tiangong-pi": { enabled: true, config: { runtimeLane: "unknown" } } } } }),

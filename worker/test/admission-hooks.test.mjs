@@ -32,10 +32,9 @@ const request = {
 
 test("blocks before-model and before-tool when the resolver cannot prove binding", async () => {
   const handlers = createAdmissionHookHandlers({ resolveContext: () => { throw new Error("missing"); } });
-  assert.deepEqual(await handlers.beforeAgentRun({ prompt: "secret" }, {}), {
-    outcome: "block",
-    reason: "ADMISSION_CONTEXT_UNAVAILABLE",
-    message: "This Worker turn is not admitted by the current Tiangong binding.",
+  assert.deepEqual(await handlers.beforeDispatch({ content: "secret" }, {}), {
+    handled: true,
+    text: "ADMISSION_CONTEXT_UNAVAILABLE: This Worker turn is not admitted by the current Tiangong binding.",
   });
   assert.deepEqual(await handlers.beforeToolCall({ toolName: "read" }, {}), {
     block: true,
@@ -63,7 +62,7 @@ test("passes only the exact two-stage admission result", async () => {
         requestDigest: request.requestDigest,
       },
   });
-  assert.equal(await handlers.beforeAgentRun({}, {}), undefined);
+  assert.equal(await handlers.beforeDispatch({}, {}), undefined);
   assert.equal(await handlers.beforeToolCall({ toolName: "read" }, {}), undefined);
 });
 
@@ -81,6 +80,6 @@ test("requires the hook API in the canary lane but leaves legacy registration un
     resolveContext: () => {},
     required: true,
   });
-  assert.deepEqual(result, { enabled: true, hooks: ["before_agent_run", "before_tool_call"] });
-  assert.deepEqual(registrations.map(([name]) => name), ["before_agent_run", "before_tool_call"]);
+  assert.deepEqual(result, { enabled: true, hooks: ["before_dispatch", "before_tool_call"] });
+  assert.deepEqual(registrations.map(([name]) => name), ["before_dispatch", "before_tool_call"]);
 });
