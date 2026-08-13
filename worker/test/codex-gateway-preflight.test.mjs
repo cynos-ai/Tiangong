@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import {
   assertCodexGatewayConfiguration,
   CodexGatewayPreflightError,
-  probeCodexGatewayModel,
+  probeCodexGateway,
 } from "../agent/preflight/codex-gateway-preflight.mjs";
 
 const config = {
@@ -27,6 +27,15 @@ test("accepts the scoped AgentTeams gateway consumer-token route", () => {
     baseUrl: "http://agentteams-controller:8080/v1",
     credentialSource: "agentteams-consumer-token",
   });
+});
+
+test("fails closed when the local provider omits the selected model", () => {
+  assert.throws(
+    () => assertCodexGatewayConfiguration({
+      models: { providers: { "agentteams-gateway": { ...config.models.providers["agentteams-gateway"], models: [{ id: "other-model" }] } } },
+    }),
+    (error) => error instanceof CodexGatewayPreflightError && error.code === "gateway-model-config-missing",
+  );
 });
 
 test("rejects a provider that would send a real key directly from the Worker", () => {
@@ -55,9 +64,9 @@ test("allows an explicitly deployed internal gateway hostname without exposing a
   assert.equal(Object.hasOwn(result, "apiKey"), false);
 });
 
-test("probes the live gateway model catalog with the consumer token", async () => {
+test("probes the AgentTeams gateway auth/connectivity endpoint with the consumer token", async () => {
   let observed;
-  const result = await probeCodexGatewayModel({
+  const result = await probeCodexGateway({
     baseUrl: "http://agentteams-controller:8080/v1",
     consumerToken: "worker-consumer-token",
     fetchImpl: async (url, options) => {
@@ -65,7 +74,7 @@ test("probes the live gateway model catalog with the consumer token", async () =
       return { status: 200, text: async () => JSON.stringify({ data: [{ id: "deepseek-v4-pro" }] }) };
     },
   });
-  assert.deepEqual(result, { model: "deepseek-v4-pro", gatewayModelProbe: "pass" });
+  assert.deepEqual(result, { model: "deepseek-v4-pro", gatewayProbe: "pass", gatewayProbeContract: "auth-connectivity" });
   assert.deepEqual(observed, {
     url: "http://agentteams-controller:8080/v1/models",
     method: "GET",
@@ -73,13 +82,11 @@ test("probes the live gateway model catalog with the consumer token", async () =
   });
 });
 
-test("fails closed when the live gateway catalog omits the requested model", async () => {
-  await assert.rejects(
-    probeCodexGatewayModel({
-      baseUrl: "http://agentteams-controller:8080/v1",
-      consumerToken: "worker-consumer-token",
-      fetchImpl: async () => ({ status: 200, text: async () => JSON.stringify({ data: [{ id: "deepseek-v4-flash" }] }) }),
-    }),
-    (error) => error instanceof CodexGatewayPreflightError && error.code === "gateway-model-missing",
-  );
+test("accepts a valid gateway probe response without requiring a model catalog", async () => {
+  const result = await probeCodexGateway({
+    baseUrl: "http://agentteams-controller:8080/v1",
+    consumerToken: "worker-consumer-token",
+    fetchImpl: async () => ({ status: 200, text: async () => JSON.stringify({ status: "ok" }) }),
+  });
+  assert.equal(result.gatewayProbeContract, "auth-connectivity");
 });

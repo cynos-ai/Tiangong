@@ -26,7 +26,7 @@ configure_codex_gateway() {
   /usr/bin/node --input-type=module -e '
     const { runCodexGatewayPreflightFromFile } = await import(process.argv[1]);
     const result = await runCodexGatewayPreflightFromFile({ configPath: process.argv[2] });
-    console.log(`codex_gateway_preflight=pass provider=${result.provider} model=${result.model} gateway_model_probe=${result.gatewayModelProbe} credential_source=${result.credentialSource}`);
+    console.log(`codex_gateway_preflight=pass provider=${result.provider} model=${result.model} gateway_probe=${result.gatewayProbe} gateway_probe_contract=${result.gatewayProbeContract} credential_source=${result.credentialSource}`);
   ' "${CODEX_GATEWAY_PREFLIGHT}" "${config_file}"
   provider_base_url="$(jq -er '.models.providers["agentteams-gateway"].baseUrl' "${config_file}")"
   provider_api_key="$(jq -er '.models.providers["agentteams-gateway"].apiKey' "${config_file}")"

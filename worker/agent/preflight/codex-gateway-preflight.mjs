@@ -44,6 +44,9 @@ export function assertCodexGatewayConfiguration(config, {
   if (!nonEmptyString(provider.apiKey)) {
     fail("gateway-consumer-token-missing", "The Worker consumer token is missing from the AgentTeams provider.");
   }
+  if (!Array.isArray(provider.models) || !provider.models.some((model) => model && typeof model === "object" && model.id === modelId)) {
+    fail("gateway-model-config-missing", `The OpenClaw provider configuration does not include ${modelId}.`);
+  }
 
   const rawBaseUrl = nonEmptyString(provider.baseUrl);
   if (!rawBaseUrl) fail("gateway-base-url-missing", "The AgentTeams gateway base URL is missing.");
@@ -68,7 +71,7 @@ export function assertCodexGatewayConfiguration(config, {
   };
 }
 
-export async function probeCodexGatewayModel({
+export async function probeCodexGateway({
   baseUrl,
   consumerToken,
   modelId = CODEX_GATEWAY_MODEL,
@@ -89,20 +92,15 @@ export async function probeCodexGatewayModel({
       signal: controller.signal,
     });
     if (!response || !Number.isInteger(response.status) || response.status < 200 || response.status >= 300) {
-      fail("gateway-model-probe-unready", "The AgentTeams gateway model probe did not return a 2xx response.");
+      fail("gateway-probe-unready", "The AgentTeams gateway connectivity probe did not return a 2xx response.");
     }
     const text = await response.text();
-    if (text.length > 1_000_000) fail("gateway-model-probe-unbounded", "The AgentTeams gateway model response exceeded the bounded probe limit.");
-    let body;
-    try { body = JSON.parse(text); } catch { fail("gateway-model-probe-invalid", "The AgentTeams gateway model response was not valid JSON."); }
-    const models = Array.isArray(body?.data) ? body.data : [];
-    if (!models.some((model) => model && typeof model === "object" && model.id === modelId)) {
-      fail("gateway-model-missing", `The AgentTeams gateway does not advertise ${modelId}.`);
-    }
-    return { model: modelId, gatewayModelProbe: "pass" };
+    if (text.length > 1_000_000) fail("gateway-probe-unbounded", "The AgentTeams gateway probe response exceeded the bounded limit.");
+    try { JSON.parse(text); } catch { fail("gateway-probe-invalid", "The AgentTeams gateway probe response was not valid JSON."); }
+    return { model: modelId, gatewayProbe: "pass", gatewayProbeContract: "auth-connectivity" };
   } catch (error) {
     if (error instanceof CodexGatewayPreflightError) throw error;
-    fail(error?.name === "AbortError" ? "gateway-model-probe-timeout" : "gateway-model-probe-unreachable", "The AgentTeams gateway model probe failed.");
+    fail(error?.name === "AbortError" ? "gateway-probe-timeout" : "gateway-probe-unreachable", "The AgentTeams gateway connectivity probe failed.");
   } finally {
     clearTimeout(timer);
   }
@@ -125,7 +123,7 @@ export async function runCodexGatewayPreflightFromFile({
   const provider = config.models?.providers?.[result.provider];
   return {
     ...result,
-    ...(await probeCodexGatewayModel({
+    ...(await probeCodexGateway({
       baseUrl: result.baseUrl,
       consumerToken: provider.apiKey,
       modelId: result.model,

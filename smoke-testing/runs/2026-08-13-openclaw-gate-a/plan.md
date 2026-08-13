@@ -190,18 +190,25 @@ uses the OpenAI-compatible provider with model `deepseek-v4-pro` and the
 Worker-scoped consumer token from the generated Worker config. The real
 DeepSeek key remains in Higress/AgentTeams; it is never copied into the image,
 Codex config, command line, session, or diagnostics. A fail-closed preflight
-checks the provider API, exact model advertisement, HTTP(S) URL safety, and an
-explicit internal gateway host allowlist. This is the intended credential
-boundary, not a claim that arbitrary direct-key configuration is safe.
+checks the provider API, local model configuration, HTTP(S) URL safety, and an
+explicit internal gateway host allowlist. It performs a bounded authenticated
+`GET /models` connectivity probe, but does not require the response to be a
+complete model catalog: AgentTeams' documented Higress contract treats this
+route as an auth/connectivity probe, while `/v1/chat/completions` is the
+controller readiness path. This is the intended credential boundary, not a
+claim that arbitrary direct-key configuration is safe.
 
 The isolated Codex app-server probe also completed a real DeepSeek V4 Pro
 Responses turn with a transient key, using a temporary `CODEX_HOME` and
 `model_providers.deepseek` (`wire_api = "responses"`). The bounded result was a
 successful `thread/start`/`turn/completed` sequence for `deepseek-v4-pro`.
 The local AgentTeams gateway was also probed without printing credentials:
-its `/models` response advertises `deepseek-v4-pro`, and its `/responses`
-endpoint returned 200 using the existing Worker consumer token. This proves
-the gateway can be the Codex transport boundary. The next slice must exercise
+its `/models` endpoint returned authenticated JSON, and its `/responses`
+endpoint returned 200 using the existing Worker consumer token. The configured
+provider still pins `deepseek-v4-pro` locally; the `/models` response is not
+treated as a stable catalog contract. This proves the gateway can be a
+candidate Codex transport boundary, not that native WebSocket transport is
+supported. The next slice must exercise
 the complete native OpenClaw turn through that route and prove native tool
 admission, `apply_patch` handling, ToolResult capture, restart, and recovery.
 The Web console remains the read-only continuity witness throughout.
@@ -223,13 +230,34 @@ route can be explicitly pinned to the gateway's supported HTTP transport.
 
 On 2026-08-13, a user-provided DeepSeek key was used only in a transient
 process environment. Direct machine observations: `GET /models` returned 200
-and listed `deepseek-v4-pro`; `POST /responses` returned 200 with model
-`deepseek-v4-pro`; and a custom `apply_patch` tool returned a bounded
+with valid JSON; the local provider configuration listed `deepseek-v4-pro`; and
+`POST /responses` returned 200 with model `deepseek-v4-pro`; and a custom
+`apply_patch` tool returned a bounded
 `custom_tool_call` containing a patch-shaped input. An unknown custom tool
 returned 400. With thinking enabled, forcing `tool_choice: required` returned
 400, while automatic tool choice returned the custom call; the adapter must
 preserve this distinction. No patch was applied and no key or project content
 was persisted.
+
+### AgentTeams upstream survey (2026-08-13)
+
+The current AgentTeams stable line is v1.2.2. Its documented runtime and
+gateway path centers on OpenClaw/QwenPaw/Hermes, OpenAI-compatible provider
+configuration, and Worker-scoped consumer tokens. No merged AgentTeams support
+for Codex Responses WebSocket was found. Draft PR #1139 adds a separate
+host-local Codex app-server/TeamHarness bridge with credential isolation, but
+explicitly avoids a Controller-managed Codex runtime and validates ChatGPT OAuth
+rather than DeepSeek-through-Higress. Closed PRs #569 and #828 are historical
+Codex/external-CLI experiments, not current stable support. Open Issue #399
+still tracks directly launching Codex/Claude Code.
+
+The Higress API reference work in PR #1125 documents `/v1/chat/completions` and
+`/v1/embeddings`, and describes `/v1/models` as an auth/connectivity probe rather
+than a complete model-list endpoint. PR #1171 addresses IP:port
+OpenAI-compatible base URLs; this canary uses the internal DNS route and does
+not rely on that fix. The upstream survey therefore supports the current
+direction, but leaves a protocol adapter or explicit HTTP/SSE route as a
+required implementation slice before native Codex promotion.
 
 ## Recorded Gate A attempt
 
