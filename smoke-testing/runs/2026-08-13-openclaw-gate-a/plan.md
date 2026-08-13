@@ -2,7 +2,7 @@
 
 ## Status and ownership
 
-- Status: **IN IMPLEMENTATION — A2/A3 readiness is proven; A4-A6 remain open**.
+- Status: **IN IMPLEMENTATION — A2/A3 readiness and hook seams are proven; A4-A6 remain open**.
 - Scope: public, credential-free compatibility and fail-closed probes for an
   isolated OpenClaw Worker lane.
 - Product code enabled by this plan: the deterministic plugin/control-API
@@ -155,9 +155,11 @@ gate_a_cleanup=pass
 
 This proves the pinned image, Tiangong plugin/preflight, AgentTeams storage
 entrypoint, OpenClaw Gateway, Matrix readiness, isolated lane, and cleanup
-boundary. It does **not** prove A4 admission, A5 ToolResult capture, or A6
-full recovery/ownership proof; a same-container restart/readiness probe is
-now available, while duplicate-owner and durable replay cases remain open.
+boundary. The live registry also reports the bounded `tool_result_persist`
+capture hook. It does **not** prove A4 admission, A5 per-tool persistence
+matrix, or A6 full recovery/ownership proof; a same-container
+restart/readiness probe passes, while duplicate-owner and durable replay cases
+remain open.
 The pinned
 image uses `api.on("before_dispatch", ...)` and `api.on("before_tool_call", ...)`
 for typed hooks; the adapter must not assume the newer `before_agent_run` or
