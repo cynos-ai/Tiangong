@@ -33,24 +33,36 @@ canary; it is not an in-place production upgrade.
   and `sha256:df4f57c450a820b47427fd3cd16d802b7defaaa52f61421bdda45ea943c58a0a`.
 - **Web/control continuity: PASS.** Matrix versions, Element Web, and the
   local control-plane health endpoint each returned HTTP 200.
-- **Current stack version: OBSERVED.** The live Manager is `Running`, but its
-  image is still `agentteams-manager-copaw:v1.2.0`. The running stack also has
-  a mixed controller/dashboard image state, so it is not evidence of a
-  completed v1.2.2 deployment.
-- **Ownership guard: BLOCKED FOR IN-PLACE SWITCH.** The containers are mounted
-  from a different workspace and this repository has no matching `.env` or
-  ownership state. The switch command therefore was not run; changing named
-  containers or the shared data volume here would risk deleting or replacing
-  state outside this run's ownership.
-- **Model/Codex claim: NOT TESTED IN THIS RUN.** No key was copied or printed,
-  and no LLM request was needed for the version/continuity preflight. The
-  existing OpenClaw Gate A records remain the source for the separate Codex
+- **Owner-workspace upgrade: PASS.** The owning Linux workspace
+  `/home/sj/codes/Tiangong` was switched to a dedicated validation branch. Its
+  private `.env` was changed only from `v1.2.0` to `v1.2.2` (mode `600`); the
+  existing LLM endpoint, model, runtime, ports, and data volume were preserved.
+  The checksum-verified `scripts/agentteams.sh up` upgrade completed.
+- **Persisted image override repair: PASS.** The controller resource retained
+  the old `agentteams-manager-copaw:v1.2.0` image override after the first
+  upgrade. The bounded `agt update manager --name default --image ...:v1.2.2`
+  operation repaired that exact resource; no workers or data were deleted.
+- **Post-upgrade stack: PASS.** Controller and Manager now run v1.2.2 images;
+  Manager is `Running` with `welcomeSent=true`, and the existing Matrix room and
+  Manager identity remain intact. Dashboard remains the intentionally
+  independent `v1.2.0-beta.1` image, as documented by the upstream installer.
+- **Ownership guard: PASS.** The upgrade was executed from the workspace that
+  owns the containers and generated environment. The current Windows checkout
+  was never used to stop or replace those resources.
+- **Model gateway: PASS.** After the upgrade, the authenticated local
+  `/v1/models` probe returned valid JSON with two models; the first reported
+  model was `deepseek-v4-flash`. The key was read only in memory for the probe
+  and was not written to this repository or retained in evidence.
+- **OpenClaw/Codex claim: NOT PROMOTED.** No OpenClaw Worker was provisioned in
+  this run, and no native Codex WebSocket turn was claimed. The existing
+  OpenClaw Gate A records remain the source for the separate Codex
   gateway/WebSocket compatibility result.
 
 ## Promotion decision
 
-**Do not promote the live stack to v1.2.2 from this workspace.** Run the
-checksum-verified upgrade from the workspace that owns the current containers,
-or provision an isolated stack with distinct container names, ports, and data
-volume. After that, repeat the Gate A Matrix/Element continuity and Codex
-gateway checks against the v1.2.2 Worker before changing the default lane.
+**Platform switch: promoted for validation, not yet for the OpenClaw default
+lane.** The owner-workspace v1.2.2 stack passed the platform and Web continuity
+checks. No OpenClaw Worker was provisioned in this run, so repeat the Gate A
+Matrix/Element continuity and Codex gateway checks against a v1.2.2 OpenClaw
+Worker before changing the default Worker lane. The existing Gate A record still
+owns the separate native Codex WebSocket compatibility result.
