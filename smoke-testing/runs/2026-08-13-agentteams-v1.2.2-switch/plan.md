@@ -58,11 +58,38 @@ canary; it is not an in-place production upgrade.
   OpenClaw Gate A records remain the source for the separate Codex
   gateway/WebSocket compatibility result.
 
+## OpenClaw Gate A follow-up (2026-08-13)
+
+- **Canary creation: PASS.** The reserved `tiangong-openclaw-canary` Worker was
+  created from `tiangong-worker-canary:dev` on the v1.2.2 stack. The resource
+  reached `phase=Running`, with the expected OpenClaw runtime, isolated lane,
+  and `OPENCLAW_AGENT_HARNESS_FALLBACK=none`.
+- **Startup boundary: PASS.** Container health, Matrix login/room join,
+  `tiangong_preflight`, and the authenticated AgentTeams gateway probe for
+  `codex/deepseek-v4-pro` all appeared in bounded machine state. The live hook
+  contract also passed against the running Worker.
+- **Restart observation: PASS WITH DRIVER TIMEOUT.** The restart driver timed
+  out while waiting for its strict post-restart log conjunction. Direct facts
+  after the timeout showed the same container identity still running,
+  `phase=Running`, OpenClaw health available, and the canary lane/fallback
+  unchanged. This is classified as a smoke oracle/timeout issue, not a Worker
+  readiness failure.
+- **Web continuity: PASS.** Matrix, Element Web, and Dashboard returned HTTP
+  200 while the canary was running.
+- **Cleanup: PASS AFTER BOUNDED REPAIR.** AgentTeams removed the Worker
+  resource, but its mirror directory remained. The run then removed only the
+  fixed canary mirror/storage prefix and verified that the Worker container,
+  controller/Manager mirror paths, storage prefix, and run state were absent.
+- **Deterministic test-driver notes.** The owner checkout did not preserve
+  executable bits on smoke scripts, and the Gate A contract's final static grep
+  is over-broad for legitimate token field names. Node contract tests were
+  `6/6`; these driver issues were not changed during the live run.
+
 ## Promotion decision
 
-**Platform switch: promoted for validation, not yet for the OpenClaw default
-lane.** The owner-workspace v1.2.2 stack passed the platform and Web continuity
-checks. No OpenClaw Worker was provisioned in this run, so repeat the Gate A
-Matrix/Element continuity and Codex gateway checks against a v1.2.2 OpenClaw
-Worker before changing the default Worker lane. The existing Gate A record still
-owns the separate native Codex WebSocket compatibility result.
+**Platform and OpenClaw canary: promoted for continued Gate A work, not for the
+default Worker lane.** The owner-workspace v1.2.2 stack and an isolated OpenClaw
+Codex canary both passed their startup/readiness boundaries. Native Codex
+WebSocket transport through AgentTeams is still a separate compatibility
+question; do not change the default Worker lane until a real model/tool turn,
+ToolResult capture, approval, and recovery are separately evidenced.
