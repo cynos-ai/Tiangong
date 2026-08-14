@@ -60,16 +60,22 @@
   4. `rotate` advances generation by exactly one. The new reference works, the
      old reference is no longer admitted, and no raw key is observable in
      Worker state or diagnostics.
-  5. Restart the sidecar or deployment controller. `reconcile` recovers only
+  5. Capture the adapter's sanitized credential-projection checks: Docker
+     create metadata and argv contain no raw value, the sidecar config stores
+     only the variable reference, logs/receipts contain no raw value, and an
+     unrelated Worker cannot read the sidecar process environment. Any
+     unobservable check is red.
+  6. Restart the sidecar or deployment controller. `reconcile` recovers only
      from current adapter status and generation; a lost response is never
      replayed blindly and never falls back to builtin/another model.
-  6. `drain` rejects new turns, resolves in-flight work with a bounded
+  7. `drain` rejects new turns, resolves in-flight work with a bounded
      cancellation/timeout fact, and leaves no unresolved active turn.
-  7. `remove` reclaims the sidecar, temporary receipt, session/cache, and
+  8. `remove` reclaims the sidecar, temporary receipt, session/cache, and
      run-owned Team/Workers. Verify absence by exact resource identifiers.
 - Required evidence: sanitized lifecycle events for each transition, current
   generation and route metadata, preflight result, one Team-room correlation,
-  restart/reconcile facts, drain terminal fact, and exact cleanup checks.
+  credential-projection check results, restart/reconcile facts, drain terminal
+  fact, and exact cleanup checks.
 - Blocked paths: readiness failure, stale receipt, generation mismatch, raw key
   observed, fallback, ambiguous post-restart state, unbounded drain, or any
   cleanup failure keeps the run red. Do not infer success from HTTP 2xx alone.
@@ -85,6 +91,8 @@
 | Rotation adapter call loses response | Stay in recovery-needed phase | adapter status/reconcile; no blind retry |
 | Drain/remove before the required phase | Deny | deterministic sidecar phase error |
 | Cleanup of a non-run-owned resource | Refuse | ownership check and unchanged external resource |
+| Raw credential appears in metadata/argv/config/logs or cross-Worker `/proc` | Red; do not promote | sanitized projection checks with explicit negative facts |
+| Config stores only a variable reference and isolation checks pass | Continue | reference-only config plus all projection checks pass |
 
 ## Maintenance notes
 
