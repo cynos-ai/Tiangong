@@ -32,6 +32,7 @@ grep -Fq 'FROM worker-base AS canary-chat-bridge' "${DOCKERFILE}" || fail 'Chat-
 grep -Fq 'TIANGONG_CODEX_MODEL=qwen3.7-plus' "${DOCKERFILE}" || fail 'Chat-only bridge canary must select the Qwen Coding Plan model.'
 grep -Fq 'TIANGONG_CODEX_TRANSPORT=responses-via-chat-bridge' "${DOCKERFILE}" || fail 'Chat-only bridge canary must select the bridge transport.'
 grep -Fq 'TIANGONG_CODEX_BRIDGE=opencodex' "${DOCKERFILE}" || fail 'Chat-only bridge canary must select OpenCodex.'
+grep -Fq 'del(.models.providers[$provider].apiKey)' "${REPO_ROOT}/worker/bin/openclaw" || fail 'Codex canary must not persist the Worker gateway credential in OpenClaw config.'
 grep -Fq 'bin/codex-app-server' "${DOCKERFILE}" || fail 'Canary image does not include the sanitized Codex app-server launcher.'
 [[ -x "${REPO_ROOT}/worker/bin/codex-app-server" ]] || fail 'Sanitized Codex app-server launcher is not executable.'
 [[ -x "${REPO_ROOT}/worker/bin/codex" ]] || fail 'Canary codex PATH shim is not executable.'

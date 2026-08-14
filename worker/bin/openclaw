@@ -15,7 +15,7 @@ cleanup_codex_home() {
 }
 
 configure_codex_gateway() {
-  local config_file provider_base_url provider_api_key provider_id model_id provider_toml_id
+  local config_file provider_base_url provider_api_key provider_id model_id provider_toml_id temporary_file
   [[ "${TIANGONG_RUNTIME_LANE:-legacy-v0.2}" == "openclaw-canary" ]] || return 0
   [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]] || return 0
   config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
@@ -36,6 +36,17 @@ configure_codex_gateway() {
   }
   provider_base_url="$(jq -er --arg provider "${provider_id}" '.models.providers[$provider].baseUrl' "${config_file}")"
   provider_api_key="$(jq -er --arg provider "${provider_id}" '.models.providers[$provider].apiKey' "${config_file}")"
+  temporary_file="$(mktemp "${config_file}.tiangong-codex-credential.XXXXXX")"
+  trap 'rm -f "${temporary_file:-}"' RETURN
+  jq --arg provider "${provider_id}" '
+    if (.models.providers[$provider] | type) == "object"
+    then del(.models.providers[$provider].apiKey)
+    else .
+    end
+  ' "${config_file}" >"${temporary_file}"
+  chmod 600 "${temporary_file}"
+  mv "${temporary_file}" "${config_file}"
+  trap - RETURN
   unset DEEPSEEK_API_KEY DEEPSEEK_BASE_URL CODEX_API_KEY OPENAI_BASE_URL
   codex_home="$(mktemp -d "${TMPDIR:-/tmp}/tiangong-codex-home.XXXXXX")"
   chmod 700 "${codex_home}"
