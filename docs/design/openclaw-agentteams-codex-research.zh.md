@@ -1,8 +1,8 @@
 # OpenClaw × AgentTeams × Codex/DeepSeek 可行性调查
 
-> 调查日期：2026-08-13
+> 调查日期：2026-08-14
 >
-> 状态：已验证基础网关链路；原生 Codex Responses WebSocket 仍需适配
+> 状态：已验证 AgentTeams v1.2.2 的原生 Codex HTTP Responses 路径，以及 Qwen Coding Plan 的 OpenCodex bridge Worker 路径；不把 WebSocket 当作必要前提
 
 ## 结论
 
@@ -10,18 +10,16 @@
 生命周期、存储和模型网关基础设施；Tiangong 继续负责 Worker 内的控制、工具、
 Gate、Evidence、审批和恢复。
 
-当前不能宣称“原生 OpenClaw Codex 已经可以直接通过 AgentTeams 调用
-DeepSeek”。我们在隔离 canary 中观察到：
+当前不能宣称“AgentTeams 已经把 Codex 注册成 Controller-managed runtime”；但在 Tiangong 显式 canary 中，原生 Codex app-server 已经可以通过 AgentTeams gateway 的 HTTP Responses 路径调用 DeepSeek，Chat-only 的 Qwen Coding Plan 也可以经 OpenCodex sidecar 调用：
 
 ```text
 OpenClaw 2026.4.14 native Codex harness
-  -> ws://agentteams-controller:8080/v1/responses
-  -> HTTP 401
+  -> http://agentteams-controller:8080/v1/responses
+  -> DeepSeek V4 Pro: pass (fallbackUsed=false)
+  -> Qwen Coding Plan: OpenCodex 2.15.0 sidecar -> pass (provider=codex)
 ```
 
-而使用同一个 Worker consumer token、同一个模型和同一个网关，直接发送 HTTP
-`POST /v1/responses` 返回 200。因此当前阻塞是 Responses WebSocket 协议适配，
-不是 DeepSeek key、模型名称或 Worker token 本身无效。
+因此当前阻塞不是 DeepSeek key、模型名称或 Worker token 本身无效，而是 AgentTeams 官方没有把 Codex app-server 作为稳定 Controller runtime 暴露，以及 OpenCodex sidecar 仍需要 AgentTeams-owned 的部署生命周期。Codex 配置显式关闭 WebSocket 后，HTTP/SSE 路径足以完成当前 canary；不需要为了 WebSocket 先写协议适配层。
 
 ## AgentTeams 当前能力
 
@@ -67,10 +65,9 @@ WebSocket 支持。
 
 ### 尚未完成
 
-1. 原生 OpenClaw Codex turn 通过网关完成一次完整 Responses WebSocket 对话。
-2. WebSocket streaming、重连、tool call 和多轮 `previous_response_id` 的端到端证明。
-3. Codex child process 的最终环境隔离证明；当前 OpenClaw 版本对自定义 app-server
-   launcher 的实际采用仍需单独确认。
+1. AgentTeams upstream 尚未把 Codex app-server 变成稳定的 Controller-managed runtime；当前使用 Tiangong canary image 和显式 runtime contract。
+2. OpenCodex sidecar 的生产生命周期、滚动升级、取消/超时和跨 Worker token 轮换还要由 AgentTeams-owned deployment 完成。
+3. 需要在真实 Team task（不只是直接 `openclaw agent`）上补齐多轮 tool replay、重启/恢复和 Evidence 关联证明。
 4. 首次数据结构迁移。迁移应等基础链路、WebUI、ToolResult、重启/恢复都通过后再做。
 
 ## 推荐实施顺序
@@ -82,24 +79,21 @@ WebSocket 支持。
 - 继续只使用 Worker-scoped consumer token；
 - 失败时保留稳定错误码，不自动切换到直连 DeepSeek key。
 
-### Phase 1：先完成 HTTP/SSE 可用的 OpenClaw canary
+### Phase 1：HTTP/SSE 原生 Codex canary（已通过）
 
-优先确认 OpenClaw/Codex 是否能显式关闭 WebSocket、使用网关支持的 HTTP/SSE
-Responses 路径。如果能配置，则保留原生 Codex、Matrix、Element Web 和
-AgentTeams key boundary，不先做数据迁移。
+OpenClaw/Codex 已显式关闭 WebSocket，使用网关支持的 HTTP Responses 路径；原生 Codex、Matrix、Element Web 和 AgentTeams key boundary 均保留，不先做数据迁移。
 
-### Phase 2：若 HTTP/SSE 不可用，增加协议适配层
+### Phase 2：Chat-only 模型的显式 bridge canary（已通过，仍需生产化）
 
-在 AgentTeams/Higress 或独立 canary adapter 中实现：
+在 AgentTeams/Higress 或独立 sidecar 中实现：
 
-1. 接受 Codex Responses WebSocket upgrade；
-2. 验证 Worker consumer token；
-3. 将 `response.create` 与事件流转换到网关后端支持的 HTTP/SSE 或上游协议；
+1. 接受 Codex Responses HTTP 请求；
+2. 用 `x-opencodex-api-key` 验证 Worker consumer token；
+3. 将 Responses 转换到 Coding Plan 的 Chat/Completions；
 4. 保持 session/turn 关联、tool call、错误和取消语义；
-5. 不把真实 DeepSeek key 下发到 Worker 或 Codex child。
+5. 不把真实 Coding Plan key 下发到 Worker、Codex child 或 sidecar。
 
-协议适配层必须先做最小握手/单轮/streaming/错误/重连测试，再接入真实 Matrix
-turn。不能用“HTTP `/responses` 返回 200”替代 WebSocket 端到端证据。
+OpenCodex 2.15.0 已通过真实 Qwen 文本、function call 和多轮 replay；生产化还必须补齐 sidecar 生命周期与真实 Team task 证据，不能因为一次文本 200 就自动升级为默认路径。
 
 ### Phase 3：Tiangong 控制面与数据结构迁移
 
@@ -120,6 +114,6 @@ ToolResult/Operation 等数据结构，并继续保留 Element Web 作为实时�
 
 当前判断：
 
-- **Go**：继续 OpenClaw + AgentTeams + DeepSeek 的 canary 开发；保留 WebUI/Matrix；
-- **No-Go（暂时）**：把原生 Codex WebSocket 当成已受支持能力，或开始大规模数据迁移；
-- **下一决策点**：HTTP/SSE 显式路由验证；若失败，转协议 adapter 分支。
+- **Go**：继续 OpenClaw + AgentTeams + DeepSeek 原生 canary；Qwen Coding Plan 走显式 OpenCodex bridge canary；保留 WebUI/Matrix；
+- **No-Go（暂时）**：把 Codex 宣称为 AgentTeams 官方 Controller runtime，或开始大规模数据迁移；
+- **下一决策点**：把 sidecar 生命周期和真实 Team task 证据纳入 AgentTeams-owned deployment，完成后再评估数据结构迁移。

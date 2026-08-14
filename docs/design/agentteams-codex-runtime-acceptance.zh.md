@@ -72,6 +72,7 @@ Codex 路由必须满足：
 - consumer token 只在 Worker 启动时从受控配置解析到内存，并通过进程环境传给 Codex app-server；
 - Codex 临时 `CODEX_HOME/config.toml` 权限为 `0600`，退出时删除；
 - 启动后从持久化 OpenClaw provider 配置移除 `apiKey`，避免 token 进入 Worker 状态、备份或同步文件；
+- Chat-only OpenCodex bridge 只在临时 Codex TOML 中声明 `env_http_headers = { "x-opencodex-api-key" = "OPENAI_API_KEY" }`；该专用 header 携带的仍是 Worker consumer token，不能改成上游 provider key；
 - provider key、consumer token、Authorization header 不得进入 CR、镜像 `ENV`、命令参数、Session、ToolResult、Evidence 或日志；
 - 真实模型测试只允许使用 AgentTeams secret/credential 注入，禁止把 key 复制到仓库或临时 manifest。
 
@@ -90,7 +91,16 @@ Codex 路由必须满足：
 - 当前 AgentTeams v1.2.2 stack 的 DeepSeek endpoint：`deepseek-v4-pro`、`deepseek-v4-flash` 预检通过；当前分支构建的 Codex Worker 和 `team_leader` 均已完成真实文本调用。
 - stock AgentTeams OpenClaw Worker 真实调用通过，但使用的是 OpenClaw 自带 Chat/Completions 循环，不是 Codex。
 - 将同一 Codex 镜像的 `spec.model` 改成另一个模型时，因 v1.2.2 `agt` 路径不能覆盖镜像级 Codex 模型环境，Worker 按预期 fail-closed。
-- Qwen Coding Plan、Qwen Token Plan、GLM、Kimi、MiniMax 尚未在本次 DeepSeek credential 上判定为“支持/不支持”；它们需要各自的 AgentTeams provider endpoint、model catalog、credential 和对应 wire/bridge canary。当前 DeepSeek credential 对这些模型的 400 只说明路由未配置，不能当作模型能力结论。
+- Qwen Coding Plan `qwen3.7-plus` 已用独立 AgentTeams provider credential 实测：直连 Coding Plan endpoint 返回 2xx；stock OpenClaw Worker 和官方 Team Leader 均以 `provider=agentteams-gateway` 完成真实文本调用。
+- 同一 Qwen 路由的 `Codex Responses -> OpenCodex 2.15.0 -> AgentTeams gateway -> Chat/Completions` 已完成真实文本、`apply_patch` function call 和多轮 replay；将 OpenCodex 作为内部 sidecar 接入自定义 canary Worker 后，Worker 以 `provider=codex`、`fallbackUsed=false` 返回 `QWEN_CODEX_WORKER_BRIDGE_OK`。
+- Qwen Coding Plan 在 thinking 模式下拒绝 Responses 的对象型 `tool_choice`；桥接层必须使用 `tool_choice=auto`。由于 AgentTeams gateway 是无状态转发，多轮请求必须重新声明 `tools`，否则 OpenCodex 会 fail-closed。这两项是 bridge 运行时合同，不是降级到 builtin 的理由。
+- 当前 canary 已将 provider、模型、模型别名、endpoint、gateway host allowlist、transport、bridge 和 credential source 参数化；允许模型仍以 AgentTeams 下发的 provider model catalog 为准，preflight 会对选定模型做精确存在性检查。
+
+## Qwen bridge 的部署合同
+
+OpenCodex 不能直接复用 Responses 请求里的 `Authorization: Bearer` 作为自身认证：其 `/v1/responses` 和 `/v1/chat/completions` 数据面要求专用 `x-opencodex-api-key`。因此 sidecar 必须绑定非 loopback 地址时，同时设置 `OPENCODEX_API_AUTH_TOKEN` 和上游 AgentTeams consumer token；Worker 的临时 Codex TOML 通过 `env_http_headers` 把同一个 Worker token 注入专用 header。sidecar 仍不持有 Coding Plan 上游 key，Coding Plan key 只在 AgentTeams gateway provider 中保存。
+
+这条链路保留 AgentTeams 的 Worker/Team/Matrix/WebUI 边界：切换模型只改变 Worker image/build args 与 AgentTeams provider catalog，不能绕过 gateway、Team room 或审计。生产化前还需要把 sidecar 生命周期纳入 AgentTeams-owned deployment，而不是让 Worker 自己启动第二套密钥或状态系统。
 
 ## 依据
 

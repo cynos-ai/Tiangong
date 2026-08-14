@@ -145,6 +145,8 @@ export async function probeCodexGateway({
 
 export async function runCodexGatewayPreflightFromFile({
   configPath,
+  consumerToken,
+  baseUrlOverride,
   ...options
 } = {}) {
   if (typeof configPath !== "string" || !configPath) {
@@ -156,13 +158,23 @@ export async function runCodexGatewayPreflightFromFile({
   } catch {
     fail("config-unreadable", "OpenClaw config could not be read for Codex gateway preflight.");
   }
+  const providerId = nonEmptyString(options.providerId) ||
+    nonEmptyString(options.env?.TIANGONG_CODEX_PROVIDER) || CODEX_GATEWAY_PROVIDER;
+  const provider = config.models?.providers?.[providerId];
+  if (provider && (nonEmptyString(consumerToken) || nonEmptyString(baseUrlOverride))) {
+    config.models.providers[providerId] = {
+      ...provider,
+      ...(nonEmptyString(consumerToken) ? { apiKey: consumerToken } : {}),
+      ...(nonEmptyString(baseUrlOverride) ? { baseUrl: baseUrlOverride } : {}),
+    };
+  }
   const result = assertCodexGatewayConfiguration(config, options);
-  const provider = config.models?.providers?.[result.provider];
+  const effectiveProvider = config.models?.providers?.[result.provider];
   return {
     ...result,
     ...(await probeCodexGateway({
       baseUrl: result.baseUrl,
-      consumerToken: provider.apiKey,
+      consumerToken: effectiveProvider.apiKey,
       modelId: result.model,
       transport: result.transport,
       bridge: result.bridge,

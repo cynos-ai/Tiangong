@@ -1,10 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   assertCodexGatewayConfiguration,
   CodexGatewayPreflightError,
   probeCodexGateway,
+  runCodexGatewayPreflightFromFile,
 } from "../agent/preflight/codex-gateway-preflight.mjs";
 
 const config = {
@@ -131,4 +135,35 @@ test("fails closed when a Chat-only route names an unknown bridge", () => {
     }),
     (error) => error instanceof CodexGatewayPreflightError && error.code === "codex-bridge-invalid",
   );
+});
+
+test("uses an ephemeral Worker token and endpoint override without persisting either", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "tiangong-codex-preflight-"));
+  const configPath = join(directory, "openclaw.json");
+  const configWithoutToken = structuredClone(config);
+  delete configWithoutToken.models.providers["agentteams-gateway"].apiKey;
+  await writeFile(configPath, JSON.stringify(configWithoutToken), "utf8");
+  let observed;
+  try {
+    const result = await runCodexGatewayPreflightFromFile({
+      configPath,
+      consumerToken: "ephemeral-worker-consumer-token",
+      baseUrlOverride: "http://agentteams-controller:18080/v1",
+      fetchImpl: async (url, options) => {
+        observed = { url: url.href, authorization: options.headers.authorization };
+        return { status: 200, text: async () => JSON.stringify({ data: [] }) };
+      },
+    });
+    assert.equal(result.baseUrl, "http://agentteams-controller:18080/v1");
+    assert.equal(result.credentialSource, "agentteams-consumer-token");
+    assert.deepEqual(observed, {
+      url: "http://agentteams-controller:18080/v1/models",
+      authorization: "Bearer ephemeral-worker-consumer-token",
+    });
+    const persisted = JSON.parse(await readFile(configPath, "utf8"));
+    assert.equal(Object.hasOwn(persisted.models.providers["agentteams-gateway"], "apiKey"), false);
+    assert.equal(persisted.models.providers["agentteams-gateway"].baseUrl, "http://agentteams-controller:8080/v1");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

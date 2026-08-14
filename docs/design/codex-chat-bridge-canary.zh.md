@@ -2,7 +2,7 @@
 
 > 验证日期：2026-08-14
 >
-> 结论：当前 Codex 不回退；Responses-capable 模型直连，Chat/Completions-only 模型通过显式 OpenCodex canary 路由验证。
+> 结论：当前 Codex 不回退；Responses-capable 模型直连，Chat/Completions-only 模型通过显式 OpenCodex canary 路由验证。Qwen Coding Plan 的真实 Worker bridge 已通过。
 
 ## 结论
 
@@ -37,7 +37,7 @@ Chat-only provider 必须在受控配置的 `compat` 中显式声明：
 
 ### OpenCodex：首选 canary
 
-[OpenCodex](https://github.com/lidge-jun/opencodex) 是独立社区项目，当前公开版本为 `2.14.2`。它专门接收 Codex Responses 请求并转换到 OpenAI-compatible Chat provider，文档和源码覆盖流式文本、reasoning、function call、`custom_tool_call`、MCP 命名空间以及 `apply_patch` freeform tool。
+[OpenCodex](https://github.com/lidge-jun/opencodex) 是独立社区项目，本次实测版本为 `2.15.0`。它专门接收 Codex Responses 请求并转换到 OpenAI-compatible Chat provider，文档和源码覆盖流式文本、reasoning、function call、`custom_tool_call`、MCP 命名空间以及 `apply_patch` freeform tool。
 
 它适合先做真实编程链路的 canary，但不应成为 AgentTeams 的第二套权威密钥或状态系统。部署时只启用内部 sidecar：
 
@@ -51,7 +51,7 @@ OpenCodex sidecar（协议转换）
 Coding Plan
 ```
 
-Coding Plan key 由 AgentTeams secret 机制持有并在运行时注入 sidecar；Worker、OpenClaw、Codex 只接触 Worker-scoped consumer token。OpenCodex 的 dashboard、账号池和持久化 provider key 管理不作为 Tiangong 的权威控制面。
+Coding Plan key 由 AgentTeams secret 机制持有并在运行时注入 gateway；Worker、OpenClaw、Codex 和 OpenCodex sidecar 只接触 Worker-scoped consumer token。非 loopback sidecar 必须使用 `OPENCODEX_API_AUTH_TOKEN`，并以 `x-opencodex-api-key` 专用 header 做数据面认证；OpenCodex 的 dashboard、账号池和持久化 provider key 管理不作为 Tiangong 的权威控制面。
 
 ### LiteLLM：通用网关备选
 
@@ -61,13 +61,21 @@ Higress、OpenClaw 原生 provider 和 OpenAI 官方 `responses-api-proxy` 都�
 
 ## 已完成的机器验证
 
-验证没有使用真实模型 key，而是固定到公开 npm 包 `@bitkyc08/opencodex@2.14.2`，后端使用本地假 Chat/Completions 服务：
+验证分为两层。协议 canary 固定到公开 npm 包 `@bitkyc08/opencodex@2.15.0` 和本地假 Chat/Completions 服务；随后使用 AgentTeams gateway 的真实 Qwen Coding Plan credential 完成端到端验证：
 
 1. OpenCodex `/v1/responses` 收到 Codex custom `apply_patch` 工具声明。
 2. 假 Chat 上游只收到 `function` 工具，并返回分片的 `tool_calls`。
 3. OpenCodex 将其恢复为 Responses `response.custom_tool_call_input.*` 和 `custom_tool_call` 完成事件。
 4. 第二轮携带 `custom_tool_call_output`，上游收到 `tool` 消息并返回文本。
 5. Responses 端收到 `bridge-ok` 和 `response.completed`。
+
+真实 Qwen 结果：
+
+1. `qwen3.7-plus` 直连 Coding Plan endpoint 返回 2xx。
+2. stock AgentTeams OpenClaw Worker 与官方 Team Leader 均以 `provider=agentteams-gateway` 完成真实文本调用。
+3. OpenCodex 2.15.0 经 AgentTeams gateway 完成 Responses 文本、`apply_patch` function call 和第二轮 replay。
+4. 自定义 Tiangong `canary-chat-bridge` Worker 通过 `host.docker.internal` sidecar 返回 `QWEN_CODEX_WORKER_BRIDGE_OK`，运行元数据显示 `provider=codex`、`model=qwen3.7-plus`、`fallbackUsed=false`。
+5. Qwen 在 thinking 模式拒绝对象型 `tool_choice`；必须使用 `auto`。无状态 gateway 的第二轮必须重新声明 `tools`，否则 bridge 明确报 undeclared tool。
 
 > 这证明的是协议和工具回环，不证明阿里云 Coding Plan 的账号、额度或特定模型质量。真实 key 只能由 AgentTeams secret 注入到隔离 canary，不能写入仓库、Codex 配置、命令参数或诊断日志。
 
@@ -76,13 +84,13 @@ Higress、OpenClaw 原生 provider 和 OpenAI 官方 `responses-api-proxy` 都�
 - `coding-model-profile.mjs` 区分 `native-responses` 与 `responses-via-chat-bridge`。
 - `model-provider-config.mjs` 只保留 bounded 的 `codexWireApi`、`codexBridge` 元数据，不保留任何 credential/header。
 - `codex-gateway-preflight.mjs` 要求 bridge 路由显式选择 `opencodex`，未知 bridge、错误 transport 均 fail-closed。
-- `worker/bin/openclaw` 已将 provider、model、model alias 参数化；当前 Docker canary 默认仍是 DeepSeek 原生 Responses。
+- `worker/bin/openclaw` 已将 provider、model、model alias、endpoint、credential source、transport 和 bridge 参数化；默认 Docker canary 仍是 DeepSeek 原生 Responses，Qwen bridge 是显式 opt-in target。
 - AgentTeams 仍是模型 key、网关路由和内部 sidecar 生命周期的 owner；Tiangong 不新增第二套密钥仓库。
 - WebUI/Matrix/Element Web 路径不变，bridge 只是模型数据面的一段内部路由。
 
 ## 后续验收门槛
 
-在真实 Coding Plan key 注入后，bridge canary 还必须逐项验证：普通流式文本、shell/function tool、`apply_patch`、多轮 tool replay、取消/超时、重试/恢复、错误映射和凭证隔离。任何一项失败，都保留原生 Responses 路线，不把 bridge 自动升级为默认路径。
+生产纳入前，bridge canary 还必须逐项验证：普通流式文本、shell/function tool、`apply_patch`、多轮 tool replay、取消/超时、重试/恢复、错误映射、sidecar 生命周期和凭证隔离。当前真实验证已覆盖文本、function call、replay、Worker runtime 与 dedicated header；任何新增门槛失败，都保留原生 Responses 路线，不把 bridge 自动升级为默认路径。
 
 ## 公开依据
 

@@ -15,7 +15,7 @@ cleanup_codex_home() {
 }
 
 configure_codex_gateway() {
-  local config_file provider_base_url provider_api_key provider_id model_id provider_toml_id temporary_file
+  local config_file provider_base_url provider_api_key provider_id model_id provider_toml_id temporary_file base_url_override credential_source bridge_mode provider_http_headers
   [[ "${TIANGONG_RUNTIME_LANE:-legacy-v0.2}" == "openclaw-canary" ]] || return 0
   [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]] || return 0
   config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
@@ -23,24 +23,47 @@ configure_codex_gateway() {
     printf '[tiangong-worker] ERROR: OpenClaw config not found: %s\n' "${config_file}" >&2
     return 1
   }
-  /usr/bin/node --input-type=module -e '
-    const { runCodexGatewayPreflightFromFile } = await import(process.argv[1]);
-    const result = await runCodexGatewayPreflightFromFile({ configPath: process.argv[2] });
-    console.log(`codex_gateway_preflight=pass provider=${result.provider} model=${result.model} gateway_probe=${result.gatewayProbe} gateway_probe_contract=${result.gatewayProbeContract} transport=${result.transport} bridge=${result.bridge ?? "none"} credential_source=${result.credentialSource}`);
-  ' "${CODEX_GATEWAY_PREFLIGHT}" "${config_file}"
   provider_id="${TIANGONG_CODEX_PROVIDER:-agentteams-gateway}"
   model_id="${TIANGONG_CODEX_MODEL:-deepseek-v4-pro}"
+  bridge_mode="${TIANGONG_CODEX_BRIDGE:-none}"
+  credential_source="${TIANGONG_CODEX_CREDENTIAL_SOURCE:-agentteams-consumer-token}"
+  [[ "${credential_source}" == "agentteams-consumer-token" ]] || {
+    printf '[tiangong-worker] ERROR: unsupported Codex credential source: %s\n' "${credential_source}" >&2
+    return 1
+  }
   [[ "${provider_id}" =~ ^[A-Za-z0-9_-]+$ ]] || {
     printf '[tiangong-worker] ERROR: unsafe Codex provider id: %s\n' "${provider_id}" >&2
     return 1
   }
-  provider_base_url="$(jq -er --arg provider "${provider_id}" '.models.providers[$provider].baseUrl' "${config_file}")"
-  provider_api_key="$(jq -er --arg provider "${provider_id}" '.models.providers[$provider].apiKey' "${config_file}")"
+  provider_api_key="$(jq -er --arg provider "${provider_id}" '.models.providers[$provider].apiKey // empty' "${config_file}" || true)"
+  provider_api_key="${provider_api_key:-${AGENTTEAMS_WORKER_GATEWAY_KEY:-}}"
+  [[ -n "${provider_api_key}" ]] || {
+    printf '[tiangong-worker] ERROR: AgentTeams Worker consumer token is unavailable.\n' >&2
+    return 1
+  }
+  base_url_override="${TIANGONG_CODEX_BASE_URL:-}"
+  if [[ -n "${base_url_override}" ]]; then
+    provider_base_url="${base_url_override}"
+  else
+    provider_base_url="$(jq -er --arg provider "${provider_id}" '.models.providers[$provider].baseUrl' "${config_file}")"
+  fi
+  TIANGONG_PREFLIGHT_CONSUMER_TOKEN="${provider_api_key}" \
+  TIANGONG_PREFLIGHT_BASE_URL="${base_url_override}" \
+  /usr/bin/node --input-type=module -e '
+    const { runCodexGatewayPreflightFromFile } = await import(process.argv[1]);
+    const result = await runCodexGatewayPreflightFromFile({
+      configPath: process.argv[2],
+      consumerToken: process.env.TIANGONG_PREFLIGHT_CONSUMER_TOKEN,
+      baseUrlOverride: process.env.TIANGONG_PREFLIGHT_BASE_URL || undefined,
+    });
+    console.log(`codex_gateway_preflight=pass provider=${result.provider} model=${result.model} gateway_probe=${result.gatewayProbe} gateway_probe_contract=${result.gatewayProbeContract} transport=${result.transport} bridge=${result.bridge ?? "none"} credential_source=${result.credentialSource}`);
+  ' "${CODEX_GATEWAY_PREFLIGHT}" "${config_file}"
   temporary_file="$(mktemp "${config_file}.tiangong-codex-credential.XXXXXX")"
   trap 'rm -f "${temporary_file:-}"' RETURN
-  jq --arg provider "${provider_id}" '
+  jq --arg provider "${provider_id}" --arg base_url "${base_url_override}" '
     if (.models.providers[$provider] | type) == "object"
-    then del(.models.providers[$provider].apiKey)
+    then (if $base_url != "" then .models.providers[$provider].baseUrl = $base_url else . end)
+      | del(.models.providers[$provider].apiKey)
     else .
     end
   ' "${config_file}" >"${temporary_file}"
@@ -51,8 +74,14 @@ configure_codex_gateway() {
   codex_home="$(mktemp -d "${TMPDIR:-/tmp}/tiangong-codex-home.XXXXXX")"
   chmod 700 "${codex_home}"
   provider_toml_id="$(printf '%s' "${provider_id}" | jq -Rsa .)"
-  printf 'model_provider = %s\n\n[model_providers.%s]\nname = %s\nbase_url = %s\nenv_key = "OPENAI_API_KEY"\nwire_api = "responses"\nsupports_websockets = false\n\n[features]\nresponses_websockets = false\nresponses_websockets_v2 = false\n' \
-    "${provider_toml_id}" "${provider_id}" "${provider_toml_id}" "$(printf '%s' "${provider_base_url}" | jq -Rsa .)" >"${codex_home}/config.toml"
+  provider_http_headers=""
+  if [[ "${bridge_mode}" == "opencodex" ]]; then
+    # OpenCodex deliberately requires its dedicated admission header on Responses/Chat routes;
+    # the value is still the scoped AgentTeams consumer token, never an upstream provider key.
+    provider_http_headers=$'env_http_headers = { "x-opencodex-api-key" = "OPENAI_API_KEY" }\n'
+  fi
+  printf 'model_provider = %s\n\n[model_providers.%s]\nname = %s\nbase_url = %s\nenv_key = "OPENAI_API_KEY"\nwire_api = "responses"\n%s\nsupports_websockets = false\n\n[features]\nresponses_websockets = false\nresponses_websockets_v2 = false\n' \
+    "${provider_toml_id}" "${provider_id}" "${provider_toml_id}" "$(printf '%s' "${provider_base_url}" | jq -Rsa .)" "${provider_http_headers}" >"${codex_home}/config.toml"
   chmod 600 "${codex_home}/config.toml"
   export CODEX_HOME="${codex_home}"
   # This is the scoped AgentTeams consumer token. The upstream provider key stays behind the gateway/bridge.
