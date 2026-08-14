@@ -110,3 +110,9 @@ OpenCodex 不能直接复用 Responses 请求里的 `Authorization: Bearer` 作�
 - [AgentTeams v1.2.2 REST resource handler](https://raw.githubusercontent.com/agentscope-ai/AgentTeams/v1.2.2/agentteams-controller/internal/server/resource_handler.go)
 - [OpenClaw Agent runtimes](https://docs.openclaw.ai/zh-CN/concepts/agent-runtimes)
 - [Codex provider configuration](https://developers.openai.com/codex/config-reference)
+
+## 2026-08-14 Team bridge canary 补充
+
+已完成一次真实 AgentTeams v1.2.2 Team 链路验证：`agt create team` 返回 `phase=Active`、`leaderReady=true`、`readyWorkers=1`；Leader 在 Team room 发出任务，`canary-chat-bridge` Worker 经 `Codex Responses -> OpenCodex 2.15.0 -> AgentTeams gateway -> Qwen Coding Plan` 返回 `QWEN_TEAM_MEMBER_TASK_OK`。运行元数据为 `provider=codex`、`model=qwen3.7-plus`、`fallbackUsed=false`；Leader 随后在同一 Team room 转发 `TEAM_LEADER_RELAY_OK`。
+
+这条证据覆盖 Team room、Leader、bridge Worker 和 Matrix/WebUI 边界，但不把它误报为 AgentTeams 官方 Controller-managed Codex runtime。临时 Team、Workers、sidecar 已回收，Higress route 已恢复到 DeepSeek；生产化仍遵循 [OpenCodex sidecar 部署合同](opencodex-sidecar-deployment-contract.zh.md)。

@@ -67,7 +67,7 @@ WebSocket 支持。
 
 1. AgentTeams upstream 尚未把 Codex app-server 变成稳定的 Controller-managed runtime；当前使用 Tiangong canary image 和显式 runtime contract。
 2. OpenCodex sidecar 的生产生命周期、滚动升级、取消/超时和跨 Worker token 轮换还要由 AgentTeams-owned deployment 完成。
-3. 需要在真实 Team task（不只是直接 `openclaw agent`）上补齐多轮 tool replay、重启/恢复和 Evidence 关联证明。
+3. 真实 Team task 基础链路已通过；仍需在 AgentTeams-owned deployment 中补齐多轮 tool replay、重启/恢复和 Evidence 关联证明。
 4. 首次数据结构迁移。迁移应等基础链路、WebUI、ToolResult、重启/恢复都通过后再做。
 
 ## 推荐实施顺序
@@ -93,7 +93,7 @@ OpenClaw/Codex 已显式关闭 WebSocket，使用网关支持的 HTTP Responses 
 4. 保持 session/turn 关联、tool call、错误和取消语义；
 5. 不把真实 Coding Plan key 下发到 Worker、Codex child 或 sidecar。
 
-OpenCodex 2.15.0 已通过真实 Qwen 文本、function call 和多轮 replay；生产化还必须补齐 sidecar 生命周期与真实 Team task 证据，不能因为一次文本 200 就自动升级为默认路径。
+OpenCodex 2.15.0 已通过真实 Qwen 文本、function call、多轮 replay 和基础 Team task；生产化还必须补齐 sidecar 生命周期，不能因为 canary 通过就自动升级为默认路径。
 
 ### Phase 3：Tiangong 控制面与数据结构迁移
 
@@ -116,4 +116,10 @@ ToolResult/Operation 等数据结构，并继续保留 Element Web 作为实时�
 
 - **Go**：继续 OpenClaw + AgentTeams + DeepSeek 原生 canary；Qwen Coding Plan 走显式 OpenCodex bridge canary；保留 WebUI/Matrix；
 - **No-Go（暂时）**：把 Codex 宣称为 AgentTeams 官方 Controller runtime，或开始大规模数据迁移；
-- **下一决策点**：把 sidecar 生命周期和真实 Team task 证据纳入 AgentTeams-owned deployment，完成后再评估数据结构迁移。
+- **下一决策点**：把 sidecar 生命周期、重启/恢复和 Evidence 关联纳入 AgentTeams-owned deployment，完成后再评估数据结构迁移。
+
+## 2026-08-14 真实 Team task 复验
+
+此前“尚未完成真实 Team task”这一项已完成复验：临时 Qwen Team 为 `Active`，Leader 为 stock OpenClaw builtin，bridge Worker 为 Tiangong `canary-chat-bridge`。Leader 在 Team room 发出任务，Worker 返回 `QWEN_TEAM_MEMBER_TASK_OK`，Leader 再返回 `TEAM_LEADER_RELAY_OK`；bridge Worker 的 execution trace 为 `winnerProvider=codex`、`winnerModel=qwen3.7-plus`、`fallbackUsed=false`。验证完成后已删除 Team、Workers、sidecar，并将 Higress route 恢复为 DeepSeek。
+
+因此当前结论是：AgentTeams + OpenClaw + Codex + Qwen Coding Plan 的 Team 任务路径可行；尚未完成的是把 OpenCodex sidecar 的生命周期正式交给 AgentTeams 部署层，而不是继续使用临时主机进程。下一步应先实现并验证 sidecar 的 provision/ready/rotate/drain/remove 合同，再考虑数据结构迁移。

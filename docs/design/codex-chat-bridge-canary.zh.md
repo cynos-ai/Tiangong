@@ -100,3 +100,9 @@ Higress、OpenClaw 原生 provider 和 OpenAI 官方 `responses-api-proxy` 都�
 - [Codex Chat/Completions deprecation discussion](https://github.com/openai/codex/discussions/7782)
 - [OpenCodex architecture](https://opencodex.me/reference/architecture/)
 - [LiteLLM Responses bridge](https://docs.litellm.ai/docs/response_api)
+
+## 2026-08-14 Team task bridge 追加证据
+
+除直接 Worker 调用外，已在真实 AgentTeams v1.2.2 Team 中验证：Leader 使用 stock OpenClaw builtin（`provider=agentteams-gateway`）进入 Team room，bridge Worker 使用 Tiangong `canary-chat-bridge`（`provider=codex`、`model=qwen3.7-plus`、`fallbackUsed=false`）处理任务并回复 `QWEN_TEAM_MEMBER_TASK_OK`；Leader 读取该消息后转发 `TEAM_LEADER_RELAY_OK`。这证明 bridge Worker 可以作为 AgentTeams Team member 工作，且不需要牺牲 Team room、Matrix 或 WebUI。
+
+该验证仍是 canary：OpenCodex sidecar 的 provision、ready、rotate、drain、remove 必须由 AgentTeams-owned deployment 提供，不能把主机上一次性启动的进程当作生产生命周期。合同见 [OpenCodex sidecar 部署合同](opencodex-sidecar-deployment-contract.zh.md)。
