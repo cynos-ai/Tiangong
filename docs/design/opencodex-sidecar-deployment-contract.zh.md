@@ -88,3 +88,14 @@ sidecar 管理器。契约固定要求：
 确定性测试补齐；真正创建容器、投影 secret、执行网络探针和回收资源的
 adapter 仍必须由 AgentTeams Controller/deployment 层提供。没有这个 adapter
 和它的真实重启/轮换 smoke，不能把 bridge 宣称为生产默认路径。
+
+## Credential projection implementation note
+
+The deployment-owned adapter may implement the provider credential as a
+controller-scoped child-process environment reference (for example, the
+sidecar config stores only `$TIANGONG_SCOPED_TOKEN`) if and only if the
+platform proves that the resolved value is absent from Docker create metadata,
+argv, Worker state, receipts, logs, and unrelated Worker `/proc` views. The
+sidecar must run under a dedicated non-agent identity; this is not permission
+for a Worker to create or inspect the process. If the isolation proof is not
+available, use a platform secret file/FD projection or keep the bridge canary-only.
