@@ -119,3 +119,11 @@ also accepted. The v1.2.2 REST DTO therefore does not preserve this field on
 the embedded CLI path; the temporary resources were deleted afterward. Use the
 native Kubernetes CR path (or an upstream DTO fix) before treating
 `accessEntries` as an effective credential binding.
+
+Before promotion, the deployment must also pass the REST-boundary check. The
+official v1.2.2 source currently omits `accessEntries` from the embedded
+controller request/response DTOs; an isolated upstream-only patch adding those
+fields and create/update tests passes the relevant package tests, but is not
+yet part of the running image. Until an AgentTeams image with that fix (or a
+native Kubernetes CR path) is selected, the credential binding is not an
+admission fact and the OpenCodex Full smoke remains blocked.

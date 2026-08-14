@@ -23,7 +23,9 @@
   sidecar identity. Refuse to replace existing resources. Provision the
   OpenCodex sidecar through the AgentTeams deployment adapter, project only a
   Worker-scoped credential reference, and wait for an observable `ready`
-  receipt.
+  receipt. The selected AgentTeams path must preserve `accessEntries` through
+  admission (native Kubernetes CR or an upstream REST DTO fix); acceptance of
+  an unknown YAML field by the unpatched embedded CLI is not sufficient.
 - Prompt: Leader sends one deterministic task marker to the bridge Worker in
   the Team room; the Worker replies with the run-owned marker.
 - Expected observations:
@@ -98,6 +100,7 @@
 
 The deterministic Node tests prove the state machine and receipt parser. They
 do not prove that AgentTeams v1.2.2 has a Controller-managed OpenCodex adapter;
-the Full smoke must remain blocked until that adapter is implemented and its
-real restart/rotation/drain/remove evidence is available. Keep DeepSeek native
+the Full smoke must remain blocked until that adapter is implemented, the
+`accessEntries` admission boundary is effective, and real
+restart/rotation/drain/remove evidence is available. Keep DeepSeek native
 Responses as the default route while this scenario is red or blocked.

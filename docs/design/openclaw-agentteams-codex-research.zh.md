@@ -142,3 +142,24 @@ smoke 证明。
 因此当前结论从“没有官方 sidecar”收窄为“有通用 credential-provider，但没有 OpenCodex-specific lifecycle manager，且 embedded `agt` 透传仍有缺口”：DeepSeek 等原生 Responses 模型继续直连；Chat-only 模型继续走显式 OpenCodex bridge canary；生产化适配层只补生命周期与 receipt，不再另造第二套 AgentTeams 凭证仓库。若使用 Helm/Kubernetes 原生 CR 路径，优先把 provider credential 绑定到官方 `accessEntries`；若继续使用 embedded `agt`，需等待上游 REST DTO 修复或由部署层直接提交 CR，并保留本文既有的密钥不落盘、跨 Worker 隔离和 fail-closed 门槛。
 
 源码锚点：[v1.2.2 WorkerSpec](https://raw.githubusercontent.com/agentscope-ai/AgentTeams/v1.2.2/agentteams-controller/api/v1beta1/types.go)、[v1.2.2 REST DTO](https://raw.githubusercontent.com/agentscope-ai/AgentTeams/v1.2.2/agentteams-controller/internal/server/types.go)、[Helm credentialProvider 配置](https://raw.githubusercontent.com/agentscope-ai/AgentTeams/v1.2.2/helm/agentteams/values.yaml)。
+
+## 2026-08-15 REST DTO 补丁与凭证轮换验证
+
+我们在 `%TEMP%\\agentteams-v1.2.2-src` 的官方 tag 副本中准备了一个最小上游补丁：
+`Create/UpdateWorker`、`Create/UpdateManager` 的 REST request/response DTO
+显式传递 `accessEntries`，handler 在 create/update 时写入 CR spec，并补上四个
+create/update 回归测试。该补丁没有复制进 Tiangong，也没有改动当前运行的
+AgentTeams 镜像；它应先以 AgentTeams issue/PR 的形式合入，再构建新镜像。
+
+隔离验证已通过：`internal/server`、`internal/accessresolver`、
+`internal/credentials` 和 `internal/credprovider` package tests 全部 PASS。
+额外的 `httptest` 凭证提供器测试验证了首个 STS 响应、有效期内缓存，以及
+`Invalidate()` 后重新签发新响应；测试只使用合成凭证，不写入文件、日志或命令行。
+随后重试的 `go build ./cmd/controller` 也已 PASS；此前一次 Go proxy 依赖下载 EOF
+在缓存补齐后未再复现。
+
+因此新的上线顺序是：先使用原生 Kubernetes CR 或合入该 DTO 补丁的 AgentTeams
+镜像，确认 `agt apply` 后 `agt get` 能回显合法 `accessEntries` 且非法 service
+在 resolver/provider 阶段 fail closed；随后再执行 credential-provider mock、
+OpenCodex generation rotation/drain 和真实 Qwen Team Full smoke。在此之前，
+DeepSeek 原生 Responses 继续作为默认路径，Qwen bridge 继续保持 canary。
