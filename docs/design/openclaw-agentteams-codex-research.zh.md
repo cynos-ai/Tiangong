@@ -132,3 +132,11 @@ generation 轮换、`reconcile` 恢复、脱敏 snapshot/receipt 和 fail-closed
 真实 Controller adapter。真实的容器 provision、secret projection、状态探针、
 drain/remove 和跨重启持久化仍必须在 AgentTeams deployment 层实现并用真实
 smoke 证明。
+
+## 2026-08-15 AgentTeams 凭证提供器边界修正
+
+补充核对 AgentTeams v1.2.2 上游源码后，需要修正“AgentTeams 完全没有官方 sidecar 能力”的表述：v1.2.2 的 `WorkerSpec` 已包含 `accessEntries`，并定义了 `CredentialProvider`/`AccessEntry` 相关控制器路径；当前 embedded 控制器二进制也包含这些实现。我们用一个 `containerManaged: false` 的临时 Worker 通过当前 `agt apply -f` 实际提交了带 `accessEntries` 的声明并完成清理，证明当前 YAML 入口可接受该字段。
+
+这项官方能力的范围是网关、对象存储、AI registry 等云资源的 STS/访问策略投影；它不是 OpenCodex 的专用进程管理器，也不提供 `provision/ready/rotate/drain/remove` 的 OpenCodex 生命周期 API。换句话说：可以复用 AgentTeams 的 `accessEntries`/credential-provider 作为凭证和访问范围的权威来源，但 OpenCodex sidecar 的进程、端口、就绪、轮换、drain 和回收仍需由 AgentTeams deployment-owned adapter 实现。
+
+因此当前结论从“没有官方 sidecar”收窄为“没有 OpenCodex-specific lifecycle manager”：DeepSeek 等原生 Responses 模型继续直连；Chat-only 模型继续走显式 OpenCodex bridge canary；生产化适配层只补生命周期与 receipt，不再另造第二套 AgentTeams 凭证仓库。若升级到带 Kubernetes/credential-provider 的部署模式，优先把 provider credential 绑定到官方 `accessEntries`，并保留本文既有的密钥不落盘、跨 Worker 隔离和 fail-closed 门槛。

@@ -99,3 +99,20 @@ argv, Worker state, receipts, logs, and unrelated Worker `/proc` views. The
 sidecar must run under a dedicated non-agent identity; this is not permission
 for a Worker to create or inspect the process. If the isolation proof is not
 available, use a platform secret file/FD projection or keep the bridge canary-only.
+
+## AgentTeams v1.2.2 credential-provider boundary
+
+AgentTeams v1.2.2 already defines generic `accessEntries` on Worker/Manager
+resources and a credential-provider path for scoped cloud permissions. This is
+the preferred source of provider authorization when the deployment runs with
+the corresponding gateway/storage provider. It does not own an OpenCodex
+process: it does not create the bridge, publish its internal endpoint, issue a
+readiness receipt, or perform bridge generation rotation and drain.
+
+The Tiangong adapter therefore remains intentionally small. It consumes an
+AgentTeams-scoped credential reference, starts or reconciles an OpenCodex
+generation under a dedicated deployment identity, and projects only the
+sanitized binding/ready receipt defined above. A local `agt apply -f` probe with
+`containerManaged: false` accepted a Worker manifest containing `accessEntries`
+and the temporary resource was deleted afterward; this verifies the declarative
+field on the pinned embedded v1.2.2 path, not production sidecar lifecycle.
