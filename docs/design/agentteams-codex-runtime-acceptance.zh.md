@@ -75,6 +75,9 @@ Codex 路由必须满足：
 - Chat-only OpenCodex bridge 只在临时 Codex TOML 中声明 `env_http_headers = { "x-opencodex-api-key" = "OPENAI_API_KEY" }`；该专用 header 携带的仍是 Worker consumer token，不能改成上游 provider key；
 - provider key、consumer token、Authorization header 不得进入 CR、镜像 `ENV`、命令参数、Session、ToolResult、Evidence 或日志；
 - 真实模型测试只允许使用 AgentTeams secret/credential 注入，禁止把 key 复制到仓库或临时 manifest。
+- Chat-only bridge Worker 必须拿到 AgentTeams deployment 投影的脱敏 `ready`
+  receipt；receipt 的 endpoint、provider、model、generation 必须和当前路由一致，
+  否则 preflight 以 `codex-sidecar-receipt-*` 错误 fail-closed。
 
 ## 必须通过的验收门槛
 
@@ -95,6 +98,11 @@ Codex 路由必须满足：
 - 同一 Qwen 路由的 `Codex Responses -> OpenCodex 2.15.0 -> AgentTeams gateway -> Chat/Completions` 已完成真实文本、`apply_patch` function call 和多轮 replay；将 OpenCodex 作为内部 sidecar 接入自定义 canary Worker 后，Worker 以 `provider=codex`、`fallbackUsed=false` 返回 `QWEN_CODEX_WORKER_BRIDGE_OK`。
 - Qwen Coding Plan 在 thinking 模式下拒绝 Responses 的对象型 `tool_choice`；桥接层必须使用 `tool_choice=auto`。由于 AgentTeams gateway 是无状态转发，多轮请求必须重新声明 `tools`，否则 OpenCodex 会 fail-closed。这两项是 bridge 运行时合同，不是降级到 builtin 的理由。
 - 当前 canary 已将 provider、模型、模型别名、endpoint、gateway host allowlist、transport、bridge 和 credential source 参数化；允许模型仍以 AgentTeams 下发的 provider model catalog 为准，preflight 会对选定模型做精确存在性检查。
+- Tiangong Worker 现已实现 `OpenCodexSidecarController` 的 provision/ready/
+  rotate/reconcile/drain/remove 状态契约和脱敏 snapshot/receipt；确定性测试覆盖
+  readiness deny、generation rotation、重启 reconcile、uncertain recovery、
+  drain/remove phase gate。它仍等待 AgentTeams deployment adapter 提供真实容器
+  和 secret projection，不把本地状态机误报成 Controller runtime。
 
 ## Qwen bridge 的部署合同
 

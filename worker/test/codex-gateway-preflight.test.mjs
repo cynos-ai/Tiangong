@@ -125,6 +125,52 @@ test("requires the explicit OpenCodex bridge for a Chat-only route", () => {
   });
 });
 
+test("requires and validates an AgentTeams-owned sidecar readiness receipt for Chat-only routes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "tiangong-opencodex-receipt-"));
+  const configPath = join(directory, "openclaw.json");
+  const receiptPath = join(directory, "ready.json");
+  const bridgeConfig = structuredClone(config);
+  bridgeConfig.models.providers["agentteams-gateway"].models = [{ id: "qwen3.7-plus" }];
+  await writeFile(configPath, JSON.stringify(bridgeConfig), "utf8");
+  await writeFile(receiptPath, JSON.stringify({
+    schemaVersion: 1,
+    sidecarId: "sidecar-qwen-member",
+    phase: "ready",
+    generation: 1,
+    endpoint: "http://agentteams-controller:8080/v1",
+    provider: "agentteams-gateway",
+    model: "qwen3.7-plus",
+    transport: "responses-via-chat-bridge",
+    bridge: "opencodex",
+    credentialSource: "agentteams-secret-projection",
+    routeDigest: "a".repeat(64),
+  }), "utf8");
+  const env = {
+    TIANGONG_CODEX_MODEL: "qwen3.7-plus",
+    TIANGONG_CODEX_TRANSPORT: "responses-via-chat-bridge",
+    TIANGONG_CODEX_BRIDGE: "opencodex",
+  };
+  try {
+    await assert.rejects(
+      runCodexGatewayPreflightFromFile({ configPath, env, consumerToken: "worker-consumer-token", fetchImpl: async () => ({ status: 200, text: async () => "{}" }) }),
+      (error) => error instanceof CodexGatewayPreflightError && error.code === "codex-sidecar-receipt-missing",
+    );
+    const result = await runCodexGatewayPreflightFromFile({
+      configPath,
+      env: { ...env, TIANGONG_CODEX_SIDECAR_RECEIPT_PATH: receiptPath },
+      consumerToken: "worker-consumer-token",
+      fetchImpl: async () => ({ status: 200, text: async () => "{}" }),
+    });
+    assert.deepEqual({ sidecarReadiness: result.sidecarReadiness, sidecarId: result.sidecarId, sidecarGeneration: result.sidecarGeneration }, {
+      sidecarReadiness: "pass",
+      sidecarId: "sidecar-qwen-member",
+      sidecarGeneration: 1,
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("fails closed when a Chat-only route names an unknown bridge", () => {
   assert.throws(
     () => assertCodexGatewayConfiguration(config, {

@@ -15,7 +15,7 @@ cleanup_codex_home() {
 }
 
 configure_codex_gateway() {
-  local config_file provider_base_url provider_api_key provider_id model_id provider_toml_id temporary_file base_url_override credential_source bridge_mode provider_http_headers
+  local config_file provider_base_url provider_api_key provider_id model_id provider_toml_id temporary_file base_url_override credential_source bridge_mode provider_http_headers sidecar_receipt_path
   [[ "${TIANGONG_RUNTIME_LANE:-legacy-v0.2}" == "openclaw-canary" ]] || return 0
   [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]] || return 0
   config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
@@ -42,6 +42,7 @@ configure_codex_gateway() {
     return 1
   }
   base_url_override="${TIANGONG_CODEX_BASE_URL:-}"
+  sidecar_receipt_path="${TIANGONG_CODEX_SIDECAR_RECEIPT_PATH:-}"
   if [[ -n "${base_url_override}" ]]; then
     provider_base_url="${base_url_override}"
   else
@@ -49,14 +50,16 @@ configure_codex_gateway() {
   fi
   TIANGONG_PREFLIGHT_CONSUMER_TOKEN="${provider_api_key}" \
   TIANGONG_PREFLIGHT_BASE_URL="${base_url_override}" \
+  TIANGONG_PREFLIGHT_SIDECAR_RECEIPT_PATH="${sidecar_receipt_path}" \
   /usr/bin/node --input-type=module -e '
     const { runCodexGatewayPreflightFromFile } = await import(process.argv[1]);
     const result = await runCodexGatewayPreflightFromFile({
       configPath: process.argv[2],
       consumerToken: process.env.TIANGONG_PREFLIGHT_CONSUMER_TOKEN,
       baseUrlOverride: process.env.TIANGONG_PREFLIGHT_BASE_URL || undefined,
+      sidecarReceiptPath: process.env.TIANGONG_PREFLIGHT_SIDECAR_RECEIPT_PATH || undefined,
     });
-    console.log(`codex_gateway_preflight=pass provider=${result.provider} model=${result.model} gateway_probe=${result.gatewayProbe} gateway_probe_contract=${result.gatewayProbeContract} transport=${result.transport} bridge=${result.bridge ?? "none"} credential_source=${result.credentialSource}`);
+    console.log(`codex_gateway_preflight=pass provider=${result.provider} model=${result.model} gateway_probe=${result.gatewayProbe} gateway_probe_contract=${result.gatewayProbeContract} transport=${result.transport} bridge=${result.bridge ?? "none"} credential_source=${result.credentialSource} sidecar=${result.sidecarReadiness ?? "none"} sidecar_id=${result.sidecarId ?? "none"} sidecar_generation=${result.sidecarGeneration ?? "none"}`);
   ' "${CODEX_GATEWAY_PREFLIGHT}" "${config_file}"
   temporary_file="$(mktemp "${config_file}.tiangong-codex-credential.XXXXXX")"
   trap 'rm -f "${temporary_file:-}"' RETURN

@@ -66,3 +66,25 @@ AgentTeams gateway -> Chat/Completions provider
 - 让 OpenCodex dashboard、账号池或持久 provider 配置成为 Tiangong/AgentTeams 的权威控制面。
 - 让 bridge 失败时自动 fallback 到 builtin 或另一个模型。
 
+## 本轮实现的公共契约
+
+Tiangong 已加入 `worker/agent/deployment/opencodex-sidecar.mjs`，它是
+AgentTeams 部署层可以调用的无密钥生命周期契约，不是 Worker 自己的
+sidecar 管理器。契约固定要求：
+
+- `provision → ready → rotate → drain → remove` 的单向状态转换；
+- 每次外部调用前先落入 in-flight 状态，失败后保留 `uncertain` 事实，禁止
+  自动回退到 builtin、其他模型或其他凭证；
+- `reconcile` 只能依据部署层的当前状态和 generation 恢复，不能靠重试猜测
+  上一次调用是否生效；
+- binding 只允许 `agentteams://credentials/...` 引用、模型/路由元数据和
+  内部 endpoint，不接受或保存上游 key；
+- `ready` receipt 是脱敏的普通 JSON，可只读投影到 Worker。Chat-only 路由的
+  Codex preflight 必须读取并校验该 receipt；没有 receipt 就 fail-closed；
+- snapshot、receipt、event 都拒绝 `apiKey`、`access_token`、`authorization`
+  等凭证字段。
+
+因此当前代码已经把 Worker 侧的 readiness gate、rotation/recovery 状态机和
+确定性测试补齐；真正创建容器、投影 secret、执行网络探针和回收资源的
+adapter 仍必须由 AgentTeams Controller/deployment 层提供。没有这个 adapter
+和它的真实重启/轮换 smoke，不能把 bridge 宣称为生产默认路径。

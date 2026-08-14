@@ -123,3 +123,12 @@ ToolResult/Operation 等数据结构，并继续保留 Element Web 作为实时�
 此前“尚未完成真实 Team task”这一项已完成复验：临时 Qwen Team 为 `Active`，Leader 为 stock OpenClaw builtin，bridge Worker 为 Tiangong `canary-chat-bridge`。Leader 在 Team room 发出任务，Worker 返回 `QWEN_TEAM_MEMBER_TASK_OK`，Leader 再返回 `TEAM_LEADER_RELAY_OK`；bridge Worker 的 execution trace 为 `winnerProvider=codex`、`winnerModel=qwen3.7-plus`、`fallbackUsed=false`。验证完成后已删除 Team、Workers、sidecar，并将 Higress route 恢复为 DeepSeek。
 
 因此当前结论是：AgentTeams + OpenClaw + Codex + Qwen Coding Plan 的 Team 任务路径可行；尚未完成的是把 OpenCodex sidecar 的生命周期正式交给 AgentTeams 部署层，而不是继续使用临时主机进程。下一步应先实现并验证 sidecar 的 provision/ready/rotate/drain/remove 合同，再考虑数据结构迁移。
+
+2026-08-14 已在 Tiangong Worker 侧落地该边界的第一版：
+`worker/agent/deployment/opencodex-sidecar.mjs` 提供无密钥的生命周期状态机、
+generation 轮换、`reconcile` 恢复、脱敏 snapshot/receipt 和 fail-closed 状态；
+`codex-gateway-preflight.mjs` 对 Chat-only 路由强制读取匹配的 `ready` receipt。
+这解决了 Worker 侧“没有 readiness 就启动”的缺口，但不等于 AgentTeams 已有
+真实 Controller adapter。真实的容器 provision、secret projection、状态探针、
+drain/remove 和跨重启持久化仍必须在 AgentTeams deployment 层实现并用真实
+smoke 证明。

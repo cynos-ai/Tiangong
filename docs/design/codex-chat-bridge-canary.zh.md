@@ -87,10 +87,18 @@ Higress、OpenClaw 原生 provider 和 OpenAI 官方 `responses-api-proxy` 都�
 - `worker/bin/openclaw` 已将 provider、model、model alias、endpoint、credential source、transport 和 bridge 参数化；默认 Docker canary 仍是 DeepSeek 原生 Responses，Qwen bridge 是显式 opt-in target。
 - AgentTeams 仍是模型 key、网关路由和内部 sidecar 生命周期的 owner；Tiangong 不新增第二套密钥仓库。
 - WebUI/Matrix/Element Web 路径不变，bridge 只是模型数据面的一段内部路由。
+- Tiangong Worker 侧现有 `opencodex-sidecar.mjs` 只实现脱敏 binding、状态转换、
+  generation rotation/reconcile 和 readiness receipt 校验；它不创建容器、不持有
+  provider key，也不替代 AgentTeams deployment owner。
 
 ## 后续验收门槛
 
 生产纳入前，bridge canary 还必须逐项验证：普通流式文本、shell/function tool、`apply_patch`、多轮 tool replay、取消/超时、重试/恢复、错误映射、sidecar 生命周期和凭证隔离。当前真实验证已覆盖文本、function call、replay、Worker runtime 与 dedicated header；任何新增门槛失败，都保留原生 Responses 路线，不把 bridge 自动升级为默认路径。
+
+Chat-only Worker 的 Codex preflight 现在要求 AgentTeams deployment 投影的脱敏
+readiness receipt；缺失、过期、generation 或 endpoint/model 不匹配都会
+fail-closed。这个门槛可在本地确定性测试中验证，不能替代真实 sidecar
+restart/rotation/drain/remove smoke。
 
 ## 公开依据
 

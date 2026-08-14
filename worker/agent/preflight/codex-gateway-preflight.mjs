@@ -1,4 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
+
+import { validateOpenCodexSidecarReceipt } from "../deployment/opencodex-sidecar.mjs";
 
 export const CODEX_GATEWAY_PROVIDER = "agentteams-gateway";
 export const CODEX_GATEWAY_MODEL = "deepseek-v4-pro";
@@ -7,6 +9,7 @@ export const CODEX_TRANSPORT_BRIDGE = "responses-via-chat-bridge";
 export const CODEX_BRIDGE = "opencodex";
 export const DEFAULT_CODEX_GATEWAY_HOST = "agentteams-controller";
 const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
+const MAX_RECEIPT_BYTES = 16 * 1024;
 const CODEX_MODEL_ALIAS_PREFIX = "codex/";
 
 export class CodexGatewayPreflightError extends Error {
@@ -170,6 +173,33 @@ export async function runCodexGatewayPreflightFromFile({
   }
   const result = assertCodexGatewayConfiguration(config, options);
   const effectiveProvider = config.models?.providers?.[result.provider];
+  let sidecar;
+  if (result.transport === CODEX_TRANSPORT_BRIDGE) {
+    const sidecarReceiptPath = nonEmptyString(options.sidecarReceiptPath) || nonEmptyString(options.env?.TIANGONG_CODEX_SIDECAR_RECEIPT_PATH);
+    if (!sidecarReceiptPath) fail("codex-sidecar-receipt-missing", "The Chat-only Codex route requires an AgentTeams sidecar readiness receipt.");
+    let receipt;
+    try {
+      const metadata = await lstat(sidecarReceiptPath);
+      if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size === 0 || metadata.size > MAX_RECEIPT_BYTES) {
+        fail("codex-sidecar-receipt-invalid", "The OpenCodex sidecar readiness receipt is not a bounded regular file.");
+      }
+      receipt = JSON.parse(await readFile(sidecarReceiptPath, "utf8"));
+    } catch (error) {
+      if (error instanceof CodexGatewayPreflightError) throw error;
+      fail("codex-sidecar-receipt-unreadable", "The OpenCodex sidecar readiness receipt could not be read.");
+    }
+    let validated;
+    try {
+      validated = validateOpenCodexSidecarReceipt(receipt, {
+        endpoint: result.baseUrl,
+        provider: result.provider,
+        model: result.model,
+      });
+    } catch {
+      fail("codex-sidecar-receipt-invalid", "The OpenCodex sidecar readiness receipt does not match the selected route.");
+    }
+    sidecar = { sidecarReadiness: "pass", sidecarId: validated.sidecarId, sidecarGeneration: validated.generation };
+  }
   return {
     ...result,
     ...(await probeCodexGateway({
@@ -181,5 +211,6 @@ export async function runCodexGatewayPreflightFromFile({
       fetchImpl: options.fetchImpl,
       timeoutMs: options.timeoutMs,
     })),
+    ...(sidecar ?? {}),
   };
 }
