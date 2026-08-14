@@ -15,7 +15,7 @@ cleanup_codex_home() {
 }
 
 configure_codex_gateway() {
-  local config_file provider_base_url provider_api_key
+  local config_file provider_base_url provider_api_key provider_id model_id provider_toml_id
   [[ "${TIANGONG_RUNTIME_LANE:-legacy-v0.2}" == "openclaw-canary" ]] || return 0
   [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]] || return 0
   config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
@@ -26,25 +26,32 @@ configure_codex_gateway() {
   /usr/bin/node --input-type=module -e '
     const { runCodexGatewayPreflightFromFile } = await import(process.argv[1]);
     const result = await runCodexGatewayPreflightFromFile({ configPath: process.argv[2] });
-    console.log(`codex_gateway_preflight=pass provider=${result.provider} model=${result.model} gateway_probe=${result.gatewayProbe} gateway_probe_contract=${result.gatewayProbeContract} credential_source=${result.credentialSource}`);
+    console.log(`codex_gateway_preflight=pass provider=${result.provider} model=${result.model} gateway_probe=${result.gatewayProbe} gateway_probe_contract=${result.gatewayProbeContract} transport=${result.transport} bridge=${result.bridge ?? "none"} credential_source=${result.credentialSource}`);
   ' "${CODEX_GATEWAY_PREFLIGHT}" "${config_file}"
-  provider_base_url="$(jq -er '.models.providers["agentteams-gateway"].baseUrl' "${config_file}")"
-  provider_api_key="$(jq -er '.models.providers["agentteams-gateway"].apiKey' "${config_file}")"
+  provider_id="${TIANGONG_CODEX_PROVIDER:-agentteams-gateway}"
+  model_id="${TIANGONG_CODEX_MODEL:-deepseek-v4-pro}"
+  [[ "${provider_id}" =~ ^[A-Za-z0-9_-]+$ ]] || {
+    printf '[tiangong-worker] ERROR: unsafe Codex provider id: %s\n' "${provider_id}" >&2
+    return 1
+  }
+  provider_base_url="$(jq -er --arg provider "${provider_id}" '.models.providers[$provider].baseUrl' "${config_file}")"
+  provider_api_key="$(jq -er --arg provider "${provider_id}" '.models.providers[$provider].apiKey' "${config_file}")"
   unset DEEPSEEK_API_KEY DEEPSEEK_BASE_URL CODEX_API_KEY OPENAI_BASE_URL
   codex_home="$(mktemp -d "${TMPDIR:-/tmp}/tiangong-codex-home.XXXXXX")"
   chmod 700 "${codex_home}"
-  printf 'model_provider = "agentteams-gateway"\n\n[model_providers.agentteams-gateway]\nname = "agentteams-gateway"\nbase_url = %s\nenv_key = "OPENAI_API_KEY"\nwire_api = "responses"\nsupports_websockets = false\n\n[features]\nresponses_websockets = false\nresponses_websockets_v2 = false\n' \
-    "$(printf '%s' "${provider_base_url}" | jq -Rsa .)" >"${codex_home}/config.toml"
+  provider_toml_id="$(printf '%s' "${provider_id}" | jq -Rsa .)"
+  printf 'model_provider = %s\n\n[model_providers.%s]\nname = %s\nbase_url = %s\nenv_key = "OPENAI_API_KEY"\nwire_api = "responses"\nsupports_websockets = false\n\n[features]\nresponses_websockets = false\nresponses_websockets_v2 = false\n' \
+    "${provider_toml_id}" "${provider_id}" "${provider_toml_id}" "$(printf '%s' "${provider_base_url}" | jq -Rsa .)" >"${codex_home}/config.toml"
   chmod 600 "${codex_home}/config.toml"
   export CODEX_HOME="${codex_home}"
-  # This is the scoped AgentTeams consumer token. The real DeepSeek key stays in the gateway.
+  # This is the scoped AgentTeams consumer token. The upstream provider key stays behind the gateway/bridge.
   export OPENAI_API_KEY="${provider_api_key}"
   export OPENCLAW_CODEX_APP_SERVER_BIN="/opt/tiangong-worker/bin/codex-app-server"
   trap cleanup_codex_home EXIT INT TERM
 }
 
 configure_codex_runtime() {
-  local config_file temporary_file
+  local config_file temporary_file model_id model_ref model_alias
   [[ "${TIANGONG_RUNTIME_LANE:-legacy-v0.2}" == "openclaw-canary" ]] || return 0
   [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]] || return 0
   config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
@@ -54,7 +61,10 @@ configure_codex_runtime() {
   }
   temporary_file="$(mktemp "${config_file}.tiangong-codex.XXXXXX")"
   trap 'rm -f "${temporary_file:-}"' RETURN
-  jq '
+  model_id="${TIANGONG_CODEX_MODEL:-deepseek-v4-pro}"
+  model_ref="codex/${model_id}"
+  model_alias="${TIANGONG_CODEX_MODEL_ALIAS:-${model_id}}"
+  jq --arg model_ref "${model_ref}" --arg model_alias "${model_alias}" '
     .plugins = (.plugins // {})
     | .plugins.entries = (.plugins.entries // {})
     | .plugins.entries.codex = ((.plugins.entries.codex // {}) + {enabled: true})
@@ -69,9 +79,9 @@ configure_codex_runtime() {
         else .plugins.allow end
     | .agents = (.agents // {})
     | .agents.defaults = (.agents.defaults // {})
-    | .agents.defaults.model = {primary: "codex/deepseek-v4-pro", fallbacks: []}
+    | .agents.defaults.model = {primary: $model_ref, fallbacks: []}
     | .agents.defaults.models = (.agents.defaults.models // {})
-    | .agents.defaults.models["codex/deepseek-v4-pro"] = ((.agents.defaults.models["codex/deepseek-v4-pro"] // {}) + {alias: "deepseek"})
+    | .agents.defaults.models[$model_ref] = ((.agents.defaults.models[$model_ref] // {}) + {alias: $model_alias})
     | .agents.defaults.embeddedHarness = {runtime: "codex", fallback: "none"}
   ' "${config_file}" >"${temporary_file}"
   chmod 600 "${temporary_file}"

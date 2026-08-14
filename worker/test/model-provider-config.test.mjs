@@ -74,6 +74,31 @@ test("preserves only bounded Responses compatibility metadata", () => {
   assert.equal(JSON.stringify(result).includes('"apiKey"'), false);
 });
 
+test("preserves the bounded Codex bridge declaration without credentials", () => {
+  const result = sanitizedProviderConfiguration({
+    models: {
+      providers: {
+        "qwen-coding": {
+          api: "openai-completions",
+          baseUrl: "https://coding-intl.dashscope.aliyuncs.com/v1",
+          compat: { codexBridge: "opencodex", arbitrary: "drop" },
+          models: [{
+            id: "qwen3.7-plus",
+            compat: { codexWireApi: "openai-completions", codexBridge: "opencodex" },
+          }],
+        },
+      },
+    },
+  }, "qwen-coding");
+
+  assert.deepEqual(result.providers["qwen-coding"].compat, { codexBridge: "opencodex" });
+  assert.deepEqual(result.providers["qwen-coding"].models[0], {
+    compat: { codexBridge: "opencodex", codexWireApi: "openai-completions" },
+    id: "qwen3.7-plus",
+  });
+  assert.equal(JSON.stringify(result).includes("arbitrary"), false);
+});
+
 test("rejects DeepSeek V4 Pro on the wrong wire API or endpoint", () => {
   assert.throws(() => sanitizedProviderConfiguration({
     models: { providers: {
@@ -83,7 +108,7 @@ test("rejects DeepSeek V4 Pro on the wrong wire API or endpoint", () => {
         models: [{ id: "deepseek-v4-pro" }],
       },
     } },
-  }, "gateway"), /requires the OpenAI Responses wire API/);
+  }, "gateway"), /requires compat\.codexBridge=opencodex/);
 
   assert.throws(() => sanitizedProviderConfiguration({
     models: { providers: {
@@ -93,5 +118,5 @@ test("rejects DeepSeek V4 Pro on the wrong wire API or endpoint", () => {
         models: [{ id: "deepseek-v4-pro" }],
       },
     } },
-  }, "gateway"), /requires the official DeepSeek API base URL/);
+  }, "gateway"), /requires the official DeepSeek Responses API base URL/);
 });

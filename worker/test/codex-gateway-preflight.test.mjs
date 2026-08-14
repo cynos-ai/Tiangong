@@ -26,6 +26,7 @@ test("accepts the scoped AgentTeams gateway consumer-token route", () => {
     model: "deepseek-v4-pro",
     baseUrl: "http://agentteams-controller:8080/v1",
     credentialSource: "agentteams-consumer-token",
+    transport: "native-responses",
   });
 });
 
@@ -80,7 +81,12 @@ test("probes the AgentTeams gateway auth/connectivity endpoint with the consumer
       return { status: 200, text: async () => JSON.stringify({ data: [{ id: "deepseek-v4-pro" }] }) };
     },
   });
-  assert.deepEqual(result, { model: "deepseek-v4-pro", gatewayProbe: "pass", gatewayProbeContract: "auth-connectivity" });
+  assert.deepEqual(result, {
+    model: "deepseek-v4-pro",
+    gatewayProbe: "pass",
+    gatewayProbeContract: "auth-connectivity",
+    transport: "native-responses",
+  });
   assert.deepEqual(observed, {
     url: "http://agentteams-controller:8080/v1/models",
     method: "GET",
@@ -95,4 +101,34 @@ test("accepts a valid gateway probe response without requiring a model catalog",
     fetchImpl: async () => ({ status: 200, text: async () => JSON.stringify({ status: "ok" }) }),
   });
   assert.equal(result.gatewayProbeContract, "auth-connectivity");
+});
+
+test("requires the explicit OpenCodex bridge for a Chat-only route", () => {
+  const bridgeConfig = structuredClone(config);
+  bridgeConfig.models.providers["agentteams-gateway"].models = [{ id: "qwen3.7-plus" }];
+  const env = {
+    TIANGONG_CODEX_MODEL: "qwen3.7-plus",
+    TIANGONG_CODEX_TRANSPORT: "responses-via-chat-bridge",
+    TIANGONG_CODEX_BRIDGE: "opencodex",
+  };
+  assert.deepEqual(assertCodexGatewayConfiguration(bridgeConfig, { env }), {
+    provider: "agentteams-gateway",
+    model: "qwen3.7-plus",
+    baseUrl: "http://agentteams-controller:8080/v1",
+    credentialSource: "agentteams-consumer-token",
+    transport: "responses-via-chat-bridge",
+    bridge: "opencodex",
+  });
+});
+
+test("fails closed when a Chat-only route names an unknown bridge", () => {
+  assert.throws(
+    () => assertCodexGatewayConfiguration(config, {
+      env: {
+        TIANGONG_CODEX_TRANSPORT: "responses-via-chat-bridge",
+        TIANGONG_CODEX_BRIDGE: "custom-adapter",
+      },
+    }),
+    (error) => error instanceof CodexGatewayPreflightError && error.code === "codex-bridge-invalid",
+  );
 });

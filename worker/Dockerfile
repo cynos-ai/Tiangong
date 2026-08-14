@@ -103,5 +103,23 @@ ENV TIANGONG_RUNTIME_LANE=openclaw-canary \
     TIANGONG_CODEX_GATEWAY_HOSTS=agentteams-controller \
     TIANGONG_CODEX_PROVIDER=agentteams-gateway \
     TIANGONG_CODEX_MODEL=deepseek-v4-pro \
+    TIANGONG_CODEX_TRANSPORT=native-responses \
+    TIANGONG_CODEX_BRIDGE=none \
+    OPENCLAW_AGENT_RUNTIME=codex \
+    OPENCLAW_AGENT_HARNESS_FALLBACK=none
+
+# Explicit opt-in lane for Chat/Completions-only coding models. The bridge itself
+# is AgentTeams-owned and must be reachable through the internal gateway route.
+FROM worker-base AS canary-chat-bridge
+ENV TIANGONG_RUNTIME_LANE=openclaw-canary \
+    TIANGONG_CANARY_REQUIRED=1 \
+    TIANGONG_CANARY_ADMISSION=local \
+    TIANGONG_CODEX_RUNTIME=1 \
+    TIANGONG_CODEX_GATEWAY_HOSTS=agentteams-controller \
+    TIANGONG_CODEX_PROVIDER=agentteams-gateway \
+    TIANGONG_CODEX_MODEL=qwen3.7-plus \
+    TIANGONG_CODEX_MODEL_ALIAS=qwen-coding \
+    TIANGONG_CODEX_TRANSPORT=responses-via-chat-bridge \
+    TIANGONG_CODEX_BRIDGE=opencodex \
     OPENCLAW_AGENT_RUNTIME=codex \
     OPENCLAW_AGENT_HARNESS_FALLBACK=none

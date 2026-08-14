@@ -1,5 +1,8 @@
 const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
 const DEEPSEEK_MODEL = "deepseek-v4-pro";
+const RESPONSES_API = "openai-responses";
+const CHAT_API = "openai-completions";
+const OPEN_CODEX_BRIDGE = "opencodex";
 
 function normalizedBaseUrl(value) {
   if (typeof value !== "string" || value === "") return null;
@@ -19,35 +22,66 @@ function normalizedBaseUrl(value) {
  * This does not enable an OpenClaw runtime or prove a live model call.
  */
 export function codingModelProfile({ provider, model }) {
-  const api = model?.api ?? provider?.api;
+  const compat = {
+    ...(provider?.compat && typeof provider.compat === "object" ? provider.compat : {}),
+    ...(model?.compat && typeof model.compat === "object" ? model.compat : {}),
+  };
+  const api = compat.codexWireApi ?? model?.api ?? provider?.api;
+  const bridge = compat.codexBridge ?? null;
   const baseUrl = normalizedBaseUrl(model?.baseUrl ?? provider?.baseUrl);
-  if (model?.id !== DEEPSEEK_MODEL) {
-    return { supported: false, reason: "model is not the DeepSeek V4 Pro target" };
+  const modelId = typeof model?.id === "string" ? model.id : "";
+  if (modelId === "") {
+    return { supported: false, reason: "coding model id is missing" };
   }
-  if (api !== "openai-responses") {
+  if (!baseUrl) {
+    return { supported: false, reason: `${modelId} requires a valid provider base URL` };
+  }
+  if (bridge && bridge !== OPEN_CODEX_BRIDGE && bridge !== "none") {
     return {
       supported: false,
-      reason: "deepseek-v4-pro requires the OpenAI Responses wire API",
+      reason: `${modelId} uses an unsupported Codex bridge: ${String(bridge)}`,
     };
   }
-  if (baseUrl !== DEEPSEEK_BASE_URL) {
+  if (api === RESPONSES_API && bridge && bridge !== "none") {
     return {
       supported: false,
-      reason: "deepseek-v4-pro requires the official DeepSeek API base URL",
+      reason: `${modelId} uses native Responses and must not select a Chat bridge`,
     };
   }
+  if (api === CHAT_API && bridge !== OPEN_CODEX_BRIDGE) {
+    return {
+      supported: false,
+      reason: `${modelId} is Chat/Completions-only and requires compat.codexBridge=opencodex`,
+    };
+  }
+  if (api !== RESPONSES_API && api !== CHAT_API) {
+    return {
+      supported: false,
+      reason: `${modelId} uses an unsupported Codex wire API: ${String(api)}`,
+    };
+  }
+  if (modelId === DEEPSEEK_MODEL && (api !== RESPONSES_API || baseUrl !== DEEPSEEK_BASE_URL)) {
+    return {
+      supported: false,
+      reason: "deepseek-v4-pro requires the official DeepSeek Responses API base URL",
+    };
+  }
+  const transport = api === RESPONSES_API ? "native-responses" : "responses-via-chat-bridge";
+  const selectedBridge = bridge === "none" ? null : bridge;
   return {
     supported: true,
-    profile: "deepseek-v4-pro-codex",
+    profile: api === RESPONSES_API ? `${modelId}-codex` : `${modelId}-codex-via-${selectedBridge}`,
     runtime: "codex-app-server",
-    provider: "deepseek",
-    model: DEEPSEEK_MODEL,
-    api: "openai-responses",
-    baseUrl: DEEPSEEK_BASE_URL,
+    provider: model?.provider ?? provider?.provider ?? (modelId === DEEPSEEK_MODEL ? "deepseek" : "custom"),
+    model: modelId,
+    api,
+    baseUrl,
+    transport,
+    ...(selectedBridge ? { bridge: selectedBridge } : {}),
     customTool: "apply_patch",
     toolChoice: "auto",
     thinkingToolChoice: "do-not-force-required",
-    stateless: true,
+    stateless: model?.stateless ?? provider?.stateless ?? modelId === DEEPSEEK_MODEL,
   };
 }
 
@@ -56,7 +90,7 @@ export function validateCodingModelConfiguration(configuration) {
   for (const [, provider] of providerEntries) {
     for (const model of provider.models ?? []) {
       const profile = codingModelProfile({ provider, model });
-      if (model.id === DEEPSEEK_MODEL && !profile.supported) {
+      if (!profile.supported && (model.id === DEEPSEEK_MODEL || model.compat?.codexWireApi || model.compat?.codexBridge)) {
         throw new Error(`Invalid coding model configuration for ${model.id}: ${profile.reason}`);
       }
     }

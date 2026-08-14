@@ -14,6 +14,8 @@ const MODEL_FIELDS = [
 ];
 
 const COMPAT_FIELDS = [
+  "codexBridge",
+  "codexWireApi",
   "sessionAffinityFormat",
   "supportsDeveloperRole",
   "supportsStrictMode",

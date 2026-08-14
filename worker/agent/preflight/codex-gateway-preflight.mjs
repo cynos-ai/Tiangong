@@ -2,6 +2,9 @@ import { readFile } from "node:fs/promises";
 
 export const CODEX_GATEWAY_PROVIDER = "agentteams-gateway";
 export const CODEX_GATEWAY_MODEL = "deepseek-v4-pro";
+export const CODEX_TRANSPORT_NATIVE = "native-responses";
+export const CODEX_TRANSPORT_BRIDGE = "responses-via-chat-bridge";
+export const CODEX_BRIDGE = "opencodex";
 export const DEFAULT_CODEX_GATEWAY_HOST = "agentteams-controller";
 const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
 const CODEX_MODEL_ALIAS_PREFIX = "codex/";
@@ -35,6 +38,21 @@ function hasAllowedModel(provider, modelId) {
   });
 }
 
+function codexTransport(env) {
+  const transport = nonEmptyString(env.TIANGONG_CODEX_TRANSPORT) || CODEX_TRANSPORT_NATIVE;
+  if (transport !== CODEX_TRANSPORT_NATIVE && transport !== CODEX_TRANSPORT_BRIDGE) {
+    fail("codex-transport-invalid", "The Codex transport must be native-responses or responses-via-chat-bridge.");
+  }
+  const bridge = nonEmptyString(env.TIANGONG_CODEX_BRIDGE) || "";
+  if (transport === CODEX_TRANSPORT_BRIDGE && bridge !== CODEX_BRIDGE) {
+    fail("codex-bridge-invalid", "The Chat-only Codex route requires the OpenCodex bridge.");
+  }
+  if (transport === CODEX_TRANSPORT_NATIVE && bridge && bridge !== "none") {
+    fail("codex-bridge-unexpected", "A native Responses Codex route must not select a bridge.");
+  }
+  return { transport, ...(transport === CODEX_TRANSPORT_BRIDGE ? { bridge } : {}) };
+}
+
 export function assertCodexGatewayConfiguration(config, {
   env = process.env,
   providerId = nonEmptyString(env.TIANGONG_CODEX_PROVIDER) || CODEX_GATEWAY_PROVIDER,
@@ -56,6 +74,7 @@ export function assertCodexGatewayConfiguration(config, {
   if (!hasAllowedModel(provider, modelId)) {
     fail("gateway-model-config-missing", `The OpenClaw provider configuration does not include ${modelId}.`);
   }
+  const route = codexTransport(env);
 
   const rawBaseUrl = nonEmptyString(provider.baseUrl);
   if (!rawBaseUrl) fail("gateway-base-url-missing", "The AgentTeams gateway base URL is missing.");
@@ -77,6 +96,7 @@ export function assertCodexGatewayConfiguration(config, {
     model: modelId,
     baseUrl: baseUrl.toString().replace(/\/$/, ""),
     credentialSource: "agentteams-consumer-token",
+    ...route,
   };
 }
 
@@ -84,6 +104,8 @@ export async function probeCodexGateway({
   baseUrl,
   consumerToken,
   modelId = CODEX_GATEWAY_MODEL,
+  transport = CODEX_TRANSPORT_NATIVE,
+  bridge,
   fetchImpl = globalThis.fetch,
   timeoutMs = DEFAULT_PROBE_TIMEOUT_MS,
 } = {}) {
@@ -106,7 +128,13 @@ export async function probeCodexGateway({
     const text = await response.text();
     if (text.length > 1_000_000) fail("gateway-probe-unbounded", "The AgentTeams gateway probe response exceeded the bounded limit.");
     try { JSON.parse(text); } catch { fail("gateway-probe-invalid", "The AgentTeams gateway probe response was not valid JSON."); }
-    return { model: modelId, gatewayProbe: "pass", gatewayProbeContract: "auth-connectivity" };
+    return {
+      model: modelId,
+      gatewayProbe: "pass",
+      gatewayProbeContract: "auth-connectivity",
+      transport,
+      ...(bridge ? { bridge } : {}),
+    };
   } catch (error) {
     if (error instanceof CodexGatewayPreflightError) throw error;
     fail(error?.name === "AbortError" ? "gateway-probe-timeout" : "gateway-probe-unreachable", "The AgentTeams gateway connectivity probe failed.");
@@ -136,6 +164,8 @@ export async function runCodexGatewayPreflightFromFile({
       baseUrl: result.baseUrl,
       consumerToken: provider.apiKey,
       modelId: result.model,
+      transport: result.transport,
+      bridge: result.bridge,
       fetchImpl: options.fetchImpl,
       timeoutMs: options.timeoutMs,
     })),
