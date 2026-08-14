@@ -135,8 +135,10 @@ smoke 证明。
 
 ## 2026-08-15 AgentTeams 凭证提供器边界修正
 
-补充核对 AgentTeams v1.2.2 上游源码后，需要修正“AgentTeams 完全没有官方 sidecar 能力”的表述：v1.2.2 的 `WorkerSpec` 已包含 `accessEntries`，并定义了 `CredentialProvider`/`AccessEntry` 相关控制器路径；当前 embedded 控制器二进制也包含这些实现。我们用一个 `containerManaged: false` 的临时 Worker 通过当前 `agt apply -f` 实际提交了带 `accessEntries` 的声明并完成清理，证明当前 YAML 入口可接受该字段。
+补充核对 AgentTeams v1.2.2 上游源码后，需要修正“AgentTeams 完全没有官方 sidecar 能力”的表述：v1.2.2 的 CRD `WorkerSpec` 已包含 `accessEntries`，并定义了 `CredentialProvider`/`AccessEntry` 相关控制器路径；当前 embedded 控制器二进制也包含这些实现。但同一 tag 的 `agt apply -f` REST DTO 没有透传 `accessEntries` 字段。我们用一个 `containerManaged: false` 的临时 Worker 做了真实反例：带有明显非法 `accessEntries.service` 的声明仍被创建，说明当前 embedded CLI 入口会接受 YAML 但在 REST DTO 边界丢弃该字段；资源随后已清理。
 
 这项官方能力的范围是网关、对象存储、AI registry 等云资源的 STS/访问策略投影；它不是 OpenCodex 的专用进程管理器，也不提供 `provision/ready/rotate/drain/remove` 的 OpenCodex 生命周期 API。换句话说：可以复用 AgentTeams 的 `accessEntries`/credential-provider 作为凭证和访问范围的权威来源，但 OpenCodex sidecar 的进程、端口、就绪、轮换、drain 和回收仍需由 AgentTeams deployment-owned adapter 实现。
 
-因此当前结论从“没有官方 sidecar”收窄为“没有 OpenCodex-specific lifecycle manager”：DeepSeek 等原生 Responses 模型继续直连；Chat-only 模型继续走显式 OpenCodex bridge canary；生产化适配层只补生命周期与 receipt，不再另造第二套 AgentTeams 凭证仓库。若升级到带 Kubernetes/credential-provider 的部署模式，优先把 provider credential 绑定到官方 `accessEntries`，并保留本文既有的密钥不落盘、跨 Worker 隔离和 fail-closed 门槛。
+因此当前结论从“没有官方 sidecar”收窄为“有通用 credential-provider，但没有 OpenCodex-specific lifecycle manager，且 embedded `agt` 透传仍有缺口”：DeepSeek 等原生 Responses 模型继续直连；Chat-only 模型继续走显式 OpenCodex bridge canary；生产化适配层只补生命周期与 receipt，不再另造第二套 AgentTeams 凭证仓库。若使用 Helm/Kubernetes 原生 CR 路径，优先把 provider credential 绑定到官方 `accessEntries`；若继续使用 embedded `agt`，需等待上游 REST DTO 修复或由部署层直接提交 CR，并保留本文既有的密钥不落盘、跨 Worker 隔离和 fail-closed 门槛。
+
+源码锚点：[v1.2.2 WorkerSpec](https://raw.githubusercontent.com/agentscope-ai/AgentTeams/v1.2.2/agentteams-controller/api/v1beta1/types.go)、[v1.2.2 REST DTO](https://raw.githubusercontent.com/agentscope-ai/AgentTeams/v1.2.2/agentteams-controller/internal/server/types.go)、[Helm credentialProvider 配置](https://raw.githubusercontent.com/agentscope-ai/AgentTeams/v1.2.2/helm/agentteams/values.yaml)。

@@ -113,6 +113,9 @@ The Tiangong adapter therefore remains intentionally small. It consumes an
 AgentTeams-scoped credential reference, starts or reconciles an OpenCodex
 generation under a dedicated deployment identity, and projects only the
 sanitized binding/ready receipt defined above. A local `agt apply -f` probe with
-`containerManaged: false` accepted a Worker manifest containing `accessEntries`
-and the temporary resource was deleted afterward; this verifies the declarative
-field on the pinned embedded v1.2.2 path, not production sidecar lifecycle.
+`containerManaged: false` accepted a Worker manifest containing `accessEntries`,
+but a second probe with an intentionally invalid `accessEntries.service` was
+also accepted. The v1.2.2 REST DTO therefore does not preserve this field on
+the embedded CLI path; the temporary resources were deleted afterward. Use the
+native Kubernetes CR path (or an upstream DTO fix) before treating
+`accessEntries` as an effective credential binding.
