@@ -1,5 +1,5 @@
 import { AdmissionDeniedError } from "./admission-boundary.mjs";
-import { normalizeAdmissionContext } from "./admission-context-file.mjs";
+import { normalizeAdmissionContext, normalizeAdmissionToolContext } from "./admission-context-file.mjs";
 
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_TIMEOUT_MS = 5000;
@@ -20,11 +20,18 @@ function summarizeHookInput({ phase, event = {}, ctx = {} } = {}) {
   return {
     phase: bounded(phase),
     event: phase === "tool"
-      ? { toolName: bounded(event.toolName), toolCallId: bounded(event.toolCallId) }
+      ? {
+        toolName: bounded(event.toolName),
+        toolCallId: bounded(event.toolCallId),
+        sessionKey: bounded(event.sessionKey),
+        messageId: bounded(event.messageId ?? event.eventId),
+      }
       : {
         channel: bounded(event.channel),
+        route: bounded(event.route),
         sessionKey: bounded(event.sessionKey),
         senderId: bounded(event.senderId),
+        messageId: bounded(event.messageId ?? event.eventId ?? event.currentMessageId),
         contentLength: typeof event.content === "string" ? event.content.length : null,
         timestamp: Number.isSafeInteger(event.timestamp) ? event.timestamp : null,
       },
@@ -33,6 +40,8 @@ function summarizeHookInput({ phase, event = {}, ctx = {} } = {}) {
       conversationId: bounded(ctx.conversationId),
       sessionKey: bounded(ctx.sessionKey),
       senderId: bounded(ctx.senderId),
+      messageId: bounded(ctx.messageId ?? ctx.eventId ?? ctx.currentMessageId),
+      route: bounded(ctx.route),
     },
   };
 }
@@ -42,6 +51,8 @@ export function createControlAdmissionResolver({
   fetchImpl = globalThis.fetch,
   timeoutMs = 1500,
   headers = {},
+  workerName = process.env.AGENTTEAMS_WORKER_NAME,
+  runtimeLane = process.env.TIANGONG_RUNTIME_LANE,
 } = {}) {
   if (typeof url !== "string" || url.length === 0) {
     throw new TypeError("Control API admission URL is required");
@@ -67,11 +78,23 @@ export function createControlAdmissionResolver({
       const response = await fetchImpl(endpoint, {
         method: "POST",
         headers: { accept: "application/json", "content-type": "application/json", ...headers },
-        body: JSON.stringify({ admission: summarizeHookInput({ phase, event, ctx }) }),
+        body: JSON.stringify({ admission: {
+          ...summarizeHookInput({ phase, event, ctx }),
+          ...(typeof workerName === "string" && workerName !== "" ? { workerName } : {}),
+          ...(typeof runtimeLane === "string" && runtimeLane !== "" ? { runtimeLane } : {}),
+        } }),
         signal: controller.signal,
       });
       if (!response || response.ok !== true) {
-        deny("ADMISSION_CONTEXT_UNAVAILABLE", "Control API did not admit this turn");
+        let code = "ADMISSION_CONTEXT_UNAVAILABLE";
+        try {
+          const failureText = await response.text();
+          const failure = JSON.parse(failureText);
+          if (typeof failure?.error === "string" && /^ADMISSION_[A-Z0-9_]{1,63}$/u.test(failure.error)) code = failure.error;
+        } catch {
+          // Preserve the bounded unavailable code when a failure body is malformed.
+        }
+        deny(code, "Control API did not admit this turn");
       }
       const text = await response.text();
       if (text.length > MAX_RESPONSE_BYTES) {
@@ -79,7 +102,7 @@ export function createControlAdmissionResolver({
       }
       let value;
       try { value = JSON.parse(text); } catch { deny("ADMISSION_CONTEXT_INVALID", "Control API admission response is not JSON"); }
-      return normalizeAdmissionContext(value);
+      return phase === "tool" ? normalizeAdmissionToolContext(value) : normalizeAdmissionContext(value);
     } catch (error) {
       if (error instanceof AdmissionDeniedError) throw error;
       deny(error?.name === "AbortError" ? "ADMISSION_CONTEXT_TIMEOUT" : "ADMISSION_CONTEXT_UNAVAILABLE", "Control API admission failed");

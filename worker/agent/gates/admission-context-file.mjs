@@ -29,6 +29,25 @@ function boundedList(value, name) {
   return [...value];
 }
 
+export function normalizeAdmissionBinding(binding) {
+  if (!binding || typeof binding !== "object" || Array.isArray(binding)) {
+    deny("ADMISSION_CONTEXT_INVALID", "admission binding must be an object");
+  }
+  return {
+    workerName: boundedString(binding.workerName, "binding.workerName"),
+    runtimeLane: boundedString(binding.runtimeLane, "binding.runtimeLane"),
+    configRevision: boundedString(binding.configRevision, "binding.configRevision"),
+    capabilityRevision: boundedString(binding.capabilityRevision, "binding.capabilityRevision"),
+    allowedChannels: boundedList(binding.allowedChannels, "binding.allowedChannels"),
+    active: binding.active === true,
+    ...(binding.revoked === true ? { revoked: true } : {}),
+    ...(binding.deniedTools === undefined ? {} : { deniedTools: boundedList(binding.deniedTools, "binding.deniedTools") }),
+    ...(binding.allowedActors === undefined ? {} : { allowedActors: boundedList(binding.allowedActors, "binding.allowedActors") }),
+    ...(binding.allowedRoutes === undefined ? {} : { allowedRoutes: boundedList(binding.allowedRoutes, "binding.allowedRoutes") }),
+    ...(binding.allowedSessions === undefined ? {} : { allowedSessions: boundedList(binding.allowedSessions, "binding.allowedSessions") }),
+  };
+}
+
 export function normalizeAdmissionContext(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     deny("ADMISSION_CONTEXT_INVALID", "admission context must be an object");
@@ -45,16 +64,7 @@ export function normalizeAdmissionContext(value) {
     route: boundedString(source.route, "source.route"),
     authenticated: source.authenticated === true,
   };
-  const normalizedBinding = {
-    workerName: boundedString(binding.workerName, "binding.workerName"),
-    runtimeLane: boundedString(binding.runtimeLane, "binding.runtimeLane"),
-    configRevision: boundedString(binding.configRevision, "binding.configRevision"),
-    capabilityRevision: boundedString(binding.capabilityRevision, "binding.capabilityRevision"),
-    allowedChannels: boundedList(binding.allowedChannels, "binding.allowedChannels"),
-    active: binding.active === true,
-    ...(binding.revoked === true ? { revoked: true } : {}),
-    ...(binding.deniedTools === undefined ? {} : { deniedTools: boundedList(binding.deniedTools, "binding.deniedTools") }),
-  };
+  const normalizedBinding = normalizeAdmissionBinding(binding);
   const normalizedRequest = {
     workerName: boundedString(request.workerName, "request.workerName"),
     runtimeLane: boundedString(request.runtimeLane, "request.runtimeLane"),
@@ -64,6 +74,30 @@ export function normalizeAdmissionContext(value) {
     capabilityRevision: boundedString(request.capabilityRevision, "request.capabilityRevision"),
   };
   return { source: normalizedSource, binding: normalizedBinding, request: normalizedRequest };
+}
+
+export function normalizeAdmissionToolContext(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      !value.admission || typeof value.admission !== "object" || Array.isArray(value.admission)) {
+    deny("ADMISSION_CONTEXT_INVALID", "tool admission context is incomplete");
+  }
+  const admission = value.admission;
+  if (admission.phase !== "model") deny("ADMISSION_CONTEXT_INVALID", "tool admission must reference a model admission");
+  const normalized = {
+    phase: "model",
+    workerName: boundedString(admission.workerName, "admission.workerName"),
+    runtimeLane: boundedString(admission.runtimeLane, "admission.runtimeLane"),
+    turnId: boundedString(admission.turnId, "admission.turnId"),
+    requestDigest: boundedString(admission.requestDigest, "admission.requestDigest"),
+    configRevision: boundedString(admission.configRevision, "admission.configRevision"),
+    capabilityRevision: boundedString(admission.capabilityRevision, "admission.capabilityRevision"),
+  };
+  return Object.freeze({
+    admission: Object.freeze(normalized),
+    binding: Object.freeze(normalizeAdmissionBinding(value.binding)),
+    toolName: boundedString(value.toolName, "toolName"),
+    requestDigest: boundedString(value.requestDigest, "requestDigest"),
+  });
 }
 
 function assertFilePath(filePath) {

@@ -68,6 +68,10 @@ COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 WORKDIR /opt/tiangong-worker
 ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/runner/broker-server.mjs"]
 
+FROM worker-base AS admission-control
+WORKDIR /opt/tiangong-worker
+ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/gates/admission-control-server.mjs"]
+
 FROM worker-base AS deployment-broker
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 WORKDIR /opt/tiangong-worker
