@@ -95,6 +95,14 @@ export function createRemoteCoordinationStore({ endpoint, token, fetchImpl = glo
       const value = await controlRequest({ fetchImpl, token: bearer, url: `${origin}/v1/coordination/works/${encodeURIComponent(required(workId, "workId"))}` });
       return value.work;
     },
+    async getTask(taskId) {
+      const value = await controlRequest({ fetchImpl, token: bearer, url: `${origin}/v1/coordination/tasks/${encodeURIComponent(required(taskId, "taskId"))}` });
+      return value.task;
+    },
+    async getResult(resultId) {
+      const value = await controlRequest({ fetchImpl, token: bearer, url: `${origin}/v1/coordination/results/${encodeURIComponent(required(resultId, "resultId"))}` });
+      return value.result;
+    },
     async listOutbox({ status } = {}) {
       const query = status === undefined ? "" : `?status=${encodeURIComponent(status)}`;
       const value = await controlRequest({ fetchImpl, token: bearer, url: `${origin}/v1/coordination/wakes${query}` });

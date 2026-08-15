@@ -7,6 +7,9 @@ import { createPostgresCoordinationStore } from "../coordination/bootstrap.mjs";
 import { acquirePostgresTestLock } from "./postgres-test-lock.mjs";
 import {
   createControlProfile,
+  createMemberConfig,
+  createResult,
+  createTaskSpec,
   createTeamConfig,
   createTeamRouteBinding,
   createWorkSpec,
@@ -121,4 +124,43 @@ test("Postgres CoordinationStore lets the room/event unique key reject concurren
   assert.equal(results.filter((result) => result.status === "rejected").length, 1);
   assert.match(results.find((result) => result.status === "rejected").reason.message, /MATRIX_MESSAGE_ALREADY_BOUND|WORK_ALREADY_EXISTS/u);
   assert.equal((await store.listWorks()).length, 1);
+});
+
+test("Postgres CoordinationStore persists immutable Task/Result and serializes the cancellation race", { skip: skipReason }, async (t) => {
+  const release = await acquirePostgresTestLock();
+  const pool = new Pool({ connectionString, max: 4 });
+  const store = new PostgresCoordinationStore({ pool, now: () => NOW });
+  t.after(async () => {
+    await pool.query("DROP SCHEMA IF EXISTS tiangong_coordination CASCADE");
+    await pool.end();
+    release();
+  });
+  await store.migrate();
+  const profile = createControlProfile({ profileId: "profile-pg-task", revision: 1, maxTimelineEntries: 64, maxOutboxEntries: 32, maxTasksPerWork: 8, toolResultRetentionMs: 60_000 });
+  const team = createTeamConfig({ teamId: "team-pg-task", revision: 1, leaderMemberId: "leader-pg-task", memberIds: ["leader-pg-task", "member-pg-task"], controlProfileId: profile.profileId, createdAt: NOW });
+  const route = createTeamRouteBinding({ routeId: "route-pg-task", teamId: team.teamId, revision: 1, channel: "matrix", roomId: "!room-pg-task:example.test", createdAt: NOW });
+  const leader = createMemberConfig({ memberId: "leader-pg-task", teamId: team.teamId, workerName: "leader-pg-task", matrixUserId: "@leader-pg-task:example.test", role: "leader", controlProfileId: profile.profileId, enabled: true, createdAt: NOW });
+  const member = createMemberConfig({ memberId: "member-pg-task", teamId: team.teamId, workerName: "member-pg-task", matrixUserId: "@member-pg-task:example.test", role: "implementor", controlProfileId: profile.profileId, enabled: true, createdAt: NOW });
+  await store.createWork({
+    workId: "work-pg-task",
+    team,
+    route,
+    profile,
+    spec: spec("work-pg-task"),
+    actorId: "@human-pg-task:example.test",
+    sourceEventId: "$event-pg-task",
+    requestId: "request-pg-task-work",
+  });
+  const task = createTaskSpec({ taskId: "task-pg-task", workId: "work-pg-task", assigneeMemberId: member.memberId, objective: "Run bounded verification", completionContract: "submit one result", inputRefs: [], createdAt: NOW });
+  const assigned = await store.createTask({ task, team, member, profile, actorId: leader.memberId, expectedEpoch: 0, requestId: "request-pg-task-create", wake: { targetMemberId: member.memberId } });
+  assert.equal(assigned.task.status, "assigned");
+  assert.equal(assigned.wake.kind, "task-assignment");
+  assert.equal((await store.getWork(task.workId)).epoch, 1);
+  const result = createResult({ resultId: "result-pg-task", workId: task.workId, taskId: task.taskId, producerMemberId: member.memberId, toolResultIds: [], artifactRefs: ["artifact-pg-task"], claim: "verification passed", createdAt: NOW });
+  const submitted = await store.submitResult({ result, team, member, profile, actorId: member.memberId, expectedEpoch: 1, requestId: "request-pg-task-result" });
+  assert.equal(submitted.result.resultId, result.resultId);
+  assert.equal((await store.getTask(task.taskId)).status, "reported");
+  assert.equal((await store.getResult(result.resultId)).contentDigest, result.contentDigest);
+  assert.equal((await store.health()).taskCount, 1);
+  await assert.rejects(() => store.cancelTask({ workId: task.workId, taskId: task.taskId, profile, actorId: leader.memberId, reason: "too late", expectedEpoch: 2, requestId: "request-pg-task-cancel" }), /TASK_CANCEL_CONFLICT/u);
 });

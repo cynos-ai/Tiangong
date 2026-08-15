@@ -10,6 +10,8 @@ import { sha256 } from "../../worker/agent/canonical-json.mjs";
 import { acquirePostgresTestLock } from "./postgres-test-lock.mjs";
 import {
   createControlProfile,
+  createResult,
+  createTaskSpec,
   createMemberConfig,
   createTeamConfig,
   createTeamRouteBinding,
@@ -50,7 +52,13 @@ test("real PG Control API + remote Leader hook + remote outbox facade form one p
   });
   const admission = await hook({ roomId: route.roomId, eventId: "$event-pg-api", source: { channel: "matrix", authenticated: true, actorId: "@human-pg-api:example.test", messageId: "$event-pg-api", route: "team-room" } });
   assert.equal(admission.replayed, false);
+  const task = createTaskSpec({ taskId: "task-pg-api", workId: admission.work.work.workId, assigneeMemberId: leaderMember.memberId, objective: "Read the gateway", completionContract: "one result", inputRefs: [], createdAt: NOW });
+  await store.createTask({ task, team, member: leaderMember, profile, actorId: leaderMember.memberId, expectedEpoch: 0, requestId: "request-pg-api-task" });
+  const result = createResult({ resultId: "result-pg-api", workId: task.workId, taskId: task.taskId, producerMemberId: leaderMember.memberId, toolResultIds: [], artifactRefs: [], claim: "gateway is readable", createdAt: NOW });
+  await store.submitResult({ result, team, member: leaderMember, profile, actorId: leaderMember.memberId, expectedEpoch: 1, requestId: "request-pg-api-result" });
   const remoteStore = createRemoteCoordinationStore({ endpoint, token: TOKEN });
+  assert.equal((await remoteStore.getTask(task.taskId)).status, "reported");
+  assert.equal((await remoteStore.getResult(result.resultId)).contentDigest, result.contentDigest);
   const handlers = createLeaderOutboxHandlers({
     store: remoteStore,
     channel: { notifyWorkAdmitted: async () => ({ transactionId: "matrix-txn-pg-api", delivered: true }) },
@@ -64,5 +72,7 @@ test("real PG Control API + remote Leader hook + remote outbox facade form one p
   const facts = await runtime.json();
   assert.equal(facts.workSource, "coordination-store");
   assert.equal(facts.works.length, 1);
+  assert.equal(facts.tasks.length, 1);
+  assert.equal(facts.results.length, 1);
   assert.equal(facts.deliveries.every((wake) => wake.status === "acked"), true);
 });

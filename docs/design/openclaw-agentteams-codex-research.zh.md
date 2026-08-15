@@ -1,5 +1,12 @@
 # OpenClaw × AgentTeams × Codex/DeepSeek 可行性调查
 
+## 2026-08-15 Phase B B3 Task/Result Gateway
+
+Phase B 继续推进到 B3：PG CoordinationStore 现在与 file-backed store 对齐 Task/Result 的直接事实边界。新增 `002_task_result` migration、Task/Result 查询 API、不可变 TaskSpec/单次 Result、Work epoch/timeline 原子更新、request replay，以及 Result 与取消的行锁竞争；Web `/api/runtime` 同步投影 bounded Task/Result/ToolResult metadata，Worker 只能通过窄 HTTP facade 读取，不接触 PG。
+
+验证已在一次性 PostgreSQL 容器中完成：`npm --prefix app test` 12/12 通过（含真实 migration、重复 ingress、Task/Result 提交、取消冲突、Control API、Web projection 和 runtime readiness）；容器随后已清理。B3 仍不等于 Gate B Go：AgentTeams v1.2.2 的 `agt apply worker` 仍没有原生 sidecar/mount/secret 生命周期字段，Leader binding、endpoint、短 token 仍由部署层注入并由 `verify-leader-runtime-injection.sh` fail-closed 校验。
+
+下一步是 B4 prepared local coding：把 Task/Result 的成员 wake 接到真实 AgentTeams Worker，加入 credential-free prepared workspace、单 Task 单执行 owner、进程树取消和 ToolResult-backed coding smoke；在这条证据链闭合前继续保留 legacy pi lane，不做 clean-cut。
 > 调查日期：2026-08-15
 >
 > 状态：原生 Responses、Qwen bridge、deployment-owned sidecar 生命周期均已完成验证；不把 WebSocket 当作必要前提

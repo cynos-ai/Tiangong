@@ -8,6 +8,8 @@ import {
   CoordinationStore,
   createControlProfile,
   createMemberConfig,
+  createResult,
+  createTaskSpec,
   createTeamConfig,
   createTeamRouteBinding,
   createWorkSpec,
@@ -33,6 +35,10 @@ test("runtime console exposes health and honest unknown state by default", async
     workSource: "coordination-store-not-configured",
     deliveries: [],
     deliverySource: "coordination-store-not-configured",
+    tasks: [],
+    taskSource: "coordination-store-not-configured",
+    results: [],
+    resultSource: "coordination-store-not-configured",
   });
   const ready = await fetch(`http://127.0.0.1:${address.port}/readyz`);
   assert.equal(ready.status, 503);
@@ -109,6 +115,17 @@ test("runtime console projects CoordinationStore Work cards, timeline, and durab
     requestId: "request-1",
     wakes: [{ kind: "leader-resume", targetMemberId: leader.memberId }, { kind: "human-reply", targetMemberId: "@alice:example.test" }],
   });
+  const task = createTaskSpec({ taskId: "task-console-1", workId: "work-1", assigneeMemberId: leader.memberId, objective: "Inspect the bounded runtime", completionContract: "return one claim", inputRefs: [], createdAt: now });
+  await store.createTask({ task, team, member: leader, profile, actorId: leader.memberId, expectedEpoch: 0, requestId: "request-console-task" });
+  await store.submitResult({
+    result: createResult({ resultId: "result-console-1", workId: task.workId, taskId: task.taskId, producerMemberId: leader.memberId, toolResultIds: [], artifactRefs: [], claim: "runtime is observable", createdAt: now }),
+    team,
+    member: leader,
+    profile,
+    actorId: leader.memberId,
+    expectedEpoch: 1,
+    requestId: "request-console-result",
+  });
   const server = createRuntimeConsoleServer({ coordinationFile }).listen(0);
   t.after(() => server.close());
   const address = server.address();
@@ -117,8 +134,13 @@ test("runtime console projects CoordinationStore Work cards, timeline, and durab
   assert.equal(facts.workSource, "coordination-store");
   assert.equal(facts.works.length, 1);
   assert.deepEqual(facts.works[0].currentWorkSpec, { revision: 1, objective: "Inspect runtime", scope: "bounded", completionContract: "visible reply" });
-  assert.equal(facts.works[0].timeline.length, 1);
+  assert.equal(facts.works[0].timeline.length, 3);
   assert.equal(facts.deliveries.length, 2);
   assert.deepEqual(facts.deliveries.map((wake) => wake.kind).sort(), ["human-reply", "leader-resume"]);
+  assert.equal(facts.tasks.length, 1);
+  assert.equal(facts.tasks[0].status, "reported");
+  assert.equal(facts.tasks[0].result.resultId, "result-console-1");
+  assert.equal(facts.results.length, 1);
+  assert.equal(facts.results[0].claim, "runtime is observable");
   assert.equal(JSON.stringify(facts).includes("profile-1"), false);
 });

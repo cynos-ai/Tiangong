@@ -790,9 +790,23 @@ export class CoordinationStore {
     return this.#read((state) => state.tasks[id] ? snapshotTask(state.tasks[id]) : undefined);
   }
 
+  async listTasks({ workId } = {}) {
+    if (workId !== undefined) identifier(workId, "workId");
+    return this.#read((state) => Object.values(state.tasks)
+      .filter((task) => workId === undefined || task.spec.workId === workId)
+      .map(snapshotTask));
+  }
+
   async getResult(resultId) {
     const id = identifier(resultId, "resultId");
     return this.#read((state) => state.results[id] ? clone(state.results[id]) : undefined);
+  }
+
+  async listResults({ workId } = {}) {
+    if (workId !== undefined) identifier(workId, "workId");
+    return this.#read((state) => Object.values(state.results)
+      .filter((result) => workId === undefined || result.workId === workId)
+      .map(clone));
   }
 
   async getWake(wakeId) {

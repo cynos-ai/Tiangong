@@ -6,6 +6,14 @@
 - Related state: PostgreSQL CoordinationStore, Matrix wake Outbox, /api/runtime
 - Update triggers: binding schema, Control API auth, runtime image, secret injection, or AgentTeams deployment contract changes
 
+## Phase B3 Task/Result checks
+
+- Create one Task through the CoordinationStore with an exact assignee and current Work epoch.
+- Submit one schema-valid Result and verify the Task projection becomes `reported`, the Result is readable through the narrow Gateway, and the Work timeline/epoch advance together.
+- Race a Result submission against cancellation for the same Task; exactly one terminal fact may commit and the loser must receive a conflict.
+- Restart the runtime and confirm Task/Result and pending wakes are read from PostgreSQL rather than process memory.
+- `/api/runtime` may expose bounded claim/blocker summaries and reference counts only; it must not expose raw ToolResult payloads or deployment credentials.
+
 ## Basic smoke
 
 ### B1: Runtime readiness and bounded deployment

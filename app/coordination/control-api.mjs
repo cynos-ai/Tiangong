@@ -65,9 +65,11 @@ export function createCoordinationAdmissionHandler({ store, bearerToken, team, r
     const claimPath = url.pathname === "/v1/coordination/wakes/claim";
     const ackPath = url.pathname === "/v1/coordination/wakes/ack";
     const workMatch = url.pathname.match(/^\/v1\/coordination\/works\/([^/]+)$/u);
+    const taskMatch = url.pathname.match(/^\/v1\/coordination\/tasks\/([^/]+)$/u);
+    const resultMatch = url.pathname.match(/^\/v1\/coordination\/results\/([^/]+)$/u);
     const wakesPath = url.pathname === "/v1/coordination/wakes";
-    if (!admissionPath && !resumePath && !claimPath && !ackPath && !workMatch && !wakesPath) return false;
-    if (workMatch || wakesPath) {
+    if (!admissionPath && !resumePath && !claimPath && !ackPath && !workMatch && !taskMatch && !resultMatch && !wakesPath) return false;
+    if (workMatch || taskMatch || resultMatch || wakesPath) {
       if (request.method !== "GET") {
         json(response, 405, { error: "method_not_allowed" });
         return true;
@@ -81,6 +83,16 @@ export function createCoordinationAdmissionHandler({ store, bearerToken, team, r
           const work = await store.getWork(decodeURIComponent(workMatch[1]));
           if (!work) json(response, 404, { error: "work_not_found" });
           else json(response, 200, { work });
+        } else if (taskMatch) {
+          if (typeof store.getTask !== "function") throw Object.assign(new Error("Task gateway is unavailable"), { code: "TASK_GATEWAY_UNAVAILABLE" });
+          const task = await store.getTask(decodeURIComponent(taskMatch[1]));
+          if (!task) json(response, 404, { error: "task_not_found" });
+          else json(response, 200, { task });
+        } else if (resultMatch) {
+          if (typeof store.getResult !== "function") throw Object.assign(new Error("Result gateway is unavailable"), { code: "RESULT_GATEWAY_UNAVAILABLE" });
+          const result = await store.getResult(decodeURIComponent(resultMatch[1]));
+          if (!result) json(response, 404, { error: "result_not_found" });
+          else json(response, 200, { result });
         } else {
           const status = url.searchParams.get("status") ?? undefined;
           json(response, 200, { wakes: await store.listOutbox({ status }) });

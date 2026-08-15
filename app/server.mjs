@@ -125,36 +125,90 @@ function projectWake(value) {
   };
 }
 
+function projectResult(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || !boundedId(value.resultId) || !boundedId(value.workId) || !boundedId(value.taskId) || !boundedId(value.producerMemberId)) return null;
+  const projected = {
+    resultId: value.resultId,
+    workId: value.workId,
+    taskId: value.taskId,
+    producerMemberId: value.producerMemberId,
+    toolResultCount: Array.isArray(value.toolResultIds) ? value.toolResultIds.length : 0,
+    artifactRefCount: Array.isArray(value.artifactRefs) ? value.artifactRefs.length : 0,
+    createdAt: typeof value.createdAt === "string" ? value.createdAt.slice(0, 64) : null,
+  };
+  if (typeof value.claim === "string") projected.claim = value.claim.slice(0, 512);
+  if (typeof value.blocker === "string") projected.blocker = value.blocker.slice(0, 512);
+  return projected;
+}
+
+function projectTask(value) {
+  if (!value || typeof value !== "object" || !value.spec || !boundedId(value.spec.taskId) || !boundedId(value.spec.workId) ||
+      !boundedId(value.spec.assigneeMemberId) || !["assigned", "reported", "cancelled"].includes(value.status)) return null;
+  return {
+    taskId: value.spec.taskId,
+    workId: value.spec.workId,
+    assigneeMemberId: value.spec.assigneeMemberId,
+    status: value.status,
+    objective: typeof value.spec.objective === "string" ? value.spec.objective.slice(0, 512) : null,
+    completionContract: typeof value.spec.completionContract === "string" ? value.spec.completionContract.slice(0, 512) : null,
+    inputRefCount: Array.isArray(value.spec.inputRefs) ? value.spec.inputRefs.length : 0,
+    createdAt: typeof value.spec.createdAt === "string" ? value.spec.createdAt.slice(0, 64) : null,
+    result: projectResult(value.result),
+    cancellation: value.cancellation && typeof value.cancellation === "object" ? {
+      reason: typeof value.cancellation.reason === "string" ? value.cancellation.reason.slice(0, 512) : null,
+      at: typeof value.cancellation.at === "string" ? value.cancellation.at.slice(0, 64) : null,
+    } : null,
+  };
+}
+
 async function readCoordination(filePath, coordinationStore) {
   if (coordinationStore && typeof coordinationStore.listWorks === "function" && typeof coordinationStore.listOutbox === "function") {
     try {
-      const [works, deliveries] = await Promise.all([coordinationStore.listWorks(), coordinationStore.listOutbox()]);
+      const [works, deliveries, tasks, results] = await Promise.all([
+        coordinationStore.listWorks(),
+        coordinationStore.listOutbox(),
+        typeof coordinationStore.listTasks === "function" ? coordinationStore.listTasks() : [],
+        typeof coordinationStore.listResults === "function" ? coordinationStore.listResults() : [],
+      ]);
       return {
         works: works.map(projectWork).filter(Boolean),
         workSource: "coordination-store",
         deliveries: deliveries.map(projectWake).filter(Boolean),
         deliverySource: "coordination-store",
+        tasks: tasks.map(projectTask).filter(Boolean),
+        taskSource: "coordination-store",
+        results: results.map(projectResult).filter(Boolean),
+        resultSource: "coordination-store",
       };
     } catch {
-      return { works: [], workSource: "coordination-store-unavailable", deliveries: [], deliverySource: "coordination-store-unavailable" };
+      return { works: [], workSource: "coordination-store-unavailable", deliveries: [], deliverySource: "coordination-store-unavailable", tasks: [], taskSource: "coordination-store-unavailable", results: [], resultSource: "coordination-store-unavailable" };
     }
   }
-  if (!filePath) return { works: [], workSource: "coordination-store-not-configured", deliveries: [], deliverySource: "coordination-store-not-configured" };
+  if (!filePath) return { works: [], workSource: "coordination-store-not-configured", deliveries: [], deliverySource: "coordination-store-not-configured", tasks: [], taskSource: "coordination-store-not-configured", results: [], resultSource: "coordination-store-not-configured" };
   try {
     const resolvedFile = resolve(filePath);
     const metadata = await lstat(resolvedFile);
     if (metadata.isSymbolicLink() || !metadata.isFile()) throw new Error("invalid coordination journal");
     const store = new CoordinationStore({ filePath: resolvedFile });
-    const [works, deliveries] = await Promise.all([store.listWorks(), store.listOutbox()]);
+    const [works, deliveries, tasks, results] = await Promise.all([
+      store.listWorks(),
+      store.listOutbox(),
+      typeof store.listTasks === "function" ? store.listTasks() : [],
+      typeof store.listResults === "function" ? store.listResults() : [],
+    ]);
     return {
       works: works.map(projectWork).filter(Boolean),
       workSource: "coordination-store",
       deliveries: deliveries.map(projectWake).filter(Boolean),
       deliverySource: "coordination-store",
+      tasks: tasks.map(projectTask).filter(Boolean),
+      taskSource: "coordination-store",
+      results: results.map(projectResult).filter(Boolean),
+      resultSource: "coordination-store",
     };
   } catch (error) {
-    if (error?.code === "ENOENT") return { works: [], workSource: "coordination-store-empty", deliveries: [], deliverySource: "coordination-store-empty" };
-    return { works: [], workSource: "coordination-store-unavailable", deliveries: [], deliverySource: "coordination-store-unavailable" };
+    if (error?.code === "ENOENT") return { works: [], workSource: "coordination-store-empty", deliveries: [], deliverySource: "coordination-store-empty", tasks: [], taskSource: "coordination-store-empty", results: [], resultSource: "coordination-store-empty" };
+    return { works: [], workSource: "coordination-store-unavailable", deliveries: [], deliverySource: "coordination-store-unavailable", tasks: [], taskSource: "coordination-store-unavailable", results: [], resultSource: "coordination-store-unavailable" };
   }
 }
 
