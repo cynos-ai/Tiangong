@@ -2,6 +2,7 @@ SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := help
 
 AGENTTEAMS := ./scripts/agentteams.sh
+AGENTTEAMS_BOOTSTRAP_TEST := ./scripts/test-agentteams.sh
 WORKER_IMAGE_BUILD := ./scripts/build-worker-image.sh
 WORKER_IMAGE_TEST := ./smoke-testing/support/run-worker-smoke.sh
 LEADER_SMOKE := ./smoke-testing/support/run-leader-smoke.sh
@@ -24,7 +25,7 @@ SKILL_CHECK := node ./scripts/check-skills.mjs
 PAUSE_WORKER_BOUNDARY_TEST := ./scripts/test-pause-worker-boundary.sh
 PHASE4_RECOVERY_TEST := node ./worker/test/phase4-recovery.test.mjs
 
-.PHONY: help init up start stop down status verify config provider-check logs login uninstall check-skills check-demo-contract check-phase6-evidence-bundle verify-professional-state build-worker-image test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-phase4-recovery test-runner-isolation test-runner-executor test-runner-broker test-runner-preparation start-runner-broker status-runner-broker stop-runner-broker test-deployment-service test-peer-mention-smoke-contract test-peer-mention-smoke test-matrix-browser-smoke-contract matrix-browser-start matrix-browser-status matrix-browser-stop test-specialist-leader-handoff-contract test-specialist-leader-handoff test-p0-identity-pg-contract test-p0-2-mention-contract test-pause-worker-boundary test-openclaw-gate-a-contract test-openclaw-gate-a-fixture test-openclaw-admission-contract test-openclaw-admission-hooks test-openclaw-admission-replay test-openclaw-tool-result-capture-matrix test-openclaw-recovery test-openclaw-admission-context-file test-openclaw-gate-a-live-hooks test-runtime-console openclaw-gate-a-start openclaw-gate-a-status openclaw-gate-a-restart openclaw-gate-a-stop openclaw-gate-a-run
+.PHONY: help init up start stop down status verify config provider-check logs login uninstall test-agentteams check-skills check-demo-contract check-phase6-evidence-bundle verify-professional-state build-worker-image test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-phase4-recovery test-runner-isolation test-runner-executor test-runner-broker test-runner-preparation start-runner-broker status-runner-broker stop-runner-broker test-deployment-service test-peer-mention-smoke-contract test-peer-mention-smoke test-matrix-browser-smoke-contract matrix-browser-start matrix-browser-status matrix-browser-stop test-specialist-leader-handoff-contract test-specialist-leader-handoff test-p0-identity-pg-contract test-p0-2-mention-contract test-pause-worker-boundary test-openclaw-gate-a-contract test-openclaw-gate-a-fixture test-openclaw-admission-contract test-openclaw-admission-hooks test-openclaw-admission-replay test-openclaw-tool-result-capture-matrix test-openclaw-recovery test-openclaw-admission-context-file test-openclaw-gate-a-live-hooks test-runtime-console openclaw-gate-a-start openclaw-gate-a-status openclaw-gate-a-restart openclaw-gate-a-stop openclaw-gate-a-run
 
 help: ## Show available commands
 	@printf '%s\n' 'Tiangong local development commands:'
@@ -55,6 +56,9 @@ config: ## Show effective configuration with secrets redacted
 
 provider-check: ## Validate the provider/model route without changing the stack
 	@$(AGENTTEAMS) provider-check
+
+test-agentteams: ## Run the AgentTeams bootstrap and provider route contract tests
+	@$(AGENTTEAMS_BOOTSTRAP_TEST)
 
 logs: ## Follow logs; use SERVICE=controller for controller logs
 	@$(AGENTTEAMS) logs $(SERVICE)
