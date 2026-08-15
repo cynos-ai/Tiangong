@@ -127,7 +127,10 @@ function projectWake(value) {
 async function readCoordination(filePath) {
   if (!filePath) return { works: [], workSource: "coordination-store-not-configured", deliveries: [], deliverySource: "coordination-store-not-configured" };
   try {
-    const store = new CoordinationStore({ filePath: resolve(filePath) });
+    const resolvedFile = resolve(filePath);
+    const metadata = await lstat(resolvedFile);
+    if (metadata.isSymbolicLink() || !metadata.isFile()) throw new Error("invalid coordination journal");
+    const store = new CoordinationStore({ filePath: resolvedFile });
     const [works, deliveries] = await Promise.all([store.listWorks(), store.listOutbox()]);
     return {
       works: works.map(projectWork).filter(Boolean),
@@ -135,7 +138,8 @@ async function readCoordination(filePath) {
       deliveries: deliveries.map(projectWake).filter(Boolean),
       deliverySource: "coordination-store",
     };
-  } catch {
+  } catch (error) {
+    if (error?.code === "ENOENT") return { works: [], workSource: "coordination-store-empty", deliveries: [], deliverySource: "coordination-store-empty" };
     return { works: [], workSource: "coordination-store-unavailable", deliveries: [], deliverySource: "coordination-store-unavailable" };
   }
 }
