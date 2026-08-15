@@ -350,3 +350,23 @@ Work/Task/Runner/Result 纵切，不等于真实 AgentTeams Matrix/Worker 投递
 下一步仍需把同一调用接到真实 Worker、Matrix 和 WebUI，并补齐取消、重启后
 unresolved execution、ToolResult retention 及 cleanup 证据；在此之前保留 legacy pi
 路径，不做 clean-cut。
+
+## 2026-08-16 真实 Worker 探针的新增结论
+
+真实五角色 Team 的第一轮探针发现，仅写 `workerMembers` 不会让 OpenClaw
+`groupAllowFrom` 自动包含 Team 同伴；按 AgentTeams 公开字段补上每个 Worker 的
+`channelPolicy.groupAllowExtra`/`dmAllowExtra` 后，allowlist 和 Matrix Team Room
+均收敛。Designer 以真实 Worker 身份 mention Leader，Leader 已进入 OpenClaw 原生
+turn，说明 Matrix sender/mention/Leader session 这一层可达。
+
+该 turn 随后在 Tiangong Leader tool gate 处明确拒绝：`Leader Coordination Control
+binding is unavailable`。也就是说当前阻塞不是模型、Matrix 或 Project/Task 文件
+格式，而是 AgentTeams v1.2.2 的 Worker 生命周期没有注入 Tiangong 所需的
+`leader-binding.json`、Coordination Control endpoint 和短 token。我们同时补了启动
+适配：只读消费 AgentTeams 的 `AGENTTEAMS_AUTH_TOKEN_FILE`，向 OpenClaw 原生工具
+提供同一进程内的 `AGENTTEAMS_AUTH_TOKEN`，凭证不进配置、不进日志。
+
+下一步应把已有 `deploy-coordination-runtime.sh` 和 `test-leader-runtime-injection.sh`
+接到真实 AgentTeams Worker 的部署层（或等待上游提供等价的 env/mount/sidecar 字段），
+然后复跑真实 Leader→Project→Task→Worker→Result→WebUI 纵切；在此之前只能报告
+“Matrix/Leader wake 通过，Coordination binding 阻塞”，不能宣称 Phase B 生产闭合。

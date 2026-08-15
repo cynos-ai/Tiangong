@@ -43,3 +43,24 @@ B4 逻辑成功或失败的证据。
 commit，随后验证取消、重启后的 unresolved execution、ToolResult retention 和
 精确 cleanup。未完成这条生产证据链前，不删除 legacy pi lane，也不把 AgentTeams
 v1.2.2 宣称为 sidecar lifecycle manager。
+
+## 2026-08-16 真实 AgentTeams Worker/Matrix 边界
+
+本次把五个真实 OpenClaw Worker 重新绑定到一次性 Team，并用 Designer Worker
+的真实 Matrix 身份向 Team Room mention Leader。起初 Team 只写了
+`workerMembers`，Worker 的 `groupAllowFrom` 仍只有 Manager/Admin；补上官方公开的
+每个 Worker `channelPolicy.groupAllowExtra`/`dmAllowExtra` 后，五个 Worker 的
+allowlist 收敛，Leader 真实收到了 Matrix 事件并进入 OpenClaw turn。
+
+探针随后暴露了下一个真实部署边界：Leader 的 `team_create_project` 在没有
+`TIANGONG_LEADER_RUNTIME_BINDING_FILE`、Coordination Control endpoint 和短 token
+时 fail closed，日志为 `Leader Coordination Control binding is unavailable`。
+这证明 Matrix/Leader wake 已经打通，但还没有把 Leader ingress 与 PG Coordination
+runtime 注入到 AgentTeams 管理出来的 Worker；当前不能把这次探针记为 Project/Task
+成功。另一个已修复的启动适配是把 AgentTeams v1.2.2 投影的
+`AGENTTEAMS_AUTH_TOKEN_FILE` 只读加载为 OpenClaw 原生工具所需的
+`AGENTTEAMS_AUTH_TOKEN`，不打印也不写回配置。
+
+因此 B4 的下一条生产门槛已经收窄为部署层注入 binding/endpoint/token，并在该边界
+闭合后重跑同一条真实 Project/Task/Result smoke；在此之前保留 fail-closed 行为和
+legacy pi lane。

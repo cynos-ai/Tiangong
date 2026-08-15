@@ -10,6 +10,30 @@ readonly CODEX_CAPABILITY_DETECTOR="/opt/tiangong-worker/agent/preflight/codex-c
 readonly CODEX_CAPABILITY_CACHE="/opt/tiangong-worker/agent/preflight/codex-capability-cache.mjs"
 codex_home=""
 
+# AgentTeams v1.2.2 projects the controller credential as a root-readable
+# file. OpenClaw's native AgentTeams tools consume the equivalent environment
+# variable, so bridge the deployment-owned file into the child process without
+# ever printing or persisting the token. An explicitly provided environment
+# value remains authoritative; an unreadable or empty file fails closed when a
+# canary actually needs the controller credential.
+load_agentteams_controller_token() {
+  local token_file="${AGENTTEAMS_AUTH_TOKEN_FILE:-}"
+  if [[ -n "${AGENTTEAMS_AUTH_TOKEN:-}" ]]; then
+    return 0
+  fi
+  [[ -n "${token_file}" ]] || return 0
+  [[ -r "${token_file}" ]] || {
+    printf '[tiangong-worker] ERROR: AgentTeams controller token file is not readable.\n' >&2
+    return 1
+  }
+  AGENTTEAMS_AUTH_TOKEN="$(<"${token_file}")"
+  [[ -n "${AGENTTEAMS_AUTH_TOKEN}" ]] || {
+    printf '[tiangong-worker] ERROR: AgentTeams controller token file is empty.\n' >&2
+    return 1
+  }
+  export AGENTTEAMS_AUTH_TOKEN
+}
+
 cleanup_codex_home() {
   [[ -n "${codex_home}" ]] || return 0
   rm -rf -- "${codex_home}"
@@ -242,6 +266,7 @@ configure_tiangong_plugin() {
 }
 
 if [[ "${1:-}" == "gateway" && "${2:-}" == "run" ]]; then
+  load_agentteams_controller_token
   configure_tiangong_plugin
   configure_codex_runtime
   configure_codex_gateway
