@@ -23,6 +23,7 @@ Web UI        = 玻璃橱窗：只读投影，不参与裁决
   - `POST /v1/coordination/wakes/claim`：原子领取 Outbox 唤醒。
   - `POST /v1/coordination/wakes/ack`：投递成功后确认唤醒。
 - `worker/agent/team/coordination-control-client.mjs`：Worker 端 remote hook。它先调用本地认证 Matrix channel 的 `readHumanEvent(roomId, eventId)`，再调用 Control API；响应不会包含数据库句柄。
+- `worker/agent/team/leader-runtime-config.mjs`：部署层启动绑定加载器。绑定文件只放 Team/Route/Profile/Leader/member 的无凭证快照；文件必须是绝对路径、普通文件、限长且（非 Windows）权限收紧。Control API token 另由 secret manager 注入。
 - `app/coordination/bootstrap.mjs`：从部署层的 `TIANGONG_COORDINATION_DATABASE_URL` 创建 PG store。连接串只在内存中交给 `pg`，不会写日志或 Evidence。
 - `app/server.mjs`：可以通过 `coordinationStore` 接入 Web 只读投影；没有注入时仍保留本地文件后端，便于开发和现有 smoke。
 
@@ -34,6 +35,8 @@ Web UI        = 玻璃橱窗：只读投影，不参与裁决
 2. 用可信的当前 TeamConfig、TeamRouteBinding、ControlProfile、Leader MemberConfig 创建 `createCoordinationAdmissionHandler(...)`。
 3. 将 `createRemoteOpenClawLeaderAdmissionHook(...)` 注入 Leader Worker 的 `createTiangongPiHarness({ leaderIngress })`。
 4. 将 Web 进程只读连接到同一个 store，并由一个受控的 outbox delivery worker 领取/确认唤醒。
+
+部署层可以用 `createLeaderRuntimeBinding({ filePath, controlEndpoint, controlToken, channel })` 一次得到 `leaderIngress` 和远程 outbox facade，再把 `leaderIngress` 显式传给 `createTiangongPiHarness({ leaderIngress })`。这一步是启动绑定，不是把凭证写进 OpenClaw 配置或 Worker image。
 
 如果其中任何一项缺失，OpenClaw 的 Matrix 原生入口仍 fail-closed，不会假装已经有总账。
 
@@ -52,4 +55,3 @@ $env:TIANGONG_TEST_POSTGRES_URL = "postgres://postgres:test@127.0.0.1:55432/tian
 $env:TIANGONG_TEST_POSTGRES_DISPOSABLE = "1"
 npm test -- --test-name-pattern="Postgres CoordinationStore"
 ```
-
