@@ -37,6 +37,7 @@ async function fixture(t) {
   await bindingStore.write(binding, { updatedAt: "2026-08-15T00:00:00.000Z" });
   const server = createAdmissionControlServer({
     plane: createAdmissionControlPlane({ bindingStore, replayStore, now: () => "2026-08-15T00:00:01.000Z" }),
+    readiness: () => bindingStore.read(),
   }).listen(0);
   t.after(() => server.close());
   const address = server.address();
@@ -99,10 +100,14 @@ test("durable Control API admits model and tool phases and replays after restart
 });
 
 test("durable Control API exposes a bounded readiness endpoint", async (t) => {
-  const { healthUrl } = await fixture(t);
+  const { directory, healthUrl } = await fixture(t);
   const response = await fetch(healthUrl);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { status: "ready" });
+  await rm(join(directory, "binding.json"), { force: true });
+  const unavailable = await fetch(healthUrl);
+  assert.equal(unavailable.status, 503);
+  assert.deepEqual(await unavailable.json(), { error: "ADMISSION_CONTEXT_UNAVAILABLE" });
 });
 
 test("durable Control API rejects changed, wrong-actor, and pre-model tool requests", async (t) => {

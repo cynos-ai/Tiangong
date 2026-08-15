@@ -358,11 +358,16 @@ function statusFor(error) {
   return 403;
 }
 
-export function createAdmissionControlHandler({ plane } = {}) {
+export function createAdmissionControlHandler({ plane, readiness } = {}) {
   if (!plane || typeof plane.resolve !== "function") throw new TypeError("admission Control API plane is required");
   return async (request, response) => {
     if (request.method === "GET" && request.url === "/healthz") {
-      send(response, 200, { status: "ready" });
+      try {
+        if (typeof readiness === "function") await readiness();
+        send(response, 200, { status: "ready" });
+      } catch {
+        send(response, 503, { error: "ADMISSION_CONTEXT_UNAVAILABLE" });
+      }
       return;
     }
     if (request.method !== "POST" || request.url !== "/v1/admission" ||
@@ -420,6 +425,7 @@ export async function startAdmissionControlServer({
   await bindingStore.read();
   const server = createAdmissionControlServer({
     plane: createAdmissionControlPlane({ bindingStore, replayStore }),
+    readiness: () => bindingStore.read(),
   });
   await new Promise((ready, reject) => {
     server.once("error", reject);
