@@ -5,7 +5,8 @@ import test from "node:test";
 import { createRuntimeConsoleServer } from "../server.mjs";
 import { PostgresCoordinationStore } from "../coordination/postgres-store.mjs";
 import { createRemoteCoordinationStore, createRemoteOpenClawLeaderAdmissionHook } from "../../worker/agent/team/coordination-control-client.mjs";
-import { drainLeaderOutbox } from "../../worker/agent/team/leader-outbox.mjs";
+import { createLeaderOutboxHandlers, drainLeaderOutbox } from "../../worker/agent/team/leader-outbox.mjs";
+import { sha256 } from "../../worker/agent/canonical-json.mjs";
 import { acquirePostgresTestLock } from "./postgres-test-lock.mjs";
 import {
   createControlProfile,
@@ -50,7 +51,13 @@ test("real PG Control API + remote Leader hook + remote outbox facade form one p
   const admission = await hook({ roomId: route.roomId, eventId: "$event-pg-api", source: { channel: "matrix", authenticated: true, actorId: "@human-pg-api:example.test", messageId: "$event-pg-api", route: "team-room" } });
   assert.equal(admission.replayed, false);
   const remoteStore = createRemoteCoordinationStore({ endpoint, token: TOKEN });
-  const drained = await drainLeaderOutbox({ store: remoteStore, consumerId: "leader-pg-api", handlers: { "leader-resume": async () => ({ receiptId: "resume-receipt" }), "human-reply": async () => ({ receiptId: "reply-receipt" }) } });
+  const handlers = createLeaderOutboxHandlers({
+    store: remoteStore,
+    channel: { notifyWorkAdmitted: async () => ({ transactionId: "matrix-txn-pg-api", delivered: true }) },
+    resolveWorkRoute: async () => ({ roomId: route.roomId, bindingDigest: sha256({ routeId: route.routeId }) }),
+    resumeLeader: async () => ({ receiptId: "resume-receipt" }),
+  });
+  const drained = await drainLeaderOutbox({ store: remoteStore, consumerId: "leader-pg-api", handlers });
   assert.equal(drained.results.length, 2);
   assert.equal(drained.results.every((result) => result.status === "acked"), true);
   const runtime = await fetch(`http://127.0.0.1:${address.port}/api/runtime`);
