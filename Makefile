@@ -135,7 +135,7 @@ test-runner-executor-linux: ## Run the Docker executor smoke inside a Linux cont
 test-runner-broker: ## Prove the closed container-identity Runner broker path
 	@$(RUNNER_BROKER_SMOKE)
 
-test-runner-broker-linux: ## Run the Runner broker smoke inside a Linux control container
+test-runner-broker-linux: ## Run the Runner broker and Work/Task/Result smoke inside Linux
 	@./scripts/run-runner-broker-linux.sh
 
 test-runner-preparation: ## Prove broker registration precedes fixed Worker plan access

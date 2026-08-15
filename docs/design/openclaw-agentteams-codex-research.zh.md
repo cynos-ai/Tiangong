@@ -330,3 +330,19 @@ Leader runtime wiring 和 outbox handler 的真实部署绑定仍属于后续 B2
 下一步应由 AgentTeams/部署层提供 canonical CoordinationStore/PG 连接和 ingress
 DTO，再把本分支的 admission/outbox seam 接入 disposable Team smoke；在此之前不做
 权威数据迁移、不删除 legacy pi，也不把本地 journal 当成跨 Worker 共享状态。
+
+## 2026-08-16 Phase B4 Work/Task/Runner/Result 纵切
+
+`make test-runner-broker-linux` 现在不再只验证 Runner broker 客户端。Linux
+控制容器中的 Worker 先通过 Tiangong TeamTaskPort 创建 Project/Task，再依次调用
+`team_resolve_task`、`run_command` 和 `team_submit_result`：实际命令修改 fixture，
+Runner broker 封存 ChangeRevision，ResultEnvelope 写入 AgentTeams shared-fs 形状的
+`projects/{id}` / `tasks/{id}` 记录，WorkRun 进入 `finalized`，随后 durable journal
+重放相同 invocation。`b4_work_task_runner=pass` 和 `b4_result_persisted=pass` 是
+直接机器事实。
+
+这条 smoke 的 Channel adapter 仍是有界测试适配器，因此它闭合的是 Tiangong 本地
+Work/Task/Runner/Result 纵切，不等于真实 AgentTeams Matrix/Worker 投递已经完成。
+下一步仍需把同一调用接到真实 Worker、Matrix 和 WebUI，并补齐取消、重启后
+unresolved execution、ToolResult retention 及 cleanup 证据；在此之前保留 legacy pi
+路径，不做 clean-cut。

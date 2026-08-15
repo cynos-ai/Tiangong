@@ -8,7 +8,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createDockerCommandRunner } from "../../worker/agent/runner/docker-executor.mjs";
+import { createProjectBinding, createTaskBinding } from "../../worker/agent/team/manifest.mjs";
 import { FORBIDDEN_ENV_KEYS, FORBIDDEN_NETWORK_TARGETS } from "../../worker/agent/runner/runner-policy.mjs";
+import { runnerRunIdForTask } from "../../worker/agent/runner/runner-port.mjs";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(directory, "../..");
@@ -20,7 +22,7 @@ const dockerPath = process.env.TIANGONG_DOCKER_PATH ?? "/usr/bin/docker";
 const runDocker = createDockerCommandRunner({ dockerPath });
 const nonce = randomUUID();
 const suffix = nonce.replaceAll("-", "").slice(0, 16);
-const runId = `run-${nonce}`;
+const projectId = `project-runner-${suffix}`;
 const assessorRunId = `run-${randomUUID()}`;
 const smokeStartedAt = Math.floor(Date.now() / 1000) - 1;
 const taskId = `task-runner-${suffix}`;
@@ -33,9 +35,40 @@ const client = `tiangong-runner-client-${suffix}`;
 const assessorClient = `tiangong-assessor-client-${suffix}`;
 const intruder = `tiangong-runner-intruder-${suffix}`;
 const stateVolume = `tiangong-runner-broker-state-${suffix}`;
-const ownerLabel = `io.tiangong.broker-run=${runId}`;
 const implementCommand = ["node", "--input-type=module", "-e", "await import('./probe.mjs'); const fs = await import('node:fs/promises'); await fs.appendFile('input.txt', 'sealed-change\\n');"];
 const assessCommand = ["node", "--input-type=module", "-e", "const fs = await import('node:fs/promises'); const value = await fs.readFile('input.txt', 'utf8'); if (!value.endsWith('sealed-change\\n')) process.exit(41); try { await fs.appendFile('input.txt', 'forbidden'); process.exit(42); } catch (error) { if (!['EACCES', 'EROFS'].includes(error.code)) throw error; } console.log('assessor_revision_readonly=pass');"];
+const projectBinding = createProjectBinding({
+  projectId,
+  playbookId: "software-change-delivery",
+  playbookVersion: "1.0.0",
+  playbookDigest: "b".repeat(64),
+  requester: "@manager:example.test",
+  roleBindings: {
+    team_leader: "tiangong-leader",
+    designer: `tiangong-designer-${suffix}`,
+    implementor: workerName,
+    assessor: `tiangong-assessor-role-${suffix}`,
+    operator: `tiangong-operator-${suffix}`,
+  },
+  createdAt: new Date().toISOString(),
+});
+const taskBinding = createTaskBinding({
+  taskId,
+  projectId,
+  playbookStepId: "software-change-delivery-transition-v1:implement",
+  taskKind: "implement",
+  revisionIndex: 0,
+  assignee: workerName,
+  objective: "Implement the bounded smoke change and return one immutable revision.",
+  completionContractDigest: "c".repeat(64),
+  sourceProfileDigest: "d".repeat(64),
+  sourceSkillId: "implementor-controlled-implementation-v1",
+  sourceSkillDigest: "e".repeat(64),
+  inputRefs: [],
+  createdAt: projectBinding.createdAt,
+});
+const runId = runnerRunIdForTask(taskBinding);
+const ownerLabel = `io.tiangong.broker-run=${runId}`;
 const tempRoot = await mkdtemp(path.join(tmpdir(), "tiangong-runner-broker-smoke-"));
 const configPath = path.join(tempRoot, "config.json");
 let cleanupFailed = false;
@@ -108,17 +141,77 @@ async function removeOwned(kind, name) {
 }
 
 const clientProgram = String.raw`
-const [{ createRunnerBrokerExecutor }, { RunnerJournal }, policy, { runCommand, runnerInvocationIdentity }] = await Promise.all([
+const [
+  { createRunnerBrokerExecutor },
+  { RunnerJournal },
+  policy,
+  { runCommand, runnerInvocationIdentity },
+  { WorkRunStore },
+  { createMemberToolRegistry },
+  { createProject, dispatchTask },
+  { createProjectBinding, createTaskBinding },
+  { TeamCoordinationGate },
+  { TurnGateState },
+  { RUNNER_BROKER_ENDPOINT_DIGEST },
+  { readTaskResult },
+] = await Promise.all([
   import("/opt/tiangong-worker/agent/runner/broker-client.mjs"),
   import("/opt/tiangong-worker/agent/runner/journal.mjs"),
   import("/opt/tiangong-worker/agent/runner/runner-policy.mjs"),
   import("/opt/tiangong-worker/agent/runner/runner-port.mjs"),
+  import("/opt/tiangong-worker/agent/work/work-run-store.mjs"),
+  import("/opt/tiangong-worker/agent/work/member-tools.mjs"),
+  import("/opt/tiangong-worker/agent/team/team-task-port.mjs"),
+  import("/opt/tiangong-worker/agent/team/manifest.mjs"),
+  import("/opt/tiangong-worker/agent/team/tool-wrapper.mjs"),
+  import("/opt/tiangong-worker/agent/gates/turn-state.mjs"),
+  import("/opt/tiangong-worker/agent/runner/preparation-client.mjs"),
+  import("/opt/tiangong-worker/agent/team/manifest-store.mjs"),
 ]);
 const env = {
   TIANGONG_FORBIDDEN_ENV_NAMES: policy.FORBIDDEN_ENV_KEYS.join(","),
   TIANGONG_FORBIDDEN_NETWORK_TARGETS: policy.FORBIDDEN_NETWORK_TARGETS.join(","),
 };
 const executor = createRunnerBrokerExecutor({ endpoint: process.env.TEST_BROKER_ENDPOINT, taskId: process.env.TEST_TASK_ID });
+const project = createProjectBinding(JSON.parse(process.env.TEST_PROJECT_BINDING));
+const task = createTaskBinding(JSON.parse(process.env.TEST_TASK_BINDING));
+const evidence = { events: [], async append(event) { this.events.push(event); } };
+const channel = {
+  calls: [],
+  async waitForTeamIdentity(role) { return { team: "team-smoke", role }; },
+  async assertTeamIdentity(role) { return { team: "team-smoke", role }; },
+  async assertTeamRoster() { return { roomId: "!team-smoke:example.test", roomIdDigest: "f".repeat(64), memberDigests: [] }; },
+  async notifyAssignee(worker, taskId) { this.calls.push({ kind: "notifyAssignee", worker, taskId }); return { queued: true, delivered: true }; },
+  async notifyLeader(taskId) { this.calls.push({ kind: "notifyLeader", taskId }); return { queued: true, delivered: true }; },
+};
+const coordination = {
+  rootDir: "/tmp/tiangong-shared",
+  channel,
+  sync: { async beforeRead() {}, async afterWrite() {} },
+  evidence,
+  now: () => task.createdAt,
+  runnerBrokerPreparation: {
+    async prepare({ taskBinding }) {
+      return {
+        schemaVersion: 1,
+        status: "ready",
+        taskId: taskBinding.taskId,
+        taskBindingDigest: taskBinding.contentDigest,
+        bindingDigest: "a".repeat(64),
+        endpointDigest: RUNNER_BROKER_ENDPOINT_DIGEST,
+        replayed: false,
+      };
+    },
+  },
+};
+const leaderEnv = {
+  AGENTTEAMS_WORKER_NAME: project.roleBindings.team_leader,
+  AGENTTEAMS_WORKER_ROLE: "team_leader",
+  AGENTTEAMS_WORKER_ROOM_ID: "room-leader",
+  AGENTTEAMS_MATRIX_DOMAIN: "example.test",
+};
+await createProject(project, { ...coordination, env: leaderEnv });
+await dispatchTask(task, { ...coordination, env: leaderEnv });
 const plan = await executor.plan({ runId: process.env.TEST_RUN_ID });
 console.log("runner_broker_plan=pass plan_digest=" + plan.contentDigest);
 const request = { runId: plan.runId, command: plan.command, cwd: plan.cwd, timeoutMs: plan.timeoutMs, outputLimitBytes: plan.outputLimitBytes };
@@ -127,27 +220,62 @@ const alteredIdentity = runnerInvocationIdentity(altered);
 const rejected = await fetch(process.env.TEST_BROKER_ENDPOINT, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ schemaVersion: 1, taskId: process.env.TEST_TASK_ID, invocationKey: alteredIdentity.invocationKey, ...altered, env }) });
 if (rejected.status !== 403) process.exit(20);
 console.log("runner_broker_changed_plan_rejected=pass");
-const first = await runCommand(request, {
-  executor,
-  journal: new RunnerJournal({ filePath: "/tmp/client-first.jsonl" }),
-  env,
-});
-if (first.outcome !== "completed" || first.exitCode !== 0 || first.stdout.trim() !== "runner_probe=pass" ||
-    !first.changeRevisionRef || first.changeRevisionRef.producerTaskId !== process.env.TEST_TASK_ID) {
-  console.error("runner_client_failure outcome=" + first.outcome + " exit=" + first.exitCode +
-    " stdout_match=" + (first.stdout?.trim() === "runner_probe=pass") +
-    " revision_present=" + Boolean(first.changeRevisionRef) + " reason=" + (first.reason ?? "none"));
-  process.exit(21);
+const memberDeps = {
+  ...coordination,
+  env: {
+    AGENTTEAMS_WORKER_NAME: task.assignee,
+    AGENTTEAMS_WORKER_ROLE: "worker",
+    AGENTTEAMS_WORKER_ROOM_ID: "room-member",
+    AGENTTEAMS_MATRIX_DOMAIN: "example.test",
+  },
+  professionalRole: "implementor",
+  sourceProfileDigest: task.sourceProfileDigest,
+  sourceSkillId: task.sourceSkillId,
+  sourceSkillDigest: task.sourceSkillDigest,
+  runnerBrokerEndpoint: process.env.TEST_BROKER_ENDPOINT,
+  runnerFetch: fetch,
+  runnerJournal: new RunnerJournal({ filePath: "/tmp/client-first.jsonl" }),
+  workRunStore: new WorkRunStore({ directory: "/tmp/client-work-runs", now: () => new Date(task.createdAt) }),
+  gate: new TeamCoordinationGate(),
+  getInvocation: () => ({
+    sessionId: "session-member-smoke",
+    turnId: "turn-member-smoke",
+    actor: { id: "@tiangong-leader:example.test" },
+    turnState: new TurnGateState(),
+    resumed: false,
+  }),
+};
+const registry = createMemberToolRegistry({ deps: memberDeps });
+const resolve = registry.definitions().find((tool) => tool.name === "team_resolve_task");
+const resolved = await resolve.execute("resolve-smoke", { taskId: task.taskId });
+if (resolved.details.workRunPhase !== "executing") process.exit(21);
+const run = registry.definitions().find((tool) => tool.name === "run_command");
+const first = await run.execute("run-smoke", { taskId: task.taskId });
+if (first.details.outcome !== "completed" || first.details.exitCode !== 0 ||
+    first.details.stdout.trim() !== "runner_probe=pass" || !first.details.changeRevisionRef ||
+    first.details.changeRevisionRef.producerTaskId !== task.taskId) {
+  console.error("runner_client_failure outcome=" + (first.details.outcome ?? "missing") +
+    " exit=" + (first.details.exitCode ?? "missing") +
+    " stdout_match=" + (first.details.stdout?.trim() === "runner_probe=pass") +
+    " revision_present=" + Boolean(first.details.changeRevisionRef));
+  process.exit(22);
 }
-const brokerReplay = await runCommand(request, {
-  executor,
-  journal: new RunnerJournal({ filePath: "/tmp/client-second.jsonl" }),
-  env,
+const submit = registry.definitions().find((tool) => tool.name === "team_submit_result");
+const submitted = await submit.execute("submit-smoke", {
+  taskId: task.taskId,
+  claim: "The bounded implementation command completed and sealed one ChangeRevision.",
+  changeRevisionRef: first.details.changeRevisionRef,
 });
-if (brokerReplay.outcome !== "completed" || brokerReplay.invocationKey !== first.invocationKey) process.exit(22);
+const persisted = await readTaskResult(task.taskId, { rootDir: coordination.rootDir });
+const workRun = await memberDeps.workRunStore.latestForTask(task.taskId);
+if (submitted.details.replayed || persisted.contentDigest !== submitted.details.resultDigest || workRun.phase !== "finalized") process.exit(23);
+const brokerReplay = await run.execute("run-smoke-replay", { taskId: task.taskId });
+if (brokerReplay.details.outcome !== "completed" || brokerReplay.details.replayed !== true) process.exit(24);
 console.log("runner_broker_client=pass");
-console.log("runner_broker_evidence=pass invocation_key=" + first.invocationKey + " policy_digest=" + first.runnerEvidence.policyDigest);
-console.log("runner_broker_revision_sealed=pass artifact_digest=" + first.changeRevisionRef.artifactDigest);
+console.log("runner_broker_evidence=pass invocation_key=" + first.details.invocationKey + " policy_digest=" + first.details.runnerEvidence.policyDigest);
+console.log("runner_broker_revision_sealed=pass artifact_digest=" + first.details.changeRevisionRef.artifactDigest);
+console.log("b4_work_task_runner=pass task_id=" + task.taskId);
+console.log("b4_result_persisted=pass result_digest=" + persisted.contentDigest + " work_run_phase=" + workRun.phase);
 console.log("runner_broker_replay=pass");
 `;
 
@@ -285,6 +413,8 @@ try {
     ...commonClientArgs,
     "--env", `TEST_TASK_ID=${taskId}`,
     "--env", `TEST_RUN_ID=${runId}`,
+    "--env", `TEST_PROJECT_BINDING=${JSON.stringify(projectBinding)}`,
+    "--env", `TEST_TASK_BINDING=${JSON.stringify(taskBinding)}`,
     "--env", `AGENTTEAMS_WORKER_NAME=${workerName}`,
     "--entrypoint", "/usr/bin/node", workerImageId,
     "--input-type=module", "-e", clientProgram,
