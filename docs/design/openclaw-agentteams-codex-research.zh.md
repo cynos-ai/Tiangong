@@ -281,8 +281,8 @@ B2 已完成第一条可测试的 admission seam，但尚未宣称完整运行�
 
 当前明确缺口：OpenClaw 的 `EmbeddedRunAttemptParams` 已能提供受限的 `groupId`、
 `messageTo`、`senderId` 和 `currentMessageId`，adapter 现在只在四者严格一致时派生
-Matrix ingress；它仍不把原始 event content 放进 `TurnRequest`，而是由 Matrix channel
-重新读取并验证。AgentTeams shared-storage sync、真实 Matrix Basic smoke、native
+Matrix ingress；真正的 sender/event 真实性仍由 Matrix channel 用 Worker token 重读并
+验证，它不把原始 event content 放进 `TurnRequest`。AgentTeams shared-storage sync、真实 Matrix Basic smoke、native
 Leader runtime wiring 和 outbox handler 的真实部署绑定仍属于后续 B2/B3 工作。不要
 把这组 focused tests 误报成 B2 Go 或完整 Team runtime 已上线。
 

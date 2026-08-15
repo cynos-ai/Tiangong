@@ -176,13 +176,14 @@ function turnId(params) {
 export function resolveOpenClawMatrixIngress(params) {
   const channel = params?.messageChannel ?? params?.messageProvider;
   if (params?.matrixIngress === undefined || params?.matrixIngress === null) {
-    // OpenClaw's public EmbeddedRunAttemptParams already carries the
-    // authenticated inbound Matrix envelope as separate fields: groupId is
+    // OpenClaw's public EmbeddedRunAttemptParams carries the runtime-delivered
+    // inbound Matrix envelope as separate fields: groupId is
     // the room, messageTo is the canonical `room:<roomId>` target, and
     // currentMessageId is the event ID. Keep this derivation deliberately
     // narrow; the channel adapter still re-reads the event with its own
-    // authenticated Matrix token before admission, so these fields never
-    // become the event-content oracle.
+    // authenticated Matrix token before admission, which is the proof of
+    // sender/event authenticity. These fields never become the event-content
+    // oracle.
     const roomId = params?.groupId;
     if (channel !== "matrix" || typeof roomId !== "string" || !MATRIX_ROOM_ID.test(roomId) ||
         params?.messageTo !== `room:${roomId}` ||

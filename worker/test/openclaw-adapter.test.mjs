@@ -127,7 +127,7 @@ test("extracts only an explicitly authenticated Matrix ingress binding", () => {
   );
 });
 
-test("derives a bounded native Matrix ingress from OpenClaw's authenticated run envelope", () => {
+test("derives a bounded native Matrix ingress from OpenClaw's runtime envelope", () => {
   const context = resolveOpenClawMatrixIngress(attemptParams({
     groupId: "!team:example.test",
     messageTo: "room:!team:example.test",
