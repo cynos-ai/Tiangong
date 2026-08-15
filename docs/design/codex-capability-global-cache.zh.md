@@ -52,3 +52,21 @@ header、请求文本、模型原文或 sidecar secret。bridge 记录只决定
 这会把启动开销从“每个 Worker 一次模型探测”降为“每个新模型/provider 指纹
 一次探测 + 其余 Worker 一次本地共享状态读取”，同时保留 WebUI/Matrix 和现有
 AgentTeams 凭证边界。
+
+## 2026-08-15 验证事实
+
+- 使用当前 canary 镜像 `sha256:59e01c909bca77641c134bd912ce41a9f98fad9a4cf0a662dabdd86e10c90c4c`
+  运行真实 AgentTeams v1.2.2 Worker：DeepSeek 原生 Responses preflight 通过，首次
+  路由日志为 `cacheHit=false`；同一 Worker 重启后为 `cacheHit=true`，并保持
+  `transport=native-responses`。该 canary、容器和 storage prefix 已按 run-owned
+  规则清理。
+- 使用同一镜像启动两个独立容器，并挂载同一个部署层 Docker volume；并发 focused
+  smoke 得到一个 `cacheHit=false`、一个 `cacheHit=true`、相同 key、单条记录，且
+  `hasCredential=false`。脚本为
+  `smoke-testing/support/run-codex-capability-cache-smoke.sh`。
+- 当前 AgentTeams v1.2.2 embedded Docker Worker 默认只挂 Worker-scoped auth
+  volume；`agt apply` DTO 没有把能力缓存共享卷挂载到 Worker 的字段。因此上述
+  focused smoke 证明的是共享卷合同和 Tiangong 实现，不能把当前默认 embedded
+  部署误称为已经全局共享。生产启用 `auto` 前必须由 Kubernetes PodTemplate、
+  AgentTeams 部署适配器或后续官方挂载能力提供同一个 RW 共享路径；没有该挂载时
+  保持显式 route 或 fail-closed。
