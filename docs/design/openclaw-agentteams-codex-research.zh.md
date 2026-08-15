@@ -280,3 +280,25 @@ B2 已完成第一条可测试的 admission seam，但尚未宣称完整运行�
 - focused contract（CoordinationStore、Leader admission、ingress、OpenClaw hook、outbox、Matrix channel）共 29 Worker tests 全部通过，另有 1 条 B2 Basic disposable smoke 和 App projection 3 tests 通过；smoke 覆盖一次真实模块组合、幂等回执、wake ack 和重启投影，但不是 AgentTeams 真实部署 smoke。
 
 当前明确缺口：OpenClaw `toTurnRequest` 仍没有把原始 Matrix room/event/content 传入 Worker，因此生产入口只能在显式 `matrixIngress` hook 下调用此 admission seam；AgentTeams shared-storage sync、真实 Matrix Basic smoke、native Leader runtime wiring 和 outbox handler 的真实部署绑定仍属于后续 B2/B3 工作。不要把这组 focused tests 误报成 B2 Go 或完整 Team runtime 已上线。
+
+## 2026-08-15 B2 共享存储边界复核
+
+对当前 AgentTeams 适配代码和内部目标计划复核后，暂不把本地 journal 复制到一个
+新的 `shared/tiangong/coordination` 目录：
+
+- `sync-adapter.mjs` 目前只同步 AgentTeams 已拥有的 `shared/projects/{id}` 和
+  `shared/tasks/{id}`；它没有一个可供 Tiangong 读写 Work/Task/Result 的 canonical
+  CoordinationStore API；
+- 内部目标计划把 PostgreSQL CoordinationStore 列为 P1.4，明确要求
+  `room_id + event_id` 唯一约束、epoch/replay/conflict 事务和 durable outbox；当前
+  file-backed journal 只能作为 disposable B2 的实现替身，不能被宣传为共享权威；
+- 历史上曾出现过第二套 Tiangong Project/Task 命名空间，已被架构规则撤销。重新造
+  一个 MinIO 路径会把平台存储权威和 Tiangong 业务权威混在一起，也无法证明跨 Worker
+  的事务语义。
+
+当前本地 v1.2.2 栈的 controller、manager、Matrix、Web、MinIO readiness 已通过
+只读检查；但真实 B2 仍不能晋级，因为 stock OpenClaw ingress 没有提供显式
+`matrixIngress`/Leader hook，且生产 outbox handler 尚未绑定 native Leader session。
+下一步应由 AgentTeams/部署层提供 canonical CoordinationStore/PG 连接和 ingress
+DTO，再把本分支的 admission/outbox seam 接入 disposable Team smoke；在此之前不做
+权威数据迁移、不删除 legacy pi，也不把本地 journal 当成跨 Worker 共享状态。
