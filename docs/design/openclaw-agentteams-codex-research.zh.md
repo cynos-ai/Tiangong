@@ -274,8 +274,9 @@ B2 已完成第一条可测试的 admission seam，但尚未宣称完整运行�
 - `worker/agent/team/leader-admission.mjs` 只接受已认证的 Matrix `m.room.message`，要求事件 ID、发送者、绑定 Team room、当前 TeamConfig/TeamRouteBinding/ControlProfile/Leader MemberConfig 一致；普通房间、Worker 身份、控制事件、改写后的 replay 都 fail closed。
 - 一次 admission 原子地产出一个确定性的 Work、一个 native Leader session 绑定，以及 `leader-resume` 和 `human-reply` 两个 durable wake。相同 Matrix event 重放只返回原 Work/wake 投影，不重复创建。
 - OpenClaw adapter 现在有显式 `matrixIngress` 输入契约和可选 Leader admission hook：只有上游明确提供 authenticated、`team-room`、room ID 时才调用 admission；缺 hook 时 fail closed，原始 event content 不进入 TurnRequest。
+- `leader-outbox.mjs` 提供 at-least-once wake consumer：先执行幂等 handler，成功后才 claim/ack；handler 失败保持 pending，崩溃发生在 side effect 后也可安全重放。
 - `worker/agent/team/channel-adapter.mjs` 新增了受加入房间约束的 Human event 读取，以及带稳定 Matrix transaction ID 的 `team.work.admitted` 可见回执；Evidence 只保留 bounded ID/digest，不保存 Human 原文或凭证。
 - `CoordinationStore.listWorks()` 和 App Runtime Console 的只读 projection 现在能展示 Work card、current WorkSpec 摘要、timeline 事件类型、Leader session 和 durable wake 状态；未配置共享 journal 时仍诚实显示 unknown，不把 Web UI 当授权源。
-- focused contract（CoordinationStore、Leader admission、ingress、OpenClaw hook、Matrix channel）共 26 Worker tests 全部通过，App projection 3 tests 全部通过；这证明的是纯 Worker seam 和 replay/idempotency，不是 AgentTeams 真实部署 smoke。
+- focused contract（CoordinationStore、Leader admission、ingress、OpenClaw hook、outbox、Matrix channel）共 28 Worker tests 全部通过，App projection 3 tests 全部通过；这证明的是纯 Worker seam 和 replay/idempotency，不是 AgentTeams 真实部署 smoke。
 
-当前明确缺口：OpenClaw `toTurnRequest` 仍没有把原始 Matrix room/event/content 传入 Worker，因此生产入口还不能自动调用此 admission seam；AgentTeams shared-storage sync、真实 Matrix Basic smoke、native Leader runtime wiring 和 durable visible outbox consumer 仍属于后续 B2/B3 工作。不要把这组 focused tests 误报成 B2 Go 或完整 Team runtime 已上线。
+当前明确缺口：OpenClaw `toTurnRequest` 仍没有把原始 Matrix room/event/content 传入 Worker，因此生产入口只能在显式 `matrixIngress` hook 下调用此 admission seam；AgentTeams shared-storage sync、真实 Matrix Basic smoke、native Leader runtime wiring 和 outbox handler 的真实部署绑定仍属于后续 B2/B3 工作。不要把这组 focused tests 误报成 B2 Go 或完整 Team runtime 已上线。
