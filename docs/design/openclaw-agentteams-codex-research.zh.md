@@ -1,8 +1,8 @@
 # OpenClaw × AgentTeams × Codex/DeepSeek 可行性调查
 
-> 调查日期：2026-08-14
+> 调查日期：2026-08-15
 >
-> 状态：已验证 AgentTeams v1.2.2 的原生 Codex HTTP Responses 路径，以及 Qwen Coding Plan 的 OpenCodex bridge Worker 路径；不把 WebSocket 当作必要前提
+> 状态：原生 Responses、Qwen bridge、deployment-owned sidecar 生命周期均已完成验证；不把 WebSocket 当作必要前提
 
 ## 结论
 
@@ -10,7 +10,7 @@
 生命周期、存储和模型网关基础设施；Tiangong 继续负责 Worker 内的控制、工具、
 Gate、Evidence、审批和恢复。
 
-当前不能宣称“AgentTeams 已经把 Codex 注册成 Controller-managed runtime”；但在 Tiangong 显式 canary 中，原生 Codex app-server 已经可以通过 AgentTeams gateway 的 HTTP Responses 路径调用 DeepSeek，Chat-only 的 Qwen Coding Plan 也可以经 OpenCodex sidecar 调用：
+当前不能宣称“AgentTeams 已经把 Codex 注册成 Controller-managed runtime”；但在 Tiangong 显式 canary 中，原生 Codex app-server 已经可以通过 AgentTeams gateway 的 HTTP Responses 路径调用 DeepSeek，Chat-only 的 Qwen Coding Plan 也已经在独立 provider 配置和 Team canary 中经 OpenCodex sidecar 调用：
 
 ```text
 OpenClaw 2026.4.14 native Codex harness
@@ -19,7 +19,7 @@ OpenClaw 2026.4.14 native Codex harness
   -> Qwen Coding Plan: OpenCodex 2.15.0 sidecar -> pass (provider=codex)
 ```
 
-因此当前阻塞不是 DeepSeek key、模型名称或 Worker token 本身无效，而是 AgentTeams 官方没有把 Codex app-server 作为稳定 Controller runtime 暴露，以及 OpenCodex sidecar 仍需要 AgentTeams-owned 的部署生命周期。Codex 配置显式关闭 WebSocket 后，HTTP/SSE 路径足以完成当前 canary；不需要为了 WebSocket 先写协议适配层。
+因此当前剩余边界不是 DeepSeek key、模型名称或 Worker token 本身无效：当前本地 stack 选择的是 `openai-compat + api.deepseek.com + deepseek-v4-*`，把 Qwen 请求发给该上游自然会被拒绝；切换 Qwen 需要用 AgentTeams 的 provider/base URL/default model 配置重建或升级网关。OpenCodex sidecar 的 deployment-owned 生命周期已经补齐。Codex 配置显式关闭 WebSocket 后，HTTP/SSE 路径足以完成当前 canary；不需要为了 WebSocket 先写协议适配层。
 
 ## AgentTeams 当前能力
 
@@ -27,6 +27,9 @@ OpenClaw 2026.4.14 native Codex harness
 
 - 支持 OpenAI-compatible provider，并可通过 `llmBaseUrl`、`defaultModel` 配置非
   OpenAI 模型服务；
+- 官方安装/Helm 配置也支持 `llmProvider=qwen`、Qwen API key 和
+  `defaultModel`；当前本地 v1.2.2 运行实例没有选择该配置，而是使用
+  `openai-compat` 的 DeepSeek 上游；
 - Worker 只持有 scoped consumer token，真实 LLM key 留在 Higress/AgentTeams
   网关；
 - OpenClaw、QwenPaw、Hermes 可通过 Matrix 房间协作，Element Web 继续提供可见的
@@ -66,9 +69,13 @@ WebSocket 支持。
 ### 尚未完成
 
 1. AgentTeams upstream 尚未把 Codex app-server 变成稳定的 Controller-managed runtime；当前使用 Tiangong canary image 和显式 runtime contract。
-2. OpenCodex sidecar 的生产生命周期、滚动升级、取消/超时和跨 Worker token 轮换还要由 AgentTeams-owned deployment 完成。
-3. 真实 Team task 基础链路已通过；仍需在 AgentTeams-owned deployment 中补齐多轮 tool replay、重启/恢复和 Evidence 关联证明。
-4. 首次数据结构迁移。迁移应等基础链路、WebUI、ToolResult、重启/恢复都通过后再做。
+2. 当前本地 stack 尚未切换到 Qwen provider；需要通过 AgentTeams 安装/升级配置选择
+   `qwen`、Qwen Coding Plan endpoint 和 `qwen3.7-plus`，再重跑当前 sidecar Team smoke。
+3. v1.2.2 embedded `agt` REST DTO 仍不透传 `accessEntries`；官方 credential-provider
+   要么走原生 Kubernetes CR，要么等待上游 DTO 修复。当前 adapter 使用受限的
+   deployment-owned compatibility lookup，不把该缺口伪装成官方 projection。
+4. 首次数据结构迁移。迁移应等 provider 配置、WebUI、ToolResult、重启/恢复和
+   Qwen Team smoke 都通过后再做。
 
 ## 推荐实施顺序
 
@@ -83,7 +90,7 @@ WebSocket 支持。
 
 OpenClaw/Codex 已显式关闭 WebSocket，使用网关支持的 HTTP Responses 路径；原生 Codex、Matrix、Element Web 和 AgentTeams key boundary 均保留，不先做数据迁移。
 
-### Phase 2：Chat-only 模型的显式 bridge canary（已通过，仍需生产化）
+### Phase 2：Chat-only 模型的显式 bridge 与 sidecar 生命周期（已通过）
 
 在 AgentTeams/Higress 或独立 sidecar 中实现：
 
@@ -93,7 +100,10 @@ OpenClaw/Codex 已显式关闭 WebSocket，使用网关支持的 HTTP Responses 
 4. 保持 session/turn 关联、tool call、错误和取消语义；
 5. 不把真实 Coding Plan key 下发到 Worker、Codex child 或 sidecar。
 
-OpenCodex 2.15.0 已通过真实 Qwen 文本、function call、多轮 replay 和基础 Team task；生产化还必须补齐 sidecar 生命周期，不能因为 canary 通过就自动升级为默认路径。
+OpenCodex 2.15.0 已通过真实 Qwen 文本、function call、多轮 replay 和基础 Team task；
+deployment-owned adapter 进一步通过了 DeepSeek sidecar 的 provision、ready、
+reconcile、generation rotate、真实 HTTP 200、drain、receipt 失效和 remove。当前
+默认仍是原生 Responses 直连；Chat-only 只有拿到 matching ready receipt 才能进入 bridge。
 
 ### Phase 3：Tiangong 控制面与数据结构迁移
 
@@ -114,24 +124,26 @@ ToolResult/Operation 等数据结构，并继续保留 Element Web 作为实时�
 
 当前判断：
 
-- **Go**：继续 OpenClaw + AgentTeams + DeepSeek 原生 canary；Qwen Coding Plan 走显式 OpenCodex bridge canary；保留 WebUI/Matrix；
-- **No-Go（暂时）**：把 Codex 宣称为 AgentTeams 官方 Controller runtime，或开始大规模数据迁移；
-- **下一决策点**：把 sidecar 生命周期、重启/恢复和 Evidence 关联纳入 AgentTeams-owned deployment，完成后再评估数据结构迁移。
+- **Go**：继续 OpenClaw + AgentTeams + DeepSeek 原生路径；启用 Qwen provider 后复用同一 OpenCodex bridge 和 WebUI/Matrix；
+- **No-Go（暂时）**：把 Codex 宣称为 AgentTeams 官方 Controller runtime，或在 Qwen provider 尚未切换前把当前拒绝误报为 sidecar 故障；
+- **下一决策点**：先切换一次隔离的 AgentTeams Qwen provider 配置并重跑 Team Full smoke，再评估数据结构迁移；sidecar 生命周期本身不再是阻塞项。
 
 ## 2026-08-14 真实 Team task 复验
 
 此前“尚未完成真实 Team task”这一项已完成复验：临时 Qwen Team 为 `Active`，Leader 为 stock OpenClaw builtin，bridge Worker 为 Tiangong `canary-chat-bridge`。Leader 在 Team room 发出任务，Worker 返回 `QWEN_TEAM_MEMBER_TASK_OK`，Leader 再返回 `TEAM_LEADER_RELAY_OK`；bridge Worker 的 execution trace 为 `winnerProvider=codex`、`winnerModel=qwen3.7-plus`、`fallbackUsed=false`。验证完成后已删除 Team、Workers、sidecar，并将 Higress route 恢复为 DeepSeek。
 
-因此当前结论是：AgentTeams + OpenClaw + Codex + Qwen Coding Plan 的 Team 任务路径可行；尚未完成的是把 OpenCodex sidecar 的生命周期正式交给 AgentTeams 部署层，而不是继续使用临时主机进程。下一步应先实现并验证 sidecar 的 provision/ready/rotate/drain/remove 合同，再考虑数据结构迁移。
+因此当前结论是：AgentTeams + OpenClaw + Codex + Qwen Coding Plan 的 Team 任务路径可行；
+sidecar 生命周期已经由 deployment-owned adapter 接管，不再依赖临时主机进程。下一步
+是切换当前网关的 Qwen provider 配置并重跑同一套 Full smoke，然后再考虑数据结构迁移。
 
 2026-08-14 已在 Tiangong Worker 侧落地该边界的第一版：
 `worker/agent/deployment/opencodex-sidecar.mjs` 提供无密钥的生命周期状态机、
 generation 轮换、`reconcile` 恢复、脱敏 snapshot/receipt 和 fail-closed 状态；
 `codex-gateway-preflight.mjs` 对 Chat-only 路由强制读取匹配的 `ready` receipt。
-这解决了 Worker 侧“没有 readiness 就启动”的缺口，但不等于 AgentTeams 已有
-真实 Controller adapter。真实的容器 provision、secret projection、状态探针、
-drain/remove 和跨重启持久化仍必须在 AgentTeams deployment 层实现并用真实
-smoke 证明。
+这解决了 Worker 侧“没有 readiness 就启动”的缺口；随后已在独立 manager 容器中
+实现真实容器 provision、secret projection、状态探针、drain/remove 和跨重启
+持久化，并用 DeepSeek sidecar Full smoke 证明。它仍然不是 AgentTeams 官方内置
+Controller runtime，而是 Tiangong deployment-owned adapter。
 
 ## 2026-08-15 AgentTeams 凭证提供器边界修正
 
@@ -178,3 +190,21 @@ CoordinationStore 已提供稳定 PG 适配器，只替换存储实现即可。W
 PG。bridge 结果仍需要每个 Worker 自己的 OpenCodex ready receipt，缓存只决定
 协议路线，不代替 sidecar 生命周期或 endpoint admission。完整合同见
 [Codex 能力探测的全局缓存合同](codex-capability-global-cache.zh.md)。
+
+## 2026-08-15 当前网关配置与下一步
+
+当前本地 `agentteams-controller` 的事实配置是：Higress `openai-compat` route
+指向 DeepSeek 上游，默认模型为 DeepSeek；因此把 Worker 的模型名改成
+`qwen3.7-plus` 会得到上游“不支持该模型”的 400，而不是进入 Qwen Coding Plan。
+这不是 OpenCodex 的 route 或生命周期错误。
+
+AgentTeams 官方当前的安装/Helm 文档提供了 Qwen 配置入口：选择
+`llmProvider=qwen`，注入 Qwen Coding Plan key，并设置对应 `defaultModel`；也可
+用 `llmBaseUrl` 配置其他 OpenAI-compatible 服务。切换时应在隔离的 AgentTeams
+配置/数据卷中完成，保留现有 DeepSeek stack 可回滚，然后重复同一套 Team Full
+smoke。真实 key 仍只进入 AgentTeams/Higress credential，不进入 Worker、Codex
+或 sidecar 配置。
+
+依据：[AgentTeams README 的 Qwen/LLM 配置](https://github.com/agentscope-ai/AgentTeams/blob/main/README.md)、
+[AgentTeams Manager Guide](https://github.com/agentscope-ai/AgentTeams/blob/main/docs/manager-guide.md)、
+[AgentTeams Quickstart](https://github.com/agentscope-ai/AgentTeams/blob/main/docs/quickstart.md)。
