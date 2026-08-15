@@ -6,6 +6,9 @@
   "license": "Apache-2.0",
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test --test-concurrency=1 test/*.test.mjs"
+  },
+  "dependencies": {
+    "pg": "8.23.0"
   }
 }

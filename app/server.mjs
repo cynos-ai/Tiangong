@@ -4,6 +4,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { CoordinationStore } from "../worker/agent/team/coordination-store.mjs";
+import { createCoordinationAdmissionHandler } from "./coordination/control-api.mjs";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8780);
@@ -124,7 +125,20 @@ function projectWake(value) {
   };
 }
 
-async function readCoordination(filePath) {
+async function readCoordination(filePath, coordinationStore) {
+  if (coordinationStore && typeof coordinationStore.listWorks === "function" && typeof coordinationStore.listOutbox === "function") {
+    try {
+      const [works, deliveries] = await Promise.all([coordinationStore.listWorks(), coordinationStore.listOutbox()]);
+      return {
+        works: works.map(projectWork).filter(Boolean),
+        workSource: "coordination-store",
+        deliveries: deliveries.map(projectWake).filter(Boolean),
+        deliverySource: "coordination-store",
+      };
+    } catch {
+      return { works: [], workSource: "coordination-store-unavailable", deliveries: [], deliverySource: "coordination-store-unavailable" };
+    }
+  }
   if (!filePath) return { works: [], workSource: "coordination-store-not-configured", deliveries: [], deliverySource: "coordination-store-not-configured" };
   try {
     const resolvedFile = resolve(filePath);
@@ -144,9 +158,9 @@ async function readCoordination(filePath) {
   }
 }
 
-async function runtimeFacts({ factsFile = FACTS_FILE, captureFile = CAPTURE_FILE, coordinationFile = COORDINATION_FILE } = {}) {
+async function runtimeFacts({ factsFile = FACTS_FILE, captureFile = CAPTURE_FILE, coordinationFile = COORDINATION_FILE, coordinationStore } = {}) {
   const capture = await readCapture(captureFile);
-  const coordination = await readCoordination(coordinationFile);
+  const coordination = await readCoordination(coordinationFile, coordinationStore);
   if (!factsFile) {
     return {
       status: "unknown",
@@ -176,11 +190,14 @@ export function createRuntimeConsoleServer(options = {}) {
   const factsFile = options.factsFile ?? FACTS_FILE;
   const captureFile = options.captureFile ?? CAPTURE_FILE;
   const coordinationFile = options.coordinationFile ?? COORDINATION_FILE;
+  const coordinationStore = options.coordinationStore;
+  const coordinationControl = options.coordinationControl ? createCoordinationAdmissionHandler(options.coordinationControl) : null;
   return createServer(async (request, response) => {
+    if (coordinationControl && request.url?.startsWith("/v1/coordination/")) return coordinationControl(request, response);
     if (request.method !== "GET") return json(response, 405, { error: "method_not_allowed" });
     if (request.url === "/healthz") return json(response, 200, { ok: true });
     if (request.url === "/readyz") return json(response, factsFile ? 200 : 503, { ready: Boolean(factsFile), source: factsFile ? "runtime-facts-file" : "runtime-facts-not-configured" });
-    if (request.url === "/api/runtime") return json(response, 200, await runtimeFacts({ factsFile, captureFile, coordinationFile }));
+    if (request.url === "/api/runtime") return json(response, 200, await runtimeFacts({ factsFile, captureFile, coordinationFile, coordinationStore }));
     if (request.url === "/" || request.url === "/index.html") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
       return response.end(await readFile(resolve(ROOT, "public/index.html")));
