@@ -209,6 +209,7 @@ test("WorkSpec changes use epoch and requestId replay, and survive a reopened st
   assert.equal(state.epoch, 1);
   assert.equal(state.timeline.length, 2);
   assert.equal((await reopened.health()).sequence, 2);
+  assert.deepEqual((await reopened.listWorks()).map((work) => work.work.workId), ["work-1"]);
 });
 
 test("Task, durable wake, ToolResult citation, and one-result ownership form one B1 path", async (t) => {

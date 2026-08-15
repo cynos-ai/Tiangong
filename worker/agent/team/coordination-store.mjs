@@ -303,6 +303,7 @@ function workRecord(input) {
     actorId: bounded(input.actorId, "actorId", 256),
     sourceEventId: bounded(input.sourceEventId, "sourceEventId", 256),
     controlProfileId: identifier(input.controlProfileId, "controlProfileId"),
+    leaderSessionId: identifier(input.leaderSessionId, "leaderSessionId"),
     createdAt: timestamp(input.createdAt, "createdAt"),
   });
 }
@@ -316,6 +317,7 @@ function isWorkRecord(value) {
       actorId: value.actorId,
       sourceEventId: value.sourceEventId,
       controlProfileId: value.controlProfileId,
+      leaderSessionId: value.leaderSessionId,
       createdAt: value.createdAt,
     }), value);
   } catch {
@@ -504,7 +506,7 @@ function applyRecord(state, record) {
   } else if (record.type === "wake-enqueued") {
     const wake = payload.wake;
     if (!wake || typeof wake !== "object" || state.wakes[wake.wakeId] || !ID.test(wake.wakeId) || !ID.test(wake.targetMemberId) ||
-        !["task-assignment", "leader-resume", "result-notification"].includes(wake.kind) || wake.status !== "pending") {
+        !["task-assignment", "leader-resume", "result-notification", "human-reply"].includes(wake.kind) || wake.status !== "pending") {
       throw new Error("Invalid wake-enqueued event");
     }
     if (Object.keys(state.wakes).length >= MAX_OUTBOX_ENTRIES) throw new Error("OUTBOX_LIMIT_EXCEEDED");
@@ -611,21 +613,38 @@ export class CoordinationStore {
     });
   }
 
-  async createWork({ workId, team, route, profile, spec, actorId, sourceEventId, requestId } = {}) {
+  async createWork({ workId, team, route, profile, spec, actorId, sourceEventId, requestId, leaderSessionId, wakes = [] } = {}) {
     const currentProfile = profileFor(profile);
     if (!isTeamConfig(team) || !isTeamRouteBinding(route) || !isWorkSpec(spec)) throw new Error("Work admission requires valid TeamConfig, route binding, and WorkSpec");
     if (team.controlProfileId !== currentProfile.profileId || route.teamId !== team.teamId || spec.workId !== workId) throw new Error("WORK_ADMISSION_BINDING_MISMATCH");
-    const work = workRecord({ workId, teamId: team.teamId, routeId: route.routeId, actorId, sourceEventId, controlProfileId: currentProfile.profileId, createdAt: spec.createdAt });
-    const request = command("work.create", requestId, { work, team, route, profile: currentProfile, spec });
-    return this.#mutate((state) => {
-      const replay = checkCommand(state, request, () => state.works[work.workId] && same(state.works[work.workId].work, work));
-      if (replay) return { events: [], result: { replayed: true, work: snapshotWork(state.works[work.workId]) } };
-      if (state.works[work.workId]) throw new Error("WORK_ALREADY_EXISTS");
+    const sessionId = leaderSessionId ?? `leader-${sha256({ workId, teamId: team.teamId, routeId: route.routeId }).slice(0, 48)}`;
+    const work = workRecord({ workId, teamId: team.teamId, routeId: route.routeId, actorId, sourceEventId, controlProfileId: currentProfile.profileId, leaderSessionId: sessionId, createdAt: spec.createdAt });
+    if (!Array.isArray(wakes) || wakes.length > 2) throw new TypeError("Work wakes must contain at most two entries");
+    const wakeRecords = wakes.map((wake) => {
+      const kind = wake?.kind;
+      if (!["leader-resume", "human-reply"].includes(kind)) throw new Error("Unsupported Work wake kind");
       return {
-        events: [{ type: "work-created", at: spec.createdAt, command: request, payload: { work, team, route, profile: currentProfile, spec, actorId } }],
-        result: { replayed: false, work: null },
+        wakeId: sha256({ kind, workId, targetMemberId: wake.targetMemberId, requestId }),
+        kind,
+        workId: identifier(workId, "workId"),
+        targetMemberId: identifier(wake.targetMemberId, "wake.targetMemberId"),
+        status: "pending",
+        createdAt: spec.createdAt,
       };
-    }).then(async (result) => result?.work ? result : { ...result, work: await this.getWork(work.workId) });
+    });
+    const request = command("work.create", requestId, { work, team, route, profile: currentProfile, spec, wakes: wakeRecords });
+    return this.#mutate((state) => {
+      const replay = checkCommand(state, request, () => state.works[work.workId] && same(state.works[work.workId].work, work) && wakeRecords.every((wake) => state.wakes[wake.wakeId] && same(state.wakes[wake.wakeId], wake)));
+      if (replay) return { events: [], result: { replayed: true, work: snapshotWork(state.works[work.workId]), wakes: wakeRecords.map((wake) => snapshotWake(state.wakes[wake.wakeId])) } };
+      if (state.works[work.workId]) throw new Error("WORK_ALREADY_EXISTS");
+      if (wakeRecords.some((wake) => state.wakes[wake.wakeId])) throw new Error("WAKE_ALREADY_EXISTS");
+      const events = [{ type: "work-created", at: spec.createdAt, command: request, payload: { work, team, route, profile: currentProfile, spec, actorId } }];
+      for (const wake of wakeRecords) events.push({ type: "wake-enqueued", at: spec.createdAt, payload: { wake } });
+      return {
+        events,
+        result: { replayed: false, work: null, wakes: [] },
+      };
+    }).then(async (result) => result?.work ? result : { ...result, work: await this.getWork(work.workId), wakes: await Promise.all(wakeRecords.map((wake) => this.getWake(wake.wakeId))) });
   }
 
   async changeWorkSpec({ workId, spec, profile, actorId, expectedEpoch, requestId } = {}) {
@@ -717,7 +736,7 @@ export class CoordinationStore {
   }
 
   async enqueueWake({ workId, taskId, targetMemberId, kind = "leader-resume", requestId, at = this.#now() } = {}) {
-    if (!["task-assignment", "leader-resume", "result-notification"].includes(kind)) throw new Error("Unsupported wake kind");
+    if (!["task-assignment", "leader-resume", "result-notification", "human-reply"].includes(kind)) throw new Error("Unsupported wake kind");
     const wake = { wakeId: sha256({ kind, workId, taskId: taskId ?? null, requestId }), kind, ...(workId ? { workId: identifier(workId, "workId") } : {}), ...(taskId ? { taskId: identifier(taskId, "taskId") } : {}), targetMemberId: identifier(targetMemberId, "targetMemberId"), status: "pending", createdAt: timestamp(at, "at") };
     const request = command("wake.enqueue", requestId, wake);
     return this.#mutate((state) => {
@@ -760,6 +779,10 @@ export class CoordinationStore {
   async getWork(workId) {
     const id = identifier(workId, "workId");
     return this.#read((state) => state.works[id] ? snapshotWork(state.works[id]) : undefined);
+  }
+
+  async listWorks() {
+    return this.#read((state) => Object.values(state.works).map(snapshotWork));
   }
 
   async getTask(taskId) {

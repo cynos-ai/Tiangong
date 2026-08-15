@@ -3,10 +3,13 @@ import { lstat, readFile } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { CoordinationStore } from "../worker/agent/team/coordination-store.mjs";
+
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8780);
 const FACTS_FILE = process.env.TIANGONG_RUNTIME_FACTS_FILE || "";
 const CAPTURE_FILE = process.env.TIANGONG_TOOL_RESULT_CAPTURE_FILE || "";
+const COORDINATION_FILE = process.env.TIANGONG_COORDINATION_FILE || "";
 const MAX_CAPTURE_BYTES = 256 * 1024;
 const MAX_CAPTURE_RECORDS = 32;
 const DIGEST = /^[a-f0-9]{64}$/u;
@@ -74,8 +77,72 @@ async function readCapture(filePath) {
   }
 }
 
-async function runtimeFacts({ factsFile = FACTS_FILE, captureFile = CAPTURE_FILE } = {}) {
+function projectWork(value) {
+  if (!value || typeof value !== "object" || !value.work || !value.currentWorkSpec || !Array.isArray(value.timeline) ||
+      !boundedId(value.work.workId) || !boundedId(value.work.teamId) || !boundedId(value.work.routeId) ||
+      !boundedId(value.work.actorId) || !boundedId(value.work.leaderSessionId) ||
+      !["open", "closed"].includes(value.status) || !Number.isSafeInteger(value.epoch)) return null;
+  return {
+    workId: value.work.workId,
+    teamId: value.work.teamId,
+    routeId: value.work.routeId,
+    actorId: value.work.actorId,
+    sourceEventId: boundedId(value.work.sourceEventId),
+    leaderSessionId: value.work.leaderSessionId,
+    status: value.status,
+    epoch: value.epoch,
+    currentWorkSpec: {
+      revision: Number.isSafeInteger(value.currentWorkSpec.revision) ? value.currentWorkSpec.revision : null,
+      objective: typeof value.currentWorkSpec.objective === "string" ? value.currentWorkSpec.objective.slice(0, 512) : null,
+      scope: typeof value.currentWorkSpec.scope === "string" ? value.currentWorkSpec.scope.slice(0, 512) : null,
+      completionContract: typeof value.currentWorkSpec.completionContract === "string" ? value.currentWorkSpec.completionContract.slice(0, 512) : null,
+    },
+    timeline: value.timeline.slice(-64).map((entry) => ({
+      sequence: Number.isSafeInteger(entry?.sequence) ? entry.sequence : null,
+      type: boundedId(entry?.type),
+      at: typeof entry?.at === "string" ? entry.at.slice(0, 64) : null,
+      epoch: Number.isSafeInteger(entry?.epoch) ? entry.epoch : null,
+      requestId: boundedId(entry?.requestId),
+    })),
+  };
+}
+
+function projectWake(value) {
+  if (!value || typeof value !== "object" || !DIGEST.test(value.wakeId ?? "") ||
+      !["leader-resume", "human-reply", "task-assignment", "result-notification"].includes(value.kind) ||
+      !boundedId(value.targetMemberId) || !["pending", "claimed", "acked"].includes(value.status)) return null;
+  return {
+    wakeId: value.wakeId,
+    kind: value.kind,
+    workId: boundedId(value.workId),
+    taskId: boundedId(value.taskId),
+    targetMemberId: value.targetMemberId,
+    status: value.status,
+    createdAt: typeof value.createdAt === "string" ? value.createdAt.slice(0, 64) : null,
+    claimedAt: typeof value.claimedAt === "string" ? value.claimedAt.slice(0, 64) : null,
+    ackedAt: typeof value.ackedAt === "string" ? value.ackedAt.slice(0, 64) : null,
+  };
+}
+
+async function readCoordination(filePath) {
+  if (!filePath) return { works: [], workSource: "coordination-store-not-configured", deliveries: [], deliverySource: "coordination-store-not-configured" };
+  try {
+    const store = new CoordinationStore({ filePath: resolve(filePath) });
+    const [works, deliveries] = await Promise.all([store.listWorks(), store.listOutbox()]);
+    return {
+      works: works.map(projectWork).filter(Boolean),
+      workSource: "coordination-store",
+      deliveries: deliveries.map(projectWake).filter(Boolean),
+      deliverySource: "coordination-store",
+    };
+  } catch {
+    return { works: [], workSource: "coordination-store-unavailable", deliveries: [], deliverySource: "coordination-store-unavailable" };
+  }
+}
+
+async function runtimeFacts({ factsFile = FACTS_FILE, captureFile = CAPTURE_FILE, coordinationFile = COORDINATION_FILE } = {}) {
   const capture = await readCapture(captureFile);
+  const coordination = await readCoordination(coordinationFile);
   if (!factsFile) {
     return {
       status: "unknown",
@@ -84,14 +151,15 @@ async function runtimeFacts({ factsFile = FACTS_FILE, captureFile = CAPTURE_FILE
       worker: null,
       toolResults: capture.records,
       toolResultsSource: capture.source,
+      ...coordination,
     };
   }
   try {
     const value = JSON.parse(await readFile(resolve(factsFile), "utf8"));
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid facts");
-    return { status: "observed", source: "runtime-facts-file", ...value, toolResults: capture.records, toolResultsSource: capture.source };
+    return { status: "observed", source: "runtime-facts-file", ...value, toolResults: capture.records, toolResultsSource: capture.source, ...coordination };
   } catch {
-    return { status: "unknown", source: "runtime-facts-unavailable", lane: null, worker: null, toolResults: capture.records, toolResultsSource: capture.source };
+    return { status: "unknown", source: "runtime-facts-unavailable", lane: null, worker: null, toolResults: capture.records, toolResultsSource: capture.source, ...coordination };
   }
 }
 
@@ -103,11 +171,12 @@ function json(response, status, body) {
 export function createRuntimeConsoleServer(options = {}) {
   const factsFile = options.factsFile ?? FACTS_FILE;
   const captureFile = options.captureFile ?? CAPTURE_FILE;
+  const coordinationFile = options.coordinationFile ?? COORDINATION_FILE;
   return createServer(async (request, response) => {
     if (request.method !== "GET") return json(response, 405, { error: "method_not_allowed" });
     if (request.url === "/healthz") return json(response, 200, { ok: true });
     if (request.url === "/readyz") return json(response, factsFile ? 200 : 503, { ready: Boolean(factsFile), source: factsFile ? "runtime-facts-file" : "runtime-facts-not-configured" });
-    if (request.url === "/api/runtime") return json(response, 200, await runtimeFacts({ factsFile, captureFile }));
+    if (request.url === "/api/runtime") return json(response, 200, await runtimeFacts({ factsFile, captureFile, coordinationFile }));
     if (request.url === "/" || request.url === "/index.html") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
       return response.end(await readFile(resolve(ROOT, "public/index.html")));
