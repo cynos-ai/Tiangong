@@ -130,7 +130,7 @@ test("extracts only an explicitly authenticated Matrix ingress binding", () => {
 test("derives a bounded native Matrix ingress from OpenClaw's runtime envelope", () => {
   const context = resolveOpenClawMatrixIngress(attemptParams({
     groupId: "!team:example.test",
-    messageTo: "room:!team:example.test",
+    messageTo: "room:!Team:Example.Test",
   }));
   assert.deepEqual(context, {
     source: {
@@ -140,7 +140,7 @@ test("derives a bounded native Matrix ingress from OpenClaw's runtime envelope",
       messageId: "$event-one",
       route: "team-room",
     },
-    roomId: "!team:example.test",
+    roomId: "!Team:Example.Test",
     eventId: "$event-one",
   });
   assert.equal(resolveOpenClawMatrixIngress(attemptParams({ groupId: "!team:example.test" })), null);
