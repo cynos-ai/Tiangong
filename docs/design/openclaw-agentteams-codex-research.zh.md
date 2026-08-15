@@ -277,9 +277,14 @@ B2 已完成第一条可测试的 admission seam，但尚未宣称完整运行�
 - `leader-outbox.mjs` 提供 at-least-once wake consumer 和显式 handler factory：先解析当前 Work route，再执行幂等 handler，成功后才 claim/ack；handler 失败保持 pending，崩溃发生在 side effect 后也可安全重放。
 - `worker/agent/team/channel-adapter.mjs` 新增了受加入房间约束的 Human event 读取，以及带稳定 Matrix transaction ID 的 `team.work.admitted` 可见回执；Evidence 只保留 bounded ID/digest，不保存 Human 原文或凭证。
 - `CoordinationStore.listWorks()` 和 App Runtime Console 的只读 projection 现在能展示 Work card、current WorkSpec 摘要、timeline 事件类型、Leader session 和 durable wake 状态；未配置共享 journal 时仍诚实显示 unknown，不把 Web UI 当授权源。
-- focused contract（CoordinationStore、Leader admission、ingress、OpenClaw hook、outbox、Matrix channel）共 29 Worker tests 全部通过，另有 1 条 B2 Basic disposable smoke 和 App projection 3 tests 通过；smoke 覆盖一次真实模块组合、幂等回执、wake ack 和重启投影，但不是 AgentTeams 真实部署 smoke。
+- focused B2 command（CoordinationStore、Leader admission、ingress、OpenClaw hook、outbox、Matrix channel、adapter）33/33 Worker tests 通过，另有 1 条 B2 Basic disposable smoke 和 App projection 3 tests 通过；smoke 覆盖一次真实模块组合、原生 OpenClaw Matrix envelope、幂等回执、wake ack 和重启投影，但不是 AgentTeams 真实部署 smoke。
 
-当前明确缺口：OpenClaw `toTurnRequest` 仍没有把原始 Matrix room/event/content 传入 Worker，因此生产入口只能在显式 `matrixIngress` hook 下调用此 admission seam；AgentTeams shared-storage sync、真实 Matrix Basic smoke、native Leader runtime wiring 和 outbox handler 的真实部署绑定仍属于后续 B2/B3 工作。不要把这组 focused tests 误报成 B2 Go 或完整 Team runtime 已上线。
+当前明确缺口：OpenClaw 的 `EmbeddedRunAttemptParams` 已能提供受限的 `groupId`、
+`messageTo`、`senderId` 和 `currentMessageId`，adapter 现在只在四者严格一致时派生
+Matrix ingress；它仍不把原始 event content 放进 `TurnRequest`，而是由 Matrix channel
+重新读取并验证。AgentTeams shared-storage sync、真实 Matrix Basic smoke、native
+Leader runtime wiring 和 outbox handler 的真实部署绑定仍属于后续 B2/B3 工作。不要
+把这组 focused tests 误报成 B2 Go 或完整 Team runtime 已上线。
 
 ## 2026-08-15 B2 共享存储边界复核
 
@@ -297,8 +302,8 @@ B2 已完成第一条可测试的 admission seam，但尚未宣称完整运行�
   的事务语义。
 
 当前本地 v1.2.2 栈的 controller、manager、Matrix、Web、MinIO readiness 已通过
-只读检查；但真实 B2 仍不能晋级，因为 stock OpenClaw ingress 没有提供显式
-`matrixIngress`/Leader hook，且生产 outbox handler 尚未绑定 native Leader session。
+只读检查；但真实 B2 仍不能晋级，因为生产 Worker 还没有启动时绑定的
+`leaderIngress`/CoordinationStore，且 outbox handler 尚未绑定 native Leader session。
 下一步应由 AgentTeams/部署层提供 canonical CoordinationStore/PG 连接和 ingress
 DTO，再把本分支的 admission/outbox seam 接入 disposable Team smoke；在此之前不做
 权威数据迁移、不删除 legacy pi，也不把本地 journal 当成跨 Worker 共享状态。

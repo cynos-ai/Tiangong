@@ -175,7 +175,33 @@ function turnId(params) {
  */
 export function resolveOpenClawMatrixIngress(params) {
   const channel = params?.messageChannel ?? params?.messageProvider;
-  if (params?.matrixIngress === undefined || params?.matrixIngress === null) return null;
+  if (params?.matrixIngress === undefined || params?.matrixIngress === null) {
+    // OpenClaw's public EmbeddedRunAttemptParams already carries the
+    // authenticated inbound Matrix envelope as separate fields: groupId is
+    // the room, messageTo is the canonical `room:<roomId>` target, and
+    // currentMessageId is the event ID. Keep this derivation deliberately
+    // narrow; the channel adapter still re-reads the event with its own
+    // authenticated Matrix token before admission, so these fields never
+    // become the event-content oracle.
+    const roomId = params?.groupId;
+    if (channel !== "matrix" || typeof roomId !== "string" || !MATRIX_ROOM_ID.test(roomId) ||
+        params?.messageTo !== `room:${roomId}` ||
+        typeof params?.senderId !== "string" || !MATRIX_USER_ID.test(params.senderId) ||
+        typeof params?.currentMessageId !== "string" || !MATRIX_EVENT_ID.test(params.currentMessageId)) {
+      return null;
+    }
+    return Object.freeze({
+      source: Object.freeze({
+        channel: "matrix",
+        authenticated: true,
+        actorId: params.senderId,
+        messageId: params.currentMessageId,
+        route: "team-room",
+      }),
+      roomId,
+      eventId: params.currentMessageId,
+    });
+  }
   const ingressKeys = typeof params.matrixIngress === "object" && !Array.isArray(params.matrixIngress)
     ? Object.keys(params.matrixIngress).sort().join(",") : "";
   if (channel !== "matrix" || typeof params.matrixIngress !== "object" || Array.isArray(params.matrixIngress) ||

@@ -127,6 +127,29 @@ test("extracts only an explicitly authenticated Matrix ingress binding", () => {
   );
 });
 
+test("derives a bounded native Matrix ingress from OpenClaw's authenticated run envelope", () => {
+  const context = resolveOpenClawMatrixIngress(attemptParams({
+    groupId: "!team:example.test",
+    messageTo: "room:!team:example.test",
+  }));
+  assert.deepEqual(context, {
+    source: {
+      channel: "matrix",
+      authenticated: true,
+      actorId: "@user:example.test",
+      messageId: "$event-one",
+      route: "team-room",
+    },
+    roomId: "!team:example.test",
+    eventId: "$event-one",
+  });
+  assert.equal(resolveOpenClawMatrixIngress(attemptParams({ groupId: "!team:example.test" })), null);
+  assert.equal(resolveOpenClawMatrixIngress(attemptParams({
+    groupId: "!team:example.test",
+    messageTo: "room:!other:example.test",
+  })), null);
+});
+
 test("derives Matrix peer authority only from authenticated effective allowlists", () => {
   const peer = {
     channel: "matrix",
@@ -263,7 +286,8 @@ test("runs the optional Leader admission hook before the model runtime", async (
   });
   t.after(() => harness.dispose());
   const result = await harness.runAttempt(attemptParams({
-    matrixIngress: { authenticated: true, route: "team-room", roomId: "!team:example.test" },
+    groupId: "!team:example.test",
+    messageTo: "room:!team:example.test",
   }));
   assert.deepEqual(order, ["admission", "runtime"]);
   assert.equal(result.promptError, null);
