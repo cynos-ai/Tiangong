@@ -366,7 +366,33 @@ binding is unavailable`。也就是说当前阻塞不是模型、Matrix 或 Proj
 适配：只读消费 AgentTeams 的 `AGENTTEAMS_AUTH_TOKEN_FILE`，向 OpenClaw 原生工具
 提供同一进程内的 `AGENTTEAMS_AUTH_TOKEN`，凭证不进配置、不进日志。
 
-下一步应把已有 `deploy-coordination-runtime.sh` 和 `test-leader-runtime-injection.sh`
-接到真实 AgentTeams Worker 的部署层（或等待上游提供等价的 env/mount/sidecar 字段），
-然后复跑真实 Leader→Project→Task→Worker→Result→WebUI 纵切；在此之前只能报告
-“Matrix/Leader wake 通过，Coordination binding 阻塞”，不能宣称 Phase B 生产闭合。
+## 2026-08-16 Phase B4 真实部署纵切收口
+
+上述部署边界已在 disposable AgentTeams v1.2.2 Team 上完成真实验证。由于 `agt`
+仍不透传 env/mount/sidecar 字段，部署层新增 Docker recreation adapter：它只接受
+固定的 AgentTeams Worker 拓扑，复用原有 auth volume，注入只读 `leader-binding.json`、
+Coordination endpoint 和短期 Control token，并在重建后立即执行 fail-closed verifier。
+Linux 直接使用 owner-only bind；Docker Desktop/WSL 使用 deployment-owned named volume，
+凭证轮换必须显式设置 `TIANGONG_LEADER_INJECTION_ROTATE=1`。不满足网络、权限、挂载、
+入口点或已有注入检查的容器会拒绝重建，失败时恢复原容器。
+
+真实纵切已覆盖：
+
+- Human Matrix room → native OpenClaw Leader session → `team_create_project` /
+  `team_dispatch_task`；
+- PG `Work`/timeline/wake 与 Matrix outbox 的 durable 写入和 ack；
+- MinIO task/result envelope（Designer claim、taskId、revision、digest）；
+- 成员 Worker 的普通 Matrix turn 不再误走 Leader admission seam；
+- Coordination runtime `/readyz` 的 `postgres-and-matrix` readiness，以及 `/`、
+  `/api/runtime` WebUI 投影。
+
+真实验证结束后，Team、Worker、runtime、PG、named volume 和 MinIO 临时对象均按 owner
+精确回收；没有把 key 写入仓库、镜像、日志或 Evidence。Linux 容器中的 Worker 全量
+回归为 380/380；Windows 主机全量测试仍受 symlink、`fsync` 和受限部署 fixture 的
+平台差异影响，不能用来替代 Linux 证据。
+
+因此 B4 的 Tiangong Work/Task/Runner/Result 与真实 AgentTeams Matrix/WebUI 纵切已闭合，
+可以进入下一阶段的数据结构迁移与 Qwen provider canary。仍保留两个生产前边界：
+AgentTeams v1.2.2 尚无官方 OpenCodex sidecar lifecycle manager，且 Docker recreation
+adapter 尚未成为 AgentTeams Controller 原生资源；生产部署必须由受控 deployment layer
+拥有该适配器的生命周期、审计和 rollback，不能把本地 smoke 误报成官方能力。
