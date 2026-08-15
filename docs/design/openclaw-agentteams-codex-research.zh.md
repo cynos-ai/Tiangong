@@ -217,3 +217,20 @@ endpoint 的组合，输出 `codex-native-responses`、`codex-opencodex-chat-bri
 这道门把“provider/catalog 配置不匹配”与“OpenCodex sidecar 运行失败”分开。实际切换
 Qwen 前先执行它，再在隔离的 AgentTeams 配置/数据卷中重跑 Team Full smoke；当前
 DeepSeek stack 继续作为默认可回滚路径。
+
+## 2026-08-15 Admission Control API 实现切片
+
+Tiangong Worker 现在提供了一个可部署的、无凭证的 admission Control API
+实现切片：`worker/agent/gates/admission-control-server.mjs`。它把 AgentTeams
+投影的 Worker/lane binding 和有界 replay journal 分开保存；模型阶段先创建
+耐久 turn 记录，tool 阶段只能复用该记录并重新核对来源、路由和当前 binding。
+
+服务只保存 bounded metadata 和 SHA-256 digest，不保存 prompt、tool payload、模型
+原文或 key；状态文件拒绝 symlink/过宽权限，并使用锁和原子替换。`/healthz` 可供
+部署层做 readiness，`worker/Dockerfile` 新增 `admission-control` 目标用于独立进程
+托管。当前测试覆盖重启 replay、改请求、错误 actor、tool-before-model、binding
+revision 变化和 readiness 失效。
+
+这仍然不是 AgentTeams 官方 sidecar manager，也不宣称 Gate A 已通过：部署层还必须
+负责投影 binding、启动/回收该服务、接通 canary Worker 并证明清理。只有这段 live smoke
+和 A5/A6 的耐久 ownership/recovery 证据完成后，才进入 Phase B 数据结构工作。
