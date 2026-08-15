@@ -147,6 +147,7 @@ const [
   policy,
   { runCommand, runnerInvocationIdentity },
   { WorkRunStore },
+  { ToolResultStore },
   { createMemberToolRegistry },
   { createProject, dispatchTask },
   { createProjectBinding, createTaskBinding },
@@ -154,12 +155,14 @@ const [
   { TurnGateState },
   { RUNNER_BROKER_ENDPOINT_DIGEST },
   { readTaskResult },
+  { sha256 },
 ] = await Promise.all([
   import("/opt/tiangong-worker/agent/runner/broker-client.mjs"),
   import("/opt/tiangong-worker/agent/runner/journal.mjs"),
   import("/opt/tiangong-worker/agent/runner/runner-policy.mjs"),
   import("/opt/tiangong-worker/agent/runner/runner-port.mjs"),
   import("/opt/tiangong-worker/agent/work/work-run-store.mjs"),
+  import("/opt/tiangong-worker/agent/gates/tool-result-store.mjs"),
   import("/opt/tiangong-worker/agent/work/member-tools.mjs"),
   import("/opt/tiangong-worker/agent/team/team-task-port.mjs"),
   import("/opt/tiangong-worker/agent/team/manifest.mjs"),
@@ -167,6 +170,7 @@ const [
   import("/opt/tiangong-worker/agent/gates/turn-state.mjs"),
   import("/opt/tiangong-worker/agent/runner/preparation-client.mjs"),
   import("/opt/tiangong-worker/agent/team/manifest-store.mjs"),
+  import("/opt/tiangong-worker/agent/canonical-json.mjs"),
 ]);
 const env = {
   TIANGONG_FORBIDDEN_ENV_NAMES: policy.FORBIDDEN_ENV_KEYS.join(","),
@@ -215,6 +219,14 @@ await dispatchTask(task, { ...coordination, env: leaderEnv });
 const plan = await executor.plan({ runId: process.env.TEST_RUN_ID });
 console.log("runner_broker_plan=pass plan_digest=" + plan.contentDigest);
 const request = { runId: plan.runId, command: plan.command, cwd: plan.cwd, timeoutMs: plan.timeoutMs, outputLimitBytes: plan.outputLimitBytes };
+const restartJournalPath = "/tmp/client-restart.jsonl";
+const restartJournal = new RunnerJournal({ filePath: restartJournalPath });
+const restartIdentity = runnerInvocationIdentity(request);
+await restartJournal.begin(restartIdentity.invocationKey, restartIdentity.requestDigest);
+const reopenedRestartJournal = new RunnerJournal({ filePath: restartJournalPath });
+const unresolvedAfterRestart = await runCommand(request, { executor, journal: reopenedRestartJournal, env });
+if (unresolvedAfterRestart.outcome !== "outcome_uncertain" || unresolvedAfterRestart.replayed !== true) process.exit(19);
+console.log("b4_restart_unresolved=pass");
 const altered = { ...request, command: ["node", "-e", "process.exit(99)"] };
 const alteredIdentity = runnerInvocationIdentity(altered);
 const rejected = await fetch(process.env.TEST_BROKER_ENDPOINT, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ schemaVersion: 1, taskId: process.env.TEST_TASK_ID, invocationKey: alteredIdentity.invocationKey, ...altered, env }) });
@@ -249,6 +261,27 @@ const registry = createMemberToolRegistry({ deps: memberDeps });
 const resolve = registry.definitions().find((tool) => tool.name === "team_resolve_task");
 const resolved = await resolve.execute("resolve-smoke", { taskId: task.taskId });
 if (resolved.details.workRunPhase !== "executing") process.exit(21);
+const toolStore = new ToolResultStore({ filePath: "/tmp/client-tool-results.json" });
+const toolCallKey = sha256({ actorId: task.assignee, sessionKey: "session-member-smoke", toolCallId: "run-smoke" });
+const toolResult = {
+  toolResultId: sha256({ source: "b4.runner.tool-result", callKey: toolCallKey }),
+  callKey: toolCallKey,
+  workId: resolved.details.workRunId,
+  taskId: task.taskId,
+  actorId: task.assignee,
+  runtimeProfile: "tiangong-implementor",
+  tool: "run_command",
+  requestSummary: { toolName: "run_command", taskId: task.taskId },
+  resultSummary: { outcome: "success", hasData: true },
+  outputRef: null,
+  startedAt: task.createdAt,
+  completedAt: task.createdAt,
+};
+const storedToolResult = await toolStore.append(toolResult);
+await toolStore.markRetention(storedToolResult.result.toolResultId, { workId: resolved.details.workRunId, until: "2026-12-01T00:00:00.000Z" });
+const reopenedToolStore = new ToolResultStore({ filePath: "/tmp/client-tool-results.json" });
+const toolState = await reopenedToolStore.list();
+if (toolState.results.length !== 1 || toolState.retentionMarks.length !== 1) process.exit(20);
 const run = registry.definitions().find((tool) => tool.name === "run_command");
 const first = await run.execute("run-smoke", { taskId: task.taskId });
 if (first.details.outcome !== "completed" || first.details.exitCode !== 0 ||
@@ -264,6 +297,7 @@ const submit = registry.definitions().find((tool) => tool.name === "team_submit_
 const submitted = await submit.execute("submit-smoke", {
   taskId: task.taskId,
   claim: "The bounded implementation command completed and sealed one ChangeRevision.",
+  evidenceRefs: [storedToolResult.result.toolResultId],
   changeRevisionRef: first.details.changeRevisionRef,
 });
 const persisted = await readTaskResult(task.taskId, { rootDir: coordination.rootDir });
@@ -276,6 +310,7 @@ console.log("runner_broker_evidence=pass invocation_key=" + first.details.invoca
 console.log("runner_broker_revision_sealed=pass artifact_digest=" + first.details.changeRevisionRef.artifactDigest);
 console.log("b4_work_task_runner=pass task_id=" + task.taskId);
 console.log("b4_result_persisted=pass result_digest=" + persisted.contentDigest + " work_run_phase=" + workRun.phase);
+console.log("b4_toolresult_retention=pass tool_result_id=" + storedToolResult.result.toolResultId);
 console.log("runner_broker_replay=pass");
 `;
 

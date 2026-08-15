@@ -341,6 +341,10 @@ Runner broker 封存 ChangeRevision，ResultEnvelope 写入 AgentTeams shared-fs
 重放相同 invocation。`b4_work_task_runner=pass` 和 `b4_result_persisted=pass` 是
 直接机器事实。
 
+该 smoke 同时验证了重启后未决 Runner invocation 不会自动重跑
+（`b4_restart_unresolved=pass`），以及 ToolResult 经过重启读取和 retention mark 后
+作为 Result 的 bounded evidence ref（`b4_toolresult_retention=pass`）。
+
 这条 smoke 的 Channel adapter 仍是有界测试适配器，因此它闭合的是 Tiangong 本地
 Work/Task/Runner/Result 纵切，不等于真实 AgentTeams Matrix/Worker 投递已经完成。
 下一步仍需把同一调用接到真实 Worker、Matrix 和 WebUI，并补齐取消、重启后

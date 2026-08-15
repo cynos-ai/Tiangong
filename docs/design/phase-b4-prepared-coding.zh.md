@@ -22,6 +22,9 @@ Linux Docker 环境的第一条真实 B4 Runner smoke 已完成：使用本分�
 封存 ChangeRevision，ResultEnvelope 写入共享文件，WorkRun 进入 `finalized`，再
 从 durable journal 重放同一 Runner invocation。输出中的
 `b4_work_task_runner=pass` 与 `b4_result_persisted=pass` 是这两条直接机器事实。
+同一条 smoke 还在实际 Worker 镜像内验证了重启后未决 Runner invocation 不会自动
+重跑（`b4_restart_unresolved=pass`），并让 ToolResult 经过重启读取和 retention mark
+后再作为 Result 的 bounded evidence ref（`b4_toolresult_retention=pass`）。
 这条 smoke 的 Channel adapter 仍是 bounded test adapter，不是外部 AgentTeams
 Matrix；因此它证明的是 Tiangong Work/Task/Runner/Result 纵切，而不是生产 Matrix
 投递已经闭合。
