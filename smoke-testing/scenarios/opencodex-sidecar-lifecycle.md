@@ -27,7 +27,9 @@
   admission (native Kubernetes CR or an upstream REST DTO fix); acceptance of
   an unknown YAML field by the unpatched embedded CLI is not sufficient. The
   route decision must come from the shared capability cache; do not repeat a
-  model probe independently for every Worker.
+  model probe independently for every Worker. The deployment must mount the
+  same RW cache path into every Worker and set
+  `TIANGONG_CODEX_CAPABILITY_CACHE_SHARED=1`; otherwise `auto` must fail closed.
 - Prompt: Leader sends one deterministic task marker to the bridge Worker in
   the Team room; the Worker replies with the run-owned marker.
 - Expected observations:
