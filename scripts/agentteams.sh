@@ -44,6 +44,8 @@ Commands:
   status     Show containers and local endpoints
   verify     Run local service and Manager readiness checks
   config     Print the effective non-secret configuration
+  provider-check
+             Validate the provider/model route without changing the stack
   logs       Follow logs (manager by default; pass controller as the second argument)
   login      Print the Element login URL and credential file location
   uninstall  Delete the stack and generated data; requires an explicit target confirmation
@@ -158,6 +160,58 @@ validate_config() {
       die "Port ${value} is configured more than once (${used_ports[${value}]} and ${name})."
     used_ports["${value}"]="${name}"
   done
+}
+
+normalize_base_url() {
+  local value="$1"
+  value="${value%/}"
+  [[ ! "${value}" =~ [[:space:]@] ]] || \
+    die "AGENTTEAMS_OPENAI_BASE_URL must not contain whitespace or embedded credentials."
+  [[ "${value}" =~ ^https?://[^/?#]+(/[^?#]*)?$ ]] || \
+    die "AGENTTEAMS_OPENAI_BASE_URL must be an absolute HTTP(S) URL without query, fragment, or embedded credentials."
+  printf '%s' "${value}"
+}
+
+provider_route() {
+  load_config
+
+  local provider="${AGENTTEAMS_LLM_PROVIDER}" model="${AGENTTEAMS_DEFAULT_MODEL}" \
+    base_url="${AGENTTEAMS_OPENAI_BASE_URL:-}" normalized key_state route wire_api
+  if [[ "${provider}" == "qwen" && -z "${base_url}" ]]; then
+    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+  fi
+  normalized="$(normalize_base_url "${base_url}")"
+  key_state=missing
+  [[ -n "${AGENTTEAMS_LLM_API_KEY:-}" ]] && key_state=present
+
+  case "${provider}:${normalized}:${model}" in
+    qwen:https://dashscope.aliyuncs.com/compatible-mode/v1:qwen*)
+      route="agentteams-qwen-native"
+      wire_api="provider-managed"
+      ;;
+    openai-compat:https://api.deepseek.com/v1:deepseek-v4-*)
+      route="codex-native-responses"
+      wire_api="openai-responses"
+      ;;
+    openai-compat:https://coding.dashscope.aliyuncs.com/v1:qwen*)
+      route="codex-opencodex-chat-bridge"
+      wire_api="openai-completions"
+      ;;
+    *)
+      die "Unsupported provider route: provider=${provider}, base_url=${normalized}, model=${model}. Use provider=qwen for DashScope native, DeepSeek Responses, or the Coding Plan Chat bridge."
+      ;;
+  esac
+
+  cat <<EOF
+provider=${provider}
+model=${model}
+base_url=${normalized}
+route=${route}
+wire_api=${wire_api}
+credential_env=AGENTTEAMS_LLM_API_KEY
+credential_state=${key_state}
+mutation=none
+EOF
 }
 
 load_config() {
@@ -664,6 +718,7 @@ case "${ACTION}" in
   verify) verify ;;
   recover-manager-readiness) load_config; validate_stack_ownership; recover_manager_dm_membership 1 ;;
   config) print_config ;;
+  provider-check) provider_route ;;
   logs) show_logs ;;
   login) load_config; print_login ;;
   uninstall) uninstall_stack ;;

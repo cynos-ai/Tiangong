@@ -208,3 +208,12 @@ smoke。真实 key 仍只进入 AgentTeams/Higress credential，不进入 Worker
 依据：[AgentTeams README 的 Qwen/LLM 配置](https://github.com/agentscope-ai/AgentTeams/blob/main/README.md)、
 [AgentTeams Manager Guide](https://github.com/agentscope-ai/AgentTeams/blob/main/docs/manager-guide.md)、
 [AgentTeams Quickstart](https://github.com/agentscope-ai/AgentTeams/blob/main/docs/quickstart.md)。
+
+仓库现在提供只读的 `make provider-check`：它在启动或升级前校验 provider、model 和
+endpoint 的组合，输出 `codex-native-responses`、`codex-opencodex-chat-bridge` 或
+`agentteams-qwen-native`。它只报告 `AGENTTEAMS_LLM_API_KEY` 是否存在，不输出 key，
+也不修改容器、数据卷或网关路由。
+
+这道门把“provider/catalog 配置不匹配”与“OpenCodex sidecar 运行失败”分开。实际切换
+Qwen 前先执行它，再在隔离的 AgentTeams 配置/数据卷中重跑 Team Full smoke；当前
+DeepSeek stack 继续作为默认可回滚路径。
