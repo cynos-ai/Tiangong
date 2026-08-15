@@ -76,13 +76,14 @@ WebSocket 支持。
 ### 尚未完成
 
 1. AgentTeams upstream 尚未把 Codex app-server 变成稳定的 Controller-managed runtime；当前使用 Tiangong canary image 和显式 runtime contract。
-2. 当前本地 stack 尚未切换到 Qwen provider；需要通过 AgentTeams 安装/升级配置选择
-   `qwen`、Qwen Coding Plan endpoint 和 `qwen3.7-plus`，再重跑当前 sidecar Team smoke。
+2. Qwen Coding Plan 已在隔离 Team canary 中通过，但当前本地 stack 的默认 provider
+   仍是 DeepSeek；要切换默认路由，仍需通过 AgentTeams 配置选择 `qwen`、Qwen
+   Coding Plan endpoint 和 `qwen3.7-plus`，再重跑当前 sidecar Team Full smoke。
 3. v1.2.2 embedded `agt` REST DTO 仍不透传 `accessEntries`；官方 credential-provider
    要么走原生 Kubernetes CR，要么等待上游 DTO 修复。当前 adapter 使用受限的
    deployment-owned compatibility lookup，不把该缺口伪装成官方 projection。
-4. 首次数据结构迁移。迁移应等 provider 配置、WebUI、ToolResult、重启/恢复和
-   Qwen Team smoke 都通过后再做。
+4. 首次权威数据结构迁移尚未开始。迁移应等 provider 配置变更、WebUI、ToolResult、
+   重启/恢复和 Qwen Team Full smoke 都通过后再做。
 
 ## 推荐实施顺序
 
@@ -133,7 +134,8 @@ ToolResult/Operation 等数据结构，并继续保留 Element Web 作为实时�
 
 - **Go**：继续 OpenClaw + AgentTeams + DeepSeek 原生路径；启用 Qwen provider 后复用同一 OpenCodex bridge 和 WebUI/Matrix；
 - **No-Go（暂时）**：把 Codex 宣称为 AgentTeams 官方 Controller runtime，或在 Qwen provider 尚未切换前把当前拒绝误报为 sidecar 故障；
-- **下一决策点**：先切换一次隔离的 AgentTeams Qwen provider 配置并重跑 Team Full smoke，再评估数据结构迁移；sidecar 生命周期本身不再是阻塞项。
+- **下一决策点**：在受控窗口切换一次 AgentTeams Qwen provider 配置并重跑 Team Full
+  smoke，再评估权威数据结构迁移；sidecar 生命周期本身不再是阻塞项。
 
 ## 2026-08-14 真实 Team task 复验
 
