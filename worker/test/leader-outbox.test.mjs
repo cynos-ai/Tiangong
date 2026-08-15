@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { drainLeaderOutbox } from "../agent/team/leader-outbox.mjs";
+import {
+  createLeaderOutboxHandlers,
+  drainLeaderOutbox,
+} from "../agent/team/leader-outbox.mjs";
 
 function fakeStore() {
   const state = new Map([
@@ -64,4 +67,36 @@ test("B2 outbox leaves unsupported wake kinds pending and bounds the batch", asy
     () => drainLeaderOutbox({ store, consumerId: "leader-worker-1", handlers: {}, maxEntries: 33 }),
     /bounded range/u,
   );
+});
+
+test("B2 outbox handlers resolve the current Work route before emitting a Human reply", async () => {
+  const calls = [];
+  const store = {
+    async getWork(workId) {
+      return { work: { workId, actorId: "@alice:example.test", sourceEventId: "$human-event-1", routeId: "route-1" } };
+    },
+  };
+  const handlers = createLeaderOutboxHandlers({
+    store,
+    channel: {
+      async notifyWorkAdmitted(recipient, input) {
+        calls.push([recipient, input]);
+        return { transactionId: "matrix-transaction-1" };
+      },
+    },
+    async resolveWorkRoute(work) {
+      assert.equal(work.work.routeId, "route-1");
+      return { roomId: "!team:example.test", bindingDigest: "d".repeat(64) };
+    },
+    async resumeLeader() { return { sessionId: "leader-session-1" }; },
+  });
+  const receipt = await handlers["human-reply"]({ wakeId: "a".repeat(64), kind: "human-reply", workId: "work-1", targetMemberId: "@alice:example.test" });
+  assert.deepEqual(receipt, { receiptId: "matrix-transaction-1" });
+  assert.deepEqual(calls, [["@alice:example.test", {
+    roomId: "!team:example.test",
+    workId: "work-1",
+    sourceEventId: "$human-event-1",
+    bindingDigest: "d".repeat(64),
+  }]]);
+  assert.deepEqual(await handlers["leader-resume"]({ wakeId: "b".repeat(64), kind: "leader-resume" }), { receiptId: "leader-session-1" });
 });
