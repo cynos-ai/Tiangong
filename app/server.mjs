@@ -192,11 +192,28 @@ export function createRuntimeConsoleServer(options = {}) {
   const coordinationFile = options.coordinationFile ?? COORDINATION_FILE;
   const coordinationStore = options.coordinationStore;
   const coordinationControl = options.coordinationControl ? createCoordinationAdmissionHandler(options.coordinationControl) : null;
+  const readiness = typeof options.readiness === "function"
+    ? options.readiness
+    : async () => {
+      if (coordinationStore && typeof coordinationStore.health === "function") await coordinationStore.health();
+      return {
+        ready: Boolean(factsFile || coordinationStore),
+        source: factsFile ? "runtime-facts-file" : coordinationStore ? "coordination-store" : "runtime-facts-not-configured",
+      };
+    };
   return createServer(async (request, response) => {
     if (coordinationControl && request.url?.startsWith("/v1/coordination/")) return coordinationControl(request, response);
     if (request.method !== "GET") return json(response, 405, { error: "method_not_allowed" });
     if (request.url === "/healthz") return json(response, 200, { ok: true });
-    if (request.url === "/readyz") return json(response, factsFile ? 200 : 503, { ready: Boolean(factsFile), source: factsFile ? "runtime-facts-file" : "runtime-facts-not-configured" });
+    if (request.url === "/readyz") {
+      try {
+        const result = await readiness();
+        const ready = result === true || result?.ready === true;
+        return json(response, ready ? 200 : 503, { ready, source: result?.source ?? "readiness" });
+      } catch {
+        return json(response, 503, { ready: false, source: "readiness-unavailable" });
+      }
+    }
     if (request.url === "/api/runtime") return json(response, 200, await runtimeFacts({ factsFile, captureFile, coordinationFile, coordinationStore }));
     if (request.url === "/" || request.url === "/index.html") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });

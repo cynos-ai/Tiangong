@@ -40,6 +40,7 @@ import { createRunnerBrokerPreparationClient } from "./runner/preparation-client
 import { defaultTiangongRoot } from "./team/shared-fs.mjs";
 import { workerStatePaths } from "./persistence/state-paths.mjs";
 import { createTeamChannel } from "./team/channel-adapter.mjs";
+import { createLeaderRuntimeBinding } from "./team/leader-runtime-config.mjs";
 import { projectDisposition } from "./team/project-chain.mjs";
 import { createTeamSync } from "./team/sync-adapter.mjs";
 import { TeamCoordinationGate } from "./team/tool-wrapper.mjs";
@@ -177,10 +178,27 @@ export class TiangongAgentRuntime {
     let gate;
     let registry;
     let channel;
+    let coordinationStore;
+    let leaderRuntimeBinding;
+    let leaderIngress;
     if (profileBundle.runtimeKind === "leader") {
       gate = new TeamCoordinationGate();
       const playbook = readPlaybookManifest("software-change-delivery");
       channel = createTeamChannel({ evidence });
+      const bindingFile = process.env.TIANGONG_LEADER_RUNTIME_BINDING_FILE;
+      if (bindingFile) {
+        if (!process.env.TIANGONG_COORDINATION_CONTROL_ENDPOINT || !process.env.TIANGONG_COORDINATION_CONTROL_TOKEN) {
+          throw new Error("Leader runtime binding requires Coordination Control endpoint and token");
+        }
+        leaderRuntimeBinding = await createLeaderRuntimeBinding({
+          filePath: bindingFile,
+          controlEndpoint: process.env.TIANGONG_COORDINATION_CONTROL_ENDPOINT,
+          controlToken: process.env.TIANGONG_COORDINATION_CONTROL_TOKEN,
+          channel,
+        });
+        coordinationStore = leaderRuntimeBinding.coordinationStore;
+        leaderIngress = leaderRuntimeBinding.leaderIngress;
+      }
       const teamDeps = {
         rootDir: defaultTiangongRoot(),
         env: process.env,
@@ -194,6 +212,7 @@ export class TiangongAgentRuntime {
         runnerBrokerPreparation: createRunnerBrokerPreparationClient({
           endpoint: process.env.TIANGONG_RUNNER_BROKER_PREPARATION_ENDPOINT,
         }),
+        coordinationStore,
       };
       registry = createLeaderToolRegistry({ playbook, deps: teamDeps });
     } else if (profileBundle.runtimeKind === "member") {
@@ -285,6 +304,9 @@ export class TiangongAgentRuntime {
       turns,
       registry,
       channel,
+      coordinationStore,
+      leaderRuntimeBinding,
+      leaderIngress,
       peerReplies: new PeerReplyRouter(),
       peerTransport: new PeerTransportProbe(),
       handoffTransport: new SpecialistHandoffProbe(),
@@ -534,6 +556,26 @@ export class TiangongAgentRuntime {
 
   async runTurn(request, observability) {
     return this.#withSessionOperation(request.sessionId, () => this.#runTurnUnlocked(request, observability));
+  }
+
+  /**
+   * Admit a deployment-authored Matrix event before a Leader turn. The
+   * binding and remote control token are loaded once with the session and the
+   * request is never passed to the model as an authority signal.
+   */
+  async admitLeaderIngress(request, context) {
+    return this.#withSessionOperation(request.sessionId, async () => {
+      const profileBundle = assertRuntimeProfileMaterialized(await this.#trustedProfileBundle());
+      if (profileBundle.runtimeKind !== "leader") throw new Error("Leader ingress is available only to the Leader runtime");
+      const resolved = await this.#gateway.resolve({
+        provider: request.provider,
+        modelId: request.modelId,
+        credential: request.credential,
+      });
+      const state = await this.#stateFor(request, resolved.model, resolved.modelRuntime, profileBundle);
+      if (typeof state.leaderIngress !== "function") throw new Error("Leader Coordination Control binding is unavailable");
+      return state.leaderIngress(context);
+    });
   }
 
   async #runTurnUnlocked(request, observability) {

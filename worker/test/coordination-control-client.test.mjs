@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createRemoteCoordinationStore, createRemoteOpenClawLeaderAdmissionHook } from "../agent/team/coordination-control-client.mjs";
+import { leaderResumeEventBody } from "../agent/team/leader-resume.mjs";
 
 test("remote Leader admission re-reads the Matrix event and sends only the bounded proof", async () => {
   const calls = [];
@@ -45,4 +46,31 @@ test("remote CoordinationStore facade supports a Leader outbox loop without a da
   assert.equal((await store.claimWake({ wakeId: "a".repeat(64), consumerId: "leader", requestId: "claim-1" })).wake.status, "claimed");
   assert.equal((await store.ackWake({ wakeId: "a".repeat(64), consumerId: "leader", receiptId: "receipt-1", requestId: "ack-1" })).wake.status, "acked");
   assert.equal(calls.every(([, options]) => options.headers.Authorization === "Bearer client-control-token"), true);
+});
+
+test("remote Leader admission routes a machine resume envelope to the resume endpoint", async () => {
+  const calls = [];
+  const event = {
+    eventId: "$event-client-resume",
+    roomId: "!room-client:example.test",
+    sender: "@leader:example.test",
+    type: "m.room.message",
+    content: leaderResumeEventBody({ wakeId: "a".repeat(64), workId: "work-client-resume", targetMemberId: "leader", targetMatrixUserId: "@leader:example.test" }),
+  };
+  const hook = createRemoteOpenClawLeaderAdmissionHook({
+    channel: { readHumanEvent: async () => event },
+    endpoint: "http://control.example.test/v1/coordination/admit",
+    token: "client-control-token",
+    fetchImpl: async (url, options) => {
+      calls.push([url, options]);
+      return new Response(JSON.stringify({ resumed: true, workId: event.content["com.tiangong.leader-resume"].work_id }), { status: 200 });
+    },
+  });
+  const result = await hook({
+    roomId: event.roomId,
+    eventId: event.eventId,
+    source: { channel: "matrix", authenticated: true, actorId: event.sender, messageId: event.eventId, route: "team-room" },
+  });
+  assert.equal(result.resumed, true);
+  assert.equal(calls[0][0], "http://control.example.test/v1/coordination/resume");
 });

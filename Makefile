@@ -27,6 +27,8 @@ PHASE4_RECOVERY_TEST := node ./worker/test/phase4-recovery.test.mjs
 
 .PHONY: help init up start stop down status verify config provider-check logs login uninstall test-agentteams check-skills check-demo-contract check-phase6-evidence-bundle verify-professional-state build-worker-image test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-phase4-recovery test-runner-isolation test-runner-executor test-runner-broker test-runner-preparation start-runner-broker status-runner-broker stop-runner-broker test-deployment-service test-peer-mention-smoke-contract test-peer-mention-smoke test-matrix-browser-smoke-contract matrix-browser-start matrix-browser-status matrix-browser-stop test-specialist-leader-handoff-contract test-specialist-leader-handoff test-p0-identity-pg-contract test-p0-2-mention-contract test-pause-worker-boundary test-openclaw-gate-a-contract test-openclaw-gate-a-fixture test-openclaw-admission-contract test-openclaw-admission-hooks test-openclaw-admission-replay test-openclaw-tool-result-capture-matrix test-openclaw-recovery test-openclaw-admission-context-file test-openclaw-gate-a-live-hooks test-runtime-console openclaw-gate-a-start openclaw-gate-a-status openclaw-gate-a-restart openclaw-gate-a-stop openclaw-gate-a-run
 
+.PHONY: start-coordination
+
 help: ## Show available commands
 	@printf '%s\n' 'Tiangong local development commands:'
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  make %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -183,6 +185,9 @@ test-openclaw-gate-a-live-hooks: ## Inspect the hooks registered by the running 
 
 test-runtime-console: ## Validate the read-only Web runtime console shell
 	@node --test app/test/*.test.mjs
+
+start-coordination: ## Start the deployment-owned PG Coordination API and Matrix outbox consumer
+	@npm --prefix app run start-coordination
 
 openclaw-gate-a-start: ## Create the isolated OpenClaw Gate A Worker (TIANGONG_RUN_REAL=1)
 	@./smoke-testing/support/run-openclaw-gate-a.sh start

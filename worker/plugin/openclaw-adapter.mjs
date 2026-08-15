@@ -263,7 +263,11 @@ export function createTiangongPiHarness(options = {}) {
   });
   const harnessEvidenceFile = options.evidencePath ?? HARNESS_EVIDENCE_FILE;
   const observability = options.observability ?? DISABLED_OBSERVABILITY;
-  const leaderIngress = options.leaderIngress;
+  const leaderIngress = options.leaderIngress ?? (
+    typeof runtime.admitLeaderIngress === "function"
+      ? (context, params) => runtime.admitLeaderIngress(toTurnRequest(params), context)
+      : undefined
+  );
 
   return {
     id: HARNESS_ID,

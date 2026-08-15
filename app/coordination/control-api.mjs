@@ -1,4 +1,5 @@
 import { admitHumanMatrixEvent } from "../../worker/agent/team/leader-admission.mjs";
+import { resumeLeaderMatrixEvent } from "../../worker/agent/team/leader-resume.mjs";
 
 const MAX_BODY_BYTES = 16 * 1024;
 const TOKEN = /^[^\s]{16,512}$/u;
@@ -60,11 +61,12 @@ export function createCoordinationAdmissionHandler({ store, bearerToken, team, r
   return async function handleCoordinationRequest(request, response) {
     const url = new URL(request.url ?? "/", "http://coordination.invalid");
     const admissionPath = url.pathname === "/v1/coordination/admit";
+    const resumePath = url.pathname === "/v1/coordination/resume";
     const claimPath = url.pathname === "/v1/coordination/wakes/claim";
     const ackPath = url.pathname === "/v1/coordination/wakes/ack";
     const workMatch = url.pathname.match(/^\/v1\/coordination\/works\/([^/]+)$/u);
     const wakesPath = url.pathname === "/v1/coordination/wakes";
-    if (!admissionPath && !claimPath && !ackPath && !workMatch && !wakesPath) return false;
+    if (!admissionPath && !resumePath && !claimPath && !ackPath && !workMatch && !wakesPath) return false;
     if (workMatch || wakesPath) {
       if (request.method !== "GET") {
         json(response, 405, { error: "method_not_allowed" });
@@ -98,21 +100,34 @@ export function createCoordinationAdmissionHandler({ store, bearerToken, team, r
     }
     try {
       const body = object(await readBody(request), "request");
-      if (admissionPath) {
+      if (admissionPath || resumePath) {
         if (Object.keys(body).some((key) => !["source", "event"].includes(key))) throw Object.assign(new Error("request contains unknown fields"), { code: "REQUEST_BODY_INVALID" });
-        const admission = await admitHumanMatrixEvent({
-          store,
-          source: object(body.source, "source"),
-          event: object(body.event, "event"),
-          team,
-          route,
-          profile,
-          leaderMember,
-          members,
-          leaderSessionId,
-          now,
-        });
-        json(response, 200, admissionResponse(admission));
+        if (resumePath) {
+          if (typeof store.getWake !== "function") throw Object.assign(new Error("Leader resume requires wake reads"), { code: "LEADER_RESUME_STORE_UNAVAILABLE" });
+          const resumed = await resumeLeaderMatrixEvent({
+            store,
+            source: object(body.source, "source"),
+            event: object(body.event, "event"),
+            team,
+            route,
+            leaderMember,
+          });
+          json(response, 200, resumed);
+        } else {
+          const admission = await admitHumanMatrixEvent({
+            store,
+            source: object(body.source, "source"),
+            event: object(body.event, "event"),
+            team,
+            route,
+            profile,
+            leaderMember,
+            members,
+            leaderSessionId,
+            now,
+          });
+          json(response, 200, admissionResponse(admission));
+        }
       } else if (claimPath) {
         if (Object.keys(body).some((key) => !["wakeId", "consumerId", "requestId"].includes(key))) throw Object.assign(new Error("request contains unknown fields"), { code: "REQUEST_BODY_INVALID" });
         json(response, 200, await store.claimWake(body));

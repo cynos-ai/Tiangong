@@ -1,3 +1,5 @@
+import { parseLeaderResumeEvent } from "./leader-resume.mjs";
+
 const MATRIX_EVENT_ID = /^\$[^\s]{1,255}$/u;
 const MATRIX_ROOM_ID = /^![^\s]{1,255}$/u;
 const MAX_RESPONSE_BYTES = 64 * 1024;
@@ -14,6 +16,10 @@ function endpointUrl(value) {
 function controlOrigin(value) {
   const url = new URL(endpointUrl(value));
   return url.origin;
+}
+
+function controlPath(origin, path) {
+  return `${origin}${path}`;
 }
 
 function tokenValue(value) {
@@ -58,12 +64,20 @@ export function createRemoteOpenClawLeaderAdmissionHook({ channel, endpoint, tok
   if (!channel || typeof channel.readHumanEvent !== "function") throw new TypeError("Remote Leader admission requires a bound Matrix channel");
   if (typeof fetchImpl !== "function") throw new TypeError("Remote Leader admission requires fetch");
   const url = endpointUrl(endpoint);
+  const origin = controlOrigin(url);
   const bearer = tokenValue(token);
   return async function remoteLeaderAdmission(context = {}) {
     const roomId = required(context.roomId, "context.roomId", MATRIX_ROOM_ID);
     const eventId = required(context.eventId, "context.eventId", MATRIX_EVENT_ID);
     const event = await channel.readHumanEvent(roomId, eventId);
-    return controlRequest({ fetchImpl, url, token: bearer, method: "POST", body: { source: context.source, event } });
+    const isResume = parseLeaderResumeEvent(event) !== null;
+    return controlRequest({
+      fetchImpl,
+      url: isResume ? controlPath(origin, "/v1/coordination/resume") : url,
+      token: bearer,
+      method: "POST",
+      body: { source: context.source, event },
+    });
   };
 }
 

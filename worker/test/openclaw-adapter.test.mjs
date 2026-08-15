@@ -293,6 +293,26 @@ test("runs the optional Leader admission hook before the model runtime", async (
   assert.equal(result.promptError, null);
 });
 
+test("uses the runtime Leader admission seam when no explicit hook is supplied", async (t) => {
+  const order = [];
+  const runtime = {
+    async admitLeaderIngress(request, context) {
+      order.push("admission");
+      assert.equal(request.sessionId, "session-one");
+      assert.equal(context.eventId, "$event-one");
+      return { resumed: true };
+    },
+    async runTurn() { order.push("runtime"); return turnResult(); },
+    async reset() {},
+    async dispose() {},
+  };
+  const harness = createTiangongPiHarness({ runtime });
+  t.after(() => harness.dispose());
+  const result = await harness.runAttempt(attemptParams({ groupId: "!team:example.test", messageTo: "room:!team:example.test" }));
+  assert.deepEqual(order, ["admission", "runtime"]);
+  assert.equal(result.promptError, null);
+});
+
 test("fails closed when a Matrix ingress binding is present but no Leader admission hook is configured", async (t) => {
   let runtimeCalls = 0;
   const harness = createTiangongPiHarness({
