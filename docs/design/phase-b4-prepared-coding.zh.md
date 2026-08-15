@@ -13,6 +13,10 @@ Linux Docker 环境的第一条真实 B4 Runner smoke 已完成：使用本分�
 `tiangong-worker-implementor:dev`，在带 Docker socket 的 Linux 控制容器中执行
 `run-runner-executor-smoke.mjs`，隔离策略、fixture/镜像绑定、只读根、无网络、
 进程树超时、durable journal replay、outcome-uncertain 和精确 cleanup 全部通过。
+随后同一控制容器执行 `run-runner-broker-smoke.mjs`，通过了 broker readiness、
+固定计划、Implementor 编辑变更、Assessor 只读复核、计划篡改拒绝、未授权 Worker
+拒绝、Worker socket 隔离、单次执行/重放和精确 cleanup；一键入口是
+`make test-runner-broker-linux`。
 Windows 主机直接运行仍会因默认 `/usr/bin/docker` 不存在而 fail closed；可用
 `tiangong-runner-broker:dev` 作为 Linux 控制容器，并设置
 `TIANGONG_DOCKER_PATH=/usr/local/bin/docker` 重跑同一脚本。为避免 Windows
@@ -23,7 +27,8 @@ checkout 把 smoke fixture 的 LF 改成 CRLF，仓库新增 `.gitattributes` �
 Windows 主机上的单个 `EPERM: fsync` 是测试临时目录的既有平台限制，不作为
 B4 逻辑成功或失败的证据。
 
-这只闭合了 Runner 基础边界，下一步仍是把一次真实编辑/构建/测试/本地 commit
-接入 B4 Work/Task/Result，并验证取消、重启后的 unresolved execution、ToolResult
-retention 和精确 cleanup。未完成这条证据链前，不删除 legacy pi lane，也不把
-AgentTeams v1.2.2 宣称为 sidecar lifecycle manager。
+这闭合了 Runner 与 broker 基础边界；下一步仍是把 broker 的真实执行结果接入
+B4 Work/Task/Result（而不是只在 smoke client 内验证），完成一次真实编辑/构建/
+测试/本地 commit，并验证取消、重启后的 unresolved execution、ToolResult retention
+和精确 cleanup。未完成这条证据链前，不删除 legacy pi lane，也不把 AgentTeams
+v1.2.2 宣称为 sidecar lifecycle manager。

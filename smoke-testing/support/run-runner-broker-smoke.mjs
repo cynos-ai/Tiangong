@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,13 +46,33 @@ function fail(message) {
 }
 
 async function docker(args, options = {}) {
-  return runDocker(args, { timeoutMs: options.timeoutMs ?? 60_000, outputLimitBytes: 4 * 1024 * 1024 });
+  return runDocker(args, { ...options, timeoutMs: options.timeoutMs ?? 60_000, outputLimitBytes: 4 * 1024 * 1024 });
 }
 
 async function requireDocker(args, code, options) {
   const result = await docker(args, options);
-  if (result.timedOut || result.exitCode !== 0) throw new Error(code);
+  if (result.timedOut || result.exitCode !== 0) throw new Error(`${code}: ${result.stderr.trim().slice(0, 512)}`);
   return result;
+}
+
+async function tarDirectory(source) {
+  return await new Promise((resolve, reject) => {
+    const child = spawn("tar", ["-cf", "-", "-C", source, "."], { stdio: ["ignore", "pipe", "pipe"] });
+    const chunks = [];
+    let bytes = 0;
+    child.stdout.on("data", (chunk) => {
+      bytes += chunk.length;
+      if (bytes > 8 * 1024 * 1024) child.kill("SIGKILL");
+      else chunks.push(chunk);
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8").slice(0, 1024); });
+    child.once("error", reject);
+    child.once("close", (code) => {
+      if (code !== 0) reject(new Error(`fixture archive failed: ${stderr.trim().slice(0, 512)}`));
+      else resolve(Buffer.concat(chunks));
+    });
+  });
 }
 
 async function inspectId(image) {
@@ -217,12 +238,22 @@ try {
     "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=16m",
     "--env", "HOME=/tmp",
     "--mount", "type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock",
-    "--mount", `type=bind,src=${configPath},dst=/run/tiangong-runner-broker/config.json,readonly`,
-    "--mount", `type=bind,src=${fixture},dst=/opt/tiangong-runner-fixtures/isolation,readonly`,
+    // The broker runs inside a control container on Docker Desktop. Host
+    // bind sources such as its /tmp or /workspace are not visible to the
+    // Docker daemon, so project bounded inputs through tmpfs and stdin.
+    "--tmpfs", "/run/tiangong-runner-broker:rw,noexec,nosuid,nodev,size=1m",
+    "--tmpfs", "/opt/tiangong-runner-fixtures/isolation:rw,noexec,nosuid,nodev,size=64m",
     "--mount", `type=volume,src=${stateVolume},dst=/var/lib/tiangong-runner-broker`,
+    "--entrypoint", "/bin/sh",
     brokerImageId,
+    "-c", "while [ ! -s /run/tiangong-runner-broker/config.json ]; do sleep 0.1; done; exec /usr/bin/node /opt/tiangong-worker/agent/runner/broker-server.mjs",
   ], "broker container create failed");
   await requireDocker(["container", "start", broker], "broker container start failed");
+  await requireDocker(["container", "exec", broker, "mkdir", "-p", "/tmp/fixture-input"], "broker fixture staging failed");
+  await requireDocker(["container", "exec", "-i", broker, "tar", "--no-same-owner", "-xf", "-", "-C", "/tmp/fixture-input"], "broker fixture projection failed", { input: await tarDirectory(fixture) });
+  await requireDocker(["container", "exec", broker, "sh", "-c", "cp -a /tmp/fixture-input/. /opt/tiangong-runner-fixtures/isolation/"], "broker fixture projection failed");
+  await requireDocker(["container", "exec", "-i", broker, "sh", "-c", "cat > /tmp/config.json"], "broker config projection failed", { input: await readFile(configPath) });
+  await requireDocker(["container", "exec", broker, "sh", "-c", "cp /tmp/config.json /run/tiangong-runner-broker/config.json"], "broker config projection failed");
 
   let ready = false;
   for (let attempt = 0; attempt < 60; attempt += 1) {
