@@ -128,20 +128,50 @@ async function probeNativeResponses({ baseUrl, consumerToken, modelId, fetchImpl
   }
 }
 
-export async function readOpenCodexSidecarReceipt(receiptPath, { provider, model } = {}) {
-  if (!nonEmptyString(receiptPath)) {
+async function readReceiptFromUrl(receiptUrl, fetchImpl) {
+  if (typeof fetchImpl !== "function") fail("codex-bridge-receipt-unreadable", "The OpenCodex readiness receipt client is unavailable.");
+  let url;
+  try {
+    url = new URL(receiptUrl);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error("unsafe");
+  } catch {
+    fail("codex-bridge-receipt-invalid", "The OpenCodex readiness receipt URL is invalid.");
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  try {
+    const response = await fetchImpl(url, { headers: { accept: "application/json" }, signal: controller.signal });
+    if (!response || response.status !== 200) fail("codex-bridge-receipt-unreadable", "The OpenCodex readiness receipt service did not return a ready receipt.");
+    const text = await response.text();
+    if (typeof text !== "string" || text.length === 0 || text.length > MAX_RECEIPT_BYTES) fail("codex-bridge-receipt-invalid", "The OpenCodex readiness receipt exceeded the bounded limit.");
+    try { return JSON.parse(text); } catch { fail("codex-bridge-receipt-invalid", "The OpenCodex readiness receipt was not valid JSON."); }
+  } catch (error) {
+    if (error instanceof CodexCapabilityDetectionError) throw error;
+    fail(error?.name === "AbortError" ? "codex-bridge-receipt-timeout" : "codex-bridge-receipt-unreadable", "The OpenCodex readiness receipt service could not be reached.");
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function readOpenCodexSidecarReceipt(receiptPath, { provider, model, receiptUrl, fetchImpl = globalThis.fetch } = {}) {
+  const source = nonEmptyString(receiptPath) || nonEmptyString(receiptUrl);
+  if (!source) {
     fail("codex-compatibility-unavailable", "The model does not expose Responses and no OpenCodex readiness receipt is available.");
   }
   let receipt;
-  try {
-    const metadata = await lstat(receiptPath);
-    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size === 0 || metadata.size > MAX_RECEIPT_BYTES) {
-      fail("codex-bridge-receipt-invalid", "The OpenCodex readiness receipt is not a bounded regular file.");
+  if (/^https?:\/\//iu.test(source)) {
+    receipt = await readReceiptFromUrl(source, fetchImpl);
+  } else {
+    try {
+      const metadata = await lstat(source);
+      if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size === 0 || metadata.size > MAX_RECEIPT_BYTES) {
+        fail("codex-bridge-receipt-invalid", "The OpenCodex readiness receipt is not a bounded regular file.");
+      }
+      receipt = JSON.parse(await readFile(source, "utf8"));
+    } catch (error) {
+      if (error instanceof CodexCapabilityDetectionError) throw error;
+      fail("codex-bridge-receipt-unreadable", "The OpenCodex readiness receipt could not be read.");
     }
-    receipt = JSON.parse(await readFile(receiptPath, "utf8"));
-  } catch (error) {
-    if (error instanceof CodexCapabilityDetectionError) throw error;
-    fail("codex-bridge-receipt-unreadable", "The OpenCodex readiness receipt could not be read.");
   }
   try {
     return validateOpenCodexSidecarReceipt(receipt, { provider, model });
@@ -207,6 +237,7 @@ export async function detectCodexRoute({
   baseUrl,
   consumerToken,
   sidecarReceiptPath,
+  sidecarReceiptUrl,
   recordPath,
   requireBridgeReceipt = true,
   fetchImpl = globalThis.fetch,
@@ -259,7 +290,12 @@ export async function detectCodexRoute({
         bridge: CODEX_BRIDGE,
       });
     }
-    sidecar = await readOpenCodexSidecarReceipt(sidecarReceiptPath, { provider, model });
+    sidecar = await readOpenCodexSidecarReceipt(sidecarReceiptPath, {
+      provider,
+      model,
+      receiptUrl: sidecarReceiptUrl,
+      fetchImpl,
+    });
   } catch (error) {
     if (error instanceof CodexCapabilityDetectionError) {
       await recordAndReturn({

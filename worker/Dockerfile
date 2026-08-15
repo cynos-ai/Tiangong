@@ -73,6 +73,22 @@ COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 WORKDIR /opt/tiangong-worker
 ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/deployment/broker-server.mjs"]
 
+FROM worker-base AS opencodex-sidecar
+RUN npm install --global --no-audit --no-fund --registry=https://registry.npmjs.org/ \
+      @bitkyc08/opencodex@2.15.0 \
+    && ocx --version
+WORKDIR /opt/tiangong-worker
+ENTRYPOINT ["/bin/sh", "-c", "exec sleep infinity"]
+
+FROM worker-base AS opencodex-receipt-service
+WORKDIR /opt/tiangong-worker
+ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/deployment/opencodex-sidecar-receipt-service.mjs"]
+
+FROM worker-base AS opencodex-adapter
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
+WORKDIR /opt/tiangong-worker
+ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/deployment/opencodex-sidecar-receipt-service.mjs"]
+
 FROM worker-base AS kernel
 COPY role-profiles/kernel.json /opt/tiangong-worker/profile.json
 RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role kernel

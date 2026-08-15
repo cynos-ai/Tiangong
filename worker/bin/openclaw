@@ -17,7 +17,7 @@ cleanup_codex_home() {
 }
 
 configure_codex_gateway() {
-  local config_file provider_base_url provider_api_key provider_id model_id provider_toml_id temporary_file base_url_override credential_source bridge_mode provider_http_headers sidecar_receipt_path transport_mode cache_path cache_url cache_result resolved_transport resolved_bridge resolved_base_url cache_hit
+  local config_file provider_base_url provider_api_key provider_id model_id provider_toml_id temporary_file base_url_override credential_source bridge_mode provider_http_headers sidecar_receipt_path sidecar_receipt_url transport_mode cache_path cache_url cache_result resolved_transport resolved_bridge resolved_base_url cache_hit
   [[ "${TIANGONG_RUNTIME_LANE:-legacy-v0.2}" == "openclaw-canary" ]] || return 0
   [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]] || return 0
   config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
@@ -46,6 +46,10 @@ configure_codex_gateway() {
   }
   base_url_override="${TIANGONG_CODEX_BASE_URL:-}"
   sidecar_receipt_path="${TIANGONG_CODEX_SIDECAR_RECEIPT_PATH:-}"
+  sidecar_receipt_url="${TIANGONG_CODEX_SIDECAR_RECEIPT_URL:-}"
+  if [[ -z "${sidecar_receipt_path}" && -z "${sidecar_receipt_url}" && -n "${AGENTTEAMS_WORKER_NAME:-}" ]]; then
+    sidecar_receipt_url="${TIANGONG_CODEX_SIDECAR_RECEIPT_SERVICE_URL:-http://tiangong-opencodex-adapter:8790}/v1/receipts/${AGENTTEAMS_WORKER_NAME}"
+  fi
   if [[ -n "${base_url_override}" ]]; then
     provider_base_url="${base_url_override}"
   else
@@ -64,6 +68,7 @@ configure_codex_gateway() {
       TIANGONG_CODEX_CACHE_BASE_URL="${provider_base_url}" \
       TIANGONG_CODEX_CACHE_TOKEN="${provider_api_key}" \
       TIANGONG_CODEX_CACHE_RECEIPT_PATH="${sidecar_receipt_path}" \
+      TIANGONG_CODEX_CACHE_RECEIPT_URL="${sidecar_receipt_url}" \
       TIANGONG_CODEX_CACHE_PATH="${cache_path}" \
       TIANGONG_CODEX_CACHE_URL="${cache_url}" \
       /usr/bin/node --input-type=module -e '
@@ -91,7 +96,7 @@ configure_codex_gateway() {
         });
         let endpoint = resolved.record.baseUrl;
         if (resolved.record.transport === "responses-via-chat-bridge") {
-          const receipt = await readOpenCodexSidecarReceipt(process.env.TIANGONG_CODEX_CACHE_RECEIPT_PATH || undefined, { provider, model });
+          const receipt = await readOpenCodexSidecarReceipt(process.env.TIANGONG_CODEX_CACHE_RECEIPT_PATH || undefined, { provider, model, receiptUrl: process.env.TIANGONG_CODEX_CACHE_RECEIPT_URL || undefined });
           endpoint = receipt.endpoint;
         }
         console.log(JSON.stringify({ endpoint, transport: resolved.record.transport, bridge: resolved.record.transport === "responses-via-chat-bridge" ? "opencodex" : null, cacheHit: resolved.cacheHit, outcome: resolved.record.outcome, reasonCode: resolved.record.reasonCode }));
@@ -116,6 +121,7 @@ configure_codex_gateway() {
   TIANGONG_PREFLIGHT_CONSUMER_TOKEN="${provider_api_key}" \
   TIANGONG_PREFLIGHT_BASE_URL="${base_url_override}" \
   TIANGONG_PREFLIGHT_SIDECAR_RECEIPT_PATH="${sidecar_receipt_path}" \
+  TIANGONG_PREFLIGHT_SIDECAR_RECEIPT_URL="${sidecar_receipt_url}" \
   TIANGONG_CODEX_TRANSPORT="${transport_mode}" \
   TIANGONG_CODEX_BRIDGE="${bridge_mode}" \
   /usr/bin/node --input-type=module -e '
@@ -125,6 +131,7 @@ configure_codex_gateway() {
       consumerToken: process.env.TIANGONG_PREFLIGHT_CONSUMER_TOKEN,
       baseUrlOverride: process.env.TIANGONG_PREFLIGHT_BASE_URL || undefined,
       sidecarReceiptPath: process.env.TIANGONG_PREFLIGHT_SIDECAR_RECEIPT_PATH || undefined,
+      sidecarReceiptUrl: process.env.TIANGONG_PREFLIGHT_SIDECAR_RECEIPT_URL || undefined,
     });
     console.log(`codex_gateway_preflight=pass provider=${result.provider} model=${result.model} gateway_probe=${result.gatewayProbe} gateway_probe_contract=${result.gatewayProbeContract} transport=${result.transport} bridge=${result.bridge ?? "none"} credential_source=${result.credentialSource} sidecar=${result.sidecarReadiness ?? "none"} sidecar_id=${result.sidecarId ?? "none"} sidecar_generation=${result.sidecarGeneration ?? "none"}`);
   ' "${CODEX_GATEWAY_PREFLIGHT}" "${config_file}"

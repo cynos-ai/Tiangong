@@ -1,6 +1,6 @@
-import { lstat, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 
-import { validateOpenCodexSidecarReceipt } from "../deployment/opencodex-sidecar.mjs";
+import { readOpenCodexSidecarReceipt } from "./codex-capability-detection.mjs";
 
 export const CODEX_GATEWAY_PROVIDER = "agentteams-gateway";
 export const CODEX_GATEWAY_MODEL = "deepseek-v4-pro";
@@ -9,7 +9,6 @@ export const CODEX_TRANSPORT_BRIDGE = "responses-via-chat-bridge";
 export const CODEX_BRIDGE = "opencodex";
 export const DEFAULT_CODEX_GATEWAY_HOST = "agentteams-controller";
 const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
-const MAX_RECEIPT_BYTES = 16 * 1024;
 const CODEX_MODEL_ALIAS_PREFIX = "codex/";
 
 export class CodexGatewayPreflightError extends Error {
@@ -31,6 +30,12 @@ function nonEmptyString(value) {
 function allowedHosts(env) {
   const configured = nonEmptyString(env.TIANGONG_CODEX_GATEWAY_HOSTS);
   return new Set((configured || DEFAULT_CODEX_GATEWAY_HOST).split(",").map((value) => value.trim()).filter(Boolean));
+}
+
+function isAllowedSidecarHost(hostname, env) {
+  const configured = nonEmptyString(env.TIANGONG_CODEX_SIDECAR_HOSTS);
+  if (configured && configured.split(",").map((value) => value.trim()).filter(Boolean).includes(hostname)) return true;
+  return hostname === "opencodex-sidecar" || hostname === "tiangong-opencodex-adapter" || /^tiangong-opencodex-[a-z0-9][a-z0-9._-]*$/iu.test(hostname);
 }
 
 function hasAllowedModel(provider, modelId) {
@@ -91,7 +96,7 @@ export function assertCodexGatewayConfiguration(config, {
     if (error instanceof CodexGatewayPreflightError) throw error;
     fail("gateway-base-url-invalid", "The AgentTeams gateway base URL is invalid.");
   }
-  if (!allowedHosts(env).has(baseUrl.hostname)) {
+  if (!allowedHosts(env).has(baseUrl.hostname) && !(route.transport === CODEX_TRANSPORT_BRIDGE && isAllowedSidecarHost(baseUrl.hostname, env))) {
     fail("gateway-host-not-allowed", "The Codex gateway host is outside the AgentTeams allowlist.");
   }
   return {
@@ -150,6 +155,7 @@ export async function runCodexGatewayPreflightFromFile({
   configPath,
   consumerToken,
   baseUrlOverride,
+  sidecarReceiptUrl,
   ...options
 } = {}) {
   if (typeof configPath !== "string" || !configPath) {
@@ -176,26 +182,20 @@ export async function runCodexGatewayPreflightFromFile({
   let sidecar;
   if (result.transport === CODEX_TRANSPORT_BRIDGE) {
     const sidecarReceiptPath = nonEmptyString(options.sidecarReceiptPath) || nonEmptyString(options.env?.TIANGONG_CODEX_SIDECAR_RECEIPT_PATH);
-    if (!sidecarReceiptPath) fail("codex-sidecar-receipt-missing", "The Chat-only Codex route requires an AgentTeams sidecar readiness receipt.");
+    const sidecarReceiptServiceUrl = nonEmptyString(sidecarReceiptUrl) || nonEmptyString(options.env?.TIANGONG_CODEX_SIDECAR_RECEIPT_URL);
+    if (!sidecarReceiptPath && !sidecarReceiptServiceUrl) fail("codex-sidecar-receipt-missing", "The Chat-only Codex route requires an AgentTeams sidecar readiness receipt.");
     let receipt;
-    try {
-      const metadata = await lstat(sidecarReceiptPath);
-      if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size === 0 || metadata.size > MAX_RECEIPT_BYTES) {
-        fail("codex-sidecar-receipt-invalid", "The OpenCodex sidecar readiness receipt is not a bounded regular file.");
-      }
-      receipt = JSON.parse(await readFile(sidecarReceiptPath, "utf8"));
-    } catch (error) {
-      if (error instanceof CodexGatewayPreflightError) throw error;
-      fail("codex-sidecar-receipt-unreadable", "The OpenCodex sidecar readiness receipt could not be read.");
-    }
     let validated;
     try {
-      validated = validateOpenCodexSidecarReceipt(receipt, {
+      validated = await readOpenCodexSidecarReceipt(sidecarReceiptPath, {
         endpoint: result.baseUrl,
         provider: result.provider,
         model: result.model,
+        receiptUrl: sidecarReceiptServiceUrl,
+        fetchImpl: options.fetchImpl,
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof CodexGatewayPreflightError) throw error;
       fail("codex-sidecar-receipt-invalid", "The OpenCodex sidecar readiness receipt does not match the selected route.");
     }
     sidecar = { sidecarReadiness: "pass", sidecarId: validated.sidecarId, sidecarGeneration: validated.generation };

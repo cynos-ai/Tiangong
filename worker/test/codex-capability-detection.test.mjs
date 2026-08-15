@@ -106,6 +106,34 @@ test("selects OpenCodex only for a clear unsupported endpoint and uses the ready
   });
 });
 
+test("reads a matching ready receipt from the deployment receipt service URL", async () => {
+  await withDirectory(async (directory) => {
+    const recordPath = join(directory, "capability.json");
+    const receiptPath = await writeReceipt(directory);
+    const receiptText = await readFile(receiptPath, "utf8");
+    const calls = [];
+    const result = await detectCodexRoute({
+      provider: PROVIDER,
+      model: MODEL,
+      baseUrl: BASE_URL,
+      consumerToken: "worker-consumer-token",
+      sidecarReceiptUrl: "http://tiangong-opencodex-adapter:8790/v1/receipts/worker-qwen-member",
+      recordPath,
+      fetchImpl: async (url) => {
+        calls.push(url.toString());
+        if (calls.length === 1) return { status: 404, headers: { get: () => "application/json" }, text: async () => '{"error":"route not found"}' };
+        return { status: 200, headers: { get: () => "application/json" }, text: async () => receiptText };
+      },
+    });
+    assert.equal(result.transport, CODEX_BRIDGE_TRANSPORT);
+    assert.deepEqual(calls, [
+      `${BASE_URL}/responses`,
+      "http://tiangong-opencodex-adapter:8790/v1/receipts/worker-qwen-member",
+    ]);
+    assert.equal(JSON.stringify(result).includes("worker-consumer-token"), false);
+  });
+});
+
 test("does not silently fallback when the bridge receipt is absent", async () => {
   await withDirectory(async (directory) => {
     const recordPath = join(directory, "capability.json");

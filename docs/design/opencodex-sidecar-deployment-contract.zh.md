@@ -1,6 +1,6 @@
 # OpenCodex sidecar 部署合同
 
-> 状态：已通过真实 AgentTeams v1.2.2 Team canary；生产接入仍需由 AgentTeams 部署层实现。
+> 状态：部署层 sidecar adapter、receipt service 和完整生命周期 smoke 已完成；AgentTeams v1.2.2 本身仍未内置 OpenCodex sidecar manager。
 >
 > 本文只定义公开项目需要的边界，不保存任何 provider key、consumer token、Matrix token 或运行日志。
 
@@ -25,6 +25,18 @@ AgentTeams gateway -> Chat/Completions provider
 ```
 
 原生 Responses 模型（例如 DeepSeek V4 Pro）不经过 sidecar，仍然由 Codex 直接访问 AgentTeams gateway。只有明确声明 `responses-via-chat-bridge` 和 `opencodex` 的模型 profile 才能进入这条路径。
+
+## 当前实现（2026-08-15）
+
+Tiangong 已提供一个部署层实现，落在 AgentTeams 同一受控 Docker 网络中：
+
+- `scripts/deploy-opencodex-sidecar.sh` 启动、检查和移除 deployment-owned manager；manager 才持有 Docker socket，Worker 不持有。
+- `tiangong-opencodex-sidecar:dev` 固定安装 OpenCodex `2.15.0`；每个 Worker 使用精确 owner labels 的独立 sidecar，无宿主机端口。
+- `worker/agent/deployment/opencodex-sidecar-cli.mjs` 驱动 `provision → ready → reconcile → rotate → drain → remove`，并把 controller snapshot 原子写入受控卷。
+- `opencodex-sidecar-receipt-service.mjs` 只通过内部 URL 返回 ready receipt；Worker 不需要挂载 manager 卷，缺失或非 ready 时 fail-closed。
+- scoped consumer token 通过 manager 到 sidecar 的 stdin/tmpfs 短暂投影；配置只保存环境变量引用，凭证值不进入 Docker metadata、argv、普通文件、receipt 或日志。
+
+这是一套 Tiangong deployment-owned adapter，不是 AgentTeams v1.2.2 的官方内置命令。未来 AgentTeams 提供正式 sidecar API 时，可保持本合同和 receipt schema 不变替换 adapter 实现。
 
 ## AgentTeams-owned 生命周期
 
@@ -57,7 +69,7 @@ AgentTeams gateway -> Chat/Completions provider
 - Leader 读取并转发 `TEAM_LEADER_RELAY_OK`。Team room、Worker room、Matrix/WebUI 路径保持 AgentTeams 所有权。
 - 测试结束后 Team、Workers、sidecar 均已回收，Higress provider route 恢复为 DeepSeek。
 
-这证明的是 Team 消息链和 bridge Worker 的兼容性，不等于 AgentTeams v1.2.2 已经提供了 Controller-managed Codex/OpenCodex runtime；生产化仍需完成上表的部署接口和 rotation/drain 证据。
+这证明的是 Team 消息链和 bridge Worker 的兼容性；它不把 AgentTeams v1.2.2 宣称为官方 Controller-managed Codex runtime。官方 runtime 缺口由本节的 deployment-owned adapter 补齐。
 
 ## 不允许的实现
 
@@ -84,10 +96,29 @@ sidecar 管理器。契约固定要求：
 - snapshot、receipt、event 都拒绝 `apiKey`、`access_token`、`authorization`
   等凭证字段。
 
-因此当前代码已经把 Worker 侧的 readiness gate、rotation/recovery 状态机和
-确定性测试补齐；真正创建容器、投影 secret、执行网络探针和回收资源的
-adapter 仍必须由 AgentTeams Controller/deployment 层提供。没有这个 adapter
-和它的真实重启/轮换 smoke，不能把 bridge 宣称为生产默认路径。
+因此当前代码已经把 Worker 侧的 readiness gate、rotation/recovery 状态机、
+真实容器 adapter、receipt service 和确定性测试补齐。adapter 作为独立部署组件
+执行网络探针、轮换、drain 和精确回收；AgentTeams Controller 继续拥有 Worker、
+Team、网关和 WebUI/Matrix 边界。bridge 只有在匹配的 ready receipt 存在时才会
+进入 Worker admission。
+
+## 部署层真实 smoke 结果
+
+- DeepSeek `deepseek-v4-pro`：sidecar provision、ready、reconcile、generation
+  rotate、真实 Responses 请求（HTTP 200）、drain、receipt 失效和 remove 全部
+  通过；Worker 日志同时报告 gateway preflight、sidecar receipt 和 OpenClaw
+  preflight 通过。
+- Qwen `qwen3.7-plus`：sidecar 生命周期控制本身全部通过，但当前本地
+  AgentTeams v1.2.2 gateway catalog 只声明 DeepSeek，真实请求被网关以
+  “supported model names are deepseek-v4-pro or deepseek-v4-flash” 拒绝。
+  这是当前 provider/catalog 配置缺口，不是 sidecar 生命周期失败；已有的
+  独立 Qwen Team bridge canary 仍保留为路由可行性证据。
+- manager 和 sidecar 均不发布宿主机端口，WebUI/Matrix 路径不变；测试结束后
+  Team、Worker、sidecar 临时资源均按 owner 精确回收。
+
+当前默认建议仍是：原生 Responses 模型直接走 Codex；明确 Chat-only 且有 ready
+receipt 的模型走 OpenCodex bridge。要把 Qwen 纳入当前栈，只需先在 AgentTeams
+gateway provider catalog/credential 路由中启用 Qwen，不需要重新设计 sidecar。
 
 ## Credential projection implementation note
 
@@ -120,13 +151,13 @@ the embedded CLI path; the temporary resources were deleted afterward. Use the
 native Kubernetes CR path (or an upstream DTO fix) before treating
 `accessEntries` as an effective credential binding.
 
-Before promotion, the deployment must also pass the REST-boundary check. The
-official v1.2.2 source currently omits `accessEntries` from the embedded
-controller request/response DTOs; an isolated upstream-only patch adding those
-fields and create/update tests passes the relevant package tests, but is not
-yet part of the running image. Until an AgentTeams image with that fix (or a
-native Kubernetes CR path) is selected, the credential binding is not an
-admission fact and the OpenCodex Full smoke remains blocked.
+The embedded v1.2.2 REST DTO still omits `accessEntries`, so that field is not
+used as an admission fact by the current Docker deployment. The running adapter
+instead consumes the Worker-scoped AgentTeams gateway token through its
+deployment-owned Docker authority, keeps the value in memory/child process only,
+and records the limitation as an explicit integration boundary. A future
+provider-enabled Kubernetes CR path or DTO fix can replace this credential
+provider without changing the sidecar lifecycle contract.
 
 ## Shared capability cache
 

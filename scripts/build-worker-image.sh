@@ -16,6 +16,9 @@ readonly RUNNER_BROKER_IMAGE="tiangong-runner-broker:dev"
 readonly DEPLOYMENT_SERVICE_IMAGE="tiangong-deployment-service:dev"
 readonly DEPLOYMENT_BROKER_IMAGE="tiangong-deployment-broker:dev"
 readonly CODEX_CAPABILITY_CACHE_IMAGE="tiangong-codex-capability-cache:dev"
+readonly OPENCODEX_SIDECAR_IMAGE="tiangong-opencodex-sidecar:dev"
+readonly OPENCODEX_RECEIPT_SERVICE_IMAGE="tiangong-opencodex-receipt-service:dev"
+readonly OPENCODEX_ADAPTER_IMAGE="tiangong-opencodex-adapter:dev"
 readonly EXPECTED_NODE_VERSION="v22.23.2"
 readonly EXPECTED_PI_VERSION="0.82.0"
 readonly EXPECTED_CODEX_VERSION="codex-cli 0.120.0"
@@ -58,6 +61,12 @@ printf '[Tiangong] Building controlled deployment broker image %s\n' "${DEPLOYME
 docker build "${build_args[@]}" --target deployment-broker --tag "${DEPLOYMENT_BROKER_IMAGE}" "${REPO_ROOT}/worker"
 printf '[Tiangong] Building deployment-owned Codex capability cache image %s\n' "${CODEX_CAPABILITY_CACHE_IMAGE}"
 docker build "${build_args[@]}" --target codex-capability-cache --tag "${CODEX_CAPABILITY_CACHE_IMAGE}" "${REPO_ROOT}/worker"
+printf '[Tiangong] Building deployment-owned OpenCodex sidecar image %s\n' "${OPENCODEX_SIDECAR_IMAGE}"
+docker build "${build_args[@]}" --target opencodex-sidecar --tag "${OPENCODEX_SIDECAR_IMAGE}" "${REPO_ROOT}/worker"
+printf '[Tiangong] Building OpenCodex receipt service image %s\n' "${OPENCODEX_RECEIPT_SERVICE_IMAGE}"
+docker build "${build_args[@]}" --target opencodex-receipt-service --tag "${OPENCODEX_RECEIPT_SERVICE_IMAGE}" "${REPO_ROOT}/worker"
+printf '[Tiangong] Building OpenCodex AgentTeams adapter image %s\n' "${OPENCODEX_ADAPTER_IMAGE}"
+docker build "${build_args[@]}" --target opencodex-adapter --tag "${OPENCODEX_ADAPTER_IMAGE}" "${REPO_ROOT}/worker"
 
 actual_node_version="$(docker run --rm --entrypoint node "${IMAGE}" --version)"
 [[ "${actual_node_version}" == "${EXPECTED_NODE_VERSION}" ]] || {
@@ -80,6 +89,11 @@ actual_pi_version="$(docker run --rm --entrypoint pi "${IMAGE}" --version)"
 actual_codex_version="$(docker run --rm --entrypoint codex "${CANARY_IMAGE}" --version)"
 [[ "${actual_codex_version}" == "${EXPECTED_CODEX_VERSION}" ]] || {
   printf 'ERROR: expected managed Codex %s, got %s.\n' "${EXPECTED_CODEX_VERSION}" "${actual_codex_version}" >&2
+  exit 1
+}
+actual_opencodex_version="$(docker run --rm --entrypoint ocx "${OPENCODEX_SIDECAR_IMAGE}" --version)"
+[[ "${actual_opencodex_version}" == *"2.15.0"* ]] || {
+  printf 'ERROR: expected OpenCodex 2.15.0, got %s.\n' "${actual_opencodex_version}" >&2
   exit 1
 }
 docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${CANARY_IMAGE}" \
