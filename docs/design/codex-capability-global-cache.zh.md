@@ -55,18 +55,25 @@ AgentTeams 凭证边界。
 
 ## 2026-08-15 验证事实
 
-- 使用当前 canary 镜像 `sha256:59e01c909bca77641c134bd912ce41a9f98fad9a4cf0a662dabdd86e10c90c4c`
-  运行真实 AgentTeams v1.2.2 Worker：DeepSeek 原生 Responses preflight 通过，首次
-  路由日志为 `cacheHit=false`；同一 Worker 重启后为 `cacheHit=true`，并保持
-  `transport=native-responses`。该 canary、容器和 storage prefix 已按 run-owned
-  规则清理。
+- 在共享挂载门槛收紧前的 canary 镜像
+  `sha256:59e01c909bca77641c134bd912ce41a9f98fad9a4cf0a662dabdd86e10c90c4c` 上，
+  真实 AgentTeams v1.2.2 Worker 的 DeepSeek 原生 Responses preflight 通过，首次
+  路由为 `cacheHit=false`；同一 Worker 重启后为 `cacheHit=true`。该观察证明了
+  Worker 内缓存复用，但不证明跨 Worker 共享。
 - 使用同一镜像启动两个独立容器，并挂载同一个部署层 Docker volume；并发 focused
   smoke 得到一个 `cacheHit=false`、一个 `cacheHit=true`、相同 key、单条记录，且
-  `hasCredential=false`。脚本为
+  `hasCredential=false`；当前门槛镜像
+  `sha256:2f856b9e6114eb3de51e39c22e2bab024fa039b8ec54ee029885fafd1f7443c6` 也已复验。
+  脚本为
   `smoke-testing/support/run-codex-capability-cache-smoke.sh`。
+- 当前门槛镜像在 embedded Docker 默认未提供共享卷声明时，真实 canary 明确以
+  `Codex auto routing requires a deployment-owned shared capability cache` 失败，
+  不再悄悄退化为本地缓存；该 canary 也已完成清理。
 - 当前 AgentTeams v1.2.2 embedded Docker Worker 默认只挂 Worker-scoped auth
   volume；`agt apply` DTO 没有把能力缓存共享卷挂载到 Worker 的字段。因此上述
   focused smoke 证明的是共享卷合同和 Tiangong 实现，不能把当前默认 embedded
   部署误称为已经全局共享。生产启用 `auto` 前必须由 Kubernetes PodTemplate、
-  AgentTeams 部署适配器或后续官方挂载能力提供同一个 RW 共享路径；没有该挂载时
-  保持显式 route 或 fail-closed。
+  AgentTeams 部署适配器或后续官方挂载能力提供同一个 RW 共享路径，并设置
+  `TIANGONG_CODEX_CAPABILITY_CACHE_SHARED=1`；没有该挂载或声明时，当前 Worker
+  会对 `auto` 路由 fail-closed，不会退化成每容器本地缓存。显式 native/bridge
+  route 不受这个共享缓存门槛影响。

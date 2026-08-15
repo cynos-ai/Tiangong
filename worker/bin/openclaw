@@ -52,6 +52,10 @@ configure_codex_gateway() {
     provider_base_url="$(jq -er --arg provider "${provider_id}" '.models.providers[$provider].baseUrl' "${config_file}")"
   fi
   if [[ "${transport_mode}" == "auto" || "${bridge_mode}" == "auto" ]]; then
+    [[ "${TIANGONG_CODEX_CAPABILITY_CACHE_SHARED:-0}" == "1" ]] || {
+      printf '[tiangong-worker] ERROR: Codex auto routing requires a deployment-owned shared capability cache.\n' >&2
+      return 1
+    }
     cache_path="${TIANGONG_CODEX_CAPABILITY_CACHE_PATH:-/var/lib/tiangong-capabilities/codex.json}"
     cache_result="$(
       TIANGONG_CODEX_CACHE_PROVIDER="${provider_id}" \
