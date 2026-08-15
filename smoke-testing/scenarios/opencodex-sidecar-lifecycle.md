@@ -25,7 +25,9 @@
   Worker-scoped credential reference, and wait for an observable `ready`
   receipt. The selected AgentTeams path must preserve `accessEntries` through
   admission (native Kubernetes CR or an upstream REST DTO fix); acceptance of
-  an unknown YAML field by the unpatched embedded CLI is not sufficient.
+  an unknown YAML field by the unpatched embedded CLI is not sufficient. The
+  route decision must come from the shared capability cache; do not repeat a
+  model probe independently for every Worker.
 - Prompt: Leader sends one deterministic task marker to the bridge Worker in
   the Team room; the Worker replies with the run-owned marker.
 - Expected observations:
@@ -89,6 +91,8 @@
 | Native Responses model without sidecar receipt | Pass on native route | `transport=native-responses`; no bridge requirement |
 | Chat-only model with matching ready receipt | Pass | receipt route/generation + preflight + Team event IDs |
 | Chat-only model with missing receipt | Deny before Worker start | `codex-sidecar-receipt-missing` |
+| Same provider/model/endpoint as a fresh cache entry | Reuse route without model probe | cache key hit and unchanged `detectorVersion` |
+| Concurrent cache miss for one provider/model/endpoint | One probe, other callers reuse | shared lock and one new cache record |
 | Receipt endpoint/model/generation mismatch | Deny before Worker start | bounded preflight error code |
 | Rotation adapter call loses response | Stay in recovery-needed phase | adapter status/reconcile; no blind retry |
 | Drain/remove before the required phase | Deny | deterministic sidecar phase error |

@@ -104,6 +104,15 @@ Codex 路由必须满足：
   drain/remove phase gate。它仍等待 AgentTeams deployment adapter 提供真实容器
   和 secret projection，不把本地状态机误报成 Controller runtime。
 
+### 全局能力探测
+
+canary 的自动路由不再要求每个 Worker 启动时各自探测模型。部署层共享缓存按
+`provider + model + endpoint + detectorVersion` 去重；命中时 Worker 只读脱敏
+route。缓存未命中时用共享锁确保只发生一次有界 Responses 探测，明确不支持才
+记录 bridge 结论。鉴权、网络、超时和畸形响应不被误判为 Chat-only；缓存缺失、
+锁超时或 bridge receipt 缺失均 fail-closed。共享缓存不保存任何凭证，Worker
+不直连 PG。
+
 ## Qwen bridge 的部署合同
 
 OpenCodex 不能直接复用 Responses 请求里的 `Authorization: Bearer` 作为自身认证：其 `/v1/responses` 和 `/v1/chat/completions` 数据面要求专用 `x-opencodex-api-key`。因此 sidecar 必须绑定非 loopback 地址时，同时设置 `OPENCODEX_API_AUTH_TOKEN` 和上游 AgentTeams consumer token；Worker 的临时 Codex TOML 通过 `env_http_headers` 把同一个 Worker token 注入专用 header。sidecar 仍不持有 Coding Plan 上游 key，Coding Plan key 只在 AgentTeams gateway provider 中保存。

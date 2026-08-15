@@ -163,3 +163,18 @@ AgentTeams 镜像；它应先以 AgentTeams issue/PR 的形式合入，再构建
 在 resolver/provider 阶段 fail closed；随后再执行 credential-provider mock、
 OpenCodex generation rotation/drain 和真实 Qwen Team Full smoke。在此之前，
 DeepSeek 原生 Responses 继续作为默认路径，Qwen bridge 继续保持 canary。
+
+## 2026-08-15 全局能力缓存
+
+为避免每个 Worker 启动都做一次模型探测，canary 的 `auto` 路径现在使用部署
+层拥有的共享能力缓存（默认 `/var/lib/tiangong-capabilities/codex.json`）。缓存
+键由 provider、model、无凭证 endpoint 和探测器版本组成；同一指纹命中缓存时，
+Worker 只读取 route，不再调用模型。缓存未命中时用精确 lock 目录串行化，只有
+第一个 Worker 探测，其他 Worker 重新读取结果。
+
+共享缓存是脱敏的基础设施状态，不是第二套凭证仓库：不写入 key、token、header、
+prompt 或模型原文。它可以由共享卷承载；将来若 AgentTeams/Tiangong 的
+CoordinationStore 已提供稳定 PG 适配器，只替换存储实现即可。Worker 不直接连接
+PG。bridge 结果仍需要每个 Worker 自己的 OpenCodex ready receipt，缓存只决定
+协议路线，不代替 sidecar 生命周期或 endpoint admission。完整合同见
+[Codex 能力探测的全局缓存合同](codex-capability-global-cache.zh.md)。

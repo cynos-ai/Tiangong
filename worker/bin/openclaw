@@ -6,6 +6,8 @@ readonly PLUGIN_ID="tiangong-pi"
 readonly PLUGIN_PATH="/opt/tiangong-worker/plugin"
 readonly PREFLIGHT="/opt/tiangong-worker/scripts/openclaw-preflight.mjs"
 readonly CODEX_GATEWAY_PREFLIGHT="/opt/tiangong-worker/agent/preflight/codex-gateway-preflight.mjs"
+readonly CODEX_CAPABILITY_DETECTOR="/opt/tiangong-worker/agent/preflight/codex-capability-detection.mjs"
+readonly CODEX_CAPABILITY_CACHE="/opt/tiangong-worker/agent/preflight/codex-capability-cache.mjs"
 codex_home=""
 
 cleanup_codex_home() {
@@ -15,7 +17,7 @@ cleanup_codex_home() {
 }
 
 configure_codex_gateway() {
-  local config_file provider_base_url provider_api_key provider_id model_id provider_toml_id temporary_file base_url_override credential_source bridge_mode provider_http_headers sidecar_receipt_path
+  local config_file provider_base_url provider_api_key provider_id model_id provider_toml_id temporary_file base_url_override credential_source bridge_mode provider_http_headers sidecar_receipt_path transport_mode cache_path cache_result resolved_transport resolved_bridge resolved_base_url cache_hit
   [[ "${TIANGONG_RUNTIME_LANE:-legacy-v0.2}" == "openclaw-canary" ]] || return 0
   [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]] || return 0
   config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
@@ -25,7 +27,8 @@ configure_codex_gateway() {
   }
   provider_id="${TIANGONG_CODEX_PROVIDER:-agentteams-gateway}"
   model_id="${TIANGONG_CODEX_MODEL:-deepseek-v4-pro}"
-  bridge_mode="${TIANGONG_CODEX_BRIDGE:-none}"
+  transport_mode="${TIANGONG_CODEX_TRANSPORT:-auto}"
+  bridge_mode="${TIANGONG_CODEX_BRIDGE:-auto}"
   credential_source="${TIANGONG_CODEX_CREDENTIAL_SOURCE:-agentteams-consumer-token}"
   [[ "${credential_source}" == "agentteams-consumer-token" ]] || {
     printf '[tiangong-worker] ERROR: unsupported Codex credential source: %s\n' "${credential_source}" >&2
@@ -48,9 +51,60 @@ configure_codex_gateway() {
   else
     provider_base_url="$(jq -er --arg provider "${provider_id}" '.models.providers[$provider].baseUrl' "${config_file}")"
   fi
+  if [[ "${transport_mode}" == "auto" || "${bridge_mode}" == "auto" ]]; then
+    cache_path="${TIANGONG_CODEX_CAPABILITY_CACHE_PATH:-/var/lib/tiangong-capabilities/codex.json}"
+    cache_result="$(
+      TIANGONG_CODEX_CACHE_PROVIDER="${provider_id}" \
+      TIANGONG_CODEX_CACHE_MODEL="${model_id}" \
+      TIANGONG_CODEX_CACHE_BASE_URL="${provider_base_url}" \
+      TIANGONG_CODEX_CACHE_TOKEN="${provider_api_key}" \
+      TIANGONG_CODEX_CACHE_RECEIPT_PATH="${sidecar_receipt_path}" \
+      TIANGONG_CODEX_CACHE_PATH="${cache_path}" \
+      /usr/bin/node --input-type=module -e '
+        const { CODEX_DETECTOR_VERSION, detectCodexRoute, readOpenCodexSidecarReceipt } = await import(process.argv[1]);
+        const { createCodexCapabilityCache } = await import(process.argv[2]);
+        const provider = process.env.TIANGONG_CODEX_CACHE_PROVIDER;
+        const model = process.env.TIANGONG_CODEX_CACHE_MODEL;
+        const baseUrl = process.env.TIANGONG_CODEX_CACHE_BASE_URL;
+        const cache = createCodexCapabilityCache({ path: process.env.TIANGONG_CODEX_CACHE_PATH });
+        const resolved = await cache.resolve({
+          provider,
+          model,
+          baseUrl,
+          detectorVersion: CODEX_DETECTOR_VERSION,
+          probe: (fingerprint) => detectCodexRoute({
+            provider,
+            model,
+            baseUrl: fingerprint.baseUrl,
+            consumerToken: process.env.TIANGONG_CODEX_CACHE_TOKEN,
+            requireBridgeReceipt: false,
+          }),
+        });
+        let endpoint = resolved.record.baseUrl;
+        if (resolved.record.transport === "responses-via-chat-bridge") {
+          const receipt = await readOpenCodexSidecarReceipt(process.env.TIANGONG_CODEX_CACHE_RECEIPT_PATH || undefined, { provider, model });
+          endpoint = receipt.endpoint;
+        }
+        console.log(JSON.stringify({ endpoint, transport: resolved.record.transport, bridge: resolved.record.transport === "responses-via-chat-bridge" ? "opencodex" : null, cacheHit: resolved.cacheHit, outcome: resolved.record.outcome, reasonCode: resolved.record.reasonCode }));
+      ' "${CODEX_CAPABILITY_DETECTOR}" "${CODEX_CAPABILITY_CACHE}"
+    )"
+    resolved_transport="$(jq -er '.transport' <<<"${cache_result}")"
+    resolved_bridge="$(jq -r '.bridge // "none"' <<<"${cache_result}")"
+    resolved_base_url="$(jq -er '.endpoint' <<<"${cache_result}")"
+    cache_hit="$(jq -r '.cacheHit' <<<"${cache_result}")"
+    transport_mode="${resolved_transport}"
+    bridge_mode="${resolved_bridge}"
+    provider_base_url="${resolved_base_url}"
+    base_url_override="${resolved_base_url}"
+    printf '[tiangong-worker] codex_capability_cache=pass hit=%s route=%s bridge=%s path=%s\n' "${cache_hit}" "${transport_mode}" "${bridge_mode}" "${cache_path}" >&2
+  fi
+  export TIANGONG_CODEX_TRANSPORT="${transport_mode}"
+  export TIANGONG_CODEX_BRIDGE="${bridge_mode}"
   TIANGONG_PREFLIGHT_CONSUMER_TOKEN="${provider_api_key}" \
   TIANGONG_PREFLIGHT_BASE_URL="${base_url_override}" \
   TIANGONG_PREFLIGHT_SIDECAR_RECEIPT_PATH="${sidecar_receipt_path}" \
+  TIANGONG_CODEX_TRANSPORT="${transport_mode}" \
+  TIANGONG_CODEX_BRIDGE="${bridge_mode}" \
   /usr/bin/node --input-type=module -e '
     const { runCodexGatewayPreflightFromFile } = await import(process.argv[1]);
     const result = await runCodexGatewayPreflightFromFile({

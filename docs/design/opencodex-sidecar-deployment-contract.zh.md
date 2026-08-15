@@ -127,3 +127,16 @@ fields and create/update tests passes the relevant package tests, but is not
 yet part of the running image. Until an AgentTeams image with that fix (or a
 native Kubernetes CR path) is selected, the credential binding is not an
 admission fact and the OpenCodex Full smoke remains blocked.
+
+## Shared capability cache
+
+The Worker image's `auto` route uses a deployment-owned shared capability cache,
+not a per-Worker probe. The cache key is the credential-free
+`provider/model/baseUrl/detectorVersion` fingerprint. A cache miss is serialized
+by an exact lock directory; only the first caller probes `/responses`, and later
+Workers reuse the bounded metadata record. The record contains no key, token,
+header, prompt, or model output. A bridge result still requires the current
+Worker's matching ready receipt, so the cache never becomes sidecar lifecycle
+ownership or an admission bypass. The default path is
+`/var/lib/tiangong-capabilities/codex.json` and must be backed by an
+AgentTeams-owned shared volume (or a future CoordinationStore adapter).

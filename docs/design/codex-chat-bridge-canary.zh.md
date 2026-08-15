@@ -84,7 +84,7 @@ Higress、OpenClaw 原生 provider 和 OpenAI 官方 `responses-api-proxy` 都�
 - `coding-model-profile.mjs` 区分 `native-responses` 与 `responses-via-chat-bridge`。
 - `model-provider-config.mjs` 只保留 bounded 的 `codexWireApi`、`codexBridge` 元数据，不保留任何 credential/header。
 - `codex-gateway-preflight.mjs` 要求 bridge 路由显式选择 `opencodex`，未知 bridge、错误 transport 均 fail-closed。
-- `worker/bin/openclaw` 已将 provider、model、model alias、endpoint、credential source、transport 和 bridge 参数化；默认 Docker canary 仍是 DeepSeek 原生 Responses，Qwen bridge 是显式 opt-in target。
+- `worker/bin/openclaw` 已将 provider、model、model alias、endpoint、credential source、transport 和 bridge 参数化；默认 Docker canary 使用共享能力缓存自动选择原生 Responses 或 OpenCodex bridge，Qwen bridge 仍要求本 Worker 的 ready receipt。
 - AgentTeams 仍是模型 key、网关路由和内部 sidecar 生命周期的 owner；Tiangong 不新增第二套密钥仓库。
 - WebUI/Matrix/Element Web 路径不变，bridge 只是模型数据面的一段内部路由。
 - Tiangong Worker 侧现有 `opencodex-sidecar.mjs` 只实现脱敏 binding、状态转换、
