@@ -13,6 +13,8 @@ const HARNESS_EVIDENCE_FILE = "/tmp/tiangong-pi-harness.last-run";
 const SUPPORTED_PROVIDER = "agentteams-gateway";
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
 const MATRIX_USER_ID = /^@[^:\s]+:[^\s]+$/u;
+const MATRIX_EVENT_ID = /^\$[^\s]{1,255}$/u;
+const MATRIX_ROOM_ID = /^![^\s]{1,255}$/u;
 
 function stringSet(value) {
   return new Set(Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : []);
@@ -166,6 +168,37 @@ function turnId(params) {
     : `${params.messageChannel ?? params.messageProvider ?? "channel"}:${messageId}`;
 }
 
+/**
+ * Extract only the bounded, non-secret Matrix ingress facts needed by the
+ * Leader admission seam. Raw event content stays in the channel adapter and
+ * never enters TurnRequest or the model runtime.
+ */
+export function resolveOpenClawMatrixIngress(params) {
+  const channel = params?.messageChannel ?? params?.messageProvider;
+  if (params?.matrixIngress === undefined || params?.matrixIngress === null) return null;
+  const ingressKeys = typeof params.matrixIngress === "object" && !Array.isArray(params.matrixIngress)
+    ? Object.keys(params.matrixIngress).sort().join(",") : "";
+  if (channel !== "matrix" || typeof params.matrixIngress !== "object" || Array.isArray(params.matrixIngress) ||
+      ingressKeys !== "authenticated,roomId,route" ||
+      params.matrixIngress.authenticated !== true || params.matrixIngress.route !== "team-room" ||
+      typeof params.senderId !== "string" || !MATRIX_USER_ID.test(params.senderId) ||
+      typeof params.currentMessageId !== "string" || !MATRIX_EVENT_ID.test(params.currentMessageId) ||
+      typeof params.matrixIngress.roomId !== "string" || !MATRIX_ROOM_ID.test(params.matrixIngress.roomId)) {
+    throw new Error("OpenClaw Matrix ingress context is incomplete or unauthenticated");
+  }
+  return Object.freeze({
+    source: Object.freeze({
+      channel: "matrix",
+      authenticated: true,
+      actorId: params.senderId,
+      messageId: params.currentMessageId,
+      route: "team-room",
+    }),
+    roomId: params.matrixIngress.roomId,
+    eventId: params.currentMessageId,
+  });
+}
+
 export function toTurnRequest(params) {
   const peerContext = matrixPeerContext(params);
   return createTurnRequest({
@@ -201,6 +234,7 @@ export function createTiangongPiHarness(options = {}) {
   });
   const harnessEvidenceFile = options.evidencePath ?? HARNESS_EVIDENCE_FILE;
   const observability = options.observability ?? DISABLED_OBSERVABILITY;
+  const leaderIngress = options.leaderIngress;
 
   return {
     id: HARNESS_ID,
@@ -236,6 +270,11 @@ export function createTiangongPiHarness(options = {}) {
           { mode: 0o600 },
         );
         if (effectiveParams.abortSignal.aborted) throw abortError(effectiveParams.abortSignal);
+        const matrixIngress = resolveOpenClawMatrixIngress(effectiveParams);
+        if (matrixIngress && typeof leaderIngress !== "function") {
+          throw new Error("OpenClaw Matrix ingress is present but Leader admission is not wired");
+        }
+        if (matrixIngress) await leaderIngress(matrixIngress, effectiveParams);
         const result = await runtime.runTurn(toTurnRequest(effectiveParams), attemptTrace);
         await writeFile(
           harnessEvidenceFile,

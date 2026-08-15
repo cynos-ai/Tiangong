@@ -11,7 +11,10 @@ import {
   createTeamConfig,
   createTeamRouteBinding,
 } from "../agent/team/coordination-store.mjs";
-import { admitLeaderMatrixIngress } from "../agent/team/leader-ingress.mjs";
+import {
+  admitLeaderMatrixIngress,
+  createOpenClawLeaderAdmissionHook,
+} from "../agent/team/leader-ingress.mjs";
 
 const NOW = "2026-08-15T01:00:00.000Z";
 
@@ -141,4 +144,31 @@ test("B2 ingress keeps the durable Work when visible reply delivery is temporari
   assert.deepEqual(result.reply, { delivered: false, pending: true, errorCode: "MATRIX_REPLY_FAILED" });
   assert.equal((await value.store.health()).workCount, 1);
   assert.equal((await value.store.listOutbox({ status: "pending" })).filter((wake) => wake.kind === "human-reply").length, 1);
+});
+
+test("B2 OpenClaw hook binds startup dependencies and accepts only per-event ingress facts", async (t) => {
+  const value = await fixture(t);
+  const hook = createOpenClawLeaderAdmissionHook({
+    channel: {
+      async readHumanEvent() { return event(); },
+      async notifyWorkAdmitted() { return { delivered: true, eventIdDigest: "c".repeat(64) }; },
+    },
+    store: value.store,
+    team: value.team,
+    route: value.route,
+    profile: value.profile,
+    leaderMember: value.leaderMember,
+    members: value.members,
+    now: () => NOW,
+  });
+  const result = await hook({
+    source: source(),
+    roomId: "!team:example.test",
+    eventId: "$human-event-1",
+  });
+  assert.equal(result.reply.delivered, true);
+  assert.throws(
+    () => createOpenClawLeaderAdmissionHook({ channel: {}, store: value.store, team: value.team }),
+    /current Team bindings and channel/u,
+  );
 });

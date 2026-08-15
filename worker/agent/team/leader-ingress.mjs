@@ -76,3 +76,38 @@ export async function admitLeaderMatrixIngress({
     });
   }
 }
+
+/**
+ * Bind the durable admission dependencies once at Worker startup so the
+ * OpenClaw Harness hook can pass only per-event ingress facts.
+ */
+export function createOpenClawLeaderAdmissionHook(bindings = {}) {
+  const {
+    channel,
+    store,
+    team,
+    route,
+    profile,
+    leaderMember,
+    members,
+    leaderSessionId,
+    now,
+  } = bindings;
+  if (!channel || !store || !team || !route || !profile || !leaderMember) {
+    throw new TypeError("Leader admission hook requires current Team bindings and channel");
+  }
+  return async (context) => admitLeaderMatrixIngress({
+    channel,
+    store,
+    source: context?.source,
+    roomId: context?.roomId,
+    eventId: context?.eventId,
+    team,
+    route,
+    profile,
+    leaderMember,
+    members,
+    leaderSessionId,
+    now,
+  });
+}
