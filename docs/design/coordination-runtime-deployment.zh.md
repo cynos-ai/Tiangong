@@ -59,3 +59,13 @@ v1.2.2 的 agt apply worker 仍没有原生的 Coordination API、Leader session
 4. 用 /readyz、PG outbox ack 和 Leader resume 事件做验收。
 
 这条路径绕过了管理面字段缺失，但没有把 PG/Matrix 权限下放给 Worker，也没有改变 AgentTeams 官方的 Matrix/OpenClaw 通道。
+
+部署后必须对实际 Leader 容器运行 verify-leader-runtime-injection.sh。它检查：
+
+- Worker 正在运行且容器名精确匹配；
+- Control endpoint、binding 目标路径和短期 Control token 恰好各注入一次；
+- binding 挂载为只读；
+- Worker 环境不存在 PG URL 或部署 Matrix token；
+- Worker 内的 Tiangong loader 能读取并验证 binding。
+
+检查失败就不能进入 Matrix/模型 smoke。v1.2.2 的 agt apply worker 帮助面没有 env/mount 参数，所以部署系统必须通过它自己的 Worker 模板/注入机制完成这些字段；仅在 Worker SOUL 或 prompt 中写入路径不算注入成功。

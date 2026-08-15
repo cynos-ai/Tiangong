@@ -19,6 +19,7 @@
   - /api/runtime exposes bounded Work/Timeline/Outbox projections only.
   - Worker container environment contains no PG URL or deployment Matrix token.
 - Required evidence: container labels, image digest, readiness JSON, Work ID, wake ID/status, and sanitized cleanup result.
+- Before the prompt, run verify-leader-runtime-injection.sh against the actual Leader container. It must pass; a prompt/SOUL mention of the path is not injection evidence.
 - Skip/block rules: block if AgentTeams cannot inject the Leader binding and endpoint; do not replace an existing Team or Worker.
 
 ## Full smoke
