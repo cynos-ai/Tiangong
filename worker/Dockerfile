@@ -149,6 +149,16 @@ ENV TIANGONG_RUNTIME_LANE=openclaw-canary \
     OPENCLAW_AGENT_RUNTIME=codex \
     OPENCLAW_AGENT_HARNESS_FALLBACK=none
 
+# Gate A admission-control canary: the Worker consumes a deployment-owned
+# Control API over the AgentTeams network; binding/replay state stays outside
+# the Worker image and is projected by the smoke/deployment owner.
+FROM canary AS canary-admission-control
+ENV TIANGONG_CANARY_ADMISSION=control \
+    TIANGONG_CONTROL_API_REQUIRED=1 \
+    TIANGONG_CONTROL_API_URL=http://tiangong-admission-control:8789/healthz \
+    TIANGONG_CONTROL_API_ADMISSION_URL=http://tiangong-admission-control:8789/v1/admission \
+    TIANGONG_CONTROL_API_TIMEOUT_MS=1500
+
 # Explicit opt-in lane for Chat/Completions-only coding models. The bridge itself
 # is AgentTeams-owned and must be reachable through the internal gateway route.
 FROM worker-base AS canary-chat-bridge

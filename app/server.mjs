@@ -7,33 +7,66 @@ const ROOT = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8780);
 const FACTS_FILE = process.env.TIANGONG_RUNTIME_FACTS_FILE || "";
 const CAPTURE_FILE = process.env.TIANGONG_TOOL_RESULT_CAPTURE_FILE || "";
-const MAX_CAPTURE_BYTES = 64 * 1024;
+const MAX_CAPTURE_BYTES = 256 * 1024;
 const MAX_CAPTURE_RECORDS = 32;
+const DIGEST = /^[a-f0-9]{64}$/u;
+
+function boundedId(value) {
+  return typeof value === "string" && value.length > 0 && value.length <= 256 ? value : null;
+}
+
+function scalarSummary(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const entries = Object.entries(value).slice(0, 32);
+  const result = {};
+  for (const [key, entry] of entries) {
+    if (!/^[A-Za-z][A-Za-z0-9_]{0,63}$/u.test(key)) continue;
+    if (typeof entry === "string" && entry.length <= 256) result[key] = entry;
+    else if (typeof entry === "number" && Number.isSafeInteger(entry)) result[key] = entry;
+    else if (typeof entry === "boolean" || entry === null) result[key] = entry;
+  }
+  return result;
+}
+
+function projectContentRef(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (typeof value.repositoryId === "string" && typeof value.commitSha === "string") {
+    return { repositoryId: value.repositoryId.slice(0, 256), commitSha: value.commitSha.slice(0, 128) };
+  }
+  if (typeof value.adapter === "string" && typeof value.ref === "string") {
+    return { adapter: value.adapter.slice(0, 128), ref: value.ref.slice(0, 256) };
+  }
+  return null;
+}
 
 async function readCapture(filePath) {
   if (!filePath) return { records: [], source: "tool-result-capture-not-configured" };
   try {
     const metadata = await lstat(resolve(filePath));
-    if (metadata.isSymbolicLink() || !metadata.isFile() || metadata.size > MAX_CAPTURE_BYTES) throw new Error("invalid capture file");
-    const lines = (await readFile(resolve(filePath), "utf8")).trim().split("\n").filter(Boolean).slice(-MAX_CAPTURE_RECORDS);
-    const records = lines.map((line) => JSON.parse(line)).filter((record) =>
-      record && typeof record === "object" && record.source === "openclaw.tool_result_persist" &&
-      typeof record.captureId === "string" && typeof record.toolName === "string" &&
-      Array.isArray(record.content) && typeof record.timestamp === "string",
+    if (metadata.isSymbolicLink() || !metadata.isFile() || metadata.size > MAX_CAPTURE_BYTES ||
+        (process.platform !== "win32" && (metadata.mode & 0o077) !== 0)) throw new Error("invalid capture file");
+    const state = JSON.parse(await readFile(resolve(filePath), "utf8"));
+    if (!state || state.version !== 1 || !Array.isArray(state.results) || state.results.length > 256 ||
+        !Array.isArray(state.retentionMarks) || state.retentionMarks.length > 256) throw new Error("invalid capture state");
+    const records = state.results.slice(-MAX_CAPTURE_RECORDS).filter((record) =>
+      record && typeof record === "object" && DIGEST.test(record.toolResultId ?? "") &&
+      DIGEST.test(record.callKey ?? "") && boundedId(record.actorId) && boundedId(record.runtimeProfile) &&
+      boundedId(record.tool) && scalarSummary(record.requestSummary) && scalarSummary(record.resultSummary) &&
+      typeof record.startedAt === "string" && typeof record.completedAt === "string",
     ).map((record) => ({
       version: 1,
-      captureId: record.captureId,
-      toolName: record.toolName,
-      toolCallId: typeof record.toolCallId === "string" ? record.toolCallId : null,
-      agentId: typeof record.agentId === "string" ? record.agentId : null,
-      sessionKey: typeof record.sessionKey === "string" ? record.sessionKey : null,
-      isSynthetic: record.isSynthetic === true,
-      content: record.content.slice(0, 32).map((part) => ({
-        type: typeof part?.type === "string" ? part.type : null,
-        textLength: Number.isSafeInteger(part?.textLength) ? part.textLength : null,
-        hasData: part?.hasData === true,
-      })),
-      timestamp: record.timestamp,
+      toolResultId: record.toolResultId,
+      callKey: record.callKey,
+      workId: boundedId(record.workId),
+      taskId: boundedId(record.taskId),
+      actorId: record.actorId,
+      runtimeProfile: record.runtimeProfile,
+      tool: record.tool,
+      requestSummary: scalarSummary(record.requestSummary),
+      resultSummary: scalarSummary(record.resultSummary),
+      outputRef: projectContentRef(record.outputRef),
+      startedAt: record.startedAt.slice(0, 64),
+      completedAt: record.completedAt.slice(0, 64),
     }));
     return { records, source: "tool-result-capture-file" };
   } catch {

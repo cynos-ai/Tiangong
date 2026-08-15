@@ -1,9 +1,8 @@
-import { closeSync, fsyncSync, mkdirSync, openSync, writeSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 import { sha256 } from "../canonical-json.mjs";
+import { ToolResultStore } from "./tool-result-store.mjs";
 
-const MAX_RECORD_BYTES = 4096;
 const WORKER_NAME_PATTERN = /^[A-Za-z0-9._-]+$/u;
 
 function bounded(value, limit = 512) {
@@ -43,7 +42,7 @@ export function defaultToolResultCapturePath(env = process.env) {
       ? `/root/agentteams-fs/agents/${env.AGENTTEAMS_WORKER_NAME}/.tiangong/runtime`
       : "";
   if (!stateRoot) throw new Error("ToolResult capture requires a Worker state root");
-  return join(stateRoot, "tool-results", "openclaw.jsonl");
+  return join(stateRoot, "tool-results", "openclaw.json");
 }
 
 export function createToolResultCaptureHook({ filePath, now = () => new Date() } = {}) {
@@ -51,32 +50,52 @@ export function createToolResultCaptureHook({ filePath, now = () => new Date() }
     throw new TypeError("ToolResult capture filePath is required");
   }
   if (typeof now !== "function") throw new TypeError("ToolResult capture clock is required");
-  return (event, ctx = {}) => {
+  const store = new ToolResultStore({ filePath });
+  return async (event, ctx = {}) => {
     const timestamp = now().toISOString();
     const summary = summarizeToolResult(event);
+    if (!summary.toolCallId) throw new Error("TOOL_RESULT_CAPTURE_GAP");
+    const actorId = bounded(ctx.actorId ?? ctx.senderId ?? ctx.agentId, 128);
+    if (!actorId) throw new Error("TOOL_RESULT_CAPTURE_GAP");
+    const sessionKey = bounded(ctx.sessionKey, 128);
+    if (!sessionKey) throw new Error("TOOL_RESULT_CAPTURE_GAP");
+    const callKey = sha256({ actorId, sessionKey, toolCallId: summary.toolCallId });
+    const toolResultId = sha256({ source: summary.source, callKey });
+    const textLength = summary.content.reduce((total, part) => total + (part.textLength ?? 0), 0);
+    const outcome = event.outcome === "timeout" || event.status === "timeout"
+      ? "timeout"
+      : event.outcome === "cancel" || event.status === "cancelled"
+        ? "cancel"
+        : summary.isSynthetic
+          ? "denied"
+          : event.outcome === "error" || event.status === "error"
+            ? "error"
+            : "success";
+    const startedAt = bounded(event.startedAt, 64) ?? timestamp;
     const record = {
-      ...summary,
-      captureId: sha256({
-        source: summary.source,
+      toolResultId,
+      callKey,
+      ...(bounded(ctx.workId, 256) ? { workId: bounded(ctx.workId, 256) } : {}),
+      ...(bounded(ctx.taskId, 256) ? { taskId: bounded(ctx.taskId, 256) } : {}),
+      actorId,
+      runtimeProfile: bounded(ctx.runtimeProfile, 128) ?? "openclaw-built-in",
+      tool: summary.toolName ?? "unknown",
+      requestSummary: {
+        toolName: summary.toolName ?? "unknown",
         toolCallId: summary.toolCallId,
-        agentId: bounded(ctx.agentId, 128),
-        sessionKey: bounded(ctx.sessionKey, 128),
-        timestamp,
-      }),
-      agentId: bounded(ctx.agentId, 128),
-      sessionKey: bounded(ctx.sessionKey, 128),
-      timestamp,
+      },
+      resultSummary: {
+        outcome,
+        contentPartCount: summary.content.length,
+        textLength,
+        hasData: summary.content.some((part) => part.hasData === true),
+        isSynthetic: summary.isSynthetic,
+      },
+      outputRef: event.outputRef ?? null,
+      startedAt,
+      completedAt: timestamp,
     };
-    const line = `${JSON.stringify(record)}\n`;
-    if (Buffer.byteLength(line) > MAX_RECORD_BYTES) {
-      throw new Error("ToolResult capture record exceeds the bounded limit");
-    }
-    mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 });
-    const fd = openSync(filePath, "a", 0o600);
-    try {
-      writeSync(fd, line);
-      fsyncSync(fd);
-    } finally { closeSync(fd); }
+    await store.append(record);
     return undefined;
   };
 }

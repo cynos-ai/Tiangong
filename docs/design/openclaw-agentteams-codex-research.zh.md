@@ -234,3 +234,16 @@ revision 变化和 readiness 失效。
 这仍然不是 AgentTeams 官方 sidecar manager，也不宣称 Gate A 已通过：部署层还必须
 负责投影 binding、启动/回收该服务、接通 canary Worker 并证明清理。只有这段 live smoke
 和 A5/A6 的耐久 ownership/recovery 证据完成后，才进入 Phase B 数据结构工作。
+
+## 2026-08-15 Phase A live closeout
+
+当前 Gate A canary 已在本地 AgentTeams 栈完成一次完整、可清理的真实运行；真实运行入口为 `smoke-testing/support/run-openclaw-admission-control-smoke.mjs`，并要求显式设置 `TIANGONG_RUN_REAL=1`。
+
+- pinned OpenClaw `2026.4.14 (2f35b6f)`、`tiangong-pi` plugin、Matrix/storage/entrypoint/readiness 均通过；
+- deployment-owned admission Control API 的 model admission、tool admission、服务重启 replay、Worker 重启 replay 和 revoke deny 均通过，失败发生在模型或工具执行前；
+- Worker-owned ToolResult store 使用稳定 `toolResultId`/`callKey`、有界 JSON state、owner-checked retention mark、重启可读、重复调用去重和冲突拒绝；原始 probe/error/credential-like 文本不会被写入；
+- 在真实 canary Worker 内实际调用 OpenClaw 内置 `read` tool，capture hook 产出 bounded ToolResult record；Web console 通过 bounded projection 测试；
+- RunnerJournal/RunnerPort 的 concurrent owner、outcome uncertainty、terminal replay 和 duplicate recovery focused tests 全部通过；canary service/Worker restart/readiness 与精确 Worker、service、storage、mirror、state cleanup 通过；
+- runtime 默认仍锁定原生 Responses/Codex 路径；未验证的其他 Harness 仍保持 disabled，不把 AgentTeams v1.2.2 credential-provider 当成 OpenCodex sidecar lifecycle manager。
+
+Phase A 的实现和 canary 证据已闭合，可以进入 Phase B 的最小 Work/Task/Result 设计；仍不删除 legacy pi lane、不迁移权威数据、不把 key 写入 Worker/image/log/evidence，也不把未经验证的 Qwen Chat-only route 切成默认路径。完整 app/PG 逐点重启和生产部署 rollback 属于后续部署演练，不作为本次 canary 的成功假设。

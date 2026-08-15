@@ -21,21 +21,27 @@ test("runtime console exposes health and honest unknown state by default", async
 
 test("runtime console projects bounded ToolResult metadata without raw payloads", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "tiangong-console-capture-"));
-  const captureFile = join(directory, "openclaw.jsonl");
+  const captureFile = join(directory, "openclaw.json");
   t.after(() => rm(directory, { recursive: true, force: true }));
-  await writeFile(captureFile, `${JSON.stringify({
+  await writeFile(captureFile, JSON.stringify({
     version: 1,
-    source: "openclaw.tool_result_persist",
-    captureId: "a".repeat(64),
-    toolName: "read",
-    toolCallId: "call-1",
-    agentId: "agent-1",
-    sessionKey: "session-1",
-    isSynthetic: false,
-    content: [{ type: "text", textLength: 5, hasData: false }],
-    timestamp: "2026-08-13T00:00:00.000Z",
+    results: [{
+    toolResultId: "a".repeat(64),
+    callKey: "b".repeat(64),
+    workId: "work-1",
+    taskId: "task-1",
+    actorId: "agent-1",
+    runtimeProfile: "openclaw-built-in",
+    tool: "read",
+    requestSummary: { toolName: "read", toolCallId: "call-1" },
+    resultSummary: { outcome: "success", textLength: 5, hasData: false },
+    outputRef: { repositoryId: "repo-1", commitSha: "abc123" },
+    startedAt: "2026-08-13T00:00:00.000Z",
+    completedAt: "2026-08-13T00:00:00.000Z",
     raw: "must-not-leak",
-  })}\n`, { mode: 0o600 });
+    }],
+    retentionMarks: [],
+  }), { mode: 0o600 });
   const server = createRuntimeConsoleServer({ captureFile }).listen(0);
   t.after(() => server.close());
   const address = server.address();
@@ -46,14 +52,18 @@ test("runtime console projects bounded ToolResult metadata without raw payloads"
   assert.equal(facts.toolResultsSource, "tool-result-capture-file");
   assert.deepEqual(facts.toolResults, [{
     version: 1,
-    captureId: "a".repeat(64),
-    toolName: "read",
-    toolCallId: "call-1",
-    agentId: "agent-1",
-    sessionKey: "session-1",
-    isSynthetic: false,
-    content: [{ type: "text", textLength: 5, hasData: false }],
-    timestamp: "2026-08-13T00:00:00.000Z",
+    toolResultId: "a".repeat(64),
+    callKey: "b".repeat(64),
+    workId: "work-1",
+    taskId: "task-1",
+    actorId: "agent-1",
+    runtimeProfile: "openclaw-built-in",
+    tool: "read",
+    requestSummary: { toolName: "read", toolCallId: "call-1" },
+    resultSummary: { outcome: "success", textLength: 5, hasData: false },
+    outputRef: { repositoryId: "repo-1", commitSha: "abc123" },
+    startedAt: "2026-08-13T00:00:00.000Z",
+    completedAt: "2026-08-13T00:00:00.000Z",
   }]);
   assert.equal(JSON.stringify(facts).includes("must-not-leak"), false);
 });

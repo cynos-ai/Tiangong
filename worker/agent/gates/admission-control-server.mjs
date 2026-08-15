@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
-import { lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname, isAbsolute } from "node:path";
 
 import { AdmissionDeniedError } from "./admission-boundary.mjs";
@@ -67,7 +67,14 @@ async function readJson(filePath, fallback) {
     throw new Error("admission state file is invalid");
   }
   if (process.platform !== "win32" && (metadata.mode & 0o077) !== 0) {
-    throw new Error("admission state permissions are too broad");
+    // Docker Desktop bind mounts can surface a host file as 0777 inside the
+    // Linux VM. A root-owned Control API may tighten that projection before
+    // accepting it; any remaining broad mode still fails closed.
+    if (typeof process.getuid === "function" && process.getuid() === 0) {
+      await chmod(filePath, 0o600).catch(() => {});
+      metadata = await lstat(filePath);
+    }
+    if ((metadata.mode & 0o077) !== 0) throw new Error("admission state permissions are too broad");
   }
   try {
     return JSON.parse(await readFile(filePath, "utf8"));
@@ -410,6 +417,14 @@ function envPort(value) {
   return port;
 }
 
+async function assertReadyBinding(bindingStore) {
+  const record = await bindingStore.read();
+  if (record.binding.active !== true || record.binding.revoked === true) {
+    throw new Error("admission binding is not active");
+  }
+  return record;
+}
+
 export async function startAdmissionControlServer({
   bindingPath = process.env.TIANGONG_ADMISSION_BINDING_FILE,
   replayPath = process.env.TIANGONG_ADMISSION_REPLAY_FILE,
@@ -422,10 +437,10 @@ export async function startAdmissionControlServer({
   const replayStore = new AdmissionReplayStore({
     filePath: envPath(replayPath, DEFAULT_REPLAY_PATH, "replay filePath"),
   });
-  await bindingStore.read();
+  await assertReadyBinding(bindingStore);
   const server = createAdmissionControlServer({
     plane: createAdmissionControlPlane({ bindingStore, replayStore }),
-    readiness: () => bindingStore.read(),
+    readiness: () => assertReadyBinding(bindingStore),
   });
   await new Promise((ready, reject) => {
     server.once("error", reject);
