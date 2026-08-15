@@ -60,6 +60,31 @@ function workAdmittedBody({ workId, sourceEventId, targetMatrixUserId }) {
   };
 }
 
+function taskAssignedBody({ taskId, workId, targetMatrixUserId }) {
+  required(taskId, "taskId", ID);
+  required(workId, "workId", ID);
+  required(targetMatrixUserId, "targetMatrixUserId", MATRIX_USER_ID);
+  return {
+    msgtype: "m.text",
+    body: `${targetMatrixUserId} Tiangong Task assigned: work=${workId} task=${taskId}. Read the immutable TaskSpec and submit one Result.`,
+    "m.mentions": { user_ids: [targetMatrixUserId] },
+    "com.tiangong.task": { version: 1, work_id: workId, task_id: taskId },
+  };
+}
+
+function resultSubmittedBody({ taskId, workId, resultDigest, targetMatrixUserId }) {
+  required(taskId, "taskId", ID);
+  required(workId, "workId", ID);
+  required(resultDigest, "resultDigest", /^[a-f0-9]{64}$/u);
+  required(targetMatrixUserId, "targetMatrixUserId", MATRIX_USER_ID);
+  return {
+    msgtype: "m.text",
+    body: `${targetMatrixUserId} Tiangong Result submitted: work=${workId} task=${taskId}. Review the durable Result.`,
+    "m.mentions": { user_ids: [targetMatrixUserId] },
+    "com.tiangong.result": { version: 1, work_id: workId, task_id: taskId, result_digest: resultDigest },
+  };
+}
+
 function transactionId(wake, roomId, targetMatrixUserId) {
   return `tiangong_coord_${sha256(canonicalJson({ kind: wake.kind, wakeId: wake.wakeId, workId: wake.workId ?? null, roomId, targetMatrixUserId }))}`;
 }
@@ -79,7 +104,7 @@ export function createMatrixWakeConsumer({
   fetchImpl = globalThis.fetch,
 } = {}) {
   if (!store || typeof store.getWork !== "function" || typeof store.listOutbox !== "function" || typeof store.claimWake !== "function" || typeof store.ackWake !== "function") throw new TypeError("Matrix wake consumer requires a CoordinationStore");
-  if (!binding?.team || !binding.route || !binding.leaderMember) throw new TypeError("Matrix wake consumer requires a Leader runtime binding");
+  if (!binding?.team || !binding.route || !binding.leaderMember || !Array.isArray(binding.members)) throw new TypeError("Matrix wake consumer requires a Leader runtime binding");
   const baseUrl = serviceBaseUrl(matrixUrl);
   const token = required(matrixToken, "matrixToken");
   required(consumerId, "consumerId", ID);
@@ -88,6 +113,8 @@ export function createMatrixWakeConsumer({
   if (typeof fetchImpl !== "function") throw new TypeError("Matrix wake consumer requires fetch");
   const roomId = required(binding.route.roomId, "binding.route.roomId", MATRIX_ROOM_ID);
   const leaderMatrixUserId = required(binding.leaderMember.matrixUserId, "binding.leaderMember.matrixUserId", MATRIX_USER_ID);
+  const membersById = new Map(binding.members.map((member) => [member.memberId, member]));
+  if (membersById.size !== binding.members.length || binding.members.some((member) => member.teamId !== binding.team.teamId)) throw new TypeError("Matrix wake consumer member binding is invalid");
   let timer;
   let running = false;
   let identityReady = false;
@@ -103,6 +130,15 @@ export function createMatrixWakeConsumer({
     identityReady = true;
   }
 
+  async function recipientMatrixUserId(memberId) {
+    const member = membersById.get(memberId);
+    if (!member || !member.enabled) throw Object.assign(new Error("Wake target is not an enabled Team member"), { code: "MATRIX_WAKE_TARGET_INVALID" });
+    const target = required(member.matrixUserId, "wake target matrix user", MATRIX_USER_ID);
+    const roster = joinedMembers(await request({ fetchImpl, baseUrl, token, method: "GET", path: `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/joined_members` }));
+    if (!roster.has(target)) throw Object.assign(new Error("Wake target is not joined to the Team room"), { code: "MATRIX_WAKE_TARGET_NOT_JOINED" });
+    return target;
+  }
+
   async function send(wake) {
     const work = wake.workId ? await store.getWork(wake.workId) : undefined;
     let body;
@@ -112,6 +148,18 @@ export function createMatrixWakeConsumer({
     } else if (wake.kind === "human-reply") {
       if (!work?.work || wake.targetMemberId !== work.work.actorId || work.work.teamId !== binding.team.teamId || work.work.routeId !== binding.route.routeId) throw Object.assign(new Error("Human reply wake is not bound to the current Work"), { code: "MATRIX_WAKE_BINDING_MISMATCH" });
       body = workAdmittedBody({ workId: work.work.workId, sourceEventId: work.work.sourceEventId, targetMatrixUserId: leaderMatrixUserId });
+    } else if (wake.kind === "task-assignment") {
+      if (!work?.work || !wake.taskId || work.work.teamId !== binding.team.teamId || work.work.routeId !== binding.route.routeId || wake.targetMemberId === binding.team.leaderMemberId) throw Object.assign(new Error("Task assignment wake is not bound to the current Team"), { code: "MATRIX_WAKE_BINDING_MISMATCH" });
+      if (typeof store.getTask !== "function") throw Object.assign(new Error("Task assignment requires task reads"), { code: "MATRIX_TASK_GATEWAY_UNAVAILABLE" });
+      const task = await store.getTask(wake.taskId);
+      if (!task?.spec || task.spec.workId !== wake.workId || task.spec.assigneeMemberId !== wake.targetMemberId) throw Object.assign(new Error("Task assignment wake does not match its TaskSpec"), { code: "MATRIX_WAKE_BINDING_MISMATCH" });
+      body = taskAssignedBody({ taskId: wake.taskId, workId: wake.workId, targetMatrixUserId: await recipientMatrixUserId(wake.targetMemberId) });
+    } else if (wake.kind === "result-notification") {
+      if (!work?.work || wake.targetMemberId !== binding.team.leaderMemberId || work.work.teamId !== binding.team.teamId || work.work.routeId !== binding.route.routeId) throw Object.assign(new Error("Result notification wake is not bound to the current Team"), { code: "MATRIX_WAKE_BINDING_MISMATCH" });
+      if (typeof store.getTask !== "function") throw Object.assign(new Error("Result notification requires task reads"), { code: "MATRIX_RESULT_GATEWAY_UNAVAILABLE" });
+      const task = await store.getTask(wake.taskId);
+      if (!task?.result || task.spec.workId !== wake.workId) throw Object.assign(new Error("Result notification wake has no matching Result"), { code: "MATRIX_WAKE_BINDING_MISMATCH" });
+      body = resultSubmittedBody({ taskId: wake.taskId, workId: wake.workId, resultDigest: task.result.contentDigest, targetMatrixUserId: leaderMatrixUserId });
     } else {
       throw Object.assign(new Error("Unsupported Matrix wake kind"), { code: "MATRIX_WAKE_KIND_UNSUPPORTED" });
     }
@@ -130,6 +178,8 @@ export function createMatrixWakeConsumer({
       handlers: {
         "leader-resume": send,
         "human-reply": send,
+        "task-assignment": send,
+        "result-notification": send,
       },
     });
     lastRunAt = new Date().toISOString();

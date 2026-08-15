@@ -25,7 +25,8 @@
   - /healthz and /readyz are successful; readiness source reports PostgreSQL and, when enabled, Matrix identity.
   - exactly one Work is bound to the source Matrix event and one Leader-resume wake is acknowledged.
   - /api/runtime exposes bounded Work/Timeline/Outbox projections only.
-  - Worker container environment contains no PG URL or deployment Matrix token.
+- Worker container environment contains no PG URL or deployment Matrix token.
+- When Task/Result wakes are present, assignment is sent only to the enabled assignee and result notification only to the current Leader; both receipts are durable and deterministic.
 - Required evidence: container labels, image digest, readiness JSON, Work ID, wake ID/status, and sanitized cleanup result.
 - Before the prompt, run verify-leader-runtime-injection.sh against the actual Leader container. It must pass; a prompt/SOUL mention of the path is not injection evidence.
 - Skip/block rules: block if AgentTeams cannot inject the Leader binding and endpoint; do not replace an existing Team or Worker.
