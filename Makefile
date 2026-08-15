@@ -28,7 +28,7 @@ SKILL_CHECK := node ./scripts/check-skills.mjs
 PAUSE_WORKER_BOUNDARY_TEST := ./scripts/test-pause-worker-boundary.sh
 PHASE4_RECOVERY_TEST := node ./worker/test/phase4-recovery.test.mjs
 
-.PHONY: help init up start stop down status verify config provider-check logs login uninstall test-agentteams check-skills check-demo-contract check-phase6-evidence-bundle verify-professional-state build-worker-image build-coordination-image coordination-runtime-start coordination-runtime-status coordination-runtime-stop test-coordination-runtime-deployment test-leader-runtime-injection test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-phase4-recovery test-runner-isolation test-runner-executor test-runner-broker test-runner-preparation start-runner-broker status-runner-broker stop-runner-broker test-deployment-service test-peer-mention-smoke-contract test-peer-mention-smoke test-matrix-browser-smoke-contract matrix-browser-start matrix-browser-status matrix-browser-stop test-specialist-leader-handoff-contract test-specialist-leader-handoff test-p0-identity-pg-contract test-p0-2-mention-contract test-pause-worker-boundary test-openclaw-gate-a-contract test-openclaw-gate-a-fixture test-openclaw-admission-contract test-openclaw-admission-hooks test-openclaw-admission-replay test-openclaw-tool-result-capture-matrix test-openclaw-recovery test-openclaw-admission-context-file test-openclaw-gate-a-live-hooks test-runtime-console openclaw-gate-a-start openclaw-gate-a-status openclaw-gate-a-restart openclaw-gate-a-stop openclaw-gate-a-run
+.PHONY: help init up start stop down status verify config provider-check logs login uninstall test-agentteams test-agentteams-worker-admission-contract check-skills check-demo-contract check-phase6-evidence-bundle verify-professional-state build-worker-image build-coordination-image coordination-runtime-start coordination-runtime-status coordination-runtime-stop test-coordination-runtime-deployment test-leader-runtime-injection test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-phase4-recovery test-runner-isolation test-runner-executor test-runner-executor-linux test-runner-broker test-runner-preparation start-runner-broker status-runner-broker stop-runner-broker test-deployment-service test-peer-mention-smoke-contract test-peer-mention-smoke test-matrix-browser-smoke-contract matrix-browser-start matrix-browser-status matrix-browser-stop test-specialist-leader-handoff-contract test-specialist-leader-handoff test-p0-identity-pg-contract test-p0-2-mention-contract test-pause-worker-boundary test-openclaw-gate-a-contract test-openclaw-gate-a-fixture test-openclaw-admission-contract test-openclaw-admission-hooks test-openclaw-admission-replay test-openclaw-tool-result-capture-matrix test-openclaw-recovery test-openclaw-admission-context-file test-openclaw-gate-a-live-hooks test-runtime-console openclaw-gate-a-start openclaw-gate-a-status openclaw-gate-a-restart openclaw-gate-a-stop openclaw-gate-a-run
 
 .PHONY: start-coordination
 
@@ -64,6 +64,9 @@ provider-check: ## Validate the provider/model route without changing the stack
 
 test-agentteams: ## Run the AgentTeams bootstrap and provider route contract tests
 	@$(AGENTTEAMS_BOOTSTRAP_TEST)
+
+test-agentteams-worker-admission-contract: ## Prove the AgentTeams agt boundary preserves credential scope fields
+	@./scripts/test-agentteams-worker-admission.sh
 
 logs: ## Follow logs; use SERVICE=controller for controller logs
 	@$(AGENTTEAMS) logs $(SERVICE)
@@ -125,6 +128,9 @@ test-runner-isolation: ## Prove the disposable RunnerPort isolation contract and
 
 test-runner-executor: ## Run the production Docker executor against the isolation fixture
 	@$(RUNNER_EXECUTOR_SMOKE)
+
+test-runner-executor-linux: ## Run the Docker executor smoke inside a Linux control container
+	@./scripts/run-runner-executor-linux.sh
 
 test-runner-broker: ## Prove the closed container-identity Runner broker path
 	@$(RUNNER_BROKER_SMOKE)

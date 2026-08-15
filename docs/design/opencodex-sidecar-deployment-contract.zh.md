@@ -159,6 +159,30 @@ and records the limitation as an explicit integration boundary. A future
 provider-enabled Kubernetes CR path or DTO fix can replace this credential
 provider without changing the sidecar lifecycle contract.
 
+### Admission preflight
+
+这条边界现在有可执行的部署前检查：
+`scripts/verify-agentteams-worker-admission.sh` 会在 Manager 内用一个
+`containerManaged: false`、`state: Stopped` 的一次性 Worker，提交合成的
+`accessEntries`，再用 `agt get workers -o json` 检查字段是否原样回显。字段被
+REST/agt 丢弃、资源已存在、apply 失败或清理不完整都会 fail closed；脚本不接受、
+读取或输出任何真实凭证。对应的本地合同测试是
+`make test-agentteams-worker-admission-contract`。
+
+截至 2026-08-15 的上游事实仍是：v1.2.2 的 `WorkerSpec` 声明了
+`accessEntries`、`credentialBindings` 和 `env`，但同一 tag 的
+`CreateWorkerRequest`/`UpdateWorkerRequest`/`WorkerResponse` REST DTO 没有
+`accessEntries` 字段，handler 也没有把它写入 Worker spec。因而 Kubernetes
+原生 CR 路径可以继续验证官方 credential-provider；embedded Docker 的
+`agt apply` 在通过该预检前不得被当作凭证绑定路径。该检查只证明字段透传，
+不把通用 credential-provider 误报成 OpenCodex sidecar 生命周期管理器。
+
+真实栈结果（2026-08-15）：在当前 `agentteams-manager` 上运行该预检，合成
+Worker 被创建为 `containerManaged=false`/`Stopped`，`agt get` 未回显
+`accessEntries`，脚本返回 `ACCESS_ENTRIES_DROPPED`，随后确认资源已删除。
+因此当前 embedded Docker 路径被明确挡在 credential binding admission 之前；
+这不是 sidecar 本身的 readiness 失败，也没有启动任何真实 Worker。
+
 ## Shared capability cache
 
 The Worker image's `auto` route uses a deployment-owned shared capability cache,

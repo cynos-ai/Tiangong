@@ -1,0 +1,2 @@
+* text=auto
+smoke-testing/fixtures/runner-isolation/input.txt text eol=lf

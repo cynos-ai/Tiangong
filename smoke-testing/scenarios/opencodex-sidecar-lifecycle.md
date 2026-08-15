@@ -23,7 +23,8 @@
   sidecar identity. Refuse to replace existing resources. Provision the
   OpenCodex sidecar through the AgentTeams deployment adapter, project only a
   Worker-scoped credential reference, and wait for an observable `ready`
-  receipt. The selected AgentTeams path must preserve `accessEntries` through
+  receipt. Run `scripts/verify-agentteams-worker-admission.sh` first. The
+  selected AgentTeams path must preserve `accessEntries` through
   admission (native Kubernetes CR or an upstream REST DTO fix); acceptance of
   an unknown YAML field by the unpatched embedded CLI is not sufficient. The
   route decision must come from the shared capability cache; do not repeat a

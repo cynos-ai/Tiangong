@@ -183,6 +183,22 @@ AgentTeams 镜像；它应先以 AgentTeams issue/PR 的形式合入，再构建
 OpenCodex generation rotation/drain 和真实 Qwen Team Full smoke。在此之前，
 DeepSeek 原生 Responses 继续作为默认路径，Qwen bridge 继续保持 canary。
 
+本分支已把“字段是否真正穿过管理面”固化为
+`scripts/verify-agentteams-worker-admission.sh`。它只创建停止状态的
+`containerManaged: false` 合成 Worker，并在清理前读取 `agt get` 的回显；
+字段缺失、资源冲突、apply/read/cleanup 任一失败都返回非零。默认只运行
+`make test-agentteams-worker-admission-contract` 的无外部资源合同测试；真实
+部署需显式设置 `TIANGONG_AGENTTEAMS_MANAGER_CONTAINER`，不会自动改动当前栈。
+
+当前栈实测结果：对 `agentteams-manager` 使用唯一临时 Worker 名称运行该预检，
+返回 `ACCESS_ENTRIES_DROPPED`，随后 `agt get workers` 确认资源为空。也就是说，
+embedded Docker 管理面当前确实会丢弃该字段；脚本在 Worker 启动前阻断，且不把
+这个反例当成 OpenCodex sidecar 生命周期故障。
+
+上游源码核对链接：[v1.2.2 WorkerSpec](https://raw.githubusercontent.com/agentscope-ai/AgentTeams/v1.2.2/agentteams-controller/api/v1beta1/types.go)、
+[v1.2.2 REST DTO](https://raw.githubusercontent.com/agentscope-ai/AgentTeams/v1.2.2/agentteams-controller/internal/server/types.go)、
+[v1.2.2 REST handler](https://raw.githubusercontent.com/agentscope-ai/AgentTeams/v1.2.2/agentteams-controller/internal/server/resource_handler.go)。
+
 ## 2026-08-15 全局能力缓存
 
 为避免每个 Worker 启动都做一次模型探测，canary 的 `auto` 路径现在使用部署
