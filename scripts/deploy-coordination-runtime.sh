@@ -9,6 +9,7 @@ readonly COMPONENT="coordination-runtime"
 readonly BINDING_TARGET="/run/tiangong-coordination/leader-binding.json"
 readonly ENV_FILE="${TIANGONG_COORDINATION_ENV_FILE:-}"
 readonly BINDING_FILE="${TIANGONG_LEADER_RUNTIME_BINDING_FILE:-}"
+readonly HOST_PORT="${TIANGONG_COORDINATION_HOST_PORT:-}"
 
 fail() { printf 'coordination_runtime_deployment=fail code=%s\n' "$1" >&2; exit 1; }
 owned_container() {
@@ -17,6 +18,10 @@ owned_container() {
 }
 require_network() { docker network inspect "${NETWORK}" >/dev/null 2>&1 || fail NETWORK_NOT_FOUND; }
 require_image() { docker image inspect "${IMAGE}" >/dev/null 2>&1 || fail IMAGE_NOT_FOUND; }
+validate_host_port() {
+  [[ -z "${HOST_PORT}" || "${HOST_PORT}" =~ ^[0-9]+$ ]] || fail INVALID_HOST_PORT
+  [[ -z "${HOST_PORT}" || ( "${HOST_PORT}" -ge 1 && "${HOST_PORT}" -le 65535 ) ]] || fail INVALID_HOST_PORT
+}
 regular_secret_file() {
   local path="$1" max_bytes="$2" mode
   [[ -n "${path}" && -f "${path}" && ! -L "${path}" ]] || return 1
@@ -32,7 +37,7 @@ validate_env_keys() {
     [[ "${line}" == *=* ]] || fail ENV_LINE_INVALID
     key="${line%%=*}"
     case "${key}" in
-      TIANGONG_COORDINATION_DATABASE_URL|TIANGONG_COORDINATION_CONTROL_TOKEN|TIANGONG_COORDINATION_MATRIX_TOKEN|AGENTTEAMS_MATRIX_URL|TIANGONG_COORDINATION_CONSUMER_ID|TIANGONG_COORDINATION_OUTBOX_INTERVAL_MS) ;;
+      TIANGONG_COORDINATION_DATABASE_URL|TIANGONG_COORDINATION_CONTROL_TOKEN|TIANGONG_COORDINATION_MATRIX_TOKEN|AGENTTEAMS_MATRIX_URL|TIANGONG_COORDINATION_CONSUMER_ID|TIANGONG_COORDINATION_OUTBOX_INTERVAL_MS|TIANGONG_LEADER_RUNTIME_BINDING_FILE|TIANGONG_COORDINATION_PORT|NODE_ENV) ;;
       *) fail UNSUPPORTED_ENVIRONMENT_KEY ;;
     esac
   done <"${ENV_FILE}"
@@ -58,11 +63,17 @@ start() {
   require_network
   require_image
   require_inputs
+  validate_host_port
   if docker container inspect "${CONTAINER}" >/dev/null 2>&1; then
     owned_container || fail FOREIGN_CONTAINER
+    if [[ -n "${HOST_PORT}" ]]; then
+      existing_host_port="$(docker container inspect --format '{{(index (index .HostConfig.PortBindings "8780/tcp") 0).HostPort}}' "${CONTAINER}" 2>/dev/null || true)"
+      existing_host_ip="$(docker container inspect --format '{{(index (index .HostConfig.PortBindings "8780/tcp") 0).HostIp}}' "${CONTAINER}" 2>/dev/null || true)"
+      [[ "${existing_host_port}" == "${HOST_PORT}" && "${existing_host_ip}" == "127.0.0.1" ]] || fail HOST_PORT_MISMATCH
+    fi
     docker container inspect --format '{{.State.Running}}' "${CONTAINER}" | grep -Fxq true || docker container start "${CONTAINER}" >/dev/null
   else
-    docker run -d --name "${CONTAINER}" \
+    run_args=(docker run -d --name "${CONTAINER}" \
       --label "io.tiangong.owner=${OWNER}" \
       --label "io.tiangong.component=${COMPONENT}" \
       --label 'io.tiangong.schema=1' \
@@ -79,7 +90,12 @@ start() {
       --cap-add=SETUID \
       --cap-add=SETGID \
       --security-opt no-new-privileges \
-      "${IMAGE}" >/dev/null
+    )
+    if [[ -n "${HOST_PORT}" ]]; then
+      run_args+=(--publish "127.0.0.1:${HOST_PORT}:8780/tcp")
+    fi
+    run_args+=("${IMAGE}")
+    "${run_args[@]}" >/dev/null
   fi
   for _ in $(seq 1 60); do
     if docker exec "${CONTAINER}" node --input-type=module -e 'const r=await fetch("http://127.0.0.1:8780/readyz"); if (!r.ok) process.exit(1);' >/dev/null 2>&1; then

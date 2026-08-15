@@ -304,10 +304,13 @@ export function createTiangongPiHarness(options = {}) {
         );
         if (effectiveParams.abortSignal.aborted) throw abortError(effectiveParams.abortSignal);
         const matrixIngress = resolveOpenClawMatrixIngress(effectiveParams);
-        if (matrixIngress && typeof leaderIngress !== "function") {
+        const leaderRuntime = typeof runtime.isLeaderRuntime === "function"
+          ? await runtime.isLeaderRuntime()
+          : true;
+        if (matrixIngress && leaderRuntime && typeof leaderIngress !== "function") {
           throw new Error("OpenClaw Matrix ingress is present but Leader admission is not wired");
         }
-        if (matrixIngress) await leaderIngress(matrixIngress, effectiveParams);
+        if (matrixIngress && leaderRuntime) await leaderIngress(matrixIngress, effectiveParams);
         const result = await runtime.runTurn(toTurnRequest(effectiveParams), attemptTrace);
         await writeFile(
           harnessEvidenceFile,

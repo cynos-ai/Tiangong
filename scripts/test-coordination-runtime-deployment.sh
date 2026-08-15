@@ -55,6 +55,26 @@ grep -q -- '--env-file' "${TEST_ROOT}/docker.log"
 grep -q -- 'leader-binding.json,readonly' "${TEST_ROOT}/docker.log"
 ! grep -q 'coordination-control-token' "${output}"
 
+output_port="${TEST_ROOT}/output-port"
+FAKE_DOCKER_LOG="${TEST_ROOT}/docker-port.log" \
+PATH="${TEST_ROOT}/bin:${PATH}" \
+TIANGONG_LEADER_RUNTIME_BINDING_FILE="${binding}" \
+TIANGONG_COORDINATION_ENV_FILE="${env_file}" \
+TIANGONG_COORDINATION_HOST_PORT=18780 \
+  "${REPO_ROOT}/scripts/deploy-coordination-runtime.sh" start >"${output_port}"
+grep -q -- '--publish 127.0.0.1:18780:8780/tcp' "${TEST_ROOT}/docker-port.log"
+
+if FAKE_DOCKER_LOG="${TEST_ROOT}/docker-invalid-port.log" \
+  PATH="${TEST_ROOT}/bin:${PATH}" \
+  TIANGONG_LEADER_RUNTIME_BINDING_FILE="${binding}" \
+  TIANGONG_COORDINATION_ENV_FILE="${env_file}" \
+  TIANGONG_COORDINATION_HOST_PORT=70000 \
+  "${REPO_ROOT}/scripts/deploy-coordination-runtime.sh" start >"${TEST_ROOT}/invalid-port.out" 2>&1; then
+  printf 'FAIL: invalid host port was accepted.\n' >&2
+  exit 1
+fi
+grep -q 'INVALID_HOST_PORT' "${TEST_ROOT}/invalid-port.out"
+
 printf '%s\n' 'NODE_ENV=production' >>"${env_file}"
 if FAKE_DOCKER_LOG="${TEST_ROOT}/docker-reserved.log" \
   PATH="${TEST_ROOT}/bin:${PATH}" \

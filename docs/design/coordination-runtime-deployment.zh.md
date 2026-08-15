@@ -69,3 +69,15 @@ v1.2.2 的 agt apply worker 仍没有原生的 Coordination API、Leader session
 - Worker 内的 Tiangong loader 能读取并验证 binding。
 
 检查失败就不能进入 Matrix/模型 smoke。v1.2.2 的 agt apply worker 帮助面没有 env/mount 参数，所以部署系统必须通过它自己的 Worker 模板/注入机制完成这些字段；仅在 Worker SOUL 或 prompt 中写入路径不算注入成功。
+
+## 2026-08-16 真实 Worker 注入补充
+
+真实 AgentTeams v1.2.2 Worker 的默认 HostConfig 只有 AgentTeams auth volume，没有 Tiangong binding、Coordination endpoint 或 token。`scripts/inject-leader-runtime-docker.sh` 是部署层的显式适配器：它只接受已校验的单 Worker 拓扑，保留原有 entrypoint、工作目录、端口、extra-host、共享网络和 auth volume，重建同名容器，然后强制执行 `verify-leader-runtime-injection.sh`。任何不支持的挂载、特权、RootFS、PG/Matrix secret 或重复注入都会 fail-closed。
+
+Docker Desktop/WSL 的 Windows bind mount 会把文件权限呈现为过宽，Tiangong loader 会拒绝它。生产部署应将 binding 放入一个专用 Docker volume（文件名为 `leader-binding.json`），以只读 volume 目录挂载到 `/run/tiangong-leader`；适配器通过 `TIANGONG_DOCKER_BINDING_VOLUME` 启用这条路径。Linux 原生 Docker 可以直接使用 owner-only bind file。已有注入需要轮换 endpoint/token 时，必须显式设置 `TIANGONG_LEADER_INJECTION_ROTATE=1`，否则重复注入仍然拒绝。
+
+本次真实验证结果：Leader 容器重建后保持 AgentTeams `Running`，只读 binding volume、短 bearer token 和 `/v1/coordination/admit` 均通过验证；人类 Matrix 单行请求进入原生 Leader 会话后，PG 产生 Work/Timeline/Wake，MinIO 写入 Project/Task binding。启用 Matrix outbox consumer 后，PG 中的 `leader-resume` 与 `human-reply` wakes 均被发送并 ack，`/readyz` 返回 `postgres-and-matrix`，runtime 根页面和 `/api/runtime` 均返回 200。
+
+如需让操作者从宿主机直接查看 runtime 页面，可设置 `TIANGONG_COORDINATION_HOST_PORT=18780`；脚本只绑定 `127.0.0.1`，不会默认暴露到公网。AgentTeams Dashboard 仍由 AgentTeams 自己管理。
+
+成员 Worker 不应调用 Leader admission。OpenClaw harness 现在读取固定 RoleProfile：只有 Leader runtime 执行 admission，Designer/Implementor/Assessor/Operator 的 Matrix 任务直接进入自己的成员运行时；对应回归测试覆盖该边界。人类 admission smoke 必须发送单行 Matrix body（换行会被 `HUMAN_EVENT_CONTENT_INVALID` 拒绝），成员 Worker mention 则走任务分发链路而不是人类 Work admission。

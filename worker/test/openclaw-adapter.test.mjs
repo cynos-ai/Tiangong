@@ -313,6 +313,25 @@ test("uses the runtime Leader admission seam when no explicit hook is supplied",
   assert.equal(result.promptError, null);
 });
 
+test("does not route member Matrix turns through the Leader admission seam", async (t) => {
+  let runtimeCalls = 0;
+  const harness = createTiangongPiHarness({
+    runtime: {
+      async isLeaderRuntime() { return false; },
+      async runTurn() { runtimeCalls += 1; return turnResult(); },
+      async reset() {},
+      async dispose() {},
+    },
+  });
+  t.after(() => harness.dispose());
+  const result = await harness.runAttempt(attemptParams({
+    groupId: "!team:example.test",
+    messageTo: "room:!team:example.test",
+  }));
+  assert.equal(runtimeCalls, 1);
+  assert.equal(result.promptError, null);
+});
+
 test("fails closed when a Matrix ingress binding is present but no Leader admission hook is configured", async (t) => {
   let runtimeCalls = 0;
   const harness = createTiangongPiHarness({

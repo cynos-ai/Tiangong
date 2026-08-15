@@ -578,6 +578,11 @@ export class TiangongAgentRuntime {
     });
   }
 
+  async isLeaderRuntime() {
+    const profileBundle = assertRuntimeProfileMaterialized(await this.#trustedProfileBundle());
+    return profileBundle.runtimeKind === "leader";
+  }
+
   async #runTurnUnlocked(request, observability) {
     if (request.images.length > 0) throw new Error("The Tiangong agent runtime does not support image input yet");
     const profileBundle = assertRuntimeProfileMaterialized(await this.#trustedProfileBundle());
