@@ -413,3 +413,23 @@ Linux 直接使用 owner-only bind；Docker Desktop/WSL 使用 deployment-owned 
 AgentTeams v1.2.2 尚无官方 OpenCodex sidecar lifecycle manager，且 Docker recreation
 adapter 尚未成为 AgentTeams Controller 原生资源；生产部署必须由受控 deployment layer
 拥有该适配器的生命周期、审计和 rollback，不能把本地 smoke 误报成官方能力。
+
+## 2026-08-16 Phase B5 provider 与迁移合同
+
+B5 在独立分支 `codex/phase-b5-provider-migration` 收口了两条生产前门槛：
+
+1. provider、model、endpoint、transport、bridge 和 credential source 继续由部署层
+   参数化；`make provider-check` 只读校验并 fail closed，默认 DeepSeek 路由不变，
+   Qwen Coding Plan 仍是显式候选路由。上游 key 只留在 AgentTeams secret/credential
+   provider，Worker/OpenClaw/Codex/OpenCodex 只拿 scoped consumer token。
+2. `app/coordination/migration-contract.mjs` 把 legacy-pi 保留、PG
+   `001_coordination`/`002_task_result`、Work/Task/Result/ToolResult retention、六个
+   provider/Matrix/WebUI/recovery/rollback/cleanup gates、digest 绑定和状态跳转变成
+   可执行合同；篡改、越级 cutover 和未验证 rollback 均拒绝。测试入口为
+   `make test-coordination-migration-contract`。
+
+当前 Qwen Coding Plan 已完成真实上游 HTTP 200 探测，历史受控 AgentTeams Team canary
+也已证明 Leader → Matrix → OpenCodex bridge Worker → Qwen 路径可行；但本分支没有把
+Qwen 切成默认，也没有执行权威数据 cutover。真正切换前仍需在隔离 Team/数据卷重跑
+完整六门 canary，并在失败时恢复 DeepSeek 与 legacy-pi。具体合同和验收表见
+[`phase-b5-provider-migration.zh.md`](phase-b5-provider-migration.zh.md)。

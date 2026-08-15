@@ -1,2 +1,4 @@
 * text=auto
+scripts/agentteams.sh text eol=lf
+scripts/test-agentteams.sh text eol=lf
 smoke-testing/fixtures/runner-isolation/input.txt text eol=lf
