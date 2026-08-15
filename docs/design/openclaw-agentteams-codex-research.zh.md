@@ -247,3 +247,22 @@ revision 变化和 readiness 失效。
 - runtime 默认仍锁定原生 Responses/Codex 路径；未验证的其他 Harness 仍保持 disabled，不把 AgentTeams v1.2.2 credential-provider 当成 OpenCodex sidecar lifecycle manager。
 
 Phase A 的实现和 canary 证据已闭合，可以进入 Phase B 的最小 Work/Task/Result 设计；仍不删除 legacy pi lane、不迁移权威数据、不把 key 写入 Worker/image/log/evidence，也不把未经验证的 Qwen Chat-only route 切成默认路径。完整 app/PG 逐点重启和生产部署 rollback 属于后续部署演练，不作为本次 canary 的成功假设。
+
+## 2026-08-15 Phase B B1 协调基础切片
+
+Phase B 已从独立分支 `codex/openclaw-phase-b-foundation` 开始。第一条纵切先实现可重启、可重放的 Tiangong `CoordinationStore`，不改变当前 legacy pi/Project-Task 默认入口：
+
+- `TeamConfig`、`TeamRouteBinding`、`MemberConfig`、`ControlProfile`、`WorkSpec`、`TaskSpec` 和 `Result` 都是严格字段、长度受限、SHA-256 绑定的记录；
+- Work 使用 append-only journal，并从 journal 重建 current WorkSpec、epoch、Task 和 Result projection；
+- WorkSpec 更新、Task 创建、Task 取消和 Result 提交使用 actor + command-scoped `requestId`，重复命令只 replay 原结果，内容冲突拒绝；
+- Task 创建可在同一 durable transaction 里写入 assignment wake；wake 的 claim/ack 也有重启可恢复的 outbox 状态；
+- Result 只能提交一次，取消与 Result 是确定性的竞争关系；引用 ToolResult 时核对 `workId`/`taskId` owner 并写 retention mark，不保存原始 tool payload；
+- journal 拒绝 partial record、错误 hash chain、非法 digest、symlink 和过宽权限。
+
+这一步的 focused contract 位于 `worker/test/coordination-store.test.mjs`，覆盖 epoch/replay、取消竞争、wake、ToolResult retention、重启重建和篡改拒绝。当前仍明确未完成：
+
+1. 尚未把新 store 接到 AgentTeams 的共享存储同步、Matrix ingress/outbox 或 Web projection；
+2. 尚未替换现有 legacy Project/Task TeamTaskPort，也不允许因此删除 pi；
+3. 尚未实现 B2 的 Human Matrix → Work → native Leader session 真实纵切。
+
+下一步是给该 store 接入受当前 TeamConfig/MemberConfig/ControlProfile 约束的 Leader admission，并用真实 Matrix room 做 B2 Basic smoke；只有 B2/B3/B4/B5 证据闭合后才讨论 clean-cut。
