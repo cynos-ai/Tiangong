@@ -72,7 +72,7 @@ v1.2.2 的 agt apply worker 仍没有原生的 Coordination API、Leader session
 
 ## 2026-08-16 真实 Worker 注入补充
 
-真实 AgentTeams v1.2.2 Worker 的默认 HostConfig 只有 AgentTeams auth volume，没有 Tiangong binding、Coordination endpoint 或 token。`scripts/inject-leader-runtime-docker.sh` 是部署层的显式适配器：它只接受已校验的单 Worker 拓扑，保留原有 entrypoint、工作目录、端口、extra-host、共享网络和 auth volume，重建同名容器，然后强制执行 `verify-leader-runtime-injection.sh`。任何不支持的挂载、特权、RootFS、PG/Matrix secret 或重复注入都会 fail-closed。
+真实 AgentTeams v1.2.2 Worker 的默认 HostConfig 只有 AgentTeams auth volume，没有 Tiangong binding、Coordination endpoint 或 token。`scripts/inject-leader-runtime-docker.sh` 是部署层的显式适配器：它只接受已校验的单 Worker 拓扑，保留原有 entrypoint、工作目录、端口、extra-host、共享网络、auth volume、cap-drop、security-opt、init 和 restart policy，重建同名容器，然后强制执行 `verify-leader-runtime-injection.sh`。任何不支持的挂载、资源限制、特权、RootFS、PG/Matrix secret 或重复注入都会 fail-closed，避免重建时静默放宽 Worker 的安全边界。
 
 Docker Desktop/WSL 的 Windows bind mount 会把文件权限呈现为过宽，Tiangong loader 会拒绝它。生产部署应将 binding 放入一个专用 Docker volume（文件名为 `leader-binding.json`），以只读 volume 目录挂载到 `/run/tiangong-leader`；适配器通过 `TIANGONG_DOCKER_BINDING_VOLUME` 启用这条路径。Linux 原生 Docker 可以直接使用 owner-only bind file。已有注入需要轮换 endpoint/token 时，必须显式设置 `TIANGONG_LEADER_INJECTION_ROTATE=1`，否则重复注入仍然拒绝。
 

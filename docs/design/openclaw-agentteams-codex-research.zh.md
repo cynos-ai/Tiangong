@@ -1,5 +1,20 @@
 # OpenClaw × AgentTeams × Codex/DeepSeek 可行性调查
 
+## 当前状态（2026-08-16）
+
+Phase B 的真实 AgentTeams 部署纵切已闭合：Human Matrix → 原生 OpenClaw Leader →
+PG Work/Timeline/Wake → Matrix outbox ack → MinIO Task/Result → 成员 Worker →
+Coordination WebUI 均已在 disposable v1.2.2 Team 中验证。Leader binding、Control
+endpoint 和短 token 由 `scripts/inject-leader-runtime-docker.sh` 以部署层适配器注入，
+并由 `verify-leader-runtime-injection.sh` 在容器内 fail-closed 验证；适配器会保留
+Worker hardening，无法精确复现的资源边界直接拒绝重建。
+
+这证明的是 Tiangong 的生产部署合同和真实纵切，不是 AgentTeams 官方已经提供了
+OpenCodex sidecar manager。v1.2.2 的 `agt` 管理面仍缺少这些原生字段，因此生产环境
+必须由受控 deployment layer 拥有注入、轮换、审计和 rollback。默认模型路径继续使用
+DeepSeek 原生 Responses；Qwen bridge 只在显式 provider 配置和 matching receipt 下启用，
+权威数据结构迁移尚未开始。
+
 ## 2026-08-15 Phase B B3 Task/Result Gateway
 
 Phase B 继续推进到 B3：PG CoordinationStore 现在与 file-backed store 对齐 Task/Result 的直接事实边界。新增 `002_task_result` migration、Task/Result 查询 API、不可变 TaskSpec/单次 Result、Work epoch/timeline 原子更新、request replay，以及 Result 与取消的行锁竞争；Web `/api/runtime` 同步投影 bounded Task/Result/ToolResult metadata，Worker 只能通过窄 HTTP facade 读取，不接触 PG。

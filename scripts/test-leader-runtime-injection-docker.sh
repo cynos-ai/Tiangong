@@ -30,6 +30,11 @@ cat >"${TEST_ROOT}/inspect.json" <<'JSON'
       "NetworkMode": "agentteams-net",
       "Privileged": false,
       "ReadonlyRootfs": false,
+      "CapAdd": [],
+      "CapDrop": ["ALL"],
+      "SecurityOpt": ["no-new-privileges:true"],
+      "Init": true,
+      "RestartPolicy": {"Name": "unless-stopped", "MaximumRetryCount": 0},
       "Binds": ["leader-test-auth:/var/run/secrets/agentteams"],
       "Mounts": [],
       "Devices": [],
@@ -40,6 +45,8 @@ cat >"${TEST_ROOT}/inspect.json" <<'JSON'
   }
 ]
 JSON
+
+jq '. [0].HostConfig.Memory = 1048576' "${TEST_ROOT}/inspect.json" >"${TEST_ROOT}/inspect-limited.json"
 
 cat >"${TEST_ROOT}/inspect-volume.json" <<'JSON'
 [
@@ -60,6 +67,11 @@ cat >"${TEST_ROOT}/inspect-volume.json" <<'JSON'
       "NetworkMode": "agentteams-net",
       "Privileged": false,
       "ReadonlyRootfs": false,
+      "CapAdd": [],
+      "CapDrop": ["ALL"],
+      "SecurityOpt": ["no-new-privileges:true"],
+      "Init": true,
+      "RestartPolicy": {"Name": "unless-stopped", "MaximumRetryCount": 0},
       "Binds": null,
       "Mounts": [
         {"Type": "volume", "Source": "leader-test-auth", "Target": "/var/run/secrets/agentteams"},
@@ -95,7 +107,13 @@ case "${1:-}:${2:-}" in
     esac
     ;;
   inspect:*)
-    if [[ "${TIANGONG_INJECTION_TEST_VOLUME:-0}" == 1 ]]; then cat "${root}/inspect-volume.json"; else cat "${root}/inspect.json"; fi
+    if [[ "${TIANGONG_INJECTION_TEST_RESOURCE:-0}" == 1 ]]; then
+      cat "${root}/inspect-limited.json"
+    elif [[ "${TIANGONG_INJECTION_TEST_VOLUME:-0}" == 1 ]]; then
+      cat "${root}/inspect-volume.json"
+    else
+      cat "${root}/inspect.json"
+    fi
     ;;
   volume:inspect) exit 0 ;;
   container:inspect) exit 0 ;;
@@ -123,7 +141,24 @@ grep -Fq -- '--mount type=bind,src=' "${TEST_ROOT}/run.args"
 grep -Fq 'dst=/run/tiangong-leader/leader-binding.json,readonly' "${TEST_ROOT}/run.args"
 grep -Fq -- '--publish 18818:8088/tcp' "${TEST_ROOT}/run.args"
 grep -Fq -- '--add-host host.docker.internal:host-gateway' "${TEST_ROOT}/run.args"
+grep -Fq -- '--cap-drop ALL' "${TEST_ROOT}/run.args"
+grep -Fq -- '--security-opt no-new-privileges:true' "${TEST_ROOT}/run.args"
+grep -Fq -- '--init' "${TEST_ROOT}/run.args"
+grep -Fq -- '--restart unless-stopped' "${TEST_ROOT}/run.args"
 ! grep -Fq 'test-control-token-123456' "${output}"
+
+if PATH="${TEST_ROOT}/bin:${PATH}" \
+  TIANGONG_INJECTION_TEST_ROOT="${TEST_ROOT}" \
+  TIANGONG_INJECTION_TEST_RESOURCE=1 \
+  TIANGONG_LEADER_WORKER_CONTAINER=leader-test \
+  TIANGONG_LEADER_RUNTIME_BINDING_FILE="${binding}" \
+  TIANGONG_COORDINATION_CONTROL_ENDPOINT=http://coordination-runtime:8780/v1/coordination/admit \
+  TIANGONG_COORDINATION_CONTROL_TOKEN=test-control-token-123456 \
+    "${SCRIPT_DIR}/inject-leader-runtime-docker.sh" >"${TEST_ROOT}/resource-output" 2>&1; then
+  printf 'expected resource-limit rejection\n' >&2
+  exit 1
+fi
+grep -Fq 'code=UNSUPPORTED_RESOURCE_LIMIT' "${TEST_ROOT}/resource-output"
 
 volume_output="${TEST_ROOT}/volume-output"
 PATH="${TEST_ROOT}/bin:${PATH}" \

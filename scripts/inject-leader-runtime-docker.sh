@@ -109,6 +109,15 @@ host_config='.[0].HostConfig'
 bind_count="$(jq -r "${host_config}.Binds | if type == \"array\" then length else 0 end" "${inspect_file}")"
 mount_count="$(jq -r "${host_config}.Mounts | if type == \"array\" then length else 0 end" "${inspect_file}")"
 [[ "$(jq -r "${host_config}.Devices | if type == \"array\" then length else 0 end" "${inspect_file}")" == 0 ]] || fail UNSUPPORTED_DEVICES
+# Recreating a Worker must not silently drop its hardening or resource boundary.
+# Preserve the security flags below and reject non-default limits that this
+# narrow adapter does not know how to reproduce exactly.
+while IFS= read -r resource; do
+  [[ -z "${resource}" ]] || fail UNSUPPORTED_RESOURCE_LIMIT
+done < <(jq -r "${host_config} | [ .Memory, .MemorySwap, .NanoCpus, .CpuShares, .CpuQuota, .CpuPeriod, .CpusetCpus, .CpusetMems, .PidsLimit ] | .[] | select(. != null and . != 0 and . != \"\")" "${inspect_file}")
+[[ "$(jq -r "${host_config}.Tmpfs | if type == \"object\" then length else 0 end" "${inspect_file}")" == 0 ]] || fail UNSUPPORTED_TMPFS
+[[ "$(jq -r "${host_config}.Ulimits | if type == \"array\" then length else 0 end" "${inspect_file}")" == 0 ]] || fail UNSUPPORTED_ULIMITS
+[[ "$(jq -r "${host_config}.AutoRemove // false" "${inspect_file}")" == false ]] || fail UNSUPPORTED_AUTO_REMOVE
 auth_source=''
 if [[ "${bind_count}" == 1 && "${mount_count}" == 0 ]]; then
   auth_bind="$(jq -r "${host_config}.Binds[0] // empty" "${inspect_file}")"
@@ -161,6 +170,21 @@ chmod 600 "${env_file}"
 run_args=(--detach --name "${CONTAINER}" --network "${NETWORK}" --env-file "${env_file}")
 [[ -n "${working_dir}" ]] && run_args+=(--workdir "${working_dir}")
 [[ -n "${user}" ]] && run_args+=(--user "${user}")
+while IFS= read -r cap; do [[ -n "${cap}" ]] && run_args+=(--cap-add "${cap}"); done < <(jq -r "${host_config}.CapAdd // [] | .[]" "${inspect_file}")
+while IFS= read -r cap; do [[ -n "${cap}" ]] && run_args+=(--cap-drop "${cap}"); done < <(jq -r "${host_config}.CapDrop // [] | .[]" "${inspect_file}")
+while IFS= read -r security_opt; do [[ -n "${security_opt}" ]] && run_args+=(--security-opt "${security_opt}"); done < <(jq -r "${host_config}.SecurityOpt // [] | .[]" "${inspect_file}")
+if [[ "$(jq -r "${host_config}.Init // false" "${inspect_file}")" == true ]]; then run_args+=(--init); fi
+restart_name="$(jq -r "${host_config}.RestartPolicy.Name // \"no\"" "${inspect_file}")"
+restart_count="$(jq -r "${host_config}.RestartPolicy.MaximumRetryCount // 0" "${inspect_file}")"
+case "${restart_name}" in
+  ''|no) ;;
+  always|unless-stopped) run_args+=(--restart "${restart_name}") ;;
+  on-failure)
+    [[ "${restart_count}" =~ ^[0-9]+$ ]] || fail UNSUPPORTED_RESTART_POLICY
+    if ((restart_count > 0)); then run_args+=(--restart "on-failure:${restart_count}"); else run_args+=(--restart on-failure); fi
+    ;;
+  *) fail UNSUPPORTED_RESTART_POLICY ;;
+esac
 run_args+=(--mount "type=volume,source=${auth_source},destination=/var/run/secrets/agentteams")
 if [[ -n "${DOCKER_BINDING_VOLUME}" ]]; then
   binding_parent="${BINDING_TARGET%/*}"
