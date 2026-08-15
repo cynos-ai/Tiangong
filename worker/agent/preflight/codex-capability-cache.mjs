@@ -167,22 +167,48 @@ export function createCodexCapabilityCache({
   if (!Number.isInteger(lockTimeoutMs) || lockTimeoutMs < 1_000 || lockTimeoutMs > 120_000) throw new TypeError("Codex capability cache lock timeout is outside the bounded range");
   if (!Number.isInteger(pollMs) || pollMs < 1 || pollMs > 1_000) throw new TypeError("Codex capability cache poll interval is outside the bounded range");
 
+  const identityFor = ({ provider, model, baseUrl, detectorVersion }) =>
+    codexCapabilityFingerprint({ provider, model, baseUrl, detectorVersion });
+  const readFresh = async (identity) => {
+    const entries = await readCache(path, now());
+    return entries.find((entry) => entry.key === identity.key) ?? null;
+  };
+  const storeIdentity = async (identity, probe) => {
+    const lockPath = `${path}.lock`;
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    await acquireLock(lockPath, lockTimeoutMs, pollMs, now);
+    try {
+      const afterLock = await readFresh(identity);
+      if (afterLock) return { cacheHit: true, record: afterLock };
+      const record = recordFromProbe(identity, probe, now(), ttlMs);
+      const entries = (await readCache(path, now())).filter((entry) => entry.key !== identity.key);
+      entries.unshift(record);
+      await writeCache(path, entries.slice(0, MAX_ENTRIES));
+      return { cacheHit: false, record };
+    } finally {
+      try { await rmdir(lockPath); } catch { /* a failed cleanup keeps the next caller fail-closed */ }
+    }
+  };
   return {
+    async lookup({ provider, model, baseUrl, detectorVersion }) {
+      const identity = identityFor({ provider, model, baseUrl, detectorVersion });
+      const record = await readFresh(identity);
+      return { cacheHit: Boolean(record), record };
+    },
+    async store({ provider, model, baseUrl, detectorVersion, probe }) {
+      const identity = identityFor({ provider, model, baseUrl, detectorVersion });
+      return storeIdentity(identity, probe);
+    },
     async resolve({ provider, model, baseUrl, detectorVersion, probe }) {
       if (typeof probe !== "function") throw new TypeError("Codex capability cache requires a probe function");
-      const identity = codexCapabilityFingerprint({ provider, model, baseUrl, detectorVersion });
-      const readFresh = async () => {
-        const entries = await readCache(path, now());
-        return entries.find((entry) => entry.key === identity.key) ?? null;
-      };
-      const cached = await readFresh();
+      const identity = identityFor({ provider, model, baseUrl, detectorVersion });
+      const cached = await readFresh(identity);
       if (cached) return { cacheHit: true, record: cached };
-
       const lockPath = `${path}.lock`;
       await mkdir(dirname(path), { recursive: true, mode: 0o700 });
       await acquireLock(lockPath, lockTimeoutMs, pollMs, now);
       try {
-        const afterLock = await readFresh();
+        const afterLock = await readFresh(identity);
         if (afterLock) return { cacheHit: true, record: afterLock };
         const result = await probe(identity.fingerprint);
         const record = recordFromProbe(identity, result, now(), ttlMs);

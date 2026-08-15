@@ -77,3 +77,33 @@ AgentTeams 凭证边界。
   `TIANGONG_CODEX_CAPABILITY_CACHE_SHARED=1`；没有该挂载或声明时，当前 Worker
   会对 `auto` 路由 fail-closed，不会退化成每容器本地缓存。显式 native/bridge
   route 不受这个共享缓存门槛影响。
+## 2026-08-15 部署适配器落地
+
+当前 embedded Docker 的 `agt apply` 仍没有 Worker 自定义 volume/mount 字段，
+所以本次没有改 AgentTeams 管理的 Worker 容器，也没有把 Docker socket 暴露给 Worker。
+新增的部署层适配器是 `scripts/deploy-codex-capability-cache.sh`：它在
+`agentteams-net` 上启动一个不发布宿主端口的 `tiangong-codex-capability-cache`
+服务，并把脱敏 JSON 状态持久化到 deployment-owned Docker volume。
+
+Worker 的 `auto` 路由默认访问内部地址
+`http://tiangong-codex-capability-cache:8788`。服务提供 bounded `lookup`/`commit`
+接口：同一 provider/model/credential-free endpoint/detectorVersion 只会发放一个
+短 lease，持有 lease 的 Worker 执行一次真实 Responses 探测并只提交脱敏结果；
+其他 Worker 等待并复用记录。provider key、Worker token、请求体和 Authorization
+header 不进入服务请求或持久化文件。服务不可用、lease 失效、记录校验失败均
+fail-closed。
+
+本地启停：
+
+```text
+bash scripts/deploy-codex-capability-cache.sh start
+bash scripts/deploy-codex-capability-cache.sh status
+bash scripts/deploy-codex-capability-cache.sh remove
+```
+
+真实 AgentTeams v1.2.2 双 Worker 冷启动验证（脚本：
+`smoke-testing/support/run-openclaw-global-cache-smoke.sh`）已通过：两个独立 Worker
+都经由 AgentTeams Worker 生命周期启动，均报告 `codex_gateway_preflight=pass` 和
+`native-responses`；日志分别出现一次 `hit=false`、一次 `hit=true`，共享记录为 1
+条，`hasCredential=false`，随后两个 Worker、容器、镜像存储和 Worker mirror 均精确
+清理。部署服务及其 deployment-owned volume 按设计保留，供后续 Worker 复用。

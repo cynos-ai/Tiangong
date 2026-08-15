@@ -13,7 +13,8 @@
 
 ## Deterministic checks
 
-- Focused Worker suite: 36/36 passed.
+- Focused Worker suite: 37/37 passed, including the remote cache service lease
+  and sanitized persistence test.
 - Worker observability contract: passed.
 - OpenClaw Gate A fixture contract and shell syntax: passed.
 
@@ -33,12 +34,33 @@
 
 ## Boundary and limitation
 
-This run proves the shared-volume implementation, the earlier real DeepSeek native
-startup path, and the current fail-closed behavior. The current embedded
-AgentTeams Docker `agt apply` route does not expose a Worker shared-volume field,
-so it does not yet prove a production multi-Worker mount. Production promotion
-remains conditional on a deployment adapter/PodTemplate mounting the same RW
-cache path into every Worker and setting `TIANGONG_CODEX_CAPABILITY_CACHE_SHARED=1`.
-The prior Qwen OpenCodex bridge Team canary remains valid for the explicit bridge
-route, but the sidecar lifecycle and shared-volume mount are still deployment-owned
-work.
+This run proves the shared-file implementation, the deployment-owned service
+adapter, the earlier real DeepSeek native startup path, and the current
+fail-closed behavior. The embedded AgentTeams Docker `agt apply` route still does
+not expose a Worker shared-volume field, so the adapter deliberately uses an
+internal network service backed by its own labeled volume rather than mutating
+Worker mounts. The direct Kubernetes PodTemplate/shared-mount alternative remains
+available, but is not required by the current Docker adapter. The prior Qwen
+OpenCodex bridge Team canary remains valid for the explicit bridge route; its
+sidecar lifecycle is still a separate deployment-owned gate.
+
+## Deployment adapter completion
+
+The embedded Docker `agt apply` route still has no Worker volume field, so the
+deployment-side implementation uses `scripts/deploy-codex-capability-cache.sh`.
+It runs `tiangong-codex-capability-cache` on `agentteams-net`, stores the bounded
+cache in the deployment-owned volume `tiangong-codex-capability-cache`, and exposes
+only credential-free `lookup`/`commit` requests to Workers. The canary image now
+defaults `TIANGONG_CODEX_CAPABILITY_CACHE_SHARED=1` and the internal service URL;
+service absence or malformed state remains fail-closed.
+
+The real two-Worker run `smoke-testing/support/run-openclaw-global-cache-smoke.sh`
+passed on 2026-08-15. The exact Workers were
+`tiangong-codex-cache-a-20260815013102-50013` and
+`tiangong-codex-cache-b-20260815013102-50013`. Both were AgentTeams-managed
+`runtime=openclaw` Workers using the current canary image, both reached Running and
+passed the Codex gateway preflight, one logged `hit=false` and the other `hit=true`,
+the shared file contained one `native-responses` entry with `hasCredential=false`,
+and both Workers, containers, storage prefixes, and mirror paths were removed with
+`codex_global_cache_cleanup=pass`. The deployment service and its owned volume were
+intentionally retained for subsequent Worker startups.

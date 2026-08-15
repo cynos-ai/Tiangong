@@ -15,6 +15,7 @@ readonly OPERATOR_IMAGE="tiangong-worker-operator:dev"
 readonly RUNNER_BROKER_IMAGE="tiangong-runner-broker:dev"
 readonly DEPLOYMENT_SERVICE_IMAGE="tiangong-deployment-service:dev"
 readonly DEPLOYMENT_BROKER_IMAGE="tiangong-deployment-broker:dev"
+readonly CODEX_CAPABILITY_CACHE_IMAGE="tiangong-codex-capability-cache:dev"
 readonly EXPECTED_NODE_VERSION="v22.23.2"
 readonly EXPECTED_PI_VERSION="0.82.0"
 readonly EXPECTED_CODEX_VERSION="codex-cli 0.120.0"
@@ -55,6 +56,8 @@ printf '[Tiangong] Building disposable deployment service image %s\n' "${DEPLOYM
 docker build "${build_args[@]}" --target deployment-service --tag "${DEPLOYMENT_SERVICE_IMAGE}" "${REPO_ROOT}/worker"
 printf '[Tiangong] Building controlled deployment broker image %s\n' "${DEPLOYMENT_BROKER_IMAGE}"
 docker build "${build_args[@]}" --target deployment-broker --tag "${DEPLOYMENT_BROKER_IMAGE}" "${REPO_ROOT}/worker"
+printf '[Tiangong] Building deployment-owned Codex capability cache image %s\n' "${CODEX_CAPABILITY_CACHE_IMAGE}"
+docker build "${build_args[@]}" --target codex-capability-cache --tag "${CODEX_CAPABILITY_CACHE_IMAGE}" "${REPO_ROOT}/worker"
 
 actual_node_version="$(docker run --rm --entrypoint node "${IMAGE}" --version)"
 [[ "${actual_node_version}" == "${EXPECTED_NODE_VERSION}" ]] || {

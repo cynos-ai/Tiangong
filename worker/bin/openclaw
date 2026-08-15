@@ -17,7 +17,7 @@ cleanup_codex_home() {
 }
 
 configure_codex_gateway() {
-  local config_file provider_base_url provider_api_key provider_id model_id provider_toml_id temporary_file base_url_override credential_source bridge_mode provider_http_headers sidecar_receipt_path transport_mode cache_path cache_result resolved_transport resolved_bridge resolved_base_url cache_hit
+  local config_file provider_base_url provider_api_key provider_id model_id provider_toml_id temporary_file base_url_override credential_source bridge_mode provider_http_headers sidecar_receipt_path transport_mode cache_path cache_url cache_result resolved_transport resolved_bridge resolved_base_url cache_hit
   [[ "${TIANGONG_RUNTIME_LANE:-legacy-v0.2}" == "openclaw-canary" ]] || return 0
   [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]] || return 0
   config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
@@ -57,6 +57,7 @@ configure_codex_gateway() {
       return 1
     }
     cache_path="${TIANGONG_CODEX_CAPABILITY_CACHE_PATH:-/var/lib/tiangong-capabilities/codex.json}"
+    cache_url="${TIANGONG_CODEX_CAPABILITY_CACHE_URL:-}"
     cache_result="$(
       TIANGONG_CODEX_CACHE_PROVIDER="${provider_id}" \
       TIANGONG_CODEX_CACHE_MODEL="${model_id}" \
@@ -64,13 +65,17 @@ configure_codex_gateway() {
       TIANGONG_CODEX_CACHE_TOKEN="${provider_api_key}" \
       TIANGONG_CODEX_CACHE_RECEIPT_PATH="${sidecar_receipt_path}" \
       TIANGONG_CODEX_CACHE_PATH="${cache_path}" \
+      TIANGONG_CODEX_CACHE_URL="${cache_url}" \
       /usr/bin/node --input-type=module -e '
         const { CODEX_DETECTOR_VERSION, detectCodexRoute, readOpenCodexSidecarReceipt } = await import(process.argv[1]);
         const { createCodexCapabilityCache } = await import(process.argv[2]);
+        const { createRemoteCodexCapabilityCache } = await import(process.argv[3]);
         const provider = process.env.TIANGONG_CODEX_CACHE_PROVIDER;
         const model = process.env.TIANGONG_CODEX_CACHE_MODEL;
         const baseUrl = process.env.TIANGONG_CODEX_CACHE_BASE_URL;
-        const cache = createCodexCapabilityCache({ path: process.env.TIANGONG_CODEX_CACHE_PATH });
+        const cache = process.env.TIANGONG_CODEX_CACHE_URL
+          ? createRemoteCodexCapabilityCache({ endpoint: process.env.TIANGONG_CODEX_CACHE_URL })
+          : createCodexCapabilityCache({ path: process.env.TIANGONG_CODEX_CACHE_PATH });
         const resolved = await cache.resolve({
           provider,
           model,
@@ -90,7 +95,7 @@ configure_codex_gateway() {
           endpoint = receipt.endpoint;
         }
         console.log(JSON.stringify({ endpoint, transport: resolved.record.transport, bridge: resolved.record.transport === "responses-via-chat-bridge" ? "opencodex" : null, cacheHit: resolved.cacheHit, outcome: resolved.record.outcome, reasonCode: resolved.record.reasonCode }));
-      ' "${CODEX_CAPABILITY_DETECTOR}" "${CODEX_CAPABILITY_CACHE}"
+      ' "${CODEX_CAPABILITY_DETECTOR}" "${CODEX_CAPABILITY_CACHE}" "/opt/tiangong-worker/agent/preflight/codex-capability-cache-remote.mjs"
     )"
     resolved_transport="$(jq -er '.transport' <<<"${cache_result}")"
     resolved_bridge="$(jq -r '.bridge // "none"' <<<"${cache_result}")"
@@ -100,7 +105,11 @@ configure_codex_gateway() {
     bridge_mode="${resolved_bridge}"
     provider_base_url="${resolved_base_url}"
     base_url_override="${resolved_base_url}"
-    printf '[tiangong-worker] codex_capability_cache=pass hit=%s route=%s bridge=%s path=%s\n' "${cache_hit}" "${transport_mode}" "${bridge_mode}" "${cache_path}" >&2
+    if [[ -n "${cache_url}" ]]; then
+      printf '[tiangong-worker] codex_capability_cache=pass hit=%s route=%s bridge=%s service=%s\n' "${cache_hit}" "${transport_mode}" "${bridge_mode}" "${cache_url}" >&2
+    else
+      printf '[tiangong-worker] codex_capability_cache=pass hit=%s route=%s bridge=%s path=%s\n' "${cache_hit}" "${transport_mode}" "${bridge_mode}" "${cache_path}" >&2
+    fi
   fi
   export TIANGONG_CODEX_TRANSPORT="${transport_mode}"
   export TIANGONG_CODEX_BRIDGE="${bridge_mode}"

@@ -59,6 +59,10 @@ FROM worker-base AS deployment-service
 WORKDIR /opt/tiangong-worker
 ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/deployment/service.mjs"]
 
+FROM worker-base AS codex-capability-cache
+WORKDIR /opt/tiangong-worker
+ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/preflight/codex-capability-cache-service.mjs"]
+
 FROM worker-base AS runner-broker
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 WORKDIR /opt/tiangong-worker
@@ -105,7 +109,8 @@ ARG TIANGONG_CODEX_CREDENTIAL_SOURCE=agentteams-consumer-token
 ARG TIANGONG_CODEX_TRANSPORT=auto
 ARG TIANGONG_CODEX_BRIDGE=auto
 ARG TIANGONG_CODEX_CAPABILITY_CACHE_PATH=/var/lib/tiangong-capabilities/codex.json
-ARG TIANGONG_CODEX_CAPABILITY_CACHE_SHARED=0
+ARG TIANGONG_CODEX_CAPABILITY_CACHE_URL=http://tiangong-codex-capability-cache:8788
+ARG TIANGONG_CODEX_CAPABILITY_CACHE_SHARED=1
 ENV TIANGONG_RUNTIME_LANE=openclaw-canary \
     TIANGONG_CANARY_REQUIRED=1 \
     TIANGONG_CANARY_ADMISSION=local \
@@ -119,6 +124,7 @@ ENV TIANGONG_RUNTIME_LANE=openclaw-canary \
     TIANGONG_CODEX_TRANSPORT="${TIANGONG_CODEX_TRANSPORT}" \
     TIANGONG_CODEX_BRIDGE="${TIANGONG_CODEX_BRIDGE}" \
     TIANGONG_CODEX_CAPABILITY_CACHE_PATH="${TIANGONG_CODEX_CAPABILITY_CACHE_PATH}" \
+    TIANGONG_CODEX_CAPABILITY_CACHE_URL="${TIANGONG_CODEX_CAPABILITY_CACHE_URL}" \
     TIANGONG_CODEX_CAPABILITY_CACHE_SHARED="${TIANGONG_CODEX_CAPABILITY_CACHE_SHARED}" \
     OPENCLAW_AGENT_RUNTIME=codex \
     OPENCLAW_AGENT_HARNESS_FALLBACK=none
