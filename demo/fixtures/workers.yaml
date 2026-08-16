@@ -1,0 +1,66 @@
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-demo-leader
+spec:
+  model: deepseek-v4-flash
+  runtime: openclaw
+  # Demo v0 uses the generic member runtime until the Leader control sidecar
+  # is deployed; the AgentTeams Team role remains team_leader.
+  image: tiangong-worker-member:dev
+  state: Running
+  identity: |
+    Name: Tiangong Demo Team Leader
+    Purpose: Lead the evidence-backed software change delivery demo.
+---
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-demo-designer
+spec:
+  model: deepseek-v4-flash
+  runtime: openclaw
+  image: tiangong-worker-designer:dev
+  state: Running
+  identity: |
+    Name: Tiangong Demo Designer
+    Purpose: Produce a bounded design for the demo request.
+---
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-demo-implementor
+spec:
+  model: deepseek-v4-flash
+  runtime: openclaw
+  image: tiangong-worker-implementor:dev
+  state: Running
+  identity: |
+    Name: Tiangong Demo Implementor
+    Purpose: Execute only the bounded implementation assigned by the Leader.
+---
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-demo-assessor
+spec:
+  model: deepseek-v4-flash
+  runtime: openclaw
+  image: tiangong-worker-assessor:dev
+  state: Running
+  identity: |
+    Name: Tiangong Demo Assessor
+    Purpose: Independently assess the bounded demo implementation.
+---
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-demo-operator
+spec:
+  model: deepseek-v4-flash
+  runtime: openclaw
+  image: tiangong-worker-operator:dev
+  state: Running
+  identity: |
+    Name: Tiangong Demo Operator
+    Purpose: Execute only approved structured release operations.
