@@ -108,3 +108,12 @@ run id 的绑定。两套 ID 不能直接混用；让模型改用普通 `exec` �
 生成 credential-free Runner binding，关闭通用 host-side coding tool，只暴露以
 Task identity 为输入的受限 native tool，并用同一条 Codex session 完成
 ChangeRevision、ToolResult、重启恢复和 cleanup 验证。
+
+本分支已先落地这个接缝的 Worker 侧合同：`native-runner-tool.mjs` 校验部署层
+注入的只读 binding receipt（Task/Work/成员/role/runId/digest），只向 OpenClaw
+注册 `tiangong_run_command`，调用时从 Runner broker 读取 immutable plan，再经
+现有 `RunnerPort`/`RunnerJournal` 执行和重放。该注册默认关闭；启用时若没有
+binding/journal，或没有显式声明 generic host-side `exec=deny`，会直接 fail closed。
+目前已完成纯合同测试和 Worker 镜像构建，尚未把它接入真实 Team smoke；下一步是
+由部署层生成 receipt、挂载 Runner broker endpoint，并验证原生 Codex 不再走普通
+host-side `exec`。

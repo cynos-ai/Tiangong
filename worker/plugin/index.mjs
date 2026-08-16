@@ -11,6 +11,7 @@ import { createCanaryAdmissionResolver } from "../agent/gates/canary-admission.m
 import { createToolResultCaptureHook, defaultToolResultCapturePath } from "../agent/gates/tool-result-capture.mjs";
 import { assertPluginApi } from "../agent/preflight/openclaw-preflight.mjs";
 import { registerMemberCoordinationHooks } from "../agent/team/member-coordination-hooks.mjs";
+import { registerNativeRunnerTool } from "../agent/team/native-runner-tool.mjs";
 import { createTiangongPiHarness } from "./openclaw-adapter.mjs";
 
 export default definePluginEntry({
@@ -50,6 +51,7 @@ export default definePluginEntry({
         token: process.env.TIANGONG_COORDINATION_CONTROL_TOKEN,
         memberId: process.env.TIANGONG_MEMBER_ID,
       });
+      registerNativeRunnerTool(api, { env: process.env });
     }
     const observability = createWorkerObservability({
       config: resolveObservabilityConfig(api.pluginConfig),
