@@ -20,7 +20,9 @@ assert_role_runtime_route() {
   if [[ "${selected_runtime}" == "codex-app-server" ]]; then
     export OPENCLAW_AGENT_RUNTIME="codex"
   else
-    export OPENCLAW_AGENT_RUNTIME="openclaw"
+    # The pinned OpenClaw image still calls its official embedded runtime
+    # `pi`; this is not Tiangong's `tiangong-pi` plugin harness.
+    export OPENCLAW_AGENT_RUNTIME="pi"
   fi
   TIANGONG_CODEX_RUNTIME="${TIANGONG_CODEX_RUNTIME:-0}" \
   OPENCLAW_AGENT_HARNESS_FALLBACK="${OPENCLAW_AGENT_HARNESS_FALLBACK:-none}" \
