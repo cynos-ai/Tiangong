@@ -120,17 +120,22 @@ async function readTrustedFile(filePath, { maxBytes, expectedDigest, root, kind 
     if (stat.size === 0 || stat.size > maxBytes) fail("RESOURCE_SIZE_INVALID", `${kind} size is invalid`);
     const bytes = await handle.readFile();
     if (bytes.byteLength !== stat.size) fail("RESOURCE_CHANGED", `${kind} changed while loading`);
-    const digest = sha256(bytes);
-    if (expectedDigest && digest !== expectedDigest) {
-      fail("RESOURCE_DIGEST_MISMATCH", `${kind} digest does not match the closed registry`);
-    }
     let text;
     try {
       text = UTF8_DECODER.decode(bytes);
     } catch {
       fail("RESOURCE_UTF8_INVALID", `${kind} must be valid UTF-8 text`);
     }
-    return { text, digest, bytes: bytes.byteLength };
+    // Git may materialize checked-in text with CRLF on Windows. The closed
+    // registry digests the repository's canonical LF form, so normalize only
+    // the transport line ending while retaining all other bytes/content.
+    text = text.replaceAll("\r\n", "\n");
+    const normalizedBytes = Buffer.from(text, "utf8");
+    const digest = sha256(normalizedBytes);
+    if (expectedDigest && digest !== expectedDigest) {
+      fail("RESOURCE_DIGEST_MISMATCH", `${kind} digest does not match the closed registry`);
+    }
+    return { text, digest, bytes: normalizedBytes.byteLength };
   } catch (error) {
     if (error?.code === "ELOOP") fail("RESOURCE_SYMLINK", `${kind} cannot be a symbolic link`);
     throw error;

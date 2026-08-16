@@ -31,6 +31,10 @@ const ROLE_BINDINGS = {
   operator: "op-w",
 };
 
+function readCanonicalText(pathname) {
+  return Buffer.from(readFileSync(pathname, "utf8").replaceAll("\r\n", "\n"), "utf8");
+}
+
 test("the closed registry exposes the software-change-delivery playbook", () => {
   const entry = findPlaybook("software-change-delivery", "1.0.0");
   assert.equal(entry.playbookId, "software-change-delivery");
@@ -254,11 +258,11 @@ test("playbooks.lock pins package, policy, schemas, roles, and upstream contract
   ]);
   const workerRoot = path.resolve(DEFAULT_PLAYBOOK_ROOT, "../worker");
   for (const [roleId, digest] of Object.entries(entry.compatibleRoleProfileDigests)) {
-    assert.equal(sha256(readFileSync(path.join(workerRoot, "role-profiles", `${roleId}.json`))), digest);
+    assert.equal(sha256(readCanonicalText(path.join(workerRoot, "role-profiles", `${roleId}.json`))), digest);
   }
   for (const [soulId, digest] of Object.entries(entry.compatibleSoulDigests)) {
     const roleId = soulId.replace(/-soul-v1$/u, "");
-    assert.equal(sha256(readFileSync(path.join(workerRoot, "roles", roleId, "SOUL.md"))), digest);
+    assert.equal(sha256(readCanonicalText(path.join(workerRoot, "roles", roleId, "SOUL.md"))), digest);
   }
   for (const [skillId, digest] of Object.entries(entry.compatibleSkillDigests)) {
     const roleId = {
@@ -268,7 +272,7 @@ test("playbooks.lock pins package, policy, schemas, roles, and upstream contract
       "assessor-independent-assessment-v1": "assessor/independent-assessment",
       "operator-controlled-release-v1": "operator/controlled-release",
     }[skillId];
-    assert.equal(sha256(readFileSync(path.join(workerRoot, "skills", `${roleId}.md`))), digest);
+    assert.equal(sha256(readCanonicalText(path.join(workerRoot, "skills", `${roleId}.md`))), digest);
   }
 });
 

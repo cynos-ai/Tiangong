@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Verify that the authenticated Manager/requester can read exactly one durable
-# terminal report from the bound Leader in the Leader personal room. Runs
-# inside the AgentTeams Manager container and never prints Matrix credentials
+# Verify that the authenticated requester can read exactly one durable terminal
+# report from the bound Leader in the requester's personal room. Runs inside an
+# AgentTeams container and never prints Matrix credentials
 # or message content.
 # Usage: ROOM_ID LEADER_USER_ID PROJECT_ID DISPOSITION
 set -Eeuo pipefail
@@ -15,7 +15,10 @@ readonly ROOM_ID="$1" LEADER_UID="$2" PROJECT_ID="$3" DISPOSITION="$4"
   printf 'requester_report_invalid_disposition=1\n' >&2
   exit 2
 }
-readonly CFG="${HOME}/openclaw.json"
+CFG="${OPENCLAW_CONFIG:-${HOME}/openclaw.json}"
+if [[ ! -f "${CFG}" && -n "${AGENTTEAMS_WORKER_NAME:-}" ]]; then
+  CFG="/root/agentteams-fs/agents/${AGENTTEAMS_WORKER_NAME}/openclaw.json"
+fi
 homeserver="$(jq -r '.channels.matrix.homeserver // empty' "${CFG}")"
 homeserver="${homeserver%/}"
 token="$(jq -r '.channels.matrix.accessToken // empty' "${CFG}")"

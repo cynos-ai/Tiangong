@@ -100,6 +100,6 @@ test("runner journal fails closed on tampering, partial records, and unsafe perm
     await journal.begin(KEY, REQUEST);
     await chmod(filePath, 0o644);
     await journal.lookup(KEY);
-    assert.equal((await stat(filePath)).mode & 0o777, 0o600);
+    if (process.platform !== "win32") assert.equal((await stat(filePath)).mode & 0o777, 0o600);
   });
 });

@@ -375,13 +375,50 @@ export function createLeaderToolRegistry({ playbook, deps }) {
     },
   });
 
+  if (deps.coordinationStore && typeof deps.coordinationStore.getWork === "function") {
+    registry.register({
+      name: "team_read_coordination_work",
+      label: "Tiangong read durable coordination Work",
+      description:
+        "Read the authoritative PG Coordination Work referenced by a Leader resume wake. This is read-only; use it before deciding the next bounded coordination action. The returned projection contains no credentials or raw Matrix payload.",
+      parameters: Type.Object({ workId: ID }, { additionalProperties: false }),
+      executionMode: "sequential",
+      async execute(_toolCallId, params) {
+        const work = await deps.coordinationStore.getWork(params.workId);
+        if (!work) throw new Error("Coordination Work was not found");
+        return ok({
+          work: {
+            workId: work.work?.workId ?? params.workId,
+            teamId: work.work?.teamId ?? null,
+            routeId: work.work?.routeId ?? null,
+            status: work.status ?? null,
+            epoch: Number.isSafeInteger(work.epoch) ? work.epoch : null,
+            leaderSessionId: work.work?.leaderSessionId ?? null,
+            currentWorkSpec: work.currentWorkSpec ? {
+              revision: Number.isSafeInteger(work.currentWorkSpec.revision) ? work.currentWorkSpec.revision : null,
+              objective: typeof work.currentWorkSpec.objective === "string" ? work.currentWorkSpec.objective.slice(0, 512) : null,
+              scope: typeof work.currentWorkSpec.scope === "string" ? work.currentWorkSpec.scope.slice(0, 512) : null,
+              completionContract: typeof work.currentWorkSpec.completionContract === "string" ? work.currentWorkSpec.completionContract.slice(0, 512) : null,
+            } : null,
+            timeline: Array.isArray(work.timeline) ? work.timeline.slice(-32).map((entry) => ({
+              sequence: Number.isSafeInteger(entry?.sequence) ? entry.sequence : null,
+              type: typeof entry?.type === "string" ? entry.type.slice(0, 96) : null,
+              at: typeof entry?.at === "string" ? entry.at.slice(0, 64) : null,
+              requestId: typeof entry?.requestId === "string" ? entry.requestId.slice(0, 160) : null,
+            })) : [],
+          },
+        });
+      },
+    });
+  }
+
   const wrapped = new TiangongToolRegistry();
   for (const definition of registry.definitions()) {
     wrapped.register(wrapTeamTool(definition, {
       gate: deps.gate,
       evidence: deps.evidence,
       getInvocation: deps.getInvocation,
-      category: definition.name === "team_check_result" ? "read-only" : "state-transition",
+      category: ["team_check_result", "team_read_coordination_work"].includes(definition.name) ? "read-only" : "state-transition",
     }));
   }
   return wrapped;

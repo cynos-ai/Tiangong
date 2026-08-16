@@ -1,0 +1,17 @@
+apiVersion: agentteams.io/v1beta1
+kind: Team
+metadata:
+  name: tiangong-demo-team
+spec:
+  description: Tiangong evidence-backed software change delivery demo.
+  workerMembers:
+    - name: tiangong-demo-leader
+      role: team_leader
+    - name: tiangong-demo-designer
+      role: worker
+    - name: tiangong-demo-implementor
+      role: worker
+    - name: tiangong-demo-assessor
+      role: worker
+    - name: tiangong-demo-operator
+      role: worker

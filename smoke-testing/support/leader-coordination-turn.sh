@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
 # Send a coordination prompt to the Leader over Matrix (formatted-body mention)
-# and poll for the LEADER_DONE reply. Runs inside the manager container, which
-# holds the Matrix credentials. Usage:
+# and poll for the LEADER_DONE reply. Runs inside an authenticated AgentTeams
+# container, which holds the Matrix credentials. Usage:
 # ROOM_ID LEADER_USER_ID NONCE PROJECT_ID TASK_ID DESIGNER IMPLEMENTOR ASSESSOR OPERATOR
 set -Eeuo pipefail
 (($# == 9)) || { printf 'Usage: %s ROOM_ID LEADER_USER_ID NONCE PROJECT_ID TASK_ID DESIGNER IMPLEMENTOR ASSESSOR OPERATOR\n' "$0" >&2; exit 2; }
 readonly ROOM_ID="$1" LEADER_UID="$2" NONCE="$3" PROJECT_ID="$4" TASK_ID="$5"
 readonly DESIGNER="$6" IMPLEMENTOR="$7" ASSESSOR="$8" OPERATOR="$9"
-CFG="${HOME}/openclaw.json"
+CFG="${OPENCLAW_CONFIG:-${HOME}/openclaw.json}"
+if [[ ! -f "${CFG}" && -n "${AGENTTEAMS_WORKER_NAME:-}" ]]; then
+  CFG="/root/agentteams-fs/agents/${AGENTTEAMS_WORKER_NAME}/openclaw.json"
+fi
 homeserver="$(jq -r '.channels.matrix.homeserver // empty' "${CFG}")"; homeserver="${homeserver%/}"
 token="$(jq -r '.channels.matrix.accessToken // empty' "${CFG}")"
+[[ -n "${homeserver}" && -n "${token}" ]] || { printf 'leader_matrix_config_unavailable=1\n' >&2; exit 1; }
 room_path="$(printf '%s' "${ROOM_ID}" | jq -sRr @uri)"
 localpart="${LEADER_UID%%:*}"
-PROMPT="${localpart} You are the Tiangong Team Leader. Use your tools to do exactly this, then report:
-1. Call team_create_project with projectId \"${PROJECT_ID}\" and roleBindings {designer:\"${DESIGNER}\", implementor:\"${IMPLEMENTOR}\", assessor:\"${ASSESSOR}\", operator:\"${OPERATOR}\"}.
-2. Call team_dispatch_task with projectId \"${PROJECT_ID}\", taskId \"${TASK_ID}\", taskKind \"design\", revisionIndex 0, assignee \"${DESIGNER}\", objective \"Define the exact bounded implementation and independent verification commands for the runner-isolation fixture.\".
-Reply with LEADER_DONE and a one-line summary."
+PROMPT="${localpart} You are the Tiangong Team Leader. Use your tools to do exactly this in order: call team_create_project with projectId \"${PROJECT_ID}\" and roleBindings {designer:\"${DESIGNER}\", implementor:\"${IMPLEMENTOR}\", assessor:\"${ASSESSOR}\", operator:\"${OPERATOR}\"}; then call team_dispatch_task with projectId \"${PROJECT_ID}\", taskId \"${TASK_ID}\", taskKind \"design\", revisionIndex 0, assignee \"${DESIGNER}\", objective \"Define the exact bounded implementation and independent verification commands for the runner-isolation fixture.\"; reply with LEADER_DONE and a one-line summary."
 FORMATTED="<a href=\"https://matrix.to/#/${LEADER_UID}\">${localpart}</a> ${PROMPT#"${localpart}" }"
 body="$(jq -cn --arg b "${PROMPT}" --arg fb "${FORMATTED}" --arg u "${LEADER_UID}" \
   '{msgtype:"m.text",body:$b,format:"org.matrix.custom.html",formatted_body:$fb,"m.mentions":{user_ids:[$u]}}')"

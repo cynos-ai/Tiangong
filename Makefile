@@ -2,7 +2,13 @@ SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := help
 
 AGENTTEAMS := ./scripts/agentteams.sh
+AGENTTEAMS_BOOTSTRAP_TEST := ./scripts/test-agentteams.sh
 WORKER_IMAGE_BUILD := ./scripts/build-worker-image.sh
+COORDINATION_IMAGE_BUILD := ./scripts/build-coordination-image.sh
+COORDINATION_RUNTIME_DEPLOY := ./scripts/deploy-coordination-runtime.sh
+LEADER_RUNTIME_INJECTION_TEST := ./scripts/test-leader-runtime-injection.sh
+LEADER_RUNTIME_DOCKER_INJECTION_TEST := ./scripts/test-leader-runtime-injection-docker.sh
+B5_ROLE_RUNTIME_INJECTION_TEST := ./scripts/test-b5-role-runtime-injection-docker.sh
 WORKER_IMAGE_TEST := ./smoke-testing/support/run-worker-smoke.sh
 LEADER_SMOKE := ./smoke-testing/support/run-leader-smoke.sh
 LEADER_SMOKE_TEST := ./scripts/test-leader-smoke.sh
@@ -23,8 +29,15 @@ DEPLOYMENT_SERVICE_SMOKE := node ./smoke-testing/support/run-deployment-service-
 SKILL_CHECK := node ./scripts/check-skills.mjs
 PAUSE_WORKER_BOUNDARY_TEST := ./scripts/test-pause-worker-boundary.sh
 PHASE4_RECOVERY_TEST := node ./worker/test/phase4-recovery.test.mjs
+B5_RUNTIME_ROUTE_TEST := node ./worker/test/runtime-routing.test.mjs
+B5_RECOVERY_TEST := node ./worker/test/phase-b5-recovery.test.mjs
+B5_RECOVERY_CLI_TEST := node ./worker/test/work-run-recovery-cli.test.mjs
+B5_VERTICAL_TEST := node ./worker/test/phase-b5-vertical.test.mjs
+COORDINATION_MIGRATION_CONTRACT_TEST := node ./app/test/migration-contract.test.mjs
 
-.PHONY: help init up start stop down status verify config logs login uninstall check-skills check-demo-contract check-phase6-evidence-bundle verify-professional-state build-worker-image test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-phase4-recovery test-runner-isolation test-runner-executor test-runner-broker test-runner-preparation start-runner-broker status-runner-broker stop-runner-broker test-deployment-service test-peer-mention-smoke-contract test-peer-mention-smoke test-matrix-browser-smoke-contract matrix-browser-start matrix-browser-status matrix-browser-stop test-specialist-leader-handoff-contract test-specialist-leader-handoff test-p0-identity-pg-contract test-p0-2-mention-contract test-pause-worker-boundary
+.PHONY: help init up start stop down status verify config provider-check logs login uninstall test-agentteams test-agentteams-worker-admission-contract check-skills check-demo-contract check-phase6-evidence-bundle verify-professional-state build-worker-image build-coordination-image coordination-runtime-start coordination-runtime-status coordination-runtime-stop test-coordination-runtime-deployment test-leader-runtime-injection test-leader-runtime-injection-docker test-b5-role-runtime-injection-docker test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-phase4-recovery test-b5-runtime-route test-b5-recovery test-b5-recovery-cli test-b5-vertical test-runner-isolation test-runner-executor test-runner-executor-linux test-runner-broker test-runner-broker-linux test-runner-preparation start-runner-broker status-runner-broker stop-runner-broker test-deployment-service test-peer-mention-smoke-contract test-peer-mention-smoke test-matrix-browser-smoke-contract matrix-browser-start matrix-browser-status matrix-browser-stop test-specialist-leader-handoff-contract test-specialist-leader-handoff test-p0-identity-pg-contract test-p0-2-mention-contract test-pause-worker-boundary test-openclaw-gate-a-contract test-openclaw-gate-a-fixture test-openclaw-admission-contract test-openclaw-admission-hooks test-openclaw-admission-replay test-openclaw-tool-result-capture-matrix test-openclaw-recovery test-openclaw-admission-context-file test-openclaw-gate-a-live-hooks test-runtime-console test-coordination-migration-contract openclaw-gate-a-start openclaw-gate-a-status openclaw-gate-a-restart openclaw-gate-a-stop openclaw-gate-a-run
+
+.PHONY: start-coordination
 
 help: ## Show available commands
 	@printf '%s\n' 'Tiangong local development commands:'
@@ -53,6 +66,15 @@ verify: ## Run local AgentTeams readiness checks
 config: ## Show effective configuration with secrets redacted
 	@$(AGENTTEAMS) config
 
+provider-check: ## Validate the provider/model route without changing the stack
+	@$(AGENTTEAMS) provider-check
+
+test-agentteams: ## Run the AgentTeams bootstrap and provider route contract tests
+	@$(AGENTTEAMS_BOOTSTRAP_TEST)
+
+test-agentteams-worker-admission-contract: ## Prove the AgentTeams agt boundary preserves credential scope fields
+	@./scripts/test-agentteams-worker-admission.sh
+
 logs: ## Follow logs; use SERVICE=controller for controller logs
 	@$(AGENTTEAMS) logs $(SERVICE)
 
@@ -75,6 +97,30 @@ verify-professional-state: ## Verify a preserved Project/Task/Result state (ROOT
 build-worker-image: ## Build the pinned local Tiangong Worker image
 	@$(WORKER_IMAGE_BUILD)
 
+build-coordination-image: ## Build the deployment-owned PG/Matrix Coordination runtime image
+	@$(COORDINATION_IMAGE_BUILD)
+
+coordination-runtime-start: ## Start the deployment-owned Coordination runtime container
+	@$(COORDINATION_RUNTIME_DEPLOY) start
+
+coordination-runtime-status: ## Show the owned Coordination runtime container status
+	@$(COORDINATION_RUNTIME_DEPLOY) status
+
+coordination-runtime-stop: ## Stop and remove only the owned Coordination runtime container
+	@$(COORDINATION_RUNTIME_DEPLOY) stop
+
+test-coordination-runtime-deployment: ## Validate Coordination runtime image/lifecycle security contract
+	@./scripts/test-coordination-runtime-deployment.sh
+
+test-leader-runtime-injection: ## Validate the live Leader Worker binding/endpoint/token boundary
+	@$(LEADER_RUNTIME_INJECTION_TEST)
+
+test-leader-runtime-injection-docker: ## Validate the Docker Worker recreation/injection contract
+	@$(LEADER_RUNTIME_DOCKER_INJECTION_TEST)
+
+test-b5-role-runtime-injection-docker: ## Validate deployment-owned B5 role/runtime injection and rollback boundary
+	@$(B5_ROLE_RUNTIME_INJECTION_TEST)
+
 test-worker-image-basic: ## Run the fast Matrix-to-pi Worker smoke and clean up
 	@TIANGONG_WORKER_SMOKE_LEVEL=basic $(WORKER_IMAGE_TEST)
 
@@ -90,14 +136,32 @@ test-leader-image-basic: ## Run the Leader Matrix coordination (blocked terminal
 test-phase4-recovery: ## Run deterministic revision, rollback, recovery, and Leader restart regressions
 	@$(PHASE4_RECOVERY_TEST)
 
+test-b5-runtime-route: ## Prove the B5 role to OpenClaw/Codex runtime matrix
+	@$(B5_RUNTIME_ROUTE_TEST)
+
+test-b5-recovery: ## Prove B5 WorkRun ownership, restart uncertainty, and privileged recovery
+	@$(B5_RECOVERY_TEST)
+
+test-b5-recovery-cli: ## Prove the operator-only B5 WorkRun recovery entrypoint
+	@$(B5_RECOVERY_CLI_TEST)
+
+test-b5-vertical: ## Prove the deterministic B5 Leader/Implementor route and restart slice
+	@$(B5_VERTICAL_TEST)
+
 test-runner-isolation: ## Prove the disposable RunnerPort isolation contract and clean up
 	@$(RUNNER_ISOLATION_SPIKE)
 
 test-runner-executor: ## Run the production Docker executor against the isolation fixture
 	@$(RUNNER_EXECUTOR_SMOKE)
 
+test-runner-executor-linux: ## Run the Docker executor smoke inside a Linux control container
+	@./scripts/run-runner-executor-linux.sh
+
 test-runner-broker: ## Prove the closed container-identity Runner broker path
 	@$(RUNNER_BROKER_SMOKE)
+
+test-runner-broker-linux: ## Run the Runner broker and Work/Task/Result smoke inside Linux
+	@./scripts/run-runner-broker-linux.sh
 
 test-runner-preparation: ## Prove broker registration precedes fixed Worker plan access
 	@$(RUNNER_PREPARATION_SMOKE)
@@ -146,6 +210,57 @@ test-p0-2-mention-contract: ## Validate the P0.2 mention-gating and delivery pro
 
 test-pause-worker-boundary: ## Test the bounded paused-Worker smoke orchestration guard
 	@$(PAUSE_WORKER_BOUNDARY_TEST)
+
+test-openclaw-gate-a-contract: ## Validate the deterministic OpenClaw Gate A preflight contract
+	@./scripts/test-openclaw-gate-a.sh
+
+test-openclaw-gate-a-fixture: ## Validate the isolated OpenClaw Gate A image and Worker fixture
+	@./scripts/test-openclaw-gate-a-fixture.sh
+
+test-openclaw-admission-contract: ## Validate the two-stage OpenClaw admission boundary
+	@node ./worker/test/admission-boundary.test.mjs
+
+test-openclaw-admission-hooks: ## Validate the OpenClaw hook registration and fail-closed decisions
+	@node ./worker/test/admission-hooks.test.mjs
+
+test-openclaw-admission-replay: ## Validate deterministic allow, deny, revocation, and replay admission paths
+	@node ./worker/test/admission-replay.test.mjs
+
+test-openclaw-tool-result-capture-matrix: ## Validate bounded success, error, denial, and replay ToolResult capture
+	@node ./worker/test/tool-result-capture.test.mjs ./worker/test/tool-result-capture-matrix.test.mjs
+
+test-openclaw-recovery: ## Validate one durable Runner owner and completed-result replay after reopen
+	@node ./worker/test/openclaw-recovery.test.mjs
+
+test-openclaw-admission-context-file: ## Validate the bounded file-backed admission context provider
+	@node ./worker/test/admission-context-file.test.mjs ./worker/test/admission-context.test.mjs ./worker/test/canary-admission.test.mjs
+
+test-openclaw-gate-a-live-hooks: ## Inspect the hooks registered by the running pinned canary
+	@./scripts/test-openclaw-gate-a-live-hooks.sh
+
+test-runtime-console: ## Validate the read-only Web runtime console shell
+	@node --test app/test/*.test.mjs
+
+test-coordination-migration-contract: ## Validate the digest-bound provider and Work/Task/Result migration contract
+	@$(COORDINATION_MIGRATION_CONTRACT_TEST)
+
+start-coordination: ## Start the deployment-owned PG Coordination API and Matrix outbox consumer
+	@npm --prefix app run start-coordination
+
+openclaw-gate-a-start: ## Create the isolated OpenClaw Gate A Worker (TIANGONG_RUN_REAL=1)
+	@./smoke-testing/support/run-openclaw-gate-a.sh start
+
+openclaw-gate-a-status: ## Inspect the isolated OpenClaw Gate A Worker
+	@./smoke-testing/support/run-openclaw-gate-a.sh status
+
+openclaw-gate-a-restart: ## Restart the isolated canary and verify readiness recovery
+	@./smoke-testing/support/run-openclaw-gate-a.sh restart
+
+openclaw-gate-a-stop: ## Delete only the owned OpenClaw Gate A Worker and verify cleanup
+	@./smoke-testing/support/run-openclaw-gate-a.sh stop
+
+openclaw-gate-a-run: ## Run the isolated OpenClaw Gate A preflight/readiness canary
+	@./smoke-testing/support/run-openclaw-gate-a.sh run
 
 uninstall: ## Delete local AgentTeams data; requires CONFIRM=delete-tiangong-agentteams-data
 	@CONFIRM="$(CONFIRM)" $(AGENTTEAMS) uninstall

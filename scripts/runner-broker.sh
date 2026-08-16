@@ -125,18 +125,30 @@ start() {
       --label "io.tiangong.component=${COMPONENT}" \
       "$volume" >/dev/null
   done
-  docker create --name "$SEED" \
+  MSYS_NO_PATHCONV=1 docker create --name "$SEED" \
     --mount "type=volume,src=${CONFIG_VOLUME},dst=/config" \
     --mount "type=volume,src=${FIXTURE_VOLUME},dst=/fixture" \
     --entrypoint /bin/sh "$BROKER_IMAGE" -c 'sleep 300' >/dev/null
   docker start "$SEED" >/dev/null
-  docker cp "$config_file" "$SEED:/config/config.json"
-  docker exec "$SEED" chmod 600 /config/config.json
-  docker exec "$SEED" mkdir -p /fixture/isolation
-  docker cp "${REPO_ROOT}/smoke-testing/fixtures/runner-isolation/." "$SEED:/fixture/isolation/"
+  # Git Bash rewrites POSIX-looking Docker container destinations (for
+  # example /config) into a Windows host path unless path conversion is
+  # disabled for that one command. Keep the host source as an absolute
+  # Windows path so Docker Desktop can still read the temporary file.
+  local config_source fixture_source
+  if [[ "${OSTYPE:-}" =~ ^(msys|cygwin) ]]; then
+    config_source="$(cygpath -w "$config_file")"
+    fixture_source="$(cygpath -w "${REPO_ROOT}/smoke-testing/fixtures/runner-isolation/.")"
+  else
+    config_source="$config_file"
+    fixture_source="${REPO_ROOT}/smoke-testing/fixtures/runner-isolation/."
+  fi
+  MSYS_NO_PATHCONV=1 docker cp "$config_source" "$SEED:/config/config.json"
+  MSYS_NO_PATHCONV=1 docker exec "$SEED" chmod 600 /config/config.json
+  MSYS_NO_PATHCONV=1 docker exec "$SEED" mkdir -p /fixture/isolation
+  MSYS_NO_PATHCONV=1 docker cp "$fixture_source" "$SEED:/fixture/isolation/"
   docker rm --force "$SEED" >/dev/null
 
-  docker create --name "$BROKER" --network "$NETWORK" \
+  MSYS_NO_PATHCONV=1 docker create --name "$BROKER" --network "$NETWORK" \
     --label "io.tiangong.owner=${OWNER}" \
     --label "io.tiangong.component=${COMPONENT}" \
     --read-only --cap-drop ALL --security-opt no-new-privileges \

@@ -6,7 +6,8 @@
 // overwrites history. The filesystem is injected so the contract is
 // deterministic and testable without touching real storage.
 
-import { chmod, lstat, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
+import crypto from "node:crypto";
 import path from "node:path";
 
 import { withFileLock } from "../persistence/file-lock.mjs";
@@ -33,7 +34,7 @@ function assertRunId(value, name = "runId") {
 }
 
 export class WorkRunStore {
-  constructor({ directory, fs, now: nowFn, lock } = {}) {
+  constructor({ directory, fs, now: nowFn, lock, ownerId, authorizeRecovery } = {}) {
     if (typeof directory !== "string" || directory === "") {
       throw new TypeError("WorkRunStore requires a directory");
     }
@@ -45,18 +46,26 @@ export class WorkRunStore {
       mkdir,
       readFile,
       readdir,
+      unlink,
       writeFile,
       appendFile: (file, data) => writeFile(file, data, { flag: "a", mode: 0o600 }),
     };
     this.#lock = lock ?? (customFs ? async (_filePath, callback) => callback() : withFileLock);
     if (typeof this.#lock !== "function") throw new TypeError("WorkRunStore lock must be a function");
     this.#now = nowFn;
+    this.#ownerId = ownerId ?? `owner-${crypto.randomUUID()}`;
+    if (typeof this.#ownerId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/u.test(this.#ownerId)) {
+      throw new TypeError("WorkRunStore ownerId must be a bounded identifier");
+    }
+    this.#authorizeRecovery = authorizeRecovery;
   }
 
   #directory;
   #fs;
   #lock;
   #now;
+  #ownerId;
+  #authorizeRecovery;
 
   async #ensureDir() {
     await this.#fs.mkdir(this.#directory, { recursive: true, mode: 0o700 });
@@ -91,6 +100,10 @@ export class WorkRunStore {
     return path.join(this.#directory, `${assertRunId(runId)}.events.jsonl`);
   }
 
+  #ownerPath(runId) {
+    return path.join(this.#directory, `${assertRunId(runId)}.owner.json`);
+  }
+
   #withRunLock(runId, callback) {
     return this.#lock(this.#eventsPath(runId), callback);
   }
@@ -117,6 +130,52 @@ export class WorkRunStore {
     }
   }
 
+  async #readOwner(runId) {
+    const filePath = this.#ownerPath(runId);
+    try {
+      await this.#assertFile(filePath, "WorkRun owner lease");
+      const value = JSON.parse(await this.#fs.readFile(filePath, "utf8"));
+      if (!value || value.schemaVersion !== 1 || value.runId !== runId ||
+          typeof value.ownerId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/u.test(value.ownerId)) {
+        throw new Error("WorkRun owner lease is invalid");
+      }
+      return value;
+    } catch (error) {
+      if (error?.code === "ENOENT") return undefined;
+      throw error;
+    }
+  }
+
+  async #removeOwner(runId) {
+    if (typeof this.#fs.unlink !== "function") throw new Error("WorkRun owner lease cleanup is unavailable");
+    try {
+      await this.#fs.unlink(this.#ownerPath(runId));
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+
+  async #appendTransitionUnlocked(state, toPhase, reason) {
+    if (state.terminal) throw new Error(`WorkRun ${state.binding.runId} is terminal (${state.phase})`);
+    if (!canTransition(state.phase, toPhase)) {
+      throw new Error(`Illegal phase transition for ${state.binding.runId}: ${state.phase} -> ${toPhase}`);
+    }
+    const previousHash = state.events.length
+      ? state.events[state.events.length - 1].contentDigest
+      : state.binding.contentDigest;
+    const event = createPhaseEvent({
+      runId: state.binding.runId,
+      sequence: state.events.length + 1,
+      fromPhase: state.phase,
+      toPhase,
+      previousHash,
+      at: now(this),
+      reason,
+    });
+    await this.#fs.appendFile(this.#eventsPath(state.binding.runId), `${JSON.stringify(event)}\n`, { mode: 0o600 });
+    return this.#readUnlocked(state.binding.runId);
+  }
+
   async open(input) {
     const binding = createWorkRun(input);
     await this.#ensureDir();
@@ -139,25 +198,109 @@ export class WorkRunStore {
   async transition(runId, toPhase, { reason } = {}) {
     assertRunId(runId);
     return this.#withRunLock(runId, async () => {
-      const state = await this.#readUnlocked(runId);
-      if (state.terminal) throw new Error(`WorkRun ${runId} is terminal (${state.phase})`);
-      if (!canTransition(state.phase, toPhase)) {
-        throw new Error(`Illegal phase transition for ${runId}: ${state.phase} -> ${toPhase}`);
+      let state = await this.#readUnlocked(runId);
+      if (!state.terminal) {
+        const existing = await this.#readOwner(runId);
+        if (existing && existing.ownerId !== this.#ownerId) {
+          const error = new Error(`WorkRun ${runId} is owned by another execution process`);
+          error.code = "TIANGONG_WORK_RUN_OWNER_CONFLICT";
+          throw error;
+        }
+        if (!existing && ["executing", "waiting_approval", "verifying"].includes(state.phase)) {
+          const error = new Error(`WorkRun ${runId} has a started phase without an execution owner`);
+          error.code = "TIANGONG_WORK_RUN_RECOVERY_REQUIRED";
+          throw error;
+        }
+        // Keep the low-level store safe for existing callers which open a run
+        // and immediately transition it: entering execution is the point at
+        // which the durable owner lease is acquired. Once a run is started,
+        // every subsequent transition must use that same owner.
+        if (!existing && toPhase === "executing" && ["planned", "blocked"].includes(state.phase)) {
+          await this.#fs.writeFile(this.#ownerPath(runId), `${JSON.stringify({ schemaVersion: 1, runId, ownerId: this.#ownerId })}\n`, { flag: "wx", mode: 0o600 });
+          state = await this.#readUnlocked(runId);
+        }
       }
-      const previousHash = state.events.length
-        ? state.events[state.events.length - 1].contentDigest
-        : state.binding.contentDigest;
-      const event = createPhaseEvent({
-        runId,
-        sequence: state.events.length + 1,
-        fromPhase: state.phase,
-        toPhase,
-        previousHash,
-        at: now(this),
-        reason,
-      });
-      await this.#fs.appendFile(this.#eventsPath(runId), `${JSON.stringify(event)}\n`, { mode: 0o600 });
+      return this.#appendTransitionUnlocked(state, toPhase, reason);
+    });
+  }
+
+  /**
+   * Claim the one active execution owner for a non-terminal WorkRun. The
+   * lease file survives a Worker crash; a new process therefore cannot
+   * blindly replay a started run until a recovery controller reconciles it.
+   */
+  async claim(runId) {
+    assertRunId(runId);
+    await this.#ensureDir();
+    return this.#withRunLock(runId, async () => {
+      const state = await this.#readUnlocked(runId);
+      if (state.terminal) {
+        await this.#removeOwner(runId);
+        return state;
+      }
+      const existing = await this.#readOwner(runId);
+      if (existing) {
+        if (existing.ownerId !== this.#ownerId) {
+          const error = new Error(`WorkRun ${runId} is owned by another execution process`);
+          error.code = "TIANGONG_WORK_RUN_OWNER_CONFLICT";
+          throw error;
+        }
+        return state;
+      }
+      if (["executing", "waiting_approval", "verifying"].includes(state.phase)) {
+        const error = new Error(`WorkRun ${runId} has a started phase without an execution owner`);
+        error.code = "TIANGONG_WORK_RUN_RECOVERY_REQUIRED";
+        throw error;
+      }
+      await this.#fs.writeFile(this.#ownerPath(runId), `${JSON.stringify({ schemaVersion: 1, runId, ownerId: this.#ownerId })}\n`, { flag: "wx", mode: 0o600 });
+      return state;
+    });
+  }
+
+  /** Release a lease only when this store still owns it. */
+  async release(runId) {
+    assertRunId(runId);
+    return this.#withRunLock(runId, async () => {
+      const existing = await this.#readOwner(runId);
+      if (!existing) return this.#readUnlocked(runId);
+      if (existing.ownerId !== this.#ownerId) {
+        const error = new Error(`WorkRun ${runId} is owned by another execution process`);
+        error.code = "TIANGONG_WORK_RUN_OWNER_CONFLICT";
+        throw error;
+      }
+      await this.#removeOwner(runId);
       return this.#readUnlocked(runId);
+    });
+  }
+
+  /**
+   * Privileged recovery entry point. It is intentionally absent from the
+   * model tool registry. A deployment/recovery controller must authorize the
+   * action; resume appends a blocked/recovery pair before reclaiming the lease.
+   */
+  async reconcile(runId, { action = "resume", reason = "worker-restart-reconciled" } = {}) {
+    assertRunId(runId);
+    if (action !== "resume" && action !== "abandon") {
+      throw new TypeError("WorkRun recovery action must be resume or abandon");
+    }
+    if (typeof this.#authorizeRecovery !== "function") {
+      const error = new Error("WorkRun recovery requires a privileged controller");
+      error.code = "TIANGONG_WORK_RUN_RECOVERY_UNAUTHORIZED";
+      throw error;
+    }
+    await this.#authorizeRecovery({ runId, action });
+    return this.#withRunLock(runId, async () => {
+      let state = await this.#readUnlocked(runId);
+      if (state.terminal) return state;
+      await this.#removeOwner(runId);
+      if (action === "abandon") {
+        state = await this.#appendTransitionUnlocked(state, "abandoned", reason);
+        return state;
+      }
+      if (state.phase !== "blocked") state = await this.#appendTransitionUnlocked(state, "blocked", reason);
+      state = await this.#appendTransitionUnlocked(state, "executing", "recovery-resume");
+      await this.#fs.writeFile(this.#ownerPath(runId), `${JSON.stringify({ schemaVersion: 1, runId, ownerId: this.#ownerId })}\n`, { flag: "wx", mode: 0o600 });
+      return state;
     });
   }
 
@@ -170,6 +313,20 @@ export class WorkRunStore {
   async read(runId) {
     assertRunId(runId);
     return this.#withRunLock(runId, () => this.#readUnlocked(runId));
+  }
+
+  /** Read the durable run and whether an execution lease is currently present. */
+  async inspect(runId) {
+    assertRunId(runId);
+    return this.#withRunLock(runId, async () => {
+      const state = await this.#readUnlocked(runId);
+      const owner = await this.#readOwner(runId);
+      return Object.freeze({
+        state,
+        ownerPresent: Boolean(owner),
+        ownerId: owner?.ownerId,
+      });
+    });
   }
 
   async latestForTask(taskId) {
