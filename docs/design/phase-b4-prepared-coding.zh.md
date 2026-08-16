@@ -64,3 +64,18 @@ runtime 注入到 AgentTeams 管理出来的 Worker；当前不能把这次探�
 因此 B4 的下一条生产门槛已经收窄为部署层注入 binding/endpoint/token，并在该边界
 闭合后重跑同一条真实 Project/Task/Result smoke；在此之前保留 fail-closed 行为和
 legacy pi lane。
+
+## 2026-08-16 当前执行指针（以 internal 计划为准）
+
+internal 计划的当前 B4 入口不是重新实现 Runner：本分支已有的 Linux 控制容器
+smoke 已通过 broker readiness、固定计划、实现变更、Assessor 只读、单次执行/重放、
+ToolResult retention、WorkRun finalized 和精确 cleanup。刚刚复核的机器事实为
+`runner_broker_ready`、`b4_work_task_runner`、`b4_result_persisted`、
+`b4_toolresult_retention`、`runner_broker_replay` 和 `runner_broker_cleanup` 全部
+通过。
+
+下一步只补 B4 缺口：把同一个受 immutable Task/Runner 约束的执行入口接到真实
+AgentTeams Implementor Worker 的 native coding session，并证明本地修改、构建/测试、
+ChangeRevision 和 Result 能经 Matrix/WebUI 回到 Leader。非编程 Leader 仍以 OpenClaw
+内置 runtime 为目标；Implementor 才在该真实纵切中验证 OpenClaw Codex runtime。
+在 B4/B5、Gate B 证据闭合前，`tiangong-pi` 继续保留，不做 clean-cut。
