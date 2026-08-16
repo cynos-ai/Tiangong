@@ -296,8 +296,11 @@ configure_tiangong_plugin() {
 
 if [[ "${1:-}" == "gateway" && "${2:-}" == "run" ]]; then
   load_agentteams_controller_token
-  configure_tiangong_plugin
   assert_role_runtime_route
+  # Route authorization must precede any config mutation. A mismatched role
+  # must fail closed without enabling a plugin or rewriting the OpenClaw
+  # configuration on disk.
+  configure_tiangong_plugin
   configure_codex_runtime
   configure_codex_gateway
   /usr/bin/node "${PREFLIGHT}"

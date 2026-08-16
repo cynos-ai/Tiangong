@@ -43,7 +43,7 @@ COPY skills/ ./skills/
 RUN npm run check-observability \
     && node -e 'import("./plugin/index.mjs").then((module) => { if (module.default?.id !== "tiangong-pi") process.exit(1); })'
 
-COPY --chmod=755 bin/codex bin/codex-app-server bin/openclaw bin/tiangong-reconcile bin/tiangong-retain /opt/tiangong-worker/bin/
+COPY --chmod=755 bin/codex bin/codex-app-server bin/openclaw bin/tiangong-reconcile bin/tiangong-retain bin/tiangong-work-run /opt/tiangong-worker/bin/
 COPY scripts/codex-app-server-proxy.mjs /opt/tiangong-worker/scripts/codex-app-server-proxy.mjs
 
 ENV PATH="/opt/tiangong-worker/bin:/opt/tiangong-worker/node_modules/.bin:${PATH}" \

@@ -198,7 +198,28 @@ export class WorkRunStore {
   async transition(runId, toPhase, { reason } = {}) {
     assertRunId(runId);
     return this.#withRunLock(runId, async () => {
-      const state = await this.#readUnlocked(runId);
+      let state = await this.#readUnlocked(runId);
+      if (!state.terminal) {
+        const existing = await this.#readOwner(runId);
+        if (existing && existing.ownerId !== this.#ownerId) {
+          const error = new Error(`WorkRun ${runId} is owned by another execution process`);
+          error.code = "TIANGONG_WORK_RUN_OWNER_CONFLICT";
+          throw error;
+        }
+        if (!existing && ["executing", "waiting_approval", "verifying"].includes(state.phase)) {
+          const error = new Error(`WorkRun ${runId} has a started phase without an execution owner`);
+          error.code = "TIANGONG_WORK_RUN_RECOVERY_REQUIRED";
+          throw error;
+        }
+        // Keep the low-level store safe for existing callers which open a run
+        // and immediately transition it: entering execution is the point at
+        // which the durable owner lease is acquired. Once a run is started,
+        // every subsequent transition must use that same owner.
+        if (!existing && toPhase === "executing" && ["planned", "blocked"].includes(state.phase)) {
+          await this.#fs.writeFile(this.#ownerPath(runId), `${JSON.stringify({ schemaVersion: 1, runId, ownerId: this.#ownerId })}\n`, { flag: "wx", mode: 0o600 });
+          state = await this.#readUnlocked(runId);
+        }
+      }
       return this.#appendTransitionUnlocked(state, toPhase, reason);
     });
   }
@@ -292,6 +313,20 @@ export class WorkRunStore {
   async read(runId) {
     assertRunId(runId);
     return this.#withRunLock(runId, () => this.#readUnlocked(runId));
+  }
+
+  /** Read the durable run and whether an execution lease is currently present. */
+  async inspect(runId) {
+    assertRunId(runId);
+    return this.#withRunLock(runId, async () => {
+      const state = await this.#readUnlocked(runId);
+      const owner = await this.#readOwner(runId);
+      return Object.freeze({
+        state,
+        ownerPresent: Boolean(owner),
+        ownerId: owner?.ownerId,
+      });
+    });
   }
 
   async latestForTask(taskId) {

@@ -132,6 +132,11 @@ grep -Fq 'tiangong-reconcile inspect' <<<"${reconciliation_help}" || {
   printf 'ERROR: the Worker reconciliation entrypoint is unavailable.\n' >&2
   exit 1
 }
+work_run_recovery_help="$(docker run --rm --entrypoint tiangong-work-run "${IMAGE}" --help)"
+grep -Fq 'tiangong-work-run inspect' <<<"${work_run_recovery_help}" || {
+  printf 'ERROR: the WorkRun recovery entrypoint is unavailable.\n' >&2
+  exit 1
+}
 retention_help="$(docker run --rm --entrypoint tiangong-retain "${IMAGE}" --help)"
 grep -Fq 'tiangong-retain compact' <<<"${retention_help}" || {
   printf 'ERROR: the Worker retention entrypoint is unavailable.\n' >&2

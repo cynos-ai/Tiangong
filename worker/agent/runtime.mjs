@@ -173,7 +173,11 @@ export class TiangongAgentRuntime {
       directory: sharedPaths.pendingOperationDirectory,
       remoteStorage: createAgentTeamsPendingStorage({ workspaceDir: request.workspaceDir }),
     });
-    const workRunStore = new WorkRunStore({ directory: sharedPaths.workRunDirectory });
+    const configuredWorkRunOwner = process.env.TIANGONG_WORK_RUN_OWNER_ID;
+    const workRunStore = new WorkRunStore({
+      directory: sharedPaths.workRunDirectory,
+      ...(configuredWorkRunOwner ? { ownerId: configuredWorkRunOwner } : {}),
+    });
     const turns = new TurnContextController();
     let gate;
     let registry;

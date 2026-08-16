@@ -59,6 +59,9 @@ test("B5 treats a started phase without a lease as unresolved instead of claimin
   const first = new WorkRunStore({ directory: root, ownerId: "owner-first" });
   await first.open(INPUT);
   await first.transition(INPUT.runId, "executing");
+  // Simulate a crash after the phase journal was committed but before the
+  // process lease was durably retained by the replacement boundary.
+  await first.release(INPUT.runId);
   const restarted = new WorkRunStore({ directory: root, ownerId: "owner-restarted" });
   await assert.rejects(() => restarted.claim(INPUT.runId), (error) => error.code === "TIANGONG_WORK_RUN_RECOVERY_REQUIRED");
 });
