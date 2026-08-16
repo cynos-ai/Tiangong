@@ -59,6 +59,19 @@ valid_endpoint() {
 valid_token() {
   [[ "$1" =~ ^[^[:space:][:cntrl:]]{16,512}$ ]]
 }
+docker_host_path() {
+  # Docker Desktop on Windows cannot resolve a WSL /tmp path through the
+  # daemon unless it is converted to a \\wsl.localhost UNC path. Keep native
+  # Windows and Unix paths untouched when the conversion helpers are absent.
+  local path="$1"
+  if command -v wslpath >/dev/null 2>&1 && [[ "${path}" == /* ]]; then
+    wslpath -w "${path}"
+  elif command -v cygpath >/dev/null 2>&1 && [[ "${path}" == /* ]]; then
+    cygpath -w "${path}"
+  else
+    printf '%s\n' "${path}"
+  fi
+}
 valid_volume_name() {
   [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]
 }
@@ -167,7 +180,7 @@ printf 'TIANGONG_COORDINATION_CONTROL_ENDPOINT=%s\n' "${ENDPOINT}" >>"${env_file
 printf 'TIANGONG_COORDINATION_CONTROL_TOKEN=%s\n' "${CONTROL_TOKEN}" >>"${env_file}"
 chmod 600 "${env_file}"
 
-run_args=(--detach --name "${CONTAINER}" --network "${NETWORK}" --env-file "${env_file}")
+run_args=(--detach --name "${CONTAINER}" --network "${NETWORK}" --env-file "$(docker_host_path "${env_file}")")
 [[ -n "${working_dir}" ]] && run_args+=(--workdir "${working_dir}")
 [[ -n "${user}" ]] && run_args+=(--user "${user}")
 while IFS= read -r cap; do [[ -n "${cap}" ]] && run_args+=(--cap-add "${cap}"); done < <(jq -r "${host_config}.CapAdd // [] | .[]" "${inspect_file}")
@@ -190,7 +203,7 @@ if [[ -n "${DOCKER_BINDING_VOLUME}" ]]; then
   binding_parent="${BINDING_TARGET%/*}"
   run_args+=(--mount "type=volume,source=${DOCKER_BINDING_VOLUME},destination=${binding_parent},readonly")
 else
-  run_args+=(--mount "type=bind,src=${DOCKER_BINDING_FILE},dst=${BINDING_TARGET},readonly")
+  run_args+=(--mount "type=bind,src=$(docker_host_path "${DOCKER_BINDING_FILE}"),dst=${BINDING_TARGET},readonly")
 fi
 while IFS= read -r host_mapping; do run_args+=(--publish "${host_mapping}"); done < <(
   jq -r "${host_config}.PortBindings // {} | to_entries[] | .key as \$container | .value[] | ((if (.HostIp // \"\") == \"\" then \"\" else .HostIp + \":\" end) + .HostPort + \":\" + \$container)" "${inspect_file}"

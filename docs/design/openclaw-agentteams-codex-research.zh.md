@@ -348,6 +348,17 @@ Leader runtime wiring 和 outbox handler 的真实部署绑定仍属于后续 B2
 DTO，再把本分支的 admission/outbox seam 接入 disposable Team smoke；在此之前不做
 权威数据迁移、不删除 legacy pi，也不把本地 journal 当成跨 Worker 共享状态。
 
+上述段落是 B2 部署接通前的历史记录。2026-08-16 已完成一次新的真实 disposable
+AgentTeams v1.2.2 B2 Basic 复核：部署层注入并验证 Leader binding，Manager 在真实
+Team Matrix room 发出带 Leader mention 的单行消息，OpenClaw 记录为
+`peer=channel:<team-room>`，PG 创建 Work/Timeline 和 `leader-resume`、`human-reply`
+wakes，Matrix consumer 完成两类 wake 的 claim/send/ack，Coordination runtime 的
+`/readyz`、根页面和 `/api/runtime` 均返回 200，Web projection 能读到 acked state。
+此外，outbox consumer 已能在同一 consumer 重启时恢复遗留的 `claimed` wake，并用
+同一个确定性 Matrix transaction pathname 重放；独立 F1 contract test 已通过。真实
+容器级 crash-after-send-before-ack 的 Full/F1、B3/B4/B5 仍未完成，不能把这次结果
+当成 Gate B clean-cut，也不能提前删除 `tiangong-pi`。
+
 ## 2026-08-16 Phase B4 Work/Task/Runner/Result 纵切
 
 `make test-runner-broker-linux` 现在不再只验证 Runner broker 客户端。Linux

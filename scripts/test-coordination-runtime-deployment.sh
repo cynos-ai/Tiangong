@@ -64,6 +64,16 @@ TIANGONG_COORDINATION_HOST_PORT=18780 \
   "${REPO_ROOT}/scripts/deploy-coordination-runtime.sh" start >"${output_port}"
 grep -q -- '--publish 127.0.0.1:18780:8780/tcp' "${TEST_ROOT}/docker-port.log"
 
+output_volume="${TEST_ROOT}/output-volume"
+FAKE_DOCKER_LOG="${TEST_ROOT}/docker-volume.log" \
+PATH="${TEST_ROOT}/bin:${PATH}" \
+TIANGONG_LEADER_RUNTIME_BINDING_FILE="${binding}" \
+TIANGONG_COORDINATION_ENV_FILE="${env_file}" \
+TIANGONG_DOCKER_BINDING_VOLUME=coordination-test-binding \
+  "${REPO_ROOT}/scripts/deploy-coordination-runtime.sh" start >"${output_volume}"
+grep -q -- '--mount type=volume,source=coordination-test-binding,destination=/run/tiangong-coordination,readonly' "${TEST_ROOT}/docker-volume.log"
+! grep -q -- 'leader-binding.json,readonly' "${TEST_ROOT}/docker-volume.log"
+
 if FAKE_DOCKER_LOG="${TEST_ROOT}/docker-invalid-port.log" \
   PATH="${TEST_ROOT}/bin:${PATH}" \
   TIANGONG_LEADER_RUNTIME_BINDING_FILE="${binding}" \

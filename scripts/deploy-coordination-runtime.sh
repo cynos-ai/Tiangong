@@ -9,6 +9,7 @@ readonly COMPONENT="coordination-runtime"
 readonly BINDING_TARGET="/run/tiangong-coordination/leader-binding.json"
 readonly ENV_FILE="${TIANGONG_COORDINATION_ENV_FILE:-}"
 readonly BINDING_FILE="${TIANGONG_LEADER_RUNTIME_BINDING_FILE:-}"
+readonly DOCKER_BINDING_VOLUME="${TIANGONG_DOCKER_BINDING_VOLUME:-}"
 readonly HOST_PORT="${TIANGONG_COORDINATION_HOST_PORT:-}"
 
 fail() { printf 'coordination_runtime_deployment=fail code=%s\n' "$1" >&2; exit 1; }
@@ -18,6 +19,19 @@ owned_container() {
 }
 require_network() { docker network inspect "${NETWORK}" >/dev/null 2>&1 || fail NETWORK_NOT_FOUND; }
 require_image() { docker image inspect "${IMAGE}" >/dev/null 2>&1 || fail IMAGE_NOT_FOUND; }
+docker_host_path() {
+  local path="$1"
+  if command -v wslpath >/dev/null 2>&1 && [[ "${path}" == /* ]]; then
+    wslpath -w "${path}"
+  elif command -v cygpath >/dev/null 2>&1 && [[ "${path}" == /* ]]; then
+    cygpath -w "${path}"
+  else
+    printf '%s\n' "${path}"
+  fi
+}
+valid_volume_name() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]
+}
 validate_host_port() {
   [[ -z "${HOST_PORT}" || "${HOST_PORT}" =~ ^[0-9]+$ ]] || fail INVALID_HOST_PORT
   [[ -z "${HOST_PORT}" || ( "${HOST_PORT}" -ge 1 && "${HOST_PORT}" -le 65535 ) ]] || fail INVALID_HOST_PORT
@@ -45,6 +59,10 @@ validate_env_keys() {
 require_inputs() {
   [[ -n "${ENV_FILE}" ]] || fail ENV_FILE_REQUIRED
   [[ -n "${BINDING_FILE}" ]] || fail BINDING_FILE_REQUIRED
+  if [[ -n "${DOCKER_BINDING_VOLUME}" ]]; then
+    valid_volume_name "${DOCKER_BINDING_VOLUME}" || fail INVALID_BINDING_VOLUME
+    docker volume inspect "${DOCKER_BINDING_VOLUME}" >/dev/null 2>&1 || fail BINDING_VOLUME_NOT_FOUND
+  fi
   regular_secret_file "${ENV_FILE}" 16384 || fail INVALID_ENV_FILE
   regular_secret_file "${BINDING_FILE}" 65536 || fail INVALID_BINDING_FILE
   validate_env_keys
@@ -79,9 +97,7 @@ start() {
       --label 'io.tiangong.schema=1' \
       --network "${NETWORK}" \
       --network-alias "${CONTAINER}" \
-      --env-file "${ENV_FILE}" \
-      --env "TIANGONG_LEADER_RUNTIME_BINDING_FILE=/run/tiangong-coordination/leader-binding.json" \
-      --mount "type=bind,src=${BINDING_FILE},dst=/run/tiangong-coordination/leader-binding.json,readonly" \
+      --env-file "$(docker_host_path "${ENV_FILE}")" \
       --read-only \
       --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m \
       --cap-drop=ALL \
@@ -91,6 +107,13 @@ start() {
       --cap-add=SETGID \
       --security-opt no-new-privileges \
     )
+    if [[ -n "${DOCKER_BINDING_VOLUME}" ]]; then
+      run_args+=(--env "TIANGONG_LEADER_RUNTIME_BINDING_FILE=/run/tiangong-coordination/leader-binding.json" \
+        --mount "type=volume,source=${DOCKER_BINDING_VOLUME},destination=/run/tiangong-coordination,readonly")
+    else
+      run_args+=(--env "TIANGONG_LEADER_RUNTIME_BINDING_FILE=/run/tiangong-coordination/leader-binding.json" \
+        --mount "type=bind,src=$(docker_host_path "${BINDING_FILE}"),dst=/run/tiangong-coordination/leader-binding.json,readonly")
+    fi
     if [[ -n "${HOST_PORT}" ]]; then
       run_args+=(--publish "127.0.0.1:${HOST_PORT}:8780/tcp")
     fi

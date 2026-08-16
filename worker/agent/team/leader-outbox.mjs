@@ -36,18 +36,23 @@ export async function drainLeaderOutbox({ store, handlers = {}, consumerId, maxE
   }
   if (!handlers || typeof handlers !== "object" || Array.isArray(handlers)) throw new TypeError("outbox handlers must be an object");
   const pending = await store.listOutbox({ status: "pending" });
+  const claimed = (await store.listOutbox({ status: "claimed" }))
+    .filter((wake) => wake.consumerId === consumerId);
+  const candidates = [...pending, ...claimed];
   const results = [];
-  for (const wake of pending.slice(0, maxEntries)) {
+  for (const wake of candidates.slice(0, maxEntries)) {
     const handler = handlers[wake.kind];
     if (typeof handler !== "function") continue;
     try {
       const value = await handler(Object.freeze(wake));
       const receipt = receiptId(wake.wakeId, value?.receiptId);
-      await store.claimWake({
-        wakeId: wake.wakeId,
-        consumerId,
-        requestId: `outbox-claim-${wake.wakeId}`,
-      });
+      if (wake.status === "pending") {
+        await store.claimWake({
+          wakeId: wake.wakeId,
+          consumerId,
+          requestId: `outbox-claim-${wake.wakeId}`,
+        });
+      }
       const acknowledged = await store.ackWake({
         wakeId: wake.wakeId,
         consumerId,
@@ -56,10 +61,10 @@ export async function drainLeaderOutbox({ store, handlers = {}, consumerId, maxE
       });
       results.push({ wakeId: wake.wakeId, kind: wake.kind, status: acknowledged.wake.status, receiptId: receipt });
     } catch (error) {
-      results.push({ wakeId: wake.wakeId, kind: wake.kind, status: "pending", errorCode: errorCode(error) });
+      results.push({ wakeId: wake.wakeId, kind: wake.kind, status: wake.status === "claimed" ? "claimed" : "pending", errorCode: errorCode(error) });
     }
   }
-  return Object.freeze({ scanned: Math.min(pending.length, maxEntries), results: Object.freeze(results) });
+  return Object.freeze({ scanned: Math.min(candidates.length, maxEntries), results: Object.freeze(results) });
 }
 
 /**

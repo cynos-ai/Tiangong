@@ -81,3 +81,15 @@ Docker Desktop/WSL 的 Windows bind mount 会把文件权限呈现为过宽，Ti
 如需让操作者从宿主机直接查看 runtime 页面，可设置 `TIANGONG_COORDINATION_HOST_PORT=18780`；脚本只绑定 `127.0.0.1`，不会默认暴露到公网。AgentTeams Dashboard 仍由 AgentTeams 自己管理。
 
 成员 Worker 不应调用 Leader admission。OpenClaw harness 现在读取固定 RoleProfile：只有 Leader runtime 执行 admission，Designer/Implementor/Assessor/Operator 的 Matrix 任务直接进入自己的成员运行时；对应回归测试覆盖该边界。人类 admission smoke 必须发送单行 Matrix body（换行会被 `HUMAN_EVENT_CONTENT_INVALID` 拒绝），成员 Worker mention 则走任务分发链路而不是人类 Work admission。
+
+## 2026-08-16 B2 Basic 闭环复核
+
+在同一套 disposable AgentTeams v1.2.2 Team 上重新复核了完整链路：
+
+- 部署层创建独立 PG、Coordination runtime 和 Leader binding volume；Leader 通过注入适配器重建后保持 `Running`，Worker 只看到 credential-free binding、Control endpoint 和短期 Control token；PG URL、Matrix deployment token 不出现在 Worker 环境。
+- 由非 Team member 的 AgentTeams Manager 身份在真实 Team Matrix room 发出带 Leader mention 的单行消息；OpenClaw 日志观察到 `peer=channel:<team-room>`，不是 DM 路由。
+- Control API 在 PG 中创建 Work、Timeline 和两个 durable wake；`matrix_message_binding` 的 `room_id + event_id` 约束生效。
+- Matrix outbox consumer 对 `leader-resume` 和 `human-reply` 各自完成 claim/send/ack；`/readyz` 返回 `source=postgres-and-matrix`，runtime 根页面和 `/api/runtime` 返回 200，并能读出 Work projection 与 acked delivery state。
+- outbox 现在会在同一 consumer 重启时恢复自己遗留的 `claimed` wake；Matrix transaction pathname 由 wake 事实确定性生成。独立测试已模拟 send 成功后 ACK 崩溃，再次启动完成同一逻辑事务的重放和 ACK。
+
+这证明 B2 Basic 的真实 AgentTeams/Matrix/PG/Leader/Web projection seam 已经可以走通，并且 F1 的确定性重放合同已具备；但真实容器级 crash-after-send-before-ack 故障注入、B3/B4、B5 runtime A/B 仍未完成，因此现在仍不能做 Gate B clean-cut，也不能删除 `tiangong-pi`。

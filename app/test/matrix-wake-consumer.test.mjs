@@ -63,3 +63,60 @@ test("Matrix wake consumer delivers Work, Task, and Result wakes, then acknowled
   assert.equal((await store.listOutbox({ status: "pending" })).length, 0);
   assert.equal((await store.listOutbox({ status: "acked" })).length, 4);
 });
+
+test("Matrix outbox replay keeps one logical transaction after a crash before ack", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "tiangong-matrix-consumer-replay-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const profile = createControlProfile({ profileId: "profile-replay", revision: 1, maxTimelineEntries: 64, maxOutboxEntries: 8, maxTasksPerWork: 4, toolResultRetentionMs: 60_000 });
+  const team = createTeamConfig({ teamId: "team-replay", revision: 1, leaderMemberId: "leader-replay", memberIds: ["leader-replay"], controlProfileId: profile.profileId, createdAt: NOW });
+  const route = createTeamRouteBinding({ routeId: "route-replay", teamId: team.teamId, revision: 1, channel: "matrix", roomId: "!room-replay:example.test", createdAt: NOW });
+  const leaderMember = createMemberConfig({ memberId: "leader-replay", teamId: team.teamId, workerName: "leader-replay", matrixUserId: "@leader-replay:example.test", role: "leader", controlProfileId: profile.profileId, enabled: true, createdAt: NOW });
+  const store = new CoordinationStore({ filePath: join(root, "coordination.jsonl"), now: () => NOW });
+  await store.createWork({
+    workId: "work-replay",
+    team,
+    route,
+    profile,
+    spec: createWorkSpec({ workId: "work-replay", revision: 1, objective: "replay", scope: "test", completionContract: "one ack", createdAt: NOW }),
+    actorId: "@human-replay:example.test",
+    sourceEventId: "$human-replay",
+    requestId: "request-replay",
+    wakes: [{ kind: "leader-resume", targetMemberId: leaderMember.memberId }],
+  });
+  const sendUrls = [];
+  const fakeFetch = async (url) => {
+    if (url.endsWith("/_matrix/client/v3/account/whoami")) return response({ user_id: leaderMember.matrixUserId });
+    if (url.includes("/joined_members")) return response({ joined: { [leaderMember.matrixUserId]: {} } });
+    if (url.includes("/send/m.room.message/")) {
+      sendUrls.push(url);
+      return response({ event_id: "$sent-replay-" + sendUrls.length });
+    }
+    throw new Error("unexpected matrix request");
+  };
+  let failAck = true;
+  const flakyStore = {
+    listOutbox: (...args) => store.listOutbox(...args),
+    getWork: (...args) => store.getWork(...args),
+    claimWake: (...args) => store.claimWake(...args),
+    ackWake: async (...args) => {
+      if (failAck) {
+        failAck = false;
+        throw Object.assign(new Error("simulated crash after Matrix send"), { code: "SIMULATED_CRASH_AFTER_SEND" });
+      }
+      return store.ackWake(...args);
+    },
+  };
+  const binding = { team, route, profile, leaderMember, members: [leaderMember] };
+  const first = createMatrixWakeConsumer({ store: flakyStore, binding, matrixUrl: "https://matrix.example.test", matrixToken: TOKEN, fetchImpl: fakeFetch, intervalMs: 1000 });
+  await first.start();
+  await first.stop();
+  assert.equal((await store.listOutbox({ status: "pending" })).length, 0);
+  assert.equal((await store.listOutbox({ status: "claimed" })).length, 1);
+  const restarted = createMatrixWakeConsumer({ store: flakyStore, binding, matrixUrl: "https://matrix.example.test", matrixToken: TOKEN, fetchImpl: fakeFetch, intervalMs: 1000 });
+  await restarted.start();
+  await restarted.stop();
+  assert.equal(sendUrls.length, 2);
+  assert.equal(new URL(sendUrls[0]).pathname, new URL(sendUrls[1]).pathname);
+  assert.equal((await store.listOutbox({ status: "pending" })).length, 0);
+  assert.equal((await store.listOutbox({ status: "acked" })).length, 1);
+});
