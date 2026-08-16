@@ -51,13 +51,27 @@ Matrix event IDs/digests, WebUI readiness, and exact run-owned cleanup. Never
 capture provider keys, raw Matrix payloads, raw prompts, unrestricted logs, or
 full model transcripts.
 
-## Current prerequisite status
+## Deployment prerequisite status
 
 The public deterministic route, owner lease, recovery controller, and B4
-Codex/Runner/Coordination/WebUI/Matrix seam are implemented. The current local
-AgentTeams v1.2.2 `agt` deployment does not inject the B5 role/runtime metadata
-(`TIANGONG_ROLE_ID`, required runtime lane, or the native Leader binding) into
-Worker containers; its observed demo Workers report `AGENTTEAMS_WORKER_ROLE=standalone`.
-Until the deployment template supplies those fields, this run is blocked at
-startup by design. Do not weaken the startup gate or repurpose the existing
-demo Team; deploy a fresh run-owned Team with the binding injection first.
+Codex/Runner/Coordination/WebUI/Matrix seam are implemented. AgentTeams v1.2.2
+still has no manifest fields for the B5 role/runtime metadata. The deployment
+adapter `scripts/inject-b5-role-runtime-docker.sh` now provides the narrow
+escape hatch: it accepts one explicit role, recreates only the supported
+single-auth-volume Worker topology, preserves its security flags, and verifies
+the route from inside the new container. Its deterministic contract is covered
+by `make test-b5-role-runtime-injection-docker`.
+
+For a fresh Worker only, the deployment owner invokes it with
+`TIANGONG_B5_WORKER_CONTAINER=agentteams-worker-<name>` and
+`TIANGONG_B5_ROLE_ID=leader|designer|implementor|assessor|operator`.
+The adapter must run after `agt apply` reports the Worker `Running` and before
+any Matrix/model turn. A failed route check rolls the exact old container name
+back; it never falls through to a different Harness.
+
+The current local AgentTeams deployment has not been mutated: its observed demo
+Workers report `AGENTTEAMS_WORKER_ROLE=standalone`, and the existing demo is not
+owned by this run. The real smoke remains blocked until a fresh run-owned Team
+is applied, each Worker is injected with the adapter (plus the separate native
+Leader binding), and the resulting WebUI/Matrix/Task/Result/restart facts are
+captured. Do not weaken the startup gate or repurpose the existing demo Team.
