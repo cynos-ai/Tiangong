@@ -26,6 +26,11 @@ Worker 提供部署拥有的 `TIANGONG_ROLE_ID`；Leader 可由 AgentTeams 的
 `AGENTTEAMS_WORKER_ROLE=team_leader` 推导。旧的 Gate A 通用 canary 不带 role
 绑定，继续作为兼容性探针，不被误报为 B5 Team 路由证明。
 
+当前 pinned OpenClaw 镜像对官方内置 runtime 使用历史标识 `pi`；启动包装器只在
+B5 路由门通过后把抽象的 `openclaw-built-in` 映射为这个上游标识。它与仓库自有的
+`tiangong-pi` plugin harness 不是同一个 runtime，后者仍只作为 Gate B 前的 legacy
+rollback。
+
 ## 2. WorkRun 重启恢复
 
 每个 Task 只有一个持久化执行 owner。Worker 在开始 `executing` 前创建 owner lease；
