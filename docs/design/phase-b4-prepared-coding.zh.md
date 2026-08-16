@@ -136,10 +136,11 @@ host-side `exec`。
   `TIANGONG_NATIVE_RUNNER_EXEC_POLICY=deny`。Worker 插件仍默认关闭，缺少这些注入时
   fail closed。
 
-启用后插件还注册 OpenClaw `before_tool_call` deny hook，阻断 `exec`、`process`、
-`shell` 及其 host-side 前缀变体；只有 `tiangong_run_command` 保留给该 Implementor
-Task。这样 `exec=deny` 不再只是部署层环境变量声明，而是在 Worker 的工具调用边界
-再次确定性执行。
+启用后插件还注册 OpenClaw `before_tool_call` deny hook，针对会进入该 lifecycle 的
+`exec`、`process`、`shell`、`bash`、`terminal` 及其 host-side 前缀变体做 fail-closed
+处理；只有 `tiangong_run_command` 保留给该 Implementor Task。注意 pinned Codex
+app-server 的原生工具可能绕过这个 plugin lifecycle，生产仍必须由 sandbox/部署层
+关闭通用 host-side execution，不能只依赖 hook。
 
 这样部署层可以在启动 Worker 前完成“broker 绑定 → receipt 挂载 → Codex session 唤醒”的
 顺序；但 B4 仍要用真实 AgentTeams Codex Task 证明 OpenClaw 的通用 host-side `exec` 已被
@@ -152,10 +153,40 @@ Task。这样 `exec=deny` 不再只是部署层环境变量声明，而是在 Wo
 `tiangong_run_command`（不使用宿主 Docker socket）后，第一次调用返回
 `runner_probe=pass`、`outcome=completed` 和 bounded `ChangeRevisionRef`；同一
 receipt/journal 的第二次调用返回 `replayed=true`，artifact digest 和 plan digest
-保持不变。native tool 的 `before_tool_call` hook 也已加入，`exec`/`process`/`shell`
-及前缀变体会确定性 deny。
+保持不变。native tool 的 `before_tool_call` hook 合约也已加入，覆盖
+`bash`/`terminal`/`exec`/`process`/`shell` 及前缀变体；其中 `bash` 是 Codex app-server
+实际暴露的通用主机执行工具名，但该 native app-server 工具不会经过 plugin hook。
 
 这已经证明“部署 receipt → broker plan → native tool → RunnerPort/Journal →
 ChangeRevision/replay”这条真实容器链可行；仍未替代真实 Codex app-server Task 的
 完整 WebUI/Matrix Result smoke，因此 B4 的最终 Go 还要把这条链放回真实 Codex session
 并完成 cleanup/恢复证据。
+
+## 2026-08-16 B4 收口：真实 Codex/Runner/Coordination 链路
+
+本次最终 smoke 已经把上面的 seam 放回真实的 AgentTeams disposable Team：
+
+- Implementor Worker 使用 OpenClaw 内置 Codex app-server，`OPENCLAW_AGENT_RUNTIME=codex`、无
+  pi fallback，provider 为 AgentTeams gateway，model 为 `deepseek-v4-pro`，transport 为
+  native Responses；Leader 仍使用 OpenClaw 自带的非编程 runtime。
+- Leader 侧先完成 `/v1/prepare`，生成不可变 Runner plan；Worker 只挂载
+  `binding.json`/journal 和 credential-free broker endpoint，模型只能传入当前 TaskId。
+- 真实 Codex 调用执行固定 fixture，输出 `B4_CODEX_NATIVE_OK`，Runner 返回 bounded
+  `ChangeRevisionRef`；同一 invocation 的再次调用由 durable journal 返回
+  `replayed=true`，command、plan、artifact digest 不变。
+- pinned OpenClaw Codex app-server 没有发出 Tiangong 期望的 `after_tool_call`/`agent_end`
+  lifecycle event。因此 native Runner tool 内增加了一个确定性的 Coordination bridge：它
+  重新读取 Task/Work，校验 member/task/work 绑定，以固定 result id 提交 bounded Result；若
+  Task 已有 Result，则只返回 replay，不重复写入。这样不依赖模型 prose，也不把数据库句柄
+  暴露给 Worker。
+- 两个真实 Task 都进入 `reported`，Result 在 PG/WebUI projection 可见，两个
+  `result-notification` 被 Leader ack；任务 assignment、human-reply、leader-resume 共八个
+  wake 最终全部 ack。第二次 Codex session 验证了 Result 提交的幂等性。
+
+安全边界记录：Codex 原生 `bash` 工具不会经过 OpenClaw plugin 的通用 lifecycle hook；真实
+试调用被 Codex sandbox 拒绝（bwrap 无法创建 namespace），没有执行宿主命令。Worker 仍对
+`exec/process/shell/bash/terminal` 做 fail-closed 的 hook 合约测试；生产部署在 Gate B 前必须
+继续保持 Codex sandbox/host-exec deny，不能把 hook 合约测试误当成 app-server 工具拦截证据。
+
+本节证明 B4 的真实 Codex/Runner/Result/WebUI/Matrix 闭环已经可运行；`tiangong-pi` 仍只作
+legacy rollback，下一阶段是 B5 的 role/recovery 与 Gate B 证据，之后再决定 B6 清理旧 lane。

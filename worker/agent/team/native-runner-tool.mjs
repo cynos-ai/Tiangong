@@ -3,6 +3,8 @@ import { isAbsolute } from "node:path";
 import { Type } from "typebox";
 
 import { canonicalJson, sha256 } from "../canonical-json.mjs";
+import { createRemoteCoordinationStore } from "./coordination-control-client.mjs";
+import { createResult } from "./coordination-store.mjs";
 import { createRunnerBrokerExecutor, runnerBrokerEndpointForWorker } from "../runner/broker-client.mjs";
 import { FORBIDDEN_ENV_KEYS, FORBIDDEN_NETWORK_TARGETS } from "../runner/runner-policy.mjs";
 import { runCommand } from "../runner/runner-port.mjs";
@@ -15,7 +17,7 @@ const DIGEST = /^[0-9a-f]{64}$/u;
 const ROLE = "implementor";
 const MAX_BINDING_BYTES = 16 * 1024;
 const MAX_OUTPUT_BYTES = 8 * 1024;
-const GENERIC_HOST_EXEC_TOOLS = new Set(["exec", "process", "shell"]);
+const GENERIC_HOST_EXEC_TOOLS = new Set(["bash", "exec", "process", "shell", "terminal"]);
 
 const BINDING_KEYS = ["assigneeMemberId", "bindingDigest", "role", "runId", "schemaVersion", "taskId", "workId"];
 
@@ -89,12 +91,16 @@ function resultText(result) {
   });
 }
 
-export function createNativeRunnerTool({ bindingFile, journalFile, endpoint, memberId, fetchImpl = globalThis.fetch } = {}) {
+export function createNativeRunnerTool({ bindingFile, journalFile, endpoint, memberId, coordinationEndpoint, coordinationToken, now = () => new Date().toISOString(), fetchImpl = globalThis.fetch } = {}) {
   const actorId = requirePattern(memberId, MEMBER_ID, "memberId");
   const brokerEndpoint = endpoint;
   if (typeof brokerEndpoint !== "string" || brokerEndpoint === "") throw new TypeError("native Runner broker endpoint is required");
   if (typeof journalFile !== "string" || journalFile === "") throw new TypeError("native Runner journal file is required");
+  if (typeof now !== "function") throw new TypeError("native Runner clock is required");
   const journal = new RunnerJournal({ filePath: journalFile });
+  const coordinationStore = coordinationEndpoint && coordinationToken
+    ? createRemoteCoordinationStore({ endpoint: coordinationEndpoint, token: coordinationToken, fetchImpl, memberId: actorId })
+    : null;
   return Object.freeze({
     name: "tiangong_run_command",
     label: "Tiangong bounded Runner command",
@@ -126,6 +132,35 @@ export function createNativeRunnerTool({ bindingFile, journalFile, endpoint, mem
         error.code = "TIANGONG_RUNNER_OUTCOME_UNCERTAIN";
         throw error;
       }
+      let coordinationResult = null;
+      if (coordinationStore) {
+        const task = await coordinationStore.getTask(binding.taskId);
+        if (!task?.spec || task.spec.taskId !== binding.taskId || task.spec.workId !== binding.workId || task.spec.assigneeMemberId !== actorId) {
+          throw new Error("native Runner Result is not bound to this Worker Task");
+        }
+        if (task.result) {
+          coordinationResult = { resultId: task.result.resultId, replayed: true };
+        } else {
+          const work = await coordinationStore.getWork(binding.workId);
+          if (!work?.work || work.work.workId !== binding.workId) throw new Error("native Runner Result Work binding is unavailable");
+          const artifactRefs = result.changeRevisionRef ? [`change-revision:${result.changeRevisionRef.contentDigest}`] : [];
+          const submitted = await coordinationStore.submitResult({
+            result: createResult({
+              resultId: `result-${sha256({ taskId, source: "native-runner" })}`,
+              workId: binding.workId,
+              taskId,
+              producerMemberId: actorId,
+              toolResultIds: [],
+              artifactRefs,
+              claim: boundedText(`Native Runner completed the assigned Codex tool call${result.replayed ? " by journal replay" : ""}${result.changeRevisionRef ? `; ChangeRevision ${result.changeRevisionRef.contentDigest}` : ""}.`),
+              createdAt: now(),
+            }),
+            expectedEpoch: work.epoch,
+            requestId: `result-submit-${taskId}`,
+          });
+          coordinationResult = { resultId: submitted.result?.resultId ?? submitted.resultId, replayed: submitted.replayed === true };
+        }
+      }
       return {
         content: [{ type: "text", text: resultText({ ...result, taskId, workId: binding.workId }) }],
         details: {
@@ -137,6 +172,7 @@ export function createNativeRunnerTool({ bindingFile, journalFile, endpoint, mem
           replayed: result.replayed === true,
           runnerEvidence: result.runnerEvidence,
           changeRevisionRef: result.changeRevisionRef ?? null,
+          coordinationResult,
         },
       };
     },
@@ -152,7 +188,7 @@ export function createNativeRunnerExecDenyHook() {
   return async (event = {}) => {
     const name = toolNameFromHookEvent(event);
     if (typeof name !== "string") return undefined;
-    if (GENERIC_HOST_EXEC_TOOLS.has(name) || name.startsWith("exec_") || name.startsWith("process_")) {
+    if (GENERIC_HOST_EXEC_TOOLS.has(name) || name.startsWith("bash_") || name.startsWith("exec_") || name.startsWith("process_") || name.startsWith("shell_") || name.startsWith("terminal_")) {
       return { block: true, blockReason: "TIANGONG_NATIVE_RUNNER_EXEC_DENIED: use tiangong_run_command for the assigned Task" };
     }
     return undefined;
@@ -173,7 +209,15 @@ export function registerNativeRunnerTool(api, { env = process.env, fetchImpl = g
     throw new Error("native Runner requires a binding file, journal file, and member identity");
   }
   if (typeof api.on !== "function") throw new Error("native Runner requires OpenClaw before_tool_call hook API");
-  api.registerTool(() => createNativeRunnerTool({ bindingFile, journalFile, endpoint, memberId, fetchImpl }), { name: "tiangong_run_command" });
+  api.registerTool(() => createNativeRunnerTool({
+    bindingFile,
+    journalFile,
+    endpoint,
+    memberId,
+    coordinationEndpoint: env.TIANGONG_COORDINATION_CONTROL_ENDPOINT,
+    coordinationToken: env.TIANGONG_COORDINATION_CONTROL_TOKEN,
+    fetchImpl,
+  }), { name: "tiangong_run_command" });
   api.on("before_tool_call", createNativeRunnerExecDenyHook(), { priority: 110 });
   return { enabled: true, tool: "tiangong_run_command", hooks: ["before_tool_call"] };
 }

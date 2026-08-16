@@ -5,6 +5,7 @@ import { sha256 } from "../canonical-json.mjs";
 const ID = /^[A-Za-z0-9@!#$%&*+./:=?_-]{1,160}$/u;
 const MAX_REPORT_BYTES = 8 * 1024;
 const TASK_ASSIGNMENT = /Tiangong Task assigned:\s*work=([^\s.]+)\s+task=([^\s.]+)/u;
+const DIGEST = /^[0-9a-f]{64}$/u;
 
 function required(value, name, pattern = ID) {
   if (typeof value !== "string" || value.length === 0 || (pattern && !pattern.test(value))) {
@@ -41,6 +42,22 @@ function resultId(taskId, sessionKey) {
   return `result-${sha256({ taskId, sessionKey })}`;
 }
 
+function nativeRunnerDetails(event = {}) {
+  const result = event?.result;
+  const details = result?.details ?? result?.result?.details;
+  if (!details || typeof details !== "object" || Array.isArray(details)) return null;
+  if (typeof details.taskId !== "string" || typeof details.workId !== "string") return null;
+  const changeRevisionRef = details.changeRevisionRef;
+  if (changeRevisionRef !== null && changeRevisionRef !== undefined &&
+      (typeof changeRevisionRef !== "object" || !DIGEST.test(changeRevisionRef.contentDigest ?? ""))) return null;
+  return Object.freeze({
+    taskId: details.taskId,
+    workId: details.workId,
+    replayed: details.replayed === true,
+    changeRevisionDigest: changeRevisionRef?.contentDigest ?? null,
+  });
+}
+
 /**
  * Hooks for a non-Leader OpenClaw Worker. OpenClaw remains the model/session
  * owner; this module only fetches the immutable TaskSpec before a native turn
@@ -51,6 +68,7 @@ export function createMemberCoordinationHooks({ endpoint, token, memberId, fetch
   const actorId = required(memberId, "memberId");
   const store = createRemoteCoordinationStore({ endpoint, token, fetchImpl, memberId: actorId });
   const assignments = new Map();
+  const nativeResults = new Set();
   return Object.freeze({
     async beforePromptBuild(event = {}, ctx = {}) {
       const assignment = assignmentFromPrompt(event.prompt);
@@ -69,6 +87,7 @@ export function createMemberCoordinationHooks({ endpoint, token, memberId, fetch
       const key = hookKey(ctx);
       const assignment = assignments.get(key);
       if (!assignment) return undefined;
+      if (nativeResults.has(assignment.taskId)) return undefined;
       assignments.delete(key);
       const work = await store.getWork(assignment.workId);
       if (!work?.work || work.work.workId !== assignment.workId) {
@@ -93,6 +112,35 @@ export function createMemberCoordinationHooks({ endpoint, token, memberId, fetch
         requestId: `result-submit-${assignment.taskId}`,
       });
     },
+    async afterToolCall(event = {}, ctx = {}) {
+      if (event.toolName !== "tiangong_run_command") return undefined;
+      const details = nativeRunnerDetails(event);
+      if (!details) throw new Error("Native Runner ToolResult details are unavailable");
+      const task = await store.getTask(details.taskId);
+      if (!task?.spec || task.spec.taskId !== details.taskId || task.spec.workId !== details.workId || task.spec.assigneeMemberId !== actorId) {
+        throw new Error("Native Runner ToolResult is not bound to this Worker Task");
+      }
+      if (task.result) {
+        nativeResults.add(details.taskId);
+        return undefined;
+      }
+      const work = await store.getWork(details.workId);
+      if (!work?.work || work.work.workId !== details.workId) throw new Error("Native Runner ToolResult Work binding is unavailable");
+      const artifactRefs = details.changeRevisionDigest ? [`change-revision:${details.changeRevisionDigest}`] : [];
+      const result = createResult({
+        resultId: resultId(details.taskId, "native-runner"),
+        workId: details.workId,
+        taskId: details.taskId,
+        producerMemberId: actorId,
+        toolResultIds: [],
+        artifactRefs,
+        claim: bounded(`Native Runner completed the assigned Codex tool call${details.replayed ? " by journal replay" : ""}${details.changeRevisionDigest ? `; ChangeRevision ${details.changeRevisionDigest}` : ""}.`, 4096),
+        createdAt: now(),
+      });
+      const submitted = await store.submitResult({ result, expectedEpoch: work.epoch, requestId: `result-submit-${details.taskId}` });
+      nativeResults.add(details.taskId);
+      return submitted;
+    },
   });
 }
 
@@ -100,6 +148,7 @@ export function registerMemberCoordinationHooks(api, options = {}) {
   if (typeof api?.on !== "function") throw new Error("OpenClaw member coordination hook API is unavailable");
   const hooks = createMemberCoordinationHooks(options);
   api.on("before_prompt_build", hooks.beforePromptBuild, { priority: 100 });
+  api.on("after_tool_call", hooks.afterToolCall, { priority: 100 });
   api.on("agent_end", hooks.agentEnd, { priority: 100 });
-  return { enabled: true, hooks: ["before_prompt_build", "agent_end"] };
+  return { enabled: true, hooks: ["before_prompt_build", "after_tool_call", "agent_end"] };
 }
