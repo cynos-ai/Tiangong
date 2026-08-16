@@ -99,7 +99,11 @@ actual_opencodex_version="$(docker run --rm --entrypoint ocx "${OPENCODEX_SIDECA
   printf 'ERROR: expected OpenCodex 2.15.0, got %s.\n' "${actual_opencodex_version}" >&2
   exit 1
 }
-docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${CANARY_IMAGE}" \
+# Probe the managed CLI's app-server directly; the `bin/codex` wrapper is the
+# credential-gated runtime entrypoint and is not a build-time health probe.
+docker run --rm --workdir /opt/tiangong-worker \
+  --env OPENCLAW_CODEX_APP_SERVER_BIN=/opt/tiangong-worker/node_modules/.bin/codex \
+  --entrypoint node "${CANARY_IMAGE}" \
   scripts/probe-codex-app-server.mjs
 
 actual_git_version="$(docker run --rm --entrypoint /usr/bin/git "${IMAGE}" --version)"
