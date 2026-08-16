@@ -129,6 +129,22 @@ async function assertPersonalRoomRecipient(config, recipient) {
   return config.personalRoomId;
 }
 
+async function requesterRoom(config, recipient) {
+  try {
+    return await assertPersonalRoomRecipient(config, recipient);
+  } catch (personalError) {
+    // AgentTeams v1.2.2 gives Worker-to-Worker reports only the authenticated
+    // shared Team room; a Worker personal/DM room is not guaranteed to contain
+    // another Worker. Keep the requester identity and fail closed to the one
+    // canonical Team room instead of silently dropping the terminal report.
+    try {
+      return await teamRoomFor(config, recipient);
+    } catch {
+      throw personalError;
+    }
+  }
+}
+
 async function assertJoinedRoom(config, roomId) {
   requireString(roomId, "Matrix room id", MATRIX_ROOM_ID);
   const rooms = await joinedRooms(config);
@@ -204,7 +220,7 @@ async function send(config, operation) {
   const roomId = operation.roomId
     ? await assertJoinedRoom(config, operation.roomId)
     : operation.personal
-    ? await assertPersonalRoomRecipient(config, operation.recipient)
+    ? await requesterRoom(config, operation.recipient)
     : await teamRoomFor(config, operation.recipient);
   const wireOperation = operation.kind === "specialist-handoff"
     ? { ...operation, sourceRoomId: roomId, sender: config.selfMatrixId }

@@ -275,7 +275,8 @@ configure_tiangong_plugin() {
     return 1
   }
   jq --arg plugin_id "${PLUGIN_ID}" --arg plugin_path "${PLUGIN_PATH}" \
-    --arg runtime_lane "${runtime_lane}" '
+    --arg runtime_lane "${runtime_lane}" \
+    --argjson disable_codex_discovery "$([[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]] && printf false || printf true)" '
     .plugins = (.plugins // {})
     | .plugins.load = (.plugins.load // {})
     | .plugins.load.paths = ([((.plugins.load.paths // [])[]), $plugin_path] | unique)
@@ -287,6 +288,13 @@ configure_tiangong_plugin() {
     | .plugins.allow = if (.plugins.allow | type) == "array"
         then ([.plugins.allow[], $plugin_id] | unique)
         else [$plugin_id]
+        end
+    | if $disable_codex_discovery
+      then .plugins.entries.codex = ((.plugins.entries.codex // {}) + {
+        enabled: true,
+        config: ((.plugins.entries.codex.config // {}) + {discovery: {enabled: false}})
+      })
+      else .
       end
   ' "${config_file}" >"${temporary_file}"
   chmod 600 "${temporary_file}"

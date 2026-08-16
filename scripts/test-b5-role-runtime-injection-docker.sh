@@ -91,6 +91,8 @@ TIANGONG_B5_INJECTION_TEST_ROOT="${TEST_ROOT}" \
 TIANGONG_B5_EXPECTED_ROLE=leader \
 TIANGONG_B5_WORKER_CONTAINER=worker-test \
 TIANGONG_B5_ROLE_ID=leader \
+TIANGONG_B5_COORDINATION_CONTROL_ENDPOINT=http://coordination-runtime:8780/v1/coordination/admit \
+TIANGONG_B5_COORDINATION_CONTROL_TOKEN=test-control-token-123456 \
   "${SCRIPT_DIR}/inject-b5-role-runtime-docker.sh" >"${output}"
 
 grep -Fq 'b5_role_runtime_injection=pass container=worker-test role=leader runtime=openclaw-built-in' "${output}"
@@ -103,6 +105,11 @@ grep -Fq -- '--restart unless-stopped' "${TEST_ROOT}/run.args"
 grep -Fq 'TIANGONG_ROLE_ID=leader' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_CODEX_RUNTIME=0' "${TEST_ROOT}/env"
 grep -Fq 'OPENCLAW_AGENT_RUNTIME=pi' "${TEST_ROOT}/env"
+grep -Fq 'CODEX_HOME=/root/.codex' "${TEST_ROOT}/env"
+grep -Fq 'OPENCLAW_CODEX_DISCOVERY_LIVE=0' "${TEST_ROOT}/env"
+grep -Fq 'TIANGONG_MEMBER_ID=worker-test' "${TEST_ROOT}/env"
+grep -Fq 'TIANGONG_MEMBER_COORDINATION_ENABLED=0' "${TEST_ROOT}/env"
+grep -Fq 'TIANGONG_COORDINATION_CONTROL_ENDPOINT=http://coordination-runtime:8780/v1/coordination/admit' "${TEST_ROOT}/env"
 ! grep -Fq 'secret-must-not-print' "${output}"
 ! grep -Fq 'secret-must-not-print' "${TEST_ROOT}/run.args"
 
@@ -112,6 +119,8 @@ TIANGONG_B5_INJECTION_TEST_ROOT="${TEST_ROOT}" \
 TIANGONG_B5_EXPECTED_ROLE=implementor \
 TIANGONG_B5_WORKER_CONTAINER=worker-test \
 TIANGONG_B5_ROLE_ID=implementor \
+TIANGONG_B5_COORDINATION_CONTROL_ENDPOINT=http://coordination-runtime:8780/v1/coordination/admit \
+TIANGONG_B5_COORDINATION_CONTROL_TOKEN=test-control-token-123456 \
   "${SCRIPT_DIR}/inject-b5-role-runtime-docker.sh" >"${output}"
 grep -Fq 'runtime=codex-app-server' "${output}"
 grep -Fq 'TIANGONG_RUNTIME_LANE=openclaw-canary' "${TEST_ROOT}/env"
@@ -120,6 +129,8 @@ grep -Fq 'OPENCLAW_AGENT_RUNTIME=codex' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_CODEX_CAPABILITY_CACHE_SHARED=1' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_CODEX_CAPABILITY_CACHE_URL=http://tiangong-codex-capability-cache:8788' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_CODEX_MODEL=deepseek-v4-flash' "${TEST_ROOT}/env"
+grep -Fq 'TIANGONG_MEMBER_ID=worker-test' "${TEST_ROOT}/env"
+grep -Fq 'TIANGONG_MEMBER_COORDINATION_ENABLED=1' "${TEST_ROOT}/env"
 
 if PATH="${TEST_ROOT}/bin:${PATH}" TIANGONG_B5_WORKER_CONTAINER=worker-test TIANGONG_B5_ROLE_ID=unknown \
   "${SCRIPT_DIR}/inject-b5-role-runtime-docker.sh" >"${TEST_ROOT}/invalid.out" 2>&1; then

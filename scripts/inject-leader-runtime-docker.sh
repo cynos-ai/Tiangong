@@ -18,6 +18,7 @@ readonly BINDING_TARGET="${TIANGONG_LEADER_RUNTIME_BINDING_TARGET:-/run/tiangong
 readonly NETWORK="${TIANGONG_AGENTTEAMS_NETWORK:-agentteams-net}"
 readonly OWNER="${TIANGONG_DEPLOYMENT_OWNER:-tiangong-deployment}"
 readonly COMPONENT="${TIANGONG_LEADER_INJECTION_COMPONENT:-leader-runtime-injection}"
+readonly DOCKER_TEMP_DIR="${TIANGONG_DOCKER_TEMP_DIR:-}"
 
 tmp_dir=''
 inspect_file=''
@@ -25,6 +26,7 @@ env_file=''
 docker_error_file=''
 backup=''
 new_started=0
+owns_tmp_dir=0
 
 fail() {
   printf 'leader_runtime_injection=fail code=%s\n' "$1" >&2
@@ -34,7 +36,11 @@ fail() {
 cleanup() {
   local status=$?
   set +e
-  [[ -n "${tmp_dir}" ]] && rm -rf -- "${tmp_dir}"
+  if ((owns_tmp_dir == 1)); then
+    [[ -n "${tmp_dir}" ]] && rm -rf -- "${tmp_dir}"
+  else
+    [[ -z "${inspect_file}" ]] || rm -f -- "${inspect_file}" "${env_file}" "${docker_error_file}"
+  fi
   if ((status != 0)) && [[ -n "${backup}" ]]; then
     if ((new_started == 1)); then "${DOCKER_COMMAND}" rm --force "${CONTAINER}" >/dev/null 2>&1 || true; fi
     if "${DOCKER_COMMAND}" container inspect "${backup}" >/dev/null 2>&1; then
@@ -51,13 +57,25 @@ regular_binding() {
   local mode path="$1"
   [[ -n "${path}" && -f "${path}" && ! -L "${path}" ]] || return 1
   mode="$(stat -c '%a' "${path}" 2>/dev/null || stat -f '%Lp' "${path}")"
-  [[ "${mode}" == 600 || "${mode}" == 400 ]]
+  if [[ "${mode}" == 600 || "${mode}" == 400 ]]; then return 0; fi
+  [[ "${TIANGONG_WINDOWS_ACL_VERIFIED:-0}" == 1 && "${OSTYPE:-}" =~ ^(msys|cygwin) ]] || return 1
+  require_command icacls
+  local host_path acl
+  host_path="$(docker_host_path "${path}")"
+  acl="$(icacls "${host_path}" 2>/dev/null || true)"
+  [[ -n "${acl}" ]] || return 1
+  # Inherited ACL markers are normal on Windows; reject only broad principals
+  # that would make a credential-bearing binding readable by unrelated users.
+  ! grep -Eiq 'Everyone|Authenticated Users|BUILTIN\\Users' <<<"${acl}"
 }
 valid_endpoint() {
-  [[ "$1" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?/v1/coordination/admit$ ]]
+  [[ "$1" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?/v1/coordination/admit$ ]] || return 1
+  local port="${BASH_REMATCH[1]#?}"
+  [[ -z "${port}" || ${#port} -le 5 ]]
 }
 valid_token() {
-  [[ "$1" =~ ^[^[:space:][:cntrl:]]{16,512}$ ]]
+  [[ "$1" =~ ^[^[:space:][:cntrl:]]+$ ]] || return 1
+  (( ${#1} >= 16 && ${#1} <= 512 ))
 }
 docker_host_path() {
   # Docker Desktop on Windows cannot resolve a WSL /tmp path through the
@@ -97,12 +115,18 @@ fi
 valid_endpoint "${ENDPOINT}" || fail INVALID_CONTROL_ENDPOINT
 valid_token "${CONTROL_TOKEN}" || fail INVALID_CONTROL_TOKEN
 
-tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/tiangong-leader-injection.XXXXXX")"
+if [[ -n "${DOCKER_TEMP_DIR}" ]]; then
+  [[ -d "${DOCKER_TEMP_DIR}" && ! -L "${DOCKER_TEMP_DIR}" ]] || fail INVALID_DOCKER_TEMP_DIR
+  tmp_dir="${DOCKER_TEMP_DIR}"
+else
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/tiangong-leader-injection.XXXXXX")"
+  owns_tmp_dir=1
+fi
 chmod 700 "${tmp_dir}"
-inspect_file="${tmp_dir}/inspect.json"
-env_file="${tmp_dir}/env"
-docker_error_file="${tmp_dir}/docker-error"
-"${DOCKER_COMMAND}" inspect "${CONTAINER}" >"${inspect_file}" 2>/dev/null || fail WORKER_NOT_FOUND
+inspect_file="${tmp_dir}/.tiangong-leader-inspect.$$"
+env_file="${tmp_dir}/.tiangong-leader-env.$$"
+docker_error_file="${tmp_dir}/.tiangong-leader-docker-error.$$"
+"${DOCKER_COMMAND}" inspect "${CONTAINER}" 2>/dev/null | sed 's/\r//g' >"${inspect_file}" || fail WORKER_NOT_FOUND
 
 running="$(jq -r '.[0].State.Running // false' "${inspect_file}")"
 [[ "${running}" == true ]] || fail WORKER_NOT_RUNNING
@@ -143,10 +167,20 @@ elif [[ "${bind_count}" == 0 && "${mount_count}" == 2 && "${ROTATE_EXISTING}" ==
   auth_source="$(jq -r "${host_config}.Mounts[] | select(.Type == \"volume\" and .Target == \"/var/run/secrets/agentteams\") | .Source // empty" "${inspect_file}")"
   [[ -n "${auth_source}" ]] || fail WORKER_AUTH_VOLUME_MISSING
   binding_parent="${BINDING_TARGET%/*}"
-  jq -e --arg parent "${binding_parent}" '
+  MSYS_NO_PATHCONV=1 jq -e --arg parent "${binding_parent}" '
     ([.[0].HostConfig.Mounts[]? | select(.Target == "/var/run/secrets/agentteams")] | length == 1) and
     ([.[0].HostConfig.Mounts[]? | select(.Target == $parent and (.ReadOnly == true or .RW == false) and .Type == "volume")] | length == 1)
-  ' "${inspect_file}" >/dev/null || fail EXISTING_BINDING_MOUNT_UNSUPPORTED
+  ' <"${inspect_file}" >/dev/null || {
+    fail EXISTING_BINDING_MOUNT_UNSUPPORTED
+  }
+elif [[ "${bind_count}" == 1 && "${mount_count}" == 1 ]]; then
+  # Docker Desktop reports a named auth volume in both Config.Binds and
+  # Config.Mounts. Accept only the exact duplicate; never drop a second mount.
+  auth_bind="$(jq -r "${host_config}.Binds[0] // empty" "${inspect_file}")"
+  mount_target="$(jq -r "${host_config}.Mounts[0].Target // empty" "${inspect_file}")"
+  mount_name="$(jq -r "${host_config}.Mounts[0].Name // empty" "${inspect_file}")"
+  [[ "${auth_bind}" == *:/var/run/secrets/agentteams && "${mount_target}" == /var/run/secrets/agentteams ]] || fail WORKER_AUTH_VOLUME_MISSING
+  auth_source="${mount_name:-${auth_bind%%:*}}"
 else
   fail UNSUPPORTED_MOUNTS
 fi
@@ -154,7 +188,7 @@ fi
 existing_injection=0
 if jq -e '
   .[0].Config.Env
-  | any(.[]?; startswith("TIANGONG_LEADER_RUNTIME_BINDING_FILE=") or startswith("TIANGONG_COORDINATION_CONTROL_ENDPOINT=") or startswith("TIANGONG_COORDINATION_CONTROL_TOKEN="))
+  | any(.[]?; startswith("TIANGONG_LEADER_RUNTIME_BINDING_FILE="))
 ' "${inspect_file}" >/dev/null; then
   [[ "${ROTATE_EXISTING}" == 1 ]] || fail EXISTING_TIANTGONG_INJECTION
   existing_injection=1
@@ -172,6 +206,7 @@ jq -r '.[0].Config.Env[]?
   | select(startswith("TIANGONG_LEADER_RUNTIME_BINDING_FILE=") | not)
   | select(startswith("TIANGONG_COORDINATION_CONTROL_ENDPOINT=") | not)
   | select(startswith("TIANGONG_COORDINATION_CONTROL_TOKEN=") | not)' "${inspect_file}" | while IFS= read -r line; do
+  line="${line%$'\r'}"
   [[ "${line}" != *$'\r'* ]] || fail WORKER_ENV_NEWLINE
   printf '%s\n' "${line}"
 done >"${env_file}"
@@ -179,13 +214,14 @@ printf 'TIANGONG_LEADER_RUNTIME_BINDING_FILE=%s\n' "${BINDING_TARGET}" >>"${env_
 printf 'TIANGONG_COORDINATION_CONTROL_ENDPOINT=%s\n' "${ENDPOINT}" >>"${env_file}"
 printf 'TIANGONG_COORDINATION_CONTROL_TOKEN=%s\n' "${CONTROL_TOKEN}" >>"${env_file}"
 chmod 600 "${env_file}"
+sleep 1
 
 run_args=(--detach --name "${CONTAINER}" --network "${NETWORK}" --env-file "$(docker_host_path "${env_file}")")
 [[ -n "${working_dir}" ]] && run_args+=(--workdir "${working_dir}")
 [[ -n "${user}" ]] && run_args+=(--user "${user}")
-while IFS= read -r cap; do [[ -n "${cap}" ]] && run_args+=(--cap-add "${cap}"); done < <(jq -r "${host_config}.CapAdd // [] | .[]" "${inspect_file}")
-while IFS= read -r cap; do [[ -n "${cap}" ]] && run_args+=(--cap-drop "${cap}"); done < <(jq -r "${host_config}.CapDrop // [] | .[]" "${inspect_file}")
-while IFS= read -r security_opt; do [[ -n "${security_opt}" ]] && run_args+=(--security-opt "${security_opt}"); done < <(jq -r "${host_config}.SecurityOpt // [] | .[]" "${inspect_file}")
+while IFS= read -r cap; do cap="${cap//$'\r'/}"; [[ -n "${cap}" ]] && run_args+=(--cap-add "${cap}"); done < <(jq -r "${host_config}.CapAdd // [] | .[]" "${inspect_file}")
+while IFS= read -r cap; do cap="${cap//$'\r'/}"; [[ -n "${cap}" ]] && run_args+=(--cap-drop "${cap}"); done < <(jq -r "${host_config}.CapDrop // [] | .[]" "${inspect_file}")
+while IFS= read -r security_opt; do security_opt="${security_opt//$'\r'/}"; [[ -n "${security_opt}" ]] && run_args+=(--security-opt "${security_opt}"); done < <(jq -r "${host_config}.SecurityOpt // [] | .[]" "${inspect_file}")
 if [[ "$(jq -r "${host_config}.Init // false" "${inspect_file}")" == true ]]; then run_args+=(--init); fi
 restart_name="$(jq -r "${host_config}.RestartPolicy.Name // \"no\"" "${inspect_file}")"
 restart_count="$(jq -r "${host_config}.RestartPolicy.MaximumRetryCount // 0" "${inspect_file}")"
@@ -205,14 +241,14 @@ if [[ -n "${DOCKER_BINDING_VOLUME}" ]]; then
 else
   run_args+=(--mount "type=bind,src=$(docker_host_path "${DOCKER_BINDING_FILE}"),dst=${BINDING_TARGET},readonly")
 fi
-while IFS= read -r host_mapping; do run_args+=(--publish "${host_mapping}"); done < <(
+while IFS= read -r host_mapping; do host_mapping="${host_mapping//$'\r'/}"; run_args+=(--publish "${host_mapping}"); done < <(
   jq -r "${host_config}.PortBindings // {} | to_entries[] | .key as \$container | .value[] | ((if (.HostIp // \"\") == \"\" then \"\" else .HostIp + \":\" end) + .HostPort + \":\" + \$container)" "${inspect_file}"
 )
-while IFS= read -r exposed; do run_args+=(--expose "${exposed}"); done < <(jq -r '.[0].Config.ExposedPorts // {} | keys[]' "${inspect_file}")
-while IFS= read -r extra_host; do run_args+=(--add-host "${extra_host}"); done < <(jq -r "${host_config}.ExtraHosts // [] | .[]" "${inspect_file}")
+while IFS= read -r exposed; do exposed="${exposed//$'\r'/}"; run_args+=(--expose "${exposed}"); done < <(jq -r '.[0].Config.ExposedPorts // {} | keys[]' "${inspect_file}")
+while IFS= read -r extra_host; do extra_host="${extra_host//$'\r'/}"; run_args+=(--add-host "${extra_host}"); done < <(jq -r "${host_config}.ExtraHosts // [] | .[]" "${inspect_file}")
 shm_size="$(jq -r "${host_config}.ShmSize // 0" "${inspect_file}")"
 [[ "${shm_size}" =~ ^[0-9]+$ ]] && ((shm_size > 0)) && run_args+=(--shm-size "${shm_size}")
-while IFS= read -r label; do run_args+=(--label "${label}"); done < <(jq -r '.[0].Config.Labels // {} | to_entries[] | "\(.key)=\(.value)"' "${inspect_file}")
+while IFS= read -r label; do label="${label//$'\r'/}"; run_args+=(--label "${label}"); done < <(jq -r '.[0].Config.Labels // {} | to_entries[] | "\(.key)=\(.value)"' "${inspect_file}")
 run_args+=(--label "io.tiangong.owner=${OWNER}" --label "io.tiangong.component=${COMPONENT}" --label 'io.tiangong.schema=1')
 
 backup="${CONTAINER}.tiangong-injection.$(date +%s).$$"
@@ -220,7 +256,7 @@ backup="${CONTAINER}.tiangong-injection.$(date +%s).$$"
 "${DOCKER_COMMAND}" stop --time 30 "${backup}" >/dev/null 2>&1 || fail WORKER_STOP_FAILED
 
 mapfile -t cmd_args < <(jq -r '.[0].Config.Cmd[]?' "${inspect_file}")
-if ! "${DOCKER_COMMAND}" run "${run_args[@]}" --entrypoint "${entrypoint}" "${image}" "${cmd_args[@]}" >/dev/null 2>"${docker_error_file}"; then
+if ! MSYS_NO_PATHCONV=1 "${DOCKER_COMMAND}" run "${run_args[@]}" --entrypoint "${entrypoint}" "${image}" "${cmd_args[@]}" >/dev/null 2>"${docker_error_file}"; then
   if [[ "${TIANGONG_INJECTION_DEBUG:-0}" == 1 ]]; then
     printf 'docker_run_args=' >&2
     printf '%s ' "${run_args[@]}" | sed 's/TIANGONG_COORDINATION_CONTROL_TOKEN=[^ ]*/TIANGONG_COORDINATION_CONTROL_TOKEN=REDACTED/g' >&2
@@ -237,7 +273,7 @@ if ! TIANGONG_LEADER_WORKER_CONTAINER="${CONTAINER}" \
   TIANGONG_LEADER_RUNTIME_BINDING_TARGET="${BINDING_TARGET}" \
   TIANGONG_DOCKER_BINDING_VOLUME="${DOCKER_BINDING_VOLUME}" \
   TIANGONG_DOCKER_COMMAND="${DOCKER_COMMAND}" \
-  "$(dirname "${BASH_SOURCE[0]}")/verify-leader-runtime-injection.sh" >/dev/null; then
+  MSYS_NO_PATHCONV=1 "$(dirname "${BASH_SOURCE[0]}")/verify-leader-runtime-injection.sh" >/dev/null; then
   fail INJECTION_VERIFY_FAILED
 fi
 

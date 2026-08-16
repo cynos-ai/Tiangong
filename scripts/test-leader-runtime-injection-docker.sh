@@ -75,7 +75,7 @@ cat >"${TEST_ROOT}/inspect-volume.json" <<'JSON'
       "Binds": null,
       "Mounts": [
         {"Type": "volume", "Source": "leader-test-auth", "Target": "/var/run/secrets/agentteams"},
-        {"Type": "volume", "Source": "leader-test-binding", "Target": "/run/tiangong-leader", "ReadOnly": true}
+        {"Type": "volume", "Source": "leader-test-binding", "Target": "/run/tiangong-leader", "ReadOnly": true, "RW": false}
       ],
       "Devices": [],
       "PortBindings": {"8088/tcp": [{"HostIp": "", "HostPort": "18818"}]},
@@ -130,6 +130,7 @@ chmod 755 "${TEST_ROOT}/bin/docker"
 output="${TEST_ROOT}/output"
 PATH="${TEST_ROOT}/bin:${PATH}" \
 TIANGONG_INJECTION_TEST_ROOT="${TEST_ROOT}" \
+TIANGONG_WINDOWS_ACL_VERIFIED=1 \
 TIANGONG_LEADER_WORKER_CONTAINER=leader-test \
 TIANGONG_LEADER_RUNTIME_BINDING_FILE="${binding}" \
 TIANGONG_COORDINATION_CONTROL_ENDPOINT=http://coordination-runtime:8780/v1/coordination/admit \
@@ -149,6 +150,7 @@ grep -Fq -- '--restart unless-stopped' "${TEST_ROOT}/run.args"
 
 if PATH="${TEST_ROOT}/bin:${PATH}" \
   TIANGONG_INJECTION_TEST_ROOT="${TEST_ROOT}" \
+  TIANGONG_WINDOWS_ACL_VERIFIED=1 \
   TIANGONG_INJECTION_TEST_RESOURCE=1 \
   TIANGONG_LEADER_WORKER_CONTAINER=leader-test \
   TIANGONG_LEADER_RUNTIME_BINDING_FILE="${binding}" \
@@ -163,6 +165,7 @@ grep -Fq 'code=UNSUPPORTED_RESOURCE_LIMIT' "${TEST_ROOT}/resource-output"
 volume_output="${TEST_ROOT}/volume-output"
 PATH="${TEST_ROOT}/bin:${PATH}" \
 TIANGONG_INJECTION_TEST_ROOT="${TEST_ROOT}" \
+TIANGONG_WINDOWS_ACL_VERIFIED=1 \
 TIANGONG_INJECTION_TEST_VOLUME=1 \
 TIANGONG_LEADER_INJECTION_ROTATE=1 \
 TIANGONG_DOCKER_BINDING_VOLUME=leader-test-binding \

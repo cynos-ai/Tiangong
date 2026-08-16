@@ -14,10 +14,21 @@ regular_binding() {
   local mode path="$1"
   [[ -n "${path}" && -f "${path}" && ! -L "${path}" ]] || return 1
   mode="$(stat -c '%a' "${path}" 2>/dev/null || stat -f '%Lp' "${path}")"
-  [[ "${mode}" == 600 || "${mode}" == 400 ]]
+  if [[ "${mode}" == 600 || "${mode}" == 400 ]]; then return 0; fi
+  [[ "${TIANGONG_WINDOWS_ACL_VERIFIED:-0}" == 1 && "${OSTYPE:-}" =~ ^(msys|cygwin) ]] || return 1
+  command -v icacls >/dev/null 2>&1 || return 1
+  local host_path acl
+  if command -v cygpath >/dev/null 2>&1; then host_path="$(cygpath -w "${path}")"; else host_path="${path}"; fi
+  acl="$(icacls "${host_path}" 2>/dev/null || true)"
+  [[ -n "${acl}" ]] || return 1
+  # Inherited ACL markers are normal on Windows; reject only broad principals
+  # that would make a credential-bearing binding readable by unrelated users.
+  ! grep -Eiq 'Everyone|Authenticated Users|BUILTIN\\Users' <<<"${acl}"
 }
 valid_endpoint() {
-  [[ "$1" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?/v1/coordination/admit$ ]]
+  [[ "$1" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?/v1/coordination/admit$ ]] || return 1
+  local port="${BASH_REMATCH[1]#?}"
+  [[ -z "${port}" || ${#port} -le 5 ]]
 }
 require_command "${DOCKER_COMMAND}"
 require_command jq
@@ -34,7 +45,7 @@ name="$("${DOCKER_COMMAND}" inspect -f '{{.Name}}' "${CONTAINER}" 2>/dev/null ||
 
 env_json="$("${DOCKER_COMMAND}" inspect -f '{{json .Config.Env}}' "${CONTAINER}" 2>/dev/null || true)"
 [[ -n "${env_json}" ]] || fail WORKER_ENV_UNAVAILABLE
-jq -e --arg endpoint "${ENDPOINT}" --arg binding "${BINDING_TARGET}" '
+MSYS_NO_PATHCONV=1 jq -e --arg endpoint "${ENDPOINT}" --arg binding "${BINDING_TARGET}" '
   if type != "array" then false
   else
     ([.[] | select(startswith("TIANGONG_COORDINATION_CONTROL_ENDPOINT="))] | length == 1) and
@@ -47,7 +58,7 @@ jq -e --arg endpoint "${ENDPOINT}" --arg binding "${BINDING_TARGET}" '
 ' >/dev/null <<<"${env_json}" || fail WORKER_ENV_BINDING_MISMATCH
 
 mounts_json="$("${DOCKER_COMMAND}" inspect -f '{{json .Mounts}}' "${CONTAINER}" 2>/dev/null || true)"
-jq -e --arg target "${BINDING_TARGET}" --arg volume "${DOCKER_BINDING_VOLUME}" '
+MSYS_NO_PATHCONV=1 jq -e --arg target "${BINDING_TARGET}" --arg volume "${DOCKER_BINDING_VOLUME}" '
   type == "array" and any(.[];
     (.Destination == $target and .RW == false) or
     ($volume != "" and .Destination == ($target | rtrimstr("/" ) | split("/")[:-1] | join("/")) and .RW == false and .Type == "volume" and .Name == $volume)

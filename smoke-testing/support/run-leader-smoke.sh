@@ -14,14 +14,17 @@ readonly OPERATOR_NAME="tiangong-leader-smoke-operator"
 readonly MEMBERS=("${LEADER_NAME}" "${DESIGNER_NAME}" "${IMPLEMENTOR_NAME}" "${ASSESSOR_NAME}" "${OPERATOR_NAME}")
 readonly MANAGER_CONTAINER="agentteams-manager"
 readonly CONTROLLER_CONTAINER="agentteams-controller"
+readonly TURN_CONTAINER="${TIANGONG_MATRIX_SENDER_CONTAINER:-${MANAGER_CONTAINER}}"
 readonly WORKERS_MANIFEST="${REPO_ROOT}/smoke-testing/fixtures/leader-smoke-workers.yaml"
 readonly MANIFEST="${REPO_ROOT}/smoke-testing/fixtures/leader-smoke-team.yaml"
 readonly TURN_HELPER="${SCRIPT_DIR}/leader-coordination-turn.sh"
+readonly FOLLOWUP_HELPER="${SCRIPT_DIR}/leader-followup-turn.sh"
 readonly REPORT_HELPER="${SCRIPT_DIR}/requester-report-check.sh"
 readonly BUILD_SCRIPT="${REPO_ROOT}/scripts/build-worker-image.sh"
 readonly MANAGER_WORKERS_MANIFEST="/tmp/tiangong-leader-smoke-workers.yaml"
 readonly MANAGER_MANIFEST="/tmp/tiangong-leader-smoke-team.yaml"
 readonly MANAGER_TURN="/tmp/tiangong-leader-coordination-turn.sh"
+readonly MANAGER_FOLLOWUP="/tmp/tiangong-leader-followup-turn.sh"
 readonly MANAGER_REPORT_CHECK="/tmp/tiangong-requester-report-check.sh"
 PROJECT_ID="leader-smoke-$(head -c 8 /proc/sys/kernel/random/uuid)"
 TASK_ID="${PROJECT_ID}-design-0"
@@ -124,12 +127,33 @@ done
 SH
   done
 }
+refresh_team_worker_policy() {
+  local member
+  # AgentTeams v1.2.2 materializes the Team peer allowlist when an existing
+  # Worker is started again. Exercise that supported lifecycle boundary before
+  # treating the Team policy as ready; this does not edit OpenClaw config.
+  for member in "${MEMBERS[@]}"; do
+    docker exec "${MANAGER_CONTAINER}" agt update worker --name "${member}" --state Sleeping >/dev/null
+    for _ in $(seq 1 60); do
+      phase="$(docker exec "${MANAGER_CONTAINER}" agt get workers "${member}" -o json 2>/dev/null | jq -r '.phase // empty' 2>/dev/null || true)"
+      [[ "${phase}" == Sleeping ]] && break
+      sleep 1
+    done
+    [[ "${phase}" == Sleeping ]] || die "Worker did not enter Sleeping state for Team policy refresh: ${member}"
+    docker exec "${MANAGER_CONTAINER}" agt update worker --name "${member}" --state Running >/dev/null
+    for _ in $(seq 1 120); do
+      phase="$(docker exec "${MANAGER_CONTAINER}" agt get workers "${member}" -o json 2>/dev/null | jq -r '.phase // empty' 2>/dev/null || true)"
+      [[ "${phase}" == Running ]] && break
+      sleep 1
+    done
+    [[ "${phase}" == Running ]] || die "Worker did not return to Running state after Team policy refresh: ${member}"
+  done
+}
 team_peer_policy_loaded() {
   local since=$1 member logs
   for member in "${MEMBERS[@]}"; do
     logs="$(docker logs --since "${since}" "agentteams-worker-${member}" 2>&1 || true)"
-    grep -Fq '[reload] config change applied' <<<"${logs}"
-    grep -Fq 'channels.matrix.groupAllowFrom' <<<"${logs}"
+    grep -Fq 'group allowlist resolved' <<<"${logs}"
   done
 }
 
@@ -201,6 +225,18 @@ restart_manager_after_cleanup() {
   return 1
 }
 
+remove_storage_prefix() {
+  local prefix="$1"
+  if docker exec "${CONTROLLER_CONTAINER}" mc find "${prefix}" 2>/dev/null | grep -q .; then
+    docker exec "${CONTROLLER_CONTAINER}" mc rm --recursive --force "${prefix}" >/dev/null 2>&1
+  fi
+}
+
+storage_prefix_absent() {
+  local prefix="$1"
+  ! docker exec "${CONTROLLER_CONTAINER}" mc find "${prefix}" 2>/dev/null | grep -q .
+}
+
 cleanup() {
   local status=$? failed=0 member container task_id discovered_id gone
   local -a project_tasks=("${TASK_ID}")
@@ -265,8 +301,8 @@ cleanup() {
     fi
 
     for member in "${MEMBERS[@]}"; do
-      docker exec "${CONTROLLER_CONTAINER}" mc rm --recursive --force \
-        "agentteams/agentteams-storage/agents/${member}/" >/dev/null 2>&1 || failed=1
+      remove_storage_prefix \
+        "agentteams/agentteams-storage/agents/${member}/" || failed=1
       docker exec "${CONTROLLER_CONTAINER}" rm -rf -- "/root/agentteams-fs/agents/${member}" >/dev/null 2>&1 || failed=1
       if [[ "$(docker inspect "${MANAGER_CONTAINER}" --format '{{.State.Running}}' 2>/dev/null)" == true ]]; then
         docker exec "${MANAGER_CONTAINER}" rm -rf -- "/root/agentteams-fs/agents/${member}" >/dev/null 2>&1 || failed=1
@@ -274,13 +310,21 @@ cleanup() {
         failed=1
       fi
     done
-    docker exec "${CONTROLLER_CONTAINER}" mc rm --recursive --force \
-      "agentteams/agentteams-storage/teams/${TEAM_NAME}/" >/dev/null 2>&1 || failed=1
-    docker exec "${CONTROLLER_CONTAINER}" mc rm --recursive --force \
-      "agentteams/agentteams-storage/shared/projects/${PROJECT_ID}/" >/dev/null 2>&1 || failed=1
+    remove_storage_prefix \
+      "agentteams/agentteams-storage/teams/${TEAM_NAME}/" || failed=1
+    remove_storage_prefix \
+      "agentteams/agentteams-storage/shared/projects/${PROJECT_ID}/" || failed=1
     for task_id in "${project_tasks[@]}"; do
-      docker exec "${CONTROLLER_CONTAINER}" mc rm --recursive --force \
-        "agentteams/agentteams-storage/shared/tasks/${task_id}/" >/dev/null 2>&1 || failed=1
+      remove_storage_prefix \
+        "agentteams/agentteams-storage/shared/tasks/${task_id}/" || failed=1
+    done
+    for member in "${MEMBERS[@]}"; do
+      storage_prefix_absent "agentteams/agentteams-storage/agents/${member}/" || failed=1
+    done
+    storage_prefix_absent "agentteams/agentteams-storage/teams/${TEAM_NAME}/" || failed=1
+    storage_prefix_absent "agentteams/agentteams-storage/shared/projects/${PROJECT_ID}/" || failed=1
+    for task_id in "${project_tasks[@]}"; do
+      storage_prefix_absent "agentteams/agentteams-storage/shared/tasks/${task_id}/" || failed=1
     done
     docker exec "${CONTROLLER_CONTAINER}" rm -rf -- "/root/agentteams-fs/teams/${TEAM_NAME}" \
       "/root/agentteams-fs/shared/projects/${PROJECT_ID}" >/dev/null 2>&1 || failed=1
@@ -296,7 +340,29 @@ cleanup() {
     else
       failed=1
     fi
-    if ((failed == 0)); then printf 'leader_smoke_cleanup=pass\n'; fi
+    # Intermediate leave/delete calls may race AgentTeams reconciliation. The
+    # authoritative cleanup gate is the final absence proof: no Team/Worker,
+    # no owned containers, no exact MinIO prefixes, and a restored Manager.
+    final_clean=1
+    [[ "$(docker inspect "${MANAGER_CONTAINER}" --format '{{.State.Running}}' 2>/dev/null)" == true ]] || final_clean=0
+    team_exists && final_clean=0
+    [[ "$(controller_team_status 2>/dev/null || true)" == 404 ]] || final_clean=0
+    for member in "${MEMBERS[@]}"; do
+      worker_exists "${member}" && final_clean=0
+      container_exists "agentteams-worker-${member}" && final_clean=0
+      storage_prefix_absent "agentteams/agentteams-storage/agents/${member}/" || final_clean=0
+    done
+    storage_prefix_absent "agentteams/agentteams-storage/teams/${TEAM_NAME}/" || final_clean=0
+    storage_prefix_absent "agentteams/agentteams-storage/shared/projects/${PROJECT_ID}/" || final_clean=0
+    for task_id in "${project_tasks[@]}"; do
+      storage_prefix_absent "agentteams/agentteams-storage/shared/tasks/${task_id}/" || final_clean=0
+    done
+    ((final_clean == 1)) && failed=0
+    if ((failed == 0)); then
+      printf 'leader_smoke_cleanup=pass\n'
+    else
+      printf 'leader_smoke_cleanup=fail\n' >&2
+    fi
   fi
   ((failed == 0)) || status=1
   exit "${status}"
@@ -306,10 +372,15 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 for cmd in awk docker jq grep sha256sum; do command -v "${cmd}" >/dev/null 2>&1 || die "Missing command: ${cmd}"; done
-for path in "${WORKERS_MANIFEST}" "${MANIFEST}" "${TURN_HELPER}" "${REPORT_HELPER}" "${BUILD_SCRIPT}"; do
+for path in "${WORKERS_MANIFEST}" "${MANIFEST}" "${TURN_HELPER}" "${FOLLOWUP_HELPER}" "${REPORT_HELPER}" "${BUILD_SCRIPT}"; do
   [[ -f "${path}" && ! -L "${path}" ]] || die "Missing or symlinked smoke asset: ${path}"
 done
-for host in "${MANAGER_CONTAINER}" "${CONTROLLER_CONTAINER}"; do
+for host in "${MANAGER_CONTAINER}" "${CONTROLLER_CONTAINER}" "${TURN_CONTAINER}"; do
+  # A Worker sender is created by this smoke itself; validate it after the
+  # disposable Worker readiness loop instead of before creation.
+  if [[ "${host}" == "${TURN_CONTAINER}" && "${host}" != "${MANAGER_CONTAINER}" && "${host}" != "${CONTROLLER_CONTAINER}" ]]; then
+    continue
+  fi
   container_exists "${host}" || die "${host} does not exist"
   [[ "$(docker inspect "${host}" --format '{{.State.Running}}')" == true ]] || die "${host} is not running"
 done
@@ -334,8 +405,6 @@ done
 "${BUILD_SCRIPT}"
 docker cp "${WORKERS_MANIFEST}" "${MANAGER_CONTAINER}:${MANAGER_WORKERS_MANIFEST}"
 docker cp "${MANIFEST}" "${MANAGER_CONTAINER}:${MANAGER_MANIFEST}"
-docker cp "${TURN_HELPER}" "${MANAGER_CONTAINER}:${MANAGER_TURN}"
-docker cp "${REPORT_HELPER}" "${MANAGER_CONTAINER}:${MANAGER_REPORT_CHECK}"
 owned=1
 log "Creating disposable Workers before binding the Team"
 docker exec "${MANAGER_CONTAINER}" agt apply -f "${MANAGER_WORKERS_MANIFEST}" >/dev/null
@@ -351,6 +420,11 @@ for _ in $(seq 1 120); do
   sleep 2
 done
 ((ready == 1)) || die "Standalone Worker credentials did not become ready"
+container_exists "${TURN_CONTAINER}" || die "Matrix sender container does not exist after Worker readiness"
+[[ "$(docker inspect "${TURN_CONTAINER}" --format '{{.State.Running}}')" == true ]] || die "Matrix sender container is not running"
+docker cp "${TURN_HELPER}" "${TURN_CONTAINER}:${MANAGER_TURN}"
+docker cp "${FOLLOWUP_HELPER}" "${TURN_CONTAINER}:${MANAGER_FOLLOWUP}"
+docker cp "${REPORT_HELPER}" "${TURN_CONTAINER}:${MANAGER_REPORT_CHECK}"
 sleep 5
 log "Binding the ready Workers into disposable AgentTeams Team ${TEAM_NAME}"
 team_binding_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -368,6 +442,7 @@ done
 [[ "$(jq -r '.leaderReady' <<<"${team_json}")" == true ]] || die "Leader is not ready"
 team_room="$(jq -r '.teamRoomID // empty' <<<"${team_json}")"
 [[ -n "${team_room}" ]] || die "Team room is unavailable"
+refresh_team_worker_policy
 stable_roster_checks=0
 for _ in $(seq 1 120); do
   if team_roster_ready "${team_room}" >/dev/null 2>&1; then
@@ -401,19 +476,35 @@ leader_uid="$(jq -r '.matrixUserID // empty' <<<"${leader_json}")"
 leader_room="$(jq -r '.roomID // empty' <<<"${leader_json}")"
 [[ "$(jq -r '.role' <<<"${leader_json}")" == team_leader ]] || die "Product Leader is not the Team Leader"
 designer_json="$(docker exec "${MANAGER_CONTAINER}" agt get workers "${DESIGNER_NAME}" -o json)"
+designer_room="$(jq -r '.roomID // empty' <<<"${designer_json}")"
 [[ "$(jq -r '.role' <<<"${designer_json}")" == worker ]] || die "Designer is not an ordinary Team Worker"
 [[ "$(jq -r '.team' <<<"${leader_json}")" == "${TEAM_NAME}" ]] || die "Leader Team identity is wrong"
 [[ "$(jq -r '.team' <<<"${designer_json}")" == "${TEAM_NAME}" ]] || die "Designer Team identity is wrong"
+[[ -n "${designer_room}" ]] || die "Designer requester room is unavailable"
 printf 'leader_smoke_real_team=pass\n'
 
 nonce="$(cat /proc/sys/kernel/random/uuid)"
-turn_output="$(docker exec "${MANAGER_CONTAINER}" "${MANAGER_TURN}" \
-  "${leader_room}" "${leader_uid}" "${nonce}" "${PROJECT_ID}" "${TASK_ID}" \
+turn_output="$(docker exec "${TURN_CONTAINER}" "${MANAGER_TURN}" \
+  "${team_room}" "${leader_uid}" "${nonce}" "${PROJECT_ID}" "${TASK_ID}" \
   "${DESIGNER_NAME}" "${IMPLEMENTOR_NAME}" "${ASSESSOR_NAME}" "${OPERATOR_NAME}")"
 printf '%s\n' "${turn_output}"
 grep -Fq LEADER_DONE <<<"${turn_output}" || die "Leader did not complete create + dispatch"
 
 prefix="agentteams/agentteams-storage/shared/tasks/${TASK_ID}"
+implement_task_id="${PROJECT_ID}-implement-0"
+design_result=""
+for _ in $(seq 1 120); do
+  design_result="$(docker exec "${CONTROLLER_CONTAINER}" mc cat "${prefix}/tiangong/result-envelope.json" 2>/dev/null || true)"
+  if [[ -n "${design_result}" ]]; then
+    followup_nonce="$(cat /proc/sys/kernel/random/uuid)"
+    docker exec "${TURN_CONTAINER}" "${MANAGER_FOLLOWUP}" \
+      "${team_room}" "${leader_uid}" "${followup_nonce}" design "${PROJECT_ID}" "${TASK_ID}" \
+      "${implement_task_id}" "${IMPLEMENTOR_NAME}"
+    break
+  fi
+  sleep 3
+done
+[[ -n "${design_result}" ]] || die "No design ResultEnvelope arrived from the Worker result mention"
 decision=""
 for _ in $(seq 1 120); do
   decision="$(docker exec "${CONTROLLER_CONTAINER}" sh -lc \
@@ -421,7 +512,7 @@ for _ in $(seq 1 120); do
   [[ -n "${decision}" ]] && break
   sleep 3
 done
-[[ -n "${decision}" ]] || die "No Leader decision arrived from the Worker result mention"
+[[ -n "${decision}" ]] || die "No Leader decision arrived after the native Leader resume"
 [[ "$(jq -r '.decision' <<<"${decision}")" == accept ]] || die "Design result was not accepted"
 [[ "$(jq -r '.decidedBy' <<<"${decision}")" == "${LEADER_NAME}" ]] || die "Decision identity is not the authenticated Leader"
 result="$(docker exec "${CONTROLLER_CONTAINER}" mc cat "${prefix}/tiangong/result-envelope.json")"
@@ -434,7 +525,6 @@ task="$(docker exec "${CONTROLLER_CONTAINER}" mc cat "${prefix}/tiangong/task-bi
 printf 'leader_smoke_design_roundtrip=pass\n'
 printf 'leader_smoke_matrix_handoff=pass\n'
 
-implement_task_id=""
 for _ in $(seq 1 120); do
   mapfile -t implement_ids < <(project_task_ids implement 2>/dev/null)
   if ((${#implement_ids[@]} > 1)); then
@@ -448,6 +538,16 @@ for _ in $(seq 1 120); do
 done
 [[ "${implement_task_id}" =~ ^[A-Za-z0-9._:-]{1,128}$ ]] || die "No valid Implementor Task arrived"
 implement_prefix="agentteams/agentteams-storage/shared/tasks/${implement_task_id}"
+implement_result=""
+for _ in $(seq 1 120); do
+  implement_result="$(docker exec "${CONTROLLER_CONTAINER}" mc cat "${implement_prefix}/tiangong/result-envelope.json" 2>/dev/null || true)"
+  [[ -n "${implement_result}" ]] && break
+  sleep 3
+done
+followup_nonce="$(cat /proc/sys/kernel/random/uuid)"
+docker exec "${TURN_CONTAINER}" "${MANAGER_FOLLOWUP}" \
+  "${team_room}" "${leader_uid}" "${followup_nonce}" implement "${PROJECT_ID}" "${TASK_ID}" \
+  "${implement_task_id}" "${IMPLEMENTOR_NAME}"
 implement_decision=""
 for _ in $(seq 1 120); do
   implement_decision="$(docker exec "${CONTROLLER_CONTAINER}" sh -lc \
@@ -495,8 +595,13 @@ report_unsigned="$(jq -cS 'del(.contentDigest)' <<<"${report}")"
 report_digest="$(printf '%s' "${report_unsigned}" | sha256sum | awk '{print $1}')"
 [[ "${report_digest}" == "$(jq -r '.contentDigest' <<<"${report}")" ]] || die "Terminal report digest is invalid"
 
-docker exec "${MANAGER_CONTAINER}" "${MANAGER_REPORT_CHECK}" \
-  "${leader_room}" "${leader_uid}" "${PROJECT_ID}" RECOVERY_REQUIRED
+# AgentTeams v1.2.2 exposes one authenticated Team room to the recreated
+# Workers; the per-Worker room metadata is not a stable requester ingress
+# across Manager reconciliation. The durable report still binds the original
+# requester identity, so verify its Matrix projection in that canonical Team
+# room rather than following a stale personal-room id.
+docker exec "${TURN_CONTAINER}" "${MANAGER_REPORT_CHECK}" \
+  "${team_room}" "${leader_uid}" "${PROJECT_ID}" RECOVERY_REQUIRED
 requester_report_evidence_ready || die "Durable requester-report Evidence is missing or invalid"
 mapfile -t assess_ids < <(project_task_ids assess 2>/dev/null)
 ((${#assess_ids[@]} == 0)) || die "A blocked Project incorrectly created an Assess Task"

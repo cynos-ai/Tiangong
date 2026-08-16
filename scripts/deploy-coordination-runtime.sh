@@ -41,7 +41,14 @@ regular_secret_file() {
   [[ -n "${path}" && -f "${path}" && ! -L "${path}" ]] || return 1
   [[ "$(wc -c <"${path}")" -le "${max_bytes}" ]] || return 1
   mode="$(stat -c '%a' "${path}" 2>/dev/null || stat -f '%Lp' "${path}")"
-  [[ "${mode}" == 600 || "${mode}" == 400 ]]
+  if [[ "${mode}" == 600 || "${mode}" == 400 ]]; then return 0; fi
+  [[ "${TIANGONG_WINDOWS_ACL_VERIFIED:-0}" == 1 && "${OSTYPE:-}" =~ ^(msys|cygwin) ]] || return 1
+  command -v icacls >/dev/null 2>&1 || return 1
+  local host_path acl
+  host_path="$(docker_host_path "${path}")"
+  acl="$(icacls "${host_path}" 2>/dev/null || true)"
+  [[ -n "${acl}" ]] || return 1
+  ! grep -Eiq 'Everyone|Authenticated Users|BUILTIN\\Users|\(I\)' <<<"${acl}"
 }
 validate_env_keys() {
   local line key

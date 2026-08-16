@@ -98,3 +98,34 @@ absence was verified. This closes the real B5 startup-routing gate only. The
 full run remains pending the separate native Leader binding and the actual
 Matrix → Work → Project/Task → ToolResult/Result → restart/recovery → closure
 slice, followed by the same-input coding A/B.
+
+## Gate B completion (2026-08-16)
+
+Run `20260816173205-1882` completed the full deployment and coordination
+closure. Stable machine markers were:
+
+- `gateb_matrix_work_task_result_closure=pass`
+- `gateb_cleanup=pass`
+- `leader_smoke_real_team=pass`
+- `leader_smoke_design_roundtrip=pass`
+- `leader_smoke_matrix_handoff=pass`
+- `leader_smoke_implementor_blocker=pass`
+- `leader_smoke_requester_report=pass`
+
+The run started or reused the code-owned `tiangong-runner-broker` sidecar,
+created run-owned PostgreSQL and Coordination containers, injected all five
+role routes, then injected the native Leader binding. The Leader resumed by an
+explicit bounded Matrix wake after each result handoff. The Implementor used
+the Codex app-server lane and failed closed on the unavailable executable
+sandbox; the Leader recorded the immutable `RECOVERY_REQUIRED` decision and
+terminal report. No Assess or release wave was created after the blocker.
+
+AgentTeams v1.2.2 exposes a shared authenticated Team room but does not provide
+a stable Worker-to-Worker personal-room ingress. The channel adapter therefore
+uses the authenticated unique Team room for a Worker requester only after the
+personal-room check fails; the requester identity and durable report binding
+remain unchanged. This is a bounded compatibility path, not a new runtime.
+
+The child smoke and Gate B driver both proved exact cleanup of the Team,
+Workers, containers, PG, binding volume, and MinIO prefixes. The shared Runner
+Broker is intentionally left running when it pre-existed the run.
