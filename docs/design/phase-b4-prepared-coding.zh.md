@@ -117,3 +117,45 @@ binding/journal，或没有显式声明 generic host-side `exec=deny`，会直�
 目前已完成纯合同测试和 Worker 镜像构建，尚未把它接入真实 Team smoke；下一步是
 由部署层生成 receipt、挂载 Runner broker endpoint，并验证原生 Codex 不再走普通
 host-side `exec`。
+
+## 2026-08-16 部署层 Runner receipt 接线
+
+本分支补齐了部署层与 Worker 之间的最小接线，代码位于
+`worker/agent/team/native-runner-binding.mjs`：
+
+- 部署层必须同时提供当前 Coordination `TaskSpec`、成员配置，以及已有的
+  AgentTeams `ProjectBinding`/`TaskBinding`；Coordination 记录不承载命令、能力或
+  Runner 策略，避免把执行权限塞进业务 TaskSpec。
+- `createNativeRunnerDeploymentBinding` 会校验 Task、Implementor Member、项目角色和
+  legacy Task 的交叉绑定，并从 immutable Task digest 推导固定 `runId`，生成只含
+  Task/Work/member/role/runId/digest 的 receipt。
+- `prepareNativeRunnerDeployment` 先调用 Runner broker preparation，再允许通知 Worker；
+  broker 返回的 Task/digest 不匹配时直接拒绝。
+- `materializeNativeRunnerBinding` 以 16 KiB、非 symlink、精确重放的只读文件写入 receipt；
+  `nativeRunnerWorkerEnvironment` 统一注入 binding path、journal path、成员身份和
+  `TIANGONG_NATIVE_RUNNER_EXEC_POLICY=deny`。Worker 插件仍默认关闭，缺少这些注入时
+  fail closed。
+
+启用后插件还注册 OpenClaw `before_tool_call` deny hook，阻断 `exec`、`process`、
+`shell` 及其 host-side 前缀变体；只有 `tiangong_run_command` 保留给该 Implementor
+Task。这样 `exec=deny` 不再只是部署层环境变量声明，而是在 Worker 的工具调用边界
+再次确定性执行。
+
+这样部署层可以在启动 Worker 前完成“broker 绑定 → receipt 挂载 → Codex session 唤醒”的
+顺序；但 B4 仍要用真实 AgentTeams Codex Task 证明 OpenClaw 的通用 host-side `exec` 已被
+配置层禁用，并观察 ChangeRevision、ToolResult retention、重启/replay 和精确 cleanup，
+所以这条接线本身不提前宣称 B4 Go。
+
+随后已在本机 Docker 的 AgentTeams 网络上做了一次真实 broker 边界验证：Leader
+容器通过既有 `/v1/prepare` 注册 immutable Task，部署适配器在 Leader 侧生成并
+物化 receipt，Implementor 容器只挂载该 receipt 和 journal。容器内直接加载
+`tiangong_run_command`（不使用宿主 Docker socket）后，第一次调用返回
+`runner_probe=pass`、`outcome=completed` 和 bounded `ChangeRevisionRef`；同一
+receipt/journal 的第二次调用返回 `replayed=true`，artifact digest 和 plan digest
+保持不变。native tool 的 `before_tool_call` hook 也已加入，`exec`/`process`/`shell`
+及前缀变体会确定性 deny。
+
+这已经证明“部署 receipt → broker plan → native tool → RunnerPort/Journal →
+ChangeRevision/replay”这条真实容器链可行；仍未替代真实 Codex app-server Task 的
+完整 WebUI/Matrix Result smoke，因此 B4 的最终 Go 还要把这条链放回真实 Codex session
+并完成 cleanup/恢复证据。

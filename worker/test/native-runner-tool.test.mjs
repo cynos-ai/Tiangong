@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { canonicalJson, sha256 } from "../agent/canonical-json.mjs";
-import { createNativeRunnerBinding, createNativeRunnerTool, registerNativeRunnerTool, validateNativeRunnerBinding } from "../agent/team/native-runner-tool.mjs";
+import { createNativeRunnerBinding, createNativeRunnerExecDenyHook, createNativeRunnerTool, registerNativeRunnerTool, validateNativeRunnerBinding } from "../agent/team/native-runner-tool.mjs";
 
 const MEMBER_ID = "member-native-runner";
 const binding = createNativeRunnerBinding({
@@ -90,10 +90,10 @@ test("native Runner tool accepts only the assigned Task and broker-authored plan
 test("native Runner registration is opt-in and exposes one bounded tool", () => {
   const registrations = [];
   assert.deepEqual(registerNativeRunnerTool({ registerTool: (...args) => registrations.push(args) }, { env: {} }), { enabled: false });
-  assert.throws(() => registerNativeRunnerTool({ registerTool: () => {} }, {
+  assert.throws(() => registerNativeRunnerTool({ registerTool: () => {}, on: () => {} }, {
     env: { TIANGONG_NATIVE_RUNNER_ENABLED: "1", AGENTTEAMS_WORKER_NAME: "worker-native-runner" },
   }), /generic host-side exec to be denied/u);
-  assert.throws(() => registerNativeRunnerTool({ registerTool: () => {} }, {
+  assert.throws(() => registerNativeRunnerTool({ registerTool: () => {}, on: () => {} }, {
     env: {
       TIANGONG_NATIVE_RUNNER_ENABLED: "1",
       AGENTTEAMS_WORKER_NAME: "worker-native-runner",
@@ -103,7 +103,8 @@ test("native Runner registration is opt-in and exposes one bounded tool", () => 
       TIANGONG_MEMBER_ID: MEMBER_ID,
     },
   }), /binding file, journal file/u);
-  const enabled = registerNativeRunnerTool({ registerTool: (...args) => registrations.push(args) }, {
+  const hooks = [];
+  const enabled = registerNativeRunnerTool({ registerTool: (...args) => registrations.push(args), on: (...args) => hooks.push(args) }, {
     env: {
       TIANGONG_NATIVE_RUNNER_ENABLED: "1",
       AGENTTEAMS_WORKER_NAME: "worker-native-runner",
@@ -113,7 +114,15 @@ test("native Runner registration is opt-in and exposes one bounded tool", () => 
       TIANGONG_MEMBER_ID: MEMBER_ID,
     },
   });
-  assert.deepEqual(enabled, { enabled: true, tool: "tiangong_run_command" });
+  assert.deepEqual(enabled, { enabled: true, tool: "tiangong_run_command", hooks: ["before_tool_call"] });
   assert.equal(registrations.length, 1);
   assert.equal(registrations[0][1].name, "tiangong_run_command");
+  assert.equal(hooks[0][0], "before_tool_call");
+});
+
+test("native Runner deny hook blocks generic host execution but keeps the bounded tool", async () => {
+  const hook = createNativeRunnerExecDenyHook();
+  assert.deepEqual(await hook({ toolName: "exec" }), { block: true, blockReason: "TIANGONG_NATIVE_RUNNER_EXEC_DENIED: use tiangong_run_command for the assigned Task" });
+  assert.deepEqual(await hook({ toolName: "process_start" }), { block: true, blockReason: "TIANGONG_NATIVE_RUNNER_EXEC_DENIED: use tiangong_run_command for the assigned Task" });
+  assert.equal(await hook({ toolName: "tiangong_run_command" }), undefined);
 });

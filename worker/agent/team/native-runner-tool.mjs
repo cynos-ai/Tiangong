@@ -15,6 +15,7 @@ const DIGEST = /^[0-9a-f]{64}$/u;
 const ROLE = "implementor";
 const MAX_BINDING_BYTES = 16 * 1024;
 const MAX_OUTPUT_BYTES = 8 * 1024;
+const GENERIC_HOST_EXEC_TOOLS = new Set(["exec", "process", "shell"]);
 
 const BINDING_KEYS = ["assigneeMemberId", "bindingDigest", "role", "runId", "schemaVersion", "taskId", "workId"];
 
@@ -142,6 +143,22 @@ export function createNativeRunnerTool({ bindingFile, journalFile, endpoint, mem
   });
 }
 
+function toolNameFromHookEvent(event = {}) {
+  return event.toolName ?? event.name ?? event.tool?.name;
+}
+
+/** Fail closed for OpenClaw's generic host-side execution surface. */
+export function createNativeRunnerExecDenyHook() {
+  return async (event = {}) => {
+    const name = toolNameFromHookEvent(event);
+    if (typeof name !== "string") return undefined;
+    if (GENERIC_HOST_EXEC_TOOLS.has(name) || name.startsWith("exec_") || name.startsWith("process_")) {
+      return { block: true, blockReason: "TIANGONG_NATIVE_RUNNER_EXEC_DENIED: use tiangong_run_command for the assigned Task" };
+    }
+    return undefined;
+  };
+}
+
 export function registerNativeRunnerTool(api, { env = process.env, fetchImpl = globalThis.fetch } = {}) {
   if (env.TIANGONG_NATIVE_RUNNER_ENABLED !== "1") return { enabled: false };
   if (typeof api?.registerTool !== "function") throw new Error("OpenClaw registerTool API is unavailable");
@@ -155,6 +172,8 @@ export function registerNativeRunnerTool(api, { env = process.env, fetchImpl = g
   if (typeof bindingFile !== "string" || !isAbsolute(bindingFile) || typeof journalFile !== "string" || !isAbsolute(journalFile) || typeof memberId !== "string" || memberId === "") {
     throw new Error("native Runner requires a binding file, journal file, and member identity");
   }
+  if (typeof api.on !== "function") throw new Error("native Runner requires OpenClaw before_tool_call hook API");
   api.registerTool(() => createNativeRunnerTool({ bindingFile, journalFile, endpoint, memberId, fetchImpl }), { name: "tiangong_run_command" });
-  return { enabled: true, tool: "tiangong_run_command" };
+  api.on("before_tool_call", createNativeRunnerExecDenyHook(), { priority: 110 });
+  return { enabled: true, tool: "tiangong_run_command", hooks: ["before_tool_call"] };
 }
