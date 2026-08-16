@@ -213,7 +213,10 @@ export class WorkRunStore {
     await this.#ensureDir();
     return this.#withRunLock(runId, async () => {
       const state = await this.#readUnlocked(runId);
-      if (state.terminal) return state;
+      if (state.terminal) {
+        await this.#removeOwner(runId);
+        return state;
+      }
       const existing = await this.#readOwner(runId);
       if (existing) {
         if (existing.ownerId !== this.#ownerId) {
