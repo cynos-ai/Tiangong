@@ -14,6 +14,16 @@ function required(value, name, pattern) {
   return value;
 }
 
+function escapeHtml(value) {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+}
+
+function visibleMatrixMention(targetMatrixUserId) {
+  const localpart = targetMatrixUserId.slice(1, targetMatrixUserId.indexOf(":"));
+  const href = `https://matrix.to/#/${encodeURIComponent(targetMatrixUserId)}`;
+  return `<a href="${href}">@${escapeHtml(localpart)}</a>`;
+}
+
 function serviceBaseUrl(value) {
   const parsed = new URL(required(value, "matrixUrl"));
   if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) throw new TypeError("matrixUrl must be a credential-free HTTP(S) URL");
@@ -52,9 +62,12 @@ function workAdmittedBody({ workId, sourceEventId, targetMatrixUserId }) {
   required(workId, "workId", ID);
   required(sourceEventId, "sourceEventId", MATRIX_EVENT_ID);
   required(targetMatrixUserId, "targetMatrixUserId", MATRIX_USER_ID);
+  const mention = visibleMatrixMention(targetMatrixUserId);
   return {
     msgtype: "m.text",
     body: `${targetMatrixUserId} Tiangong Work admitted: work=${workId}. Read the durable Work facts before the next coordination action.`,
+    format: "org.matrix.custom.html",
+    formatted_body: `${mention} Tiangong Work admitted: work=${escapeHtml(workId)}. Read the durable Work facts before the next coordination action.`,
     "m.mentions": { user_ids: [targetMatrixUserId] },
     "com.tiangong.work": { version: 1, work_id: workId, source_event_id: sourceEventId },
   };
@@ -64,9 +77,12 @@ function taskAssignedBody({ taskId, workId, targetMatrixUserId }) {
   required(taskId, "taskId", ID);
   required(workId, "workId", ID);
   required(targetMatrixUserId, "targetMatrixUserId", MATRIX_USER_ID);
+  const mention = visibleMatrixMention(targetMatrixUserId);
   return {
     msgtype: "m.text",
     body: `${targetMatrixUserId} Tiangong Task assigned: work=${workId} task=${taskId}. Read the immutable TaskSpec and submit one Result.`,
+    format: "org.matrix.custom.html",
+    formatted_body: `${mention} Tiangong Task assigned: work=${escapeHtml(workId)} task=${escapeHtml(taskId)}. Read the immutable TaskSpec and submit one Result.`,
     "m.mentions": { user_ids: [targetMatrixUserId] },
     "com.tiangong.task": { version: 1, work_id: workId, task_id: taskId },
   };
@@ -77,9 +93,12 @@ function resultSubmittedBody({ taskId, workId, resultDigest, targetMatrixUserId 
   required(workId, "workId", ID);
   required(resultDigest, "resultDigest", /^[a-f0-9]{64}$/u);
   required(targetMatrixUserId, "targetMatrixUserId", MATRIX_USER_ID);
+  const mention = visibleMatrixMention(targetMatrixUserId);
   return {
     msgtype: "m.text",
     body: `${targetMatrixUserId} Tiangong Result submitted: work=${workId} task=${taskId}. Review the durable Result.`,
+    format: "org.matrix.custom.html",
+    formatted_body: `${mention} Tiangong Result submitted: work=${escapeHtml(workId)} task=${escapeHtml(taskId)}. Review the durable Result.`,
     "m.mentions": { user_ids: [targetMatrixUserId] },
     "com.tiangong.result": { version: 1, work_id: workId, task_id: taskId, result_digest: resultDigest },
   };

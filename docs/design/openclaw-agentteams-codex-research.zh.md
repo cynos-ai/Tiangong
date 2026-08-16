@@ -448,3 +448,23 @@ B5 在独立分支 `codex/phase-b5-provider-migration` 收口了两条生产前�
 Qwen 切成默认，也没有执行权威数据 cutover。真正切换前仍需在隔离 Team/数据卷重跑
 完整六门 canary，并在失败时恢复 DeepSeek 与 legacy-pi。具体合同和验收表见
 [`phase-b5-provider-migration.zh.md`](phase-b5-provider-migration.zh.md)。
+
+## 2026-08-16 当前执行指针（以 internal 计划为准）
+
+上面的 B4/B5 段落保留为此前的设计与验证记录；当前公开分支的执行指针以
+`tiangong-internal/plans/openclaw-first-web-and-runtime-development-plan.md` 的
+最新附录为准。B2 Basic/Full/F1 和 B3 Gateway seam 已闭合，B3 的真实非 Leader
+成员 Full smoke 也已闭合：成员 Worker 使用 `OPENCLAW_AGENT_RUNTIME=pi` 选择
+OpenClaw 上游内置 embedded harness，Tiangong 只通过官方
+`before_prompt_build`/`agent_end` hook 读取 TaskSpec、提交一个 bounded Result。
+这不是 Tiangong 自有 runtime，也不是 Codex harness；Leader/Designer/Assessor/
+Operator 等非编程角色的目标仍是 OpenClaw 内置 runtime；当前角色 A/B 尚未全部
+切换，后续 B4 再为编程 Worker 验证 OpenClaw Codex runtime，B5 再证明 Leader 与
+各专业角色的最终路由。
+
+本次真实 smoke 使用部署层注入的 member identity/token、真实 AgentTeams Team/Matrix
+和 PG Coordination runtime；Task reporting、Result projection 及 assignment/
+notification wakes 均成功 ack。Matrix wake payload 同时带 `formatted_body` 的
+`matrix.to` mention，避免 OpenClaw 丢弃只有 `m.mentions` 的事件。`tiangong-pi`
+仍是 Gate B 前的 legacy 回滚/对照路径，只有 B4/B5 和 Gate B 证据闭合后才允许进入
+B6 clean-cut 删除。

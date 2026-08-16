@@ -106,6 +106,10 @@ Docker Desktop/WSL 的 Windows bind mount 会把文件权限呈现为过宽，Ti
 The member-side implementation now uses OpenClaw's native lifecycle hooks
 (`before_prompt_build` and `agent_end`) rather than a Tiangong model/runtime
 loop. The hook fetches TaskSpec and submits one Result through the deployment
-gateway; it has no PG/Team authority. Deployment must inject a member-scoped
-Control API token and `TIANGONG_MEMBER_ID`; the member-session Full smoke is
-still pending until that injection is exercised in a rebuilt real Worker.
+gateway; it has no PG/Team authority. Deployment injects a member-scoped
+Control API token and `TIANGONG_MEMBER_ID`. A rebuilt real Worker has now
+completed the member-session Full smoke with `OPENCLAW_AGENT_RUNTIME=pi`
+(OpenClaw's upstream embedded harness), Task/Result projection, and acked
+assignment/notification wakes. This closes the B3 member seam; B4 prepared
+local coding, B5 recovery/coding A/B, Gate B, and the B6 `tiangong-pi`
+clean-cut remain future work.

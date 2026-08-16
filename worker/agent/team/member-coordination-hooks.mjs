@@ -34,7 +34,7 @@ function reportFromMessages(event) {
   const content = Array.isArray(assistant?.content)
     ? assistant.content.filter((part) => part?.type === "text" && typeof part.text === "string").map((part) => part.text).join("\n")
     : typeof assistant?.content === "string" ? assistant.content : "";
-  return bounded(content.trim());
+  return bounded(content.replace(/[\r\n]+/gu, " ").trim());
 }
 
 function resultId(taskId, sessionKey) {
@@ -84,7 +84,7 @@ export function createMemberCoordinationHooks({ endpoint, token, memberId, fetch
         artifactRefs: [],
         ...(event.success === false
           ? { blocker: bounded(event.error || "Native OpenClaw member session failed", 4096) }
-          : { claim: report || "Native OpenClaw member session completed without a bounded assistant report" }),
+          : { claim: bounded(report, 4096) || "Native OpenClaw member session completed without a bounded assistant report" }),
         createdAt: now(),
       });
       return store.submitResult({

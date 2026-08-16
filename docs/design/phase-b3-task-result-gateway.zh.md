@@ -42,10 +42,8 @@ existing bounded reads:
 The Worker-side facade routes both writes through the same bearer gateway and
 never receives a PG handle or Team authority. Contract tests cover server-side
 assignee/producer binding, replay, task/result projection, and bounded HTTP
-request shapes. The remaining B3 evidence is a real disposable Team with a
-non-Leader member Worker consuming `task-assignment` and submitting one Result;
-this is deployment smoke, not a reason to reintroduce the Tiangong-owned Pi
-runtime.
+request shapes. The deployment gateway seam is now proven on a real disposable
+Team; the remaining member proof is recorded below.
 ## 2026-08-16 native member session hook
 
 `worker/agent/team/member-coordination-hooks.mjs` is the B3 member-side slice.
@@ -57,10 +55,21 @@ module has no PG handle, Team binding authority, Matrix credential, or model
 loop. `TIANGONG_MEMBER_COORDINATION_ENABLED=1` is an explicit deployment opt-in
 and `TIANGONG_MEMBER_ID` is injected by the deployment owner.
 
-This is the intended B3 Full path for a non-Leader Worker. The Leader remains an
-ordinary OpenClaw built-in runtime session; the existing `tiangong-pi` harness is
-still a retained legacy lane until the internal plan's Gate B review and B6
-clean-cut PR. A contract test now proves Task binding, one Result submission,
-and the absence of the bearer token from the request body. Live member-session
-smoke still needs a rebuilt Worker image plus deployment-owned member env/token
-injection; until that run, B3 is not marked complete.
+This is the intended B3 Full path for a non-Leader Worker. The target role split
+keeps the Leader on OpenClaw's built-in runtime, while the existing
+`tiangong-pi` harness remains a retained legacy lane until the internal plan's
+Gate B review and B6 clean-cut PR. The current B3 smoke proves the member lane;
+the role-specific Leader/Implementor A/B is still a B4/B5 gate. A contract test
+proves Task binding, one Result submission, and the absence of the bearer token
+from the request body.
+
+The remaining member-session smoke has now passed on a rebuilt real Worker with
+deployment-owned member identity/token injection. With
+`OPENCLAW_AGENT_RUNTIME=pi` and fallback disabled, the upstream OpenClaw
+embedded harness accepted the Matrix assignment; the Tiangong plugin only ran
+`before_prompt_build`/`agent_end`, fetched the immutable TaskSpec, and submitted
+one bounded Result. Task reporting, Result projection, and all assignment/
+notification wake deliveries were acked. The Matrix wake consumer emits a
+`formatted_body` `matrix.to` mention because OpenClaw otherwise drops an
+`m.mentions`-only event. This closes the B3 member Full smoke; it does not
+authorize B4/B5, Gate B, or deletion of `tiangong-pi`.

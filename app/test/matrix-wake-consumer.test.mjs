@@ -60,6 +60,10 @@ test("Matrix wake consumer delivers Work, Task, and Result wakes, then acknowled
   assert.ok(deliveries.some((call) => JSON.parse(call.options.body)["com.tiangong.work"]));
   assert.ok(deliveries.some((call) => JSON.parse(call.options.body)["com.tiangong.task"]));
   assert.ok(deliveries.some((call) => JSON.parse(call.options.body)["com.tiangong.result"]));
+  const taskDelivery = deliveries.find((call) => JSON.parse(call.options.body)["com.tiangong.task"]);
+  const taskBody = JSON.parse(taskDelivery.options.body);
+  assert.equal(taskBody.format, "org.matrix.custom.html");
+  assert.match(taskBody.formatted_body, /matrix\.to\/#[^\s"]+/u);
   assert.equal((await store.listOutbox({ status: "pending" })).length, 0);
   assert.equal((await store.listOutbox({ status: "acked" })).length, 4);
 });
