@@ -468,3 +468,21 @@ notification wakes 均成功 ack。Matrix wake payload 同时带 `formatted_body
 `matrix.to` mention，避免 OpenClaw 丢弃只有 `m.mentions` 的事件。`tiangong-pi`
 仍是 Gate B 前的 legacy 回滚/对照路径，只有 B4/B5 和 Gate B 证据闭合后才允许进入
 B6 clean-cut 删除。
+
+## 2026-08-16 B4 原生 Codex 真实成员验证
+
+在 disposable AgentTeams Team 上，Implementor 以 OpenClaw 内置 `codex`
+runtime、`native-responses`、无 bridge、DeepSeek V4 Pro 完成了一次真实
+Matrix Task。OpenClaw Codex app-server 执行了 bounded fixture read/write 和
+本地断言；Tiangong hook 通过 Control API 读取 immutable TaskSpec 并提交一个
+Result，Task/Result、WebUI 投影及四个 Matrix wake ack 均可观察。
+
+因此目前可以确认：编码 Worker 不需要退回 Tiangong 自有 runtime，也不需要
+OpenCodex bridge；非编程角色继续使用 OpenClaw 内置 embedded runtime，编程角色
+可以使用 OpenClaw 官方 Codex runtime。当前仍未把原生 Codex 工具调用纳入
+Runner broker 的唯一执行权和恢复闭环，B4/B5 尚未整体 Go。
+
+本次使用的是 pinned OpenClaw 版本稳定的生命周期兼容 hook（`api.on`）。对同一
+版本试用 `registerHook` 时出现 Codex app-server 动态工具目录重建且未产出
+Result，因此暂不升级该注册方式；这不改变“runtime 由 OpenClaw 提供、Tiangong
+只做控制插件”的架构结论。
