@@ -86,7 +86,10 @@ actual_pi_version="$(docker run --rm --entrypoint pi "${IMAGE}" --version)"
   exit 1
 }
 
-actual_codex_version="$(docker run --rm --entrypoint codex "${CANARY_IMAGE}" --version)"
+# `bin/codex` is the runtime app-server entrypoint and intentionally requires
+# the in-memory gateway environment. Inspect the managed CLI package directly
+# for the image-version contract instead of starting that runtime wrapper.
+actual_codex_version="$(docker run --rm --entrypoint /opt/tiangong-worker/node_modules/.bin/codex "${CANARY_IMAGE}" --version)"
 [[ "${actual_codex_version}" == "${EXPECTED_CODEX_VERSION}" ]] || {
   printf 'ERROR: expected managed Codex %s, got %s.\n' "${EXPECTED_CODEX_VERSION}" "${actual_codex_version}" >&2
   exit 1
