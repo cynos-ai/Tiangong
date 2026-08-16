@@ -91,6 +91,18 @@ AgentTeams credential/provider 层，不写入镜像、Team manifest、OpenClaw 
 4. 保留 `OPENCLAW_AGENT_HARNESS_FALLBACK=none`，确保 `codex` 要求失败时不会偷偷切回
    `openclaw`。
 
+### 版本门槛
+
+当前 Tiangong 基础镜像实际固定的是 OpenClaw `2026.4.14`。这个版本的内置 embedded
+runtime 在源码和配置中仍使用历史名称 `pi`；它和仓库里的 `tiangong-pi` 自定义 harness
+不是同一个东西，但会让“完全不使用 pi”这个要求在配置名称上无法成立。
+
+OpenClaw 当前主线已把内置 runtime 的规范名称统一为 `openclaw`，并继续把官方 Codex
+app-server harness 叫作 `codex`。因此正式切换前必须先把 AgentTeams Worker 基础镜像升级到
+支持规范 `openclaw` runtime 的、经过锁定的 OpenClaw 版本，然后重新跑 AgentTeams/Matrix/
+WebUI smoke；不能在现有镜像里只改一个环境变量假装完成升级。升级前可以继续用当前镜像验证
+协议和路由，但验收报告必须标注它是旧版内置 `pi` 命名，而不是目标版本。
+
 ## 验收标准
 
 - Leader 的 `/status` 或等价机器状态为 `Runtime: OpenClaw`，且真实 Matrix Team room 回包可在 Element WebUI 看到。
@@ -98,4 +110,3 @@ AgentTeams credential/provider 层，不写入镜像、Team manifest、OpenClaw 
 - 两个 Worker 都仍由 AgentTeams Team 管理，Team 为 `Active`，Worker 为 `Ready`，不绕过 Matrix/WebUI。
 - Leader 的 Work/Task/Result/CoordinationStore 记录仍然存在；这些是 Tiangong 业务层事实，不是 runtime 实现。
 - 删除或禁用 `tiangong-pi` 后，Leader 和 Implementor 都能启动；任何缺失的 Codex plugin、模型兼容性、凭证或 bridge readiness 都 fail-closed。
-
