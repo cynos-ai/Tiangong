@@ -100,3 +100,11 @@ ChangeRevision、WorkRun、ToolResult retention、重启恢复和 cleanup 闭环
 证据。`OPENCLAW_AGENT_RUNTIME=pi` 是当前 pinned OpenClaw 内置 runtime 的历史
 标识，不等于仓库的 `tiangong-pi`；后者仍只作为 Gate B 前的 legacy rollback
 保留，不能提前删除。
+当前剩余卡点不是再造一个 runtime，而是权限记录的接缝：原生 Codex 这次收到的
+是 PG Coordination `TaskSpec`，而既有 Runner broker 只接受带 immutable
+AgentTeams task binding、预计算 command plan、Worker/container identity 和
+run id 的绑定。两套 ID 不能直接混用；让模型改用普通 `exec` 或在 prompt 里要求
+“只走 Runner”都不能形成安全证据。下一步应由部署层为 admitted Implementor Task
+生成 credential-free Runner binding，关闭通用 host-side coding tool，只暴露以
+Task identity 为输入的受限 native tool，并用同一条 Codex session 完成
+ChangeRevision、ToolResult、重启恢复和 cleanup 验证。
