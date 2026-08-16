@@ -36,6 +36,7 @@ test("deployment binding joins Coordination TaskSpec to explicit legacy Runner a
   assert.match(prepared.binding.runId, /^run-/u);
   const otherMember = createMemberConfig({ memberId: value.member.memberId, teamId: value.member.teamId, workerName: "other-worker", matrixUserId: value.member.matrixUserId, role: value.member.role, controlProfileId: value.member.controlProfileId, enabled: true, createdAt: value.member.createdAt });
   assert.throws(() => createNativeRunnerDeploymentBinding({ ...value, member: otherMember }), /do not match/u);
+  assert.throws(() => createNativeRunnerDeploymentBinding({ ...value, task: { ...value.task, status: "reported" } }), /assigned Coordination Task/u);
 });
 
 test("deployment prepares broker first and materializes an idempotent receipt", async () => {

@@ -27,6 +27,9 @@ function requireAbsolutePath(value, name) {
 function coordinationTaskSpec(task) {
   const spec = task?.spec ?? task;
   if (!isTaskSpec(spec)) throw new Error("Native Runner deployment requires an immutable Coordination TaskSpec");
+  if (task?.status !== undefined && task.status !== "assigned") {
+    throw new Error("Native Runner deployment requires an assigned Coordination Task");
+  }
   return spec;
 }
 
