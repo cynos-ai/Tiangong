@@ -46,6 +46,16 @@ require_command() { command -v "$1" >/dev/null 2>&1 || fail "${2:-COMMAND_NOT_FO
 valid_name() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]; }
 valid_role() { [[ "$1" =~ ^(leader|designer|implementor|assessor|operator)$ ]]; }
 valid_volume_name() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]; }
+docker_host_path() {
+  local path="$1"
+  if command -v wslpath >/dev/null 2>&1 && [[ "${path}" == /* ]]; then
+    wslpath -w "${path}"
+  elif command -v cygpath >/dev/null 2>&1 && [[ "${path}" == /* ]]; then
+    cygpath -w "${path}"
+  else
+    printf '%s\n' "${path}"
+  fi
+}
 
 require_command "${DOCKER_COMMAND}"
 require_command jq
@@ -60,12 +70,27 @@ if [[ "${ROLE}" == implementor ]]; then
   readonly CANARY_REQUIRED=1
   readonly CANARY_ADMISSION=local
   readonly OPENCLAW_RUNTIME=codex
+  readonly CODEX_PROVIDER="${TIANGONG_B5_CODEX_PROVIDER:-agentteams-gateway}"
+  # Match the pinned local AgentTeams fixture. A deployment using a different
+  # model must pass TIANGONG_B5_CODEX_MODEL explicitly so OpenClaw metadata and
+  # the Codex preflight cannot silently diverge.
+  readonly CODEX_MODEL="${TIANGONG_B5_CODEX_MODEL:-deepseek-v4-flash}"
+  readonly CODEX_CACHE_URL="${TIANGONG_B5_CODEX_CAPABILITY_CACHE_URL:-http://tiangong-codex-capability-cache:8788}"
 else
   readonly CODEX_RUNTIME=0
   readonly RUNTIME_LANE=''
   readonly CANARY_REQUIRED=0
   readonly CANARY_ADMISSION=''
   readonly OPENCLAW_RUNTIME=pi
+  readonly CODEX_PROVIDER=''
+  readonly CODEX_MODEL=''
+  readonly CODEX_CACHE_URL=''
+fi
+
+if [[ "${ROLE}" == implementor ]]; then
+  [[ "${CODEX_PROVIDER}" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || fail CODEX_PROVIDER_INVALID
+  [[ "${CODEX_MODEL}" =~ ^[A-Za-z0-9._:/-]{1,128}$ ]] || fail CODEX_MODEL_INVALID
+  [[ "${CODEX_CACHE_URL}" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~:/-]*)?$ ]] || fail CODEX_CACHE_URL_INVALID
 fi
 
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/tiangong-b5-role-injection.XXXXXX")"
@@ -75,7 +100,11 @@ env_file="${tmp_dir}/env"
 docker_error_file="${tmp_dir}/docker-error"
 "${DOCKER_COMMAND}" inspect "${CONTAINER}" >"${inspect_file}" 2>/dev/null || fail WORKER_NOT_FOUND
 
-[[ "$(jq -r '.[0].State.Running // false' "${inspect_file}")" == true ]] || fail WORKER_NOT_RUNNING
+running="$(jq -r '.[0].State.Running // false' "${inspect_file}")"
+if [[ "${running}" != true ]]; then
+  [[ "${TIANGONG_B5_ALLOW_STOPPED:-0}" == 1 ]] || fail WORKER_NOT_RUNNING
+  [[ "$(jq -r '.[0].State.Paused // false' "${inspect_file}")" == false ]] || fail WORKER_PAUSED
+fi
 [[ "$(jq -r '.[0].Name // empty' "${inspect_file}")" == "/${CONTAINER}" ]] || fail WORKER_IDENTITY_MISMATCH
 image="$(jq -r '.[0].Config.Image // empty' "${inspect_file}")"
 entrypoint_count="$(jq -r '.[0].Config.Entrypoint | if type == "array" then length else 0 end' "${inspect_file}")"
@@ -131,16 +160,19 @@ jq -r '.[0].Config.Env[]?
        $key == "TIANGONG_CANARY_REQUIRED" or
        $key == "TIANGONG_CANARY_ADMISSION" or
        $key == "OPENCLAW_AGENT_RUNTIME" or
-       $key == "OPENCLAW_AGENT_HARNESS_FALLBACK") | not)' "${inspect_file}" >"${env_file}"
+       $key == "OPENCLAW_AGENT_HARNESS_FALLBACK" or
+       ($key | startswith("TIANGONG_CODEX_"))) | not)' "${inspect_file}" >"${env_file}"
 printf 'TIANGONG_ROLE_ID=%s\nTIANGONG_RUNTIME_ROLE_ROUTING_REQUIRED=%s\nTIANGONG_CODEX_RUNTIME=%s\nOPENCLAW_AGENT_HARNESS_FALLBACK=none\nOPENCLAW_AGENT_RUNTIME=%s\n' \
   "${ROLE}" "${ROUTING_REQUIRED}" "${CODEX_RUNTIME}" "${OPENCLAW_RUNTIME}" >>"${env_file}"
 if [[ -n "${RUNTIME_LANE}" ]]; then
   printf 'TIANGONG_RUNTIME_LANE=%s\nTIANGONG_CANARY_REQUIRED=%s\nTIANGONG_CANARY_ADMISSION=%s\n' \
     "${RUNTIME_LANE}" "${CANARY_REQUIRED}" "${CANARY_ADMISSION}" >>"${env_file}"
+  printf 'TIANGONG_CODEX_PROVIDER=%s\nTIANGONG_CODEX_MODEL=%s\nTIANGONG_CODEX_CREDENTIAL_SOURCE=agentteams-consumer-token\nTIANGONG_CODEX_TRANSPORT=auto\nTIANGONG_CODEX_BRIDGE=auto\nTIANGONG_CODEX_CAPABILITY_CACHE_PATH=/var/lib/tiangong-capabilities/codex.json\nTIANGONG_CODEX_CAPABILITY_CACHE_URL=%s\nTIANGONG_CODEX_CAPABILITY_CACHE_SHARED=1\n' \
+    "${CODEX_PROVIDER}" "${CODEX_MODEL}" "${CODEX_CACHE_URL}" >>"${env_file}"
 fi
 chmod 600 "${env_file}"
 
-run_args=(--detach --name "${CONTAINER}" --network "${NETWORK}" --env-file "${env_file}")
+run_args=(--detach --name "${CONTAINER}" --network "${NETWORK}" --env-file "$(docker_host_path "${env_file}")")
 [[ -n "${working_dir}" ]] && run_args+=(--workdir "${working_dir}")
 [[ -n "${user}" ]] && run_args+=(--user "${user}")
 [[ "$(jq -r "${host_config}.ReadonlyRootfs // false" "${inspect_file}")" == true ]] && run_args+=(--read-only)

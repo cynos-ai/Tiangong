@@ -71,7 +71,30 @@ back; it never falls through to a different Harness.
 
 The current local AgentTeams deployment has not been mutated: its observed demo
 Workers report `AGENTTEAMS_WORKER_ROLE=standalone`, and the existing demo is not
-owned by this run. The real smoke remains blocked until a fresh run-owned Team
-is applied, each Worker is injected with the adapter (plus the separate native
-Leader binding), and the resulting WebUI/Matrix/Task/Result/restart facts are
-captured. Do not weaken the startup gate or repurpose the existing demo Team.
+owned by this run. The full smoke requires a fresh run-owned Team, per-Worker
+injection (plus the separate native Leader binding), and direct
+WebUI/Matrix/Task/Result/restart facts. Do not weaken the startup gate or
+repurpose the existing demo Team.
+
+## Attempt A: real startup route gate (2026-08-16)
+
+Run-owned Team `tiangong-b5-route-20260816-a` was applied against the local
+AgentTeams v1.2.2 stack using the five role images. After the deployment adapter
+injected the routes, the Team reached `phase=Active`, `leaderReady=true`, and
+`readyWorkers=4/4`. The direct container facts were:
+
+| role | runtime | fallback | result |
+| --- | --- | --- | --- |
+| leader | `openclaw-built-in` | `none` | pass |
+| designer | `openclaw-built-in` | `none` | pass |
+| implementor | `codex-app-server` | `none` | pass; shared capability cache hit |
+| assessor | `openclaw-built-in` | `none` | pass |
+| operator | `openclaw-built-in` | `none` | pass |
+
+The five route records and image digests were captured from the Worker startup
+lines; no provider, Matrix, or raw prompt data was retained. The exact Team,
+Workers, containers, volumes, and manager manifest files were then removed and
+absence was verified. This closes the real B5 startup-routing gate only. The
+full run remains pending the separate native Leader binding and the actual
+Matrix → Work → Project/Task → ToolResult/Result → restart/recovery → closure
+slice, followed by the same-input coding A/B.

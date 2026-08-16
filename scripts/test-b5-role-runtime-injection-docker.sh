@@ -61,7 +61,11 @@ case "${1:-}:${2:-}" in
     args=("$@")
     for ((i=0; i<${#args[@]}; i++)); do
       if [[ "${args[i]}" == --env-file ]]; then
-        cp "${args[i+1]}" "${root}/env"
+        env_path="${args[i+1]}"
+        if [[ "${env_path}" == \\wsl.localhost\\* ]] && command -v wslpath >/dev/null 2>&1; then
+          env_path="$(wslpath -u "${env_path}")"
+        fi
+        cp "${env_path}" "${root}/env"
       fi
     done
     ;;
@@ -75,6 +79,11 @@ case "${1:-}:${2:-}" in
 esac
 SH
 chmod 755 "${TEST_ROOT}/bin/docker"
+cat >"${TEST_ROOT}/bin/wslpath" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "${2:-}"
+SH
+chmod 755 "${TEST_ROOT}/bin/wslpath"
 
 output="${TEST_ROOT}/output"
 PATH="${TEST_ROOT}/bin:${PATH}" \
@@ -108,6 +117,9 @@ grep -Fq 'runtime=codex-app-server' "${output}"
 grep -Fq 'TIANGONG_RUNTIME_LANE=openclaw-canary' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_CODEX_RUNTIME=1' "${TEST_ROOT}/env"
 grep -Fq 'OPENCLAW_AGENT_RUNTIME=codex' "${TEST_ROOT}/env"
+grep -Fq 'TIANGONG_CODEX_CAPABILITY_CACHE_SHARED=1' "${TEST_ROOT}/env"
+grep -Fq 'TIANGONG_CODEX_CAPABILITY_CACHE_URL=http://tiangong-codex-capability-cache:8788' "${TEST_ROOT}/env"
+grep -Fq 'TIANGONG_CODEX_MODEL=deepseek-v4-flash' "${TEST_ROOT}/env"
 
 if PATH="${TEST_ROOT}/bin:${PATH}" TIANGONG_B5_WORKER_CONTAINER=worker-test TIANGONG_B5_ROLE_ID=unknown \
   "${SCRIPT_DIR}/inject-b5-role-runtime-docker.sh" >"${TEST_ROOT}/invalid.out" 2>&1; then

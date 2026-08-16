@@ -49,4 +49,4 @@ tiangong-work-run reconcile <run-id> --action resume|abandon \
 
 B5 A/B 必须固定同一 repo/commit、Task、模型、预算、环境和 capability，然后分别记录 runtime 路由、ToolResult/Result、测试和 local commit 事实。单次模型成功、模型自评或“看起来完成”不构成通过条件。真实 OpenClaw built-in 与受限 Codex 的质量/安全 A/B 必须在独立 canary Team 中执行，并保留 WebUI、Matrix、重启、取消和 cleanup 的直接机器事实。
 
-当前公开代码已提供可重复的角色路由、owner/recovery 合同、B4 Codex/Runner/Coordination/WebUI/Matrix seam，以及 `scripts/inject-b5-role-runtime-docker.sh` 部署注入器。注入器只接受显式角色、只重建受支持的单 auth-volume Worker 拓扑、保留安全边界，并在新容器内校验路由。真实 role-specific Team 纵向切片和 coding A/B 仍是剩余 Gate B 证据，不在确定性测试中冒充完成。
+当前公开代码已提供可重复的角色路由、owner/recovery 合同、B4 Codex/Runner/Coordination/WebUI/Matrix seam，以及 `scripts/inject-b5-role-runtime-docker.sh` 部署注入器。注入器只接受显式角色、只重建受支持的单 auth-volume Worker 拓扑、保留安全边界，并在新容器内校验路由。2026-08-16 的 fresh Team 启动验证已真实通过五个角色的路由门和 `readyWorkers=4/4`；真实 role-specific Team 纵向 Task/Result/restart/recovery 与 coding A/B 仍是剩余 Gate B 证据，不在启动验证中冒充完成。
