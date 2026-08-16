@@ -8,7 +8,34 @@ readonly PREFLIGHT="/opt/tiangong-worker/scripts/openclaw-preflight.mjs"
 readonly CODEX_GATEWAY_PREFLIGHT="/opt/tiangong-worker/agent/preflight/codex-gateway-preflight.mjs"
 readonly CODEX_CAPABILITY_DETECTOR="/opt/tiangong-worker/agent/preflight/codex-capability-detection.mjs"
 readonly CODEX_CAPABILITY_CACHE="/opt/tiangong-worker/agent/preflight/codex-capability-cache.mjs"
+readonly RUNTIME_ROUTE_PREFLIGHT="/opt/tiangong-worker/scripts/runtime-route-preflight.mjs"
 codex_home=""
+
+assert_role_runtime_route() {
+  [[ "${TIANGONG_RUNTIME_ROLE_ROUTING_REQUIRED:-0}" == "1" ]] || return 0
+  local selected_runtime="openclaw-built-in"
+  if [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]]; then
+    selected_runtime="codex-app-server"
+  fi
+  if [[ "${selected_runtime}" == "codex-app-server" ]]; then
+    export OPENCLAW_AGENT_RUNTIME="codex"
+  else
+    export OPENCLAW_AGENT_RUNTIME="openclaw"
+  fi
+  TIANGONG_CODEX_RUNTIME="${TIANGONG_CODEX_RUNTIME:-0}" \
+  OPENCLAW_AGENT_HARNESS_FALLBACK="${OPENCLAW_AGENT_HARNESS_FALLBACK:-none}" \
+  TIANGONG_SELECTED_RUNTIME="${selected_runtime}" \
+  /usr/bin/node --input-type=module -e '
+    const { assertRoleRuntimeRoute, roleIdFromEnvironment } = await import(process.argv[1]);
+    const roleId = roleIdFromEnvironment(process.env);
+    const route = assertRoleRuntimeRoute({
+      roleId,
+      runtime: process.env.TIANGONG_SELECTED_RUNTIME,
+      fallback: process.env.OPENCLAW_AGENT_HARNESS_FALLBACK,
+    });
+    console.error(`tiangong_runtime_route=pass role=${route.roleId} runtime=${route.runtime} fallback=${route.fallback} digest=${route.routeDigest}`);
+  ' "${RUNTIME_ROUTE_PREFLIGHT%/*}/../agent/runtime-routing.mjs"
+}
 
 # AgentTeams v1.2.2 projects the controller credential as a root-readable
 # file. OpenClaw's native AgentTeams tools consume the equivalent environment
@@ -268,6 +295,7 @@ configure_tiangong_plugin() {
 if [[ "${1:-}" == "gateway" && "${2:-}" == "run" ]]; then
   load_agentteams_controller_token
   configure_tiangong_plugin
+  assert_role_runtime_route
   configure_codex_runtime
   configure_codex_gateway
   /usr/bin/node "${PREFLIGHT}"

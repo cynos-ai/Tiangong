@@ -84,10 +84,24 @@ async function ensureWorkRun(taskBinding, deps, sourceRole) {
     if (existing.phase === "abandoned" || existing.phase === "conflict") {
       throw new Error(`WorkRun ${existing.binding.runId} requires recovery before task progress can continue`);
     }
-    if (existing.phase === "planned" || existing.phase === "blocked") {
+    if (existing.phase === "planned") {
+      await deps.workRunStore.claim(existing.binding.runId);
       return deps.workRunStore.transition(existing.binding.runId, "executing", { reason: "task-resolved" });
     }
-    return existing;
+    if (existing.phase === "blocked") {
+      await deps.workRunStore.claim(existing.binding.runId);
+      return deps.workRunStore.transition(existing.binding.runId, "executing", { reason: "task-resolved" });
+    }
+    try {
+      return await deps.workRunStore.claim(existing.binding.runId);
+    } catch (error) {
+      if (["TIANGONG_WORK_RUN_OWNER_CONFLICT", "TIANGONG_WORK_RUN_RECOVERY_REQUIRED"].includes(error?.code)) {
+        const recovery = new Error(`WorkRun ${existing.binding.runId} requires privileged recovery after Worker restart`);
+        recovery.code = "TIANGONG_WORK_RUN_RECOVERY_REQUIRED";
+        throw recovery;
+      }
+      throw error;
+    }
   }
   const opened = await deps.workRunStore.open(createWorkRun({
     runId: workRunIdForTask(taskBinding),
@@ -101,6 +115,7 @@ async function ensureWorkRun(taskBinding, deps, sourceRole) {
     inputRefs: taskBinding.inputRefs,
     createdAt: nowISO(deps),
   }));
+  if (opened.phase === "planned") await deps.workRunStore.claim(opened.binding.runId);
   return opened.phase === "planned"
     ? deps.workRunStore.transition(opened.binding.runId, "executing", { reason: "task-resolved" })
     : opened;
@@ -121,6 +136,7 @@ async function finalizeWorkRun(taskBinding, deps, sourceRole) {
   if (state.phase === "verifying") {
     state = await deps.workRunStore.transition(state.binding.runId, "finalized", { reason: "result-submitted" });
   }
+  await deps.workRunStore.release(state.binding.runId);
   return state;
 }
 
