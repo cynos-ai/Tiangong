@@ -185,13 +185,11 @@ else
   fail UNSUPPORTED_MOUNTS
 fi
 
-existing_injection=0
 if jq -e '
   .[0].Config.Env
   | any(.[]?; startswith("TIANGONG_LEADER_RUNTIME_BINDING_FILE="))
 ' "${inspect_file}" >/dev/null; then
   [[ "${ROTATE_EXISTING}" == 1 ]] || fail EXISTING_TIANTGONG_INJECTION
-  existing_injection=1
 fi
 if jq -e '
   .[0].Config.Env
@@ -210,9 +208,11 @@ jq -r '.[0].Config.Env[]?
   [[ "${line}" != *$'\r'* ]] || fail WORKER_ENV_NEWLINE
   printf '%s\n' "${line}"
 done >"${env_file}"
-printf 'TIANGONG_LEADER_RUNTIME_BINDING_FILE=%s\n' "${BINDING_TARGET}" >>"${env_file}"
-printf 'TIANGONG_COORDINATION_CONTROL_ENDPOINT=%s\n' "${ENDPOINT}" >>"${env_file}"
-printf 'TIANGONG_COORDINATION_CONTROL_TOKEN=%s\n' "${CONTROL_TOKEN}" >>"${env_file}"
+{
+  printf 'TIANGONG_LEADER_RUNTIME_BINDING_FILE=%s\n' "${BINDING_TARGET}"
+  printf 'TIANGONG_COORDINATION_CONTROL_ENDPOINT=%s\n' "${ENDPOINT}"
+  printf 'TIANGONG_COORDINATION_CONTROL_TOKEN=%s\n' "${CONTROL_TOKEN}"
+} >>"${env_file}"
 chmod 600 "${env_file}"
 sleep 1
 

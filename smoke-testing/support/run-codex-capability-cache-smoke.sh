@@ -3,8 +3,8 @@ set -Eeuo pipefail
 
 readonly IMAGE="${TIANGONG_CODEX_CAPABILITY_IMAGE:-tiangong-worker-canary:dev}"
 readonly VOLUME="tiangong-codex-capability-smoke-${BASHPID}"
-readonly RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/tiangong-codex-capability.XXXXXX")"
-readonly CACHE_PATH="/var/lib/tiangong-capabilities/codex.json"
+RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/tiangong-codex-capability.XXXXXX")"
+readonly RUN_ROOT
 readonly CACHE_DIR="/var/lib/tiangong-capabilities"
 
 cleanup() {

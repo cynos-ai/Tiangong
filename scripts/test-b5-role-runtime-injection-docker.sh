@@ -110,8 +110,10 @@ grep -Fq 'OPENCLAW_CODEX_DISCOVERY_LIVE=0' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_MEMBER_ID=worker-test' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_MEMBER_COORDINATION_ENABLED=0' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_COORDINATION_CONTROL_ENDPOINT=http://coordination-runtime:8780/v1/coordination/admit' "${TEST_ROOT}/env"
-! grep -Fq 'secret-must-not-print' "${output}"
-! grep -Fq 'secret-must-not-print' "${TEST_ROOT}/run.args"
+if grep -Fq 'secret-must-not-print' "${output}" || grep -Fq 'secret-must-not-print' "${TEST_ROOT}/run.args"; then
+  printf 'FAIL: injection diagnostic leaked a secret.\n' >&2
+  exit 1
+fi
 
 output="${TEST_ROOT}/implementor-output"
 PATH="${TEST_ROOT}/bin:${PATH}" \

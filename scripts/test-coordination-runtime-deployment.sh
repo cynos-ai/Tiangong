@@ -53,7 +53,10 @@ grep -q -- '--cap-add=SETGID' "${TEST_ROOT}/docker.log"
 grep -q -- '--security-opt no-new-privileges' "${TEST_ROOT}/docker.log"
 grep -q -- '--env-file' "${TEST_ROOT}/docker.log"
 grep -q -- 'leader-binding.json,readonly' "${TEST_ROOT}/docker.log"
-! grep -q 'coordination-control-token' "${output}"
+if grep -q 'coordination-control-token' "${output}"; then
+  printf 'FAIL: deployment diagnostic leaked a control token.\n' >&2
+  exit 1
+fi
 
 output_port="${TEST_ROOT}/output-port"
 FAKE_DOCKER_LOG="${TEST_ROOT}/docker-port.log" \
@@ -72,7 +75,10 @@ TIANGONG_COORDINATION_ENV_FILE="${env_file}" \
 TIANGONG_DOCKER_BINDING_VOLUME=coordination-test-binding \
   "${REPO_ROOT}/scripts/deploy-coordination-runtime.sh" start >"${output_volume}"
 grep -q -- '--mount type=volume,source=coordination-test-binding,destination=/run/tiangong-coordination,readonly' "${TEST_ROOT}/docker-volume.log"
-! grep -q -- 'leader-binding.json,readonly' "${TEST_ROOT}/docker-volume.log"
+if grep -q -- 'leader-binding.json,readonly' "${TEST_ROOT}/docker-volume.log"; then
+  printf 'FAIL: volume deployment unexpectedly used a host binding.\n' >&2
+  exit 1
+fi
 
 if FAKE_DOCKER_LOG="${TEST_ROOT}/docker-invalid-port.log" \
   PATH="${TEST_ROOT}/bin:${PATH}" \

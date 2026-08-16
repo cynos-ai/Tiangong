@@ -161,6 +161,7 @@ else
 fi
 mkdir -p "${STATE_DIR}"
 chmod 700 "${STATE_DIR}"
+# shellcheck disable=SC2016
 tr -d '\r' <"${DRIVER}" | sed \
   -e '/^"\${BUILD_SCRIPT}"$/d' \
   -e 's#head -c 8 /proc/sys/kernel/random/uuid#openssl rand -hex 8#g' \
@@ -175,10 +176,15 @@ sed -i "s#^readonly TURN_HELPER=.*#readonly TURN_HELPER=\"${turn_path}\"#" "${NO
 sed -i "s#^readonly FOLLOWUP_HELPER=.*#readonly FOLLOWUP_HELPER=\"${followup_path}\"#" "${NORMALIZED_DRIVER}"
 sed -i "s#^readonly REPORT_HELPER=.*#readonly REPORT_HELPER=\"${report_path}\"#" "${NORMALIZED_DRIVER}"
 sed -i '1i export MSYS_NO_PATHCONV=1' "${NORMALIZED_DRIVER}"
+# shellcheck disable=SC2016
 sed -i '/^docker cp /s#"\${WORKERS_MANIFEST}"#"$(cygpath -w "\${WORKERS_MANIFEST}")"#' "${NORMALIZED_DRIVER}"
+# shellcheck disable=SC2016
 sed -i '/^docker cp /s#"\${MANIFEST}"#"$(cygpath -w "\${MANIFEST}")"#' "${NORMALIZED_DRIVER}"
+# shellcheck disable=SC2016
 sed -i '/^docker cp /s#"\${TURN_HELPER}"#"$(cygpath -w "\${TURN_HELPER}")"#' "${NORMALIZED_DRIVER}"
+# shellcheck disable=SC2016
 sed -i '/^docker cp /s#"\${FOLLOWUP_HELPER}"#"$(cygpath -w "\${FOLLOWUP_HELPER}")"#' "${NORMALIZED_DRIVER}"
+# shellcheck disable=SC2016
 sed -i '/^docker cp /s#"\${REPORT_HELPER}"#"$(cygpath -w "\${REPORT_HELPER}")"#' "${NORMALIZED_DRIVER}"
 sed -i "/^leader_json=/i printf 'leader_smoke_team_ready_for_injection=pass\\n'; : >\"${TEAM_READY_BARRIER//\//\\/}\"; while [[ ! -f \"${INJECTION_BARRIER//\//\\/}\" ]]; do sleep 1; done" "${NORMALIZED_DRIVER}"
 chmod 700 "${NORMALIZED_DRIVER}"

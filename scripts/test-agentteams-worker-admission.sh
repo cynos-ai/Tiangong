@@ -78,6 +78,9 @@ if PATH="${TEST_ROOT}/bin:${PATH}" \
   exit 1
 fi
 grep -q 'ACCESS_ENTRIES_DROPPED' "${TEST_ROOT}/fail.out"
-! grep -q 'scope' "${TEST_ROOT}/fail.out"
+if grep -q 'scope' "${TEST_ROOT}/fail.out"; then
+  printf 'FAIL: diagnostic leaked the access scope.\n' >&2
+  exit 1
+fi
 
 printf 'agentteams_worker_admission_contract=pass\n'

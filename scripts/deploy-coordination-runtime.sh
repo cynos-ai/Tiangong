@@ -6,7 +6,6 @@ readonly IMAGE="${TIANGONG_COORDINATION_IMAGE:-tiangong-coordination-runtime:dev
 readonly CONTAINER="${TIANGONG_COORDINATION_CONTAINER:-tiangong-coordination-runtime}"
 readonly OWNER="tiangong-deployment"
 readonly COMPONENT="coordination-runtime"
-readonly BINDING_TARGET="/run/tiangong-coordination/leader-binding.json"
 readonly ENV_FILE="${TIANGONG_COORDINATION_ENV_FILE:-}"
 readonly BINDING_FILE="${TIANGONG_LEADER_RUNTIME_BINDING_FILE:-}"
 readonly DOCKER_BINDING_VOLUME="${TIANGONG_DOCKER_BINDING_VOLUME:-}"
@@ -106,7 +105,7 @@ start() {
       --network-alias "${CONTAINER}" \
       --env-file "$(docker_host_path "${ENV_FILE}")" \
       --read-only \
-      --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m \
+      --tmpfs "/tmp:rw,noexec,nosuid,nodev,size=16m" \
       --cap-drop=ALL \
       --cap-add=CHOWN \
       --cap-add=DAC_OVERRIDE \

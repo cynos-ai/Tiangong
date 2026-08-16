@@ -52,7 +52,9 @@ delete_worker_if_owned() {
 }
 
 stop_demo() {
-  resource_exists teams "${TEAM_NAME}" && docker exec "${MANAGER_CONTAINER}" agt delete team "${TEAM_NAME}" >/dev/null || true
+  if resource_exists teams "${TEAM_NAME}"; then
+    docker exec "${MANAGER_CONTAINER}" agt delete team "${TEAM_NAME}" >/dev/null || true
+  fi
   # AgentTeams removes Team membership asynchronously; retry after the Team is gone.
   for _ in $(seq 1 20); do
     resource_exists teams "${TEAM_NAME}" || break

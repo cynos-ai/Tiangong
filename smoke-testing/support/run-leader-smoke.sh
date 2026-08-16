@@ -473,7 +473,6 @@ team_peer_policy_loaded "${team_binding_started_at}" || die "OpenClaw did not lo
 
 leader_json="$(docker exec "${MANAGER_CONTAINER}" agt get workers "${LEADER_NAME}" -o json)"
 leader_uid="$(jq -r '.matrixUserID // empty' <<<"${leader_json}")"
-leader_room="$(jq -r '.roomID // empty' <<<"${leader_json}")"
 [[ "$(jq -r '.role' <<<"${leader_json}")" == team_leader ]] || die "Product Leader is not the Team Leader"
 designer_json="$(docker exec "${MANAGER_CONTAINER}" agt get workers "${DESIGNER_NAME}" -o json)"
 designer_room="$(jq -r '.roomID // empty' <<<"${designer_json}")"

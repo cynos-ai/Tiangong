@@ -37,6 +37,7 @@ grep -Fq 'FROM worker-base AS canary-chat-bridge' "${DOCKERFILE}" || fail 'Chat-
 grep -Fq 'ARG TIANGONG_CODEX_MODEL=qwen3.7-plus' "${DOCKERFILE}" || fail 'Chat-only bridge canary must select the Qwen Coding Plan model.'
 grep -Fq 'ARG TIANGONG_CODEX_TRANSPORT=responses-via-chat-bridge' "${DOCKERFILE}" || fail 'Chat-only bridge canary must select the bridge transport.'
 grep -Fq 'ARG TIANGONG_CODEX_BRIDGE=opencodex' "${DOCKERFILE}" || fail 'Chat-only bridge canary must select OpenCodex.'
+# shellcheck disable=SC2016
 grep -Fq 'del(.models.providers[$provider].apiKey)' "${REPO_ROOT}/worker/bin/openclaw" || fail 'Codex canary must not persist the Worker gateway credential in OpenClaw config.'
 grep -Fq 'x-opencodex-api-key' "${REPO_ROOT}/worker/bin/openclaw" || fail 'OpenCodex bridge must use its dedicated admission header.'
 grep -Fq 'TIANGONG_CODEX_SIDECAR_RECEIPT_PATH' "${REPO_ROOT}/worker/bin/openclaw" || fail 'Chat-only Codex workers must receive an explicit sidecar readiness receipt path.'

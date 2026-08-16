@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly REPO_ROOT
 readonly MANAGER_CONTAINER="${TIANGONG_AGENTTEAMS_MANAGER_CONTAINER:-agentteams-manager}"
 readonly CONTROLLER_CONTAINER="${TIANGONG_AGENTTEAMS_CONTROLLER_CONTAINER:-agentteams-controller}"
 readonly IMAGE="${TIANGONG_CODEX_CAPABILITY_IMAGE:-tiangong-worker-canary:dev}"
 readonly NETWORK="${TIANGONG_AGENTTEAMS_NETWORK:-agentteams-net}"
-readonly SUFFIX="$(date -u +%Y%m%d%H%M%S)-$$"
+SUFFIX="$(date -u +%Y%m%d%H%M%S)-$$"
+readonly SUFFIX
 readonly WORKER_A="tiangong-codex-cache-a-${SUFFIX}"
 readonly WORKER_B="tiangong-codex-cache-b-${SUFFIX}"
 readonly CONTAINER_A="agentteams-worker-${WORKER_A}"
@@ -16,7 +18,8 @@ readonly STORAGE_PREFIX_B="agentteams/agentteams-storage/agents/${WORKER_B}/"
 readonly MIRROR_A="/root/agentteams-fs/agents/${WORKER_A}"
 readonly MIRROR_B="/root/agentteams-fs/agents/${WORKER_B}"
 readonly MANIFEST_CONTAINER="/tmp/tiangong-codex-global-cache-${SUFFIX}.yaml"
-readonly RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/tiangong-codex-global-cache.XXXXXX")"
+RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/tiangong-codex-global-cache.XXXXXX")"
+readonly RUN_ROOT
 created=0
 
 fail() { printf 'codex_global_cache_smoke=fail code=%s\n' "$1" >&2; exit 1; }
@@ -35,7 +38,9 @@ purge_worker() {
   done
   worker_json "${name}" >/dev/null 2>&1 && return 1
   container_exists "${container}" && return 1
-  docker exec "${CONTROLLER_CONTAINER}" mc ls "${storage}" 2>/dev/null | grep -q . && return 1 || true
+  if docker exec "${CONTROLLER_CONTAINER}" mc ls "${storage}" 2>/dev/null | grep -q .; then
+    return 1
+  fi
   docker exec "${CONTROLLER_CONTAINER}" test ! -e "${mirror}" || return 1
   docker exec "${MANAGER_CONTAINER}" test ! -e "${mirror}" || return 1
 }

@@ -2,7 +2,6 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "${TEST_ROOT}"' EXIT INT TERM
 
@@ -146,7 +145,10 @@ grep -Fq -- '--cap-drop ALL' "${TEST_ROOT}/run.args"
 grep -Fq -- '--security-opt no-new-privileges:true' "${TEST_ROOT}/run.args"
 grep -Fq -- '--init' "${TEST_ROOT}/run.args"
 grep -Fq -- '--restart unless-stopped' "${TEST_ROOT}/run.args"
-! grep -Fq 'test-control-token-123456' "${output}"
+if grep -Fq 'test-control-token-123456' "${output}"; then
+  printf 'FAIL: injection diagnostic leaked a control token.\n' >&2
+  exit 1
+fi
 
 if PATH="${TEST_ROOT}/bin:${PATH}" \
   TIANGONG_INJECTION_TEST_ROOT="${TEST_ROOT}" \
@@ -176,6 +178,9 @@ TIANGONG_COORDINATION_CONTROL_TOKEN=test-control-token-123456 \
   "${SCRIPT_DIR}/inject-leader-runtime-docker.sh" >"${volume_output}"
 grep -Fq 'leader_runtime_injection=pass container=leader-test' "${volume_output}"
 grep -Fq 'source=leader-test-binding,destination=/run/tiangong-leader,readonly' "${TEST_ROOT}/run.args"
-! grep -Fq 'test-control-token-123456' "${volume_output}"
+if grep -Fq 'test-control-token-123456' "${volume_output}"; then
+  printf 'FAIL: volume injection diagnostic leaked a control token.\n' >&2
+  exit 1
+fi
 
 printf 'leader_runtime_injection_docker_contract=pass\n'

@@ -266,6 +266,7 @@ new_started=1
 
 # Check the route from inside the new process namespace without exposing any
 # environment value. This is the same code path used by the OpenClaw wrapper.
+# shellcheck disable=SC2016
 MSYS_NO_PATHCONV=1 "${DOCKER_COMMAND}" exec "${CONTAINER}" node --input-type=module -e '
   const { runtimeRouteFromEnvironment } = await import("/opt/tiangong-worker/agent/runtime-routing.mjs");
   const route = runtimeRouteFromEnvironment(process.env);

@@ -33,7 +33,10 @@ TIANGONG_LEADER_RUNTIME_BINDING_FILE="${binding}" \
 TIANGONG_COORDINATION_CONTROL_ENDPOINT=http://coordination-runtime:8780/v1/coordination/admit \
   "${REPO_ROOT}/scripts/verify-leader-runtime-injection.sh" >"${TEST_ROOT}/pass.out"
 grep -q 'leader_runtime_injection=pass' "${TEST_ROOT}/pass.out"
-! grep -q 'test-control-token' "${TEST_ROOT}/pass.out"
+if grep -q 'test-control-token' "${TEST_ROOT}/pass.out"; then
+  printf 'FAIL: verification diagnostic leaked a control token.\n' >&2
+  exit 1
+fi
 
 cat >"${TEST_ROOT}/bin/docker" <<'EOF'
 #!/usr/bin/env bash

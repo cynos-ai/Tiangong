@@ -10,7 +10,8 @@ readonly PROBE_NAME="${TIANGONG_AGENTTEAMS_PROBE_NAME:-tiangong-admission-probe}
 readonly PROBE_MODEL="${TIANGONG_AGENTTEAMS_PROBE_MODEL:-tiangong-admission-probe-model}"
 readonly PROBE_SERVICE="${TIANGONG_AGENTTEAMS_PROBE_SERVICE:-object-storage}"
 readonly PROBE_SCOPE="${TIANGONG_AGENTTEAMS_PROBE_SCOPE:-{\"bucketRef\":\"workspace\",\"prefix\":\"agents/probe/*\"}}"
-readonly WORK_DIR="$(mktemp -d)"
+WORK_DIR="$(mktemp -d)"
+readonly WORK_DIR
 readonly MANIFEST="${WORK_DIR}/${PROBE_NAME}.yaml"
 readonly REMOTE_MANIFEST="/tmp/${PROBE_NAME}.yaml"
 
