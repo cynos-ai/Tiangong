@@ -79,3 +79,24 @@ AgentTeams Implementor Worker 的 native coding session，并证明本地修改�
 ChangeRevision 和 Result 能经 Matrix/WebUI 回到 Leader。非编程 Leader 仍以 OpenClaw
 内置 runtime 为目标；Implementor 才在该真实纵切中验证 OpenClaw Codex runtime。
 在 B4/B5、Gate B 证据闭合前，`tiangong-pi` 继续保留，不做 clean-cut。
+
+## 2026-08-16 B4 原生 Codex Worker smoke
+
+真实 disposable AgentTeams Team 上，Implementor 使用
+`OPENCLAW_AGENT_RUNTIME=codex`、`OPENCLAW_AGENT_HARNESS_FALLBACK=none`、
+`TIANGONG_CODEX_TRANSPORT=native-responses` 和
+`TIANGONG_CODEX_BRIDGE=none`，通过 AgentTeams scoped provider 路由调用
+DeepSeek V4 Pro。OpenClaw 自带 Codex app-server 接收 Matrix Task；Tiangong
+只通过现有生命周期 hook 读取 immutable TaskSpec 并提交 bounded Result。
+
+本次真实任务已读 fixture、写入精确 marker、完成本地断言，Task 变为
+`reported`，Result 出现在 PostgreSQL/WebUI 投影，相关 Matrix wakes 全部
+`acked`。这证明了“OpenClaw 内置 Codex + AgentTeams Task/Result gateway”
+这一条路可行；没有使用 OpenCodex bridge，也没有 Tiangong 自己的模型循环。
+
+但这还不是 B4 完成：本次原生工具调用尚未纳入 Runner broker 的唯一执行权、
+ChangeRevision、WorkRun、ToolResult retention、重启恢复和 cleanup 闭环。下一步
+是把同一条 Codex session 接到已通过的 Runner broker，再做 B5 role/recovery
+证据。`OPENCLAW_AGENT_RUNTIME=pi` 是当前 pinned OpenClaw 内置 runtime 的历史
+标识，不等于仓库的 `tiangong-pi`；后者仍只作为 Gate B 前的 legacy rollback
+保留，不能提前删除。
