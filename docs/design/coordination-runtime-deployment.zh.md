@@ -92,4 +92,20 @@ Docker Desktop/WSL 的 Windows bind mount 会把文件权限呈现为过宽，Ti
 - Matrix outbox consumer 对 `leader-resume` 和 `human-reply` 各自完成 claim/send/ack；`/readyz` 返回 `source=postgres-and-matrix`，runtime 根页面和 `/api/runtime` 返回 200，并能读出 Work projection 与 acked delivery state。
 - outbox 现在会在同一 consumer 重启时恢复自己遗留的 `claimed` wake；Matrix transaction pathname 由 wake 事实确定性生成。独立测试已模拟 send 成功后 ACK 崩溃，再次启动完成同一逻辑事务的重放和 ACK。
 
-这证明 B2 Basic 的真实 AgentTeams/Matrix/PG/Leader/Web projection seam 已经可以走通，并且 F1 的确定性重放合同已具备；但真实容器级 crash-after-send-before-ack 故障注入、B3/B4、B5 runtime A/B 仍未完成，因此现在仍不能做 Gate B clean-cut，也不能删除 `tiangong-pi`。
+这证明 B2 Basic 的真实 AgentTeams/Matrix/PG/Leader/Web projection seam 已经可以走通，并且 F1 的确定性重放合同已具备；真实容器级故障注入仍单独记录在下一节。
+
+## 2026-08-16 B2 Full/F1 容器级重启复核
+
+为避免旧 consumer 抢消费，临时停掉已有 Coordination runtime，另起一个隔离 runtime，复用同一套 PG、Leader binding volume 和真实 AgentTeams Matrix。测试代理把第一次 `PUT /send/m.room.message/<transaction>` 的上游响应延迟；确认 Matrix 已接受事件后强制杀掉该 runtime，再启动同一容器。
+
+重启后的 runtime 重新 ready，扫描并重放遗留 wake；第一次发送和重放使用同一个 transaction pathname，两个 Work wake 最终均为 `acked`，`/api/runtime` 能看到 durable delivery state，测试资源随后精确清理，原 runtime 已恢复到 `source=postgres-and-matrix` ready。
+
+因此 B2 Basic/Full/F1 的 disposable deployment seam 现在通过；B3/B4、B5 runtime A/B 与 Gate B 仍未完成，所以仍不能删除 `tiangong-pi`。按 internal 计划，下一切片是 B3 跨 Gateway Task/Result，不是提前做 B6 clean-cut。
+## 2026-08-16 B3 native member hook boundary
+
+The member-side implementation now uses OpenClaw's native lifecycle hooks
+(`before_prompt_build` and `agent_end`) rather than a Tiangong model/runtime
+loop. The hook fetches TaskSpec and submits one Result through the deployment
+gateway; it has no PG/Team authority. Deployment must inject a member-scoped
+Control API token and `TIANGONG_MEMBER_ID`; the member-session Full smoke is
+still pending until that injection is exercised in a rebuilt real Worker.

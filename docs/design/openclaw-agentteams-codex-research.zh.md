@@ -356,8 +356,12 @@ wakes，Matrix consumer 完成两类 wake 的 claim/send/ack，Coordination runt
 `/readyz`、根页面和 `/api/runtime` 均返回 200，Web projection 能读到 acked state。
 此外，outbox consumer 已能在同一 consumer 重启时恢复遗留的 `claimed` wake，并用
 同一个确定性 Matrix transaction pathname 重放；独立 F1 contract test 已通过。真实
-容器级 crash-after-send-before-ack 的 Full/F1、B3/B4/B5 仍未完成，不能把这次结果
-当成 Gate B clean-cut，也不能提前删除 `tiangong-pi`。
+容器级 crash-after-send-before-ack 也已在隔离 Coordination runtime 上复核：真实
+Matrix PUT 已落地后杀掉 runtime，重启后同一 transaction pathname 重放并 ACK，原
+runtime 最终恢复 ready。B2 Basic/Full/F1 seam 已通过，但 B3/B4/B5 仍未完成，不能
+把这次结果当成 Gate B clean-cut，也不能提前删除 `tiangong-pi`；B3 的部署 gateway
+和真实 Team Matrix delivery seam 已在下一切片通过，剩余的是 member native session
+调用的 Full smoke，然后才进入 B4。
 
 ## 2026-08-16 Phase B4 Work/Task/Runner/Result 纵切
 

@@ -8,6 +8,8 @@ import { createRuntimeConsoleServer } from "../server.mjs";
 import {
   CoordinationStore,
   createControlProfile,
+  createResult,
+  createTaskSpec,
   createMemberConfig,
   createTeamConfig,
   createTeamRouteBinding,
@@ -80,4 +82,51 @@ test("Coordination Control API validates a deployment-authored Leader resume eve
   assert.equal(resumed.status, 200);
   assert.equal((await resumed.json()).resumed, true);
   assert.equal((await store.listWorks()).length, 1);
+});
+
+test("Coordination Control API keeps Task/Result writes bound to the current Team and emits durable wakes", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "tiangong-control-task-result-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const profile = createControlProfile({ profileId: "profile-task-result-api", revision: 1, maxTimelineEntries: 64, maxOutboxEntries: 32, maxTasksPerWork: 8, toolResultRetentionMs: 60_000 });
+  const team = createTeamConfig({ teamId: "team-task-result-api", revision: 1, leaderMemberId: "leader-task-result-api", memberIds: ["leader-task-result-api", "member-task-result-api"], controlProfileId: profile.profileId, createdAt: NOW });
+  const route = createTeamRouteBinding({ routeId: "route-task-result-api", teamId: team.teamId, revision: 1, channel: "matrix", roomId: "!room-task-result-api:example.test", createdAt: NOW });
+  const leaderMember = createMemberConfig({ memberId: "leader-task-result-api", teamId: team.teamId, workerName: "leader-task-result-api", matrixUserId: "@leader-task-result-api:example.test", role: "leader", controlProfileId: profile.profileId, enabled: true, createdAt: NOW });
+  const member = createMemberConfig({ memberId: "member-task-result-api", teamId: team.teamId, workerName: "member-task-result-api", matrixUserId: "@member-task-result-api:example.test", role: "implementor", controlProfileId: profile.profileId, enabled: true, createdAt: NOW });
+  const store = new CoordinationStore({ filePath: join(root, "coordination.jsonl"), now: () => NOW });
+  const server = createRuntimeConsoleServer({ coordinationControl: { store, bearerToken: TOKEN, team, route, profile, leaderMember, members: [leaderMember, member], now: () => NOW } }).listen(0);
+  t.after(() => server.close());
+  const address = server.address();
+  const headers = { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" };
+  const admission = await fetch(`http://127.0.0.1:${address.port}/v1/coordination/admit`, { method: "POST", headers, body: JSON.stringify({ source: { channel: "matrix", authenticated: true, actorId: "@human-task-result-api:example.test", messageId: "$human-task-result-api", route: "team-room" }, event: { eventId: "$human-task-result-api", roomId: route.roomId, sender: "@human-task-result-api:example.test", type: "m.room.message", content: { msgtype: "m.text", body: "Build the bounded task" } } }) });
+  const admitted = await admission.json();
+  const task = createTaskSpec({ taskId: "task-task-result-api", workId: admitted.work.work.workId, assigneeMemberId: member.memberId, objective: "Run one bounded implementation", completionContract: "submit one Result", inputRefs: [], createdAt: NOW });
+  const taskResponse = await fetch(`http://127.0.0.1:${address.port}/v1/coordination/tasks`, { method: "POST", headers, body: JSON.stringify({ task, actorId: leaderMember.memberId, expectedEpoch: 0, requestId: "task-create-api" }) });
+  assert.equal(taskResponse.status, 200);
+  const createdTask = await taskResponse.json();
+  assert.equal(createdTask.task.spec.assigneeMemberId, member.memberId);
+  assert.equal(createdTask.wake.kind, "task-assignment");
+  assert.equal(createdTask.wake.status, "pending");
+  const result = createResult({ resultId: "result-task-result-api", workId: task.workId, taskId: task.taskId, producerMemberId: member.memberId, toolResultIds: [], artifactRefs: [], claim: "implementation complete", createdAt: NOW });
+  const resultResponse = await fetch(`http://127.0.0.1:${address.port}/v1/coordination/results`, { method: "POST", headers, body: JSON.stringify({ result, actorId: member.memberId, expectedEpoch: 1, requestId: "result-submit-api" }) });
+  assert.equal(resultResponse.status, 200);
+  const submitted = await resultResponse.json();
+  assert.equal(submitted.result.resultId, result.resultId);
+  assert.equal(submitted.wake.kind, "result-notification");
+  assert.equal(submitted.wake.targetMemberId, leaderMember.memberId);
+  const taskRead = await fetch(`http://127.0.0.1:${address.port}/v1/coordination/tasks/${task.taskId}`, { headers: { Authorization: `Bearer ${TOKEN}` } });
+  assert.equal((await taskRead.json()).task.result.resultId, result.resultId);
+  const wrongTaskActor = await fetch(`http://127.0.0.1:${address.port}/v1/coordination/tasks`, { method: "POST", headers, body: JSON.stringify({ task: createTaskSpec({ taskId: "task-wrong-actor", workId: task.workId, assigneeMemberId: member.memberId, objective: task.objective, completionContract: task.completionContract, inputRefs: [], createdAt: NOW }), actorId: member.memberId, expectedEpoch: 1, requestId: "task-wrong-actor" }) });
+  assert.equal(wrongTaskActor.status, 422);
+  assert.equal((await wrongTaskActor.json()).error, "TASK_ACTOR_NOT_LEADER");
+  const wrongResultActor = await fetch(`http://127.0.0.1:${address.port}/v1/coordination/results`, { method: "POST", headers, body: JSON.stringify({ result, actorId: leaderMember.memberId, expectedEpoch: 1, requestId: "result-wrong-actor" }) });
+  assert.equal(wrongResultActor.status, 422);
+  assert.equal((await wrongResultActor.json()).error, "RESULT_ACTOR_MISMATCH");
+  const replay = await fetch(`http://127.0.0.1:${address.port}/v1/coordination/results`, { method: "POST", headers, body: JSON.stringify({ result, actorId: member.memberId, expectedEpoch: 1, requestId: "result-submit-api" }) });
+  assert.equal(replay.status, 200);
+  const replayBody = await replay.json();
+  assert.equal(replayBody.replayed, true);
+  assert.equal(replayBody.wakeReplayed, true);
+  const pending = await store.listOutbox({ status: "pending" });
+  assert.equal(pending.filter((wake) => wake.kind === "task-assignment").length, 1);
+  assert.equal(pending.filter((wake) => wake.kind === "result-notification").length, 1);
 });

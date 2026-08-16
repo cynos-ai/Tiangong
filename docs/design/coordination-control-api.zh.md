@@ -84,3 +84,20 @@ $env:TIANGONG_TEST_POSTGRES_URL = "postgres://postgres:test@127.0.0.1:55432/tian
 $env:TIANGONG_TEST_POSTGRES_DISPOSABLE = "1"
 npm test -- --test-name-pattern="Postgres CoordinationStore"
 ```
+
+## 2026-08-16 B3 Gateway 补充
+
+部署层现在还提供 `POST /v1/coordination/tasks` 和
+`POST /v1/coordination/results`：前者只接受当前绑定 Leader 创建的
+TaskSpec，并在同一事务内写入 `task-assignment` wake；后者只接受当前绑定
+producer 的 Result，并在同一事务内写入 Leader 的 `result-notification` wake。
+两条路径都复用现有 request replay、Work epoch、Task/Result binding 和 Web
+projection，不把 PG 或 Team authority 暴露给 Worker；Worker facade 只发送
+受限 HTTP 请求。
+成员 Worker 的 native OpenClaw 路径由
+`worker/agent/team/member-coordination-hooks.mjs` 接入：`before_prompt_build`
+读取 TaskSpec，`agent_end` 提交一次 Result。它不是 Tiangong 自己的 runtime，
+也不把数据库、Team binding 或 Matrix token 放进 Worker；部署层只注入
+`TIANGONG_COORDINATION_CONTROL_ENDPOINT`、Worker-scoped token 和
+`TIANGONG_MEMBER_ID`。Leader 仍使用 OpenClaw built-in runtime；`tiangong-pi`
+只在 Gate B/B6 之前作为 legacy 回滚路径保留。

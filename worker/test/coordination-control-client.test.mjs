@@ -48,6 +48,27 @@ test("remote CoordinationStore facade supports a Leader outbox loop without a da
   assert.equal(calls.every(([, options]) => options.headers.Authorization === "Bearer client-control-token"), true);
 });
 
+test("remote CoordinationStore routes bound Task/Result writes through the deployment gateway", async () => {
+  const calls = [];
+  const store = createRemoteCoordinationStore({
+    endpoint: "http://control.example.test/v1/coordination/admit",
+    token: "client-control-token",
+    fetchImpl: async (url, options) => {
+      calls.push([url, options]);
+      if (url.endsWith("/tasks")) return new Response(JSON.stringify({ replayed: false, task: { spec: { taskId: "task-remote" } }, wake: { kind: "task-assignment" } }), { status: 200 });
+      return new Response(JSON.stringify({ replayed: false, result: { resultId: "result-remote" }, wake: { kind: "result-notification" } }), { status: 200 });
+    },
+  });
+  const task = await store.createTask({ task: { taskId: "task-remote" }, actorId: "leader-remote", expectedEpoch: 0, requestId: "task-remote-request" });
+  const result = await store.submitResult({ result: { resultId: "result-remote" }, actorId: "member-remote", expectedEpoch: 1, requestId: "result-remote-request" });
+  assert.equal(task.wake.kind, "task-assignment");
+  assert.equal(result.wake.kind, "result-notification");
+  assert.equal(calls[0][0], "http://control.example.test/v1/coordination/tasks");
+  assert.equal(JSON.parse(calls[0][1].body).actorId, "leader-remote");
+  assert.equal(calls[1][0], "http://control.example.test/v1/coordination/results");
+  assert.equal(JSON.parse(calls[1][1].body).actorId, "member-remote");
+});
+
 test("remote Leader admission routes a machine resume envelope to the resume endpoint", async () => {
   const calls = [];
   const event = {

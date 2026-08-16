@@ -40,6 +40,12 @@ function object(value, name) {
   return value;
 }
 
+function memberFor(members, memberId) {
+  const member = members.find((candidate) => candidate.memberId === memberId);
+  if (!member) throw Object.assign(new Error("Team member is not part of the current binding"), { code: "MEMBER_BINDING_INVALID" });
+  return member;
+}
+
 function admissionResponse(admission) {
   return {
     replayed: admission.replayed === true,
@@ -67,8 +73,10 @@ export function createCoordinationAdmissionHandler({ store, bearerToken, team, r
     const workMatch = url.pathname.match(/^\/v1\/coordination\/works\/([^/]+)$/u);
     const taskMatch = url.pathname.match(/^\/v1\/coordination\/tasks\/([^/]+)$/u);
     const resultMatch = url.pathname.match(/^\/v1\/coordination\/results\/([^/]+)$/u);
+    const taskCreatePath = url.pathname === "/v1/coordination/tasks";
+    const resultSubmitPath = url.pathname === "/v1/coordination/results";
     const wakesPath = url.pathname === "/v1/coordination/wakes";
-    if (!admissionPath && !resumePath && !claimPath && !ackPath && !workMatch && !taskMatch && !resultMatch && !wakesPath) return false;
+    if (!admissionPath && !resumePath && !claimPath && !ackPath && !workMatch && !taskMatch && !resultMatch && !taskCreatePath && !resultSubmitPath && !wakesPath) return false;
     if (workMatch || taskMatch || resultMatch || wakesPath) {
       if (request.method !== "GET") {
         json(response, 405, { error: "method_not_allowed" });
@@ -112,7 +120,46 @@ export function createCoordinationAdmissionHandler({ store, bearerToken, team, r
     }
     try {
       const body = object(await readBody(request), "request");
-      if (admissionPath || resumePath) {
+      if (taskCreatePath) {
+        if (Object.keys(body).some((key) => !["task", "actorId", "expectedEpoch", "requestId"].includes(key))) throw Object.assign(new Error("request contains unknown fields"), { code: "REQUEST_BODY_INVALID" });
+        if (body.actorId !== leaderMember.memberId) throw Object.assign(new Error("Only the bound Leader may create a Task"), { code: "TASK_ACTOR_NOT_LEADER" });
+        const task = object(body.task, "task");
+        const assignee = memberFor(members, task.assigneeMemberId);
+        const created = await store.createTask({
+          task,
+          team,
+          member: assignee,
+          profile,
+          actorId: body.actorId,
+          expectedEpoch: body.expectedEpoch,
+          requestId: body.requestId,
+          wake: { kind: "task-assignment", targetMemberId: assignee.memberId },
+        });
+        json(response, 200, created);
+      } else if (resultSubmitPath) {
+        if (Object.keys(body).some((key) => !["result", "actorId", "expectedEpoch", "requestId"].includes(key))) throw Object.assign(new Error("request contains unknown fields"), { code: "REQUEST_BODY_INVALID" });
+        const result = object(body.result, "result");
+        const producer = memberFor(members, result.producerMemberId);
+        if (body.actorId !== producer.memberId) throw Object.assign(new Error("Result actor must match the bound producer"), { code: "RESULT_ACTOR_MISMATCH" });
+        const submitted = await store.submitResult({
+          result,
+          team,
+          member: producer,
+          profile,
+          actorId: body.actorId,
+          expectedEpoch: body.expectedEpoch,
+          requestId: body.requestId,
+        });
+        const wake = await store.enqueueWake({
+          workId: result.workId,
+          taskId: result.taskId,
+          targetMemberId: team.leaderMemberId,
+          kind: "result-notification",
+          requestId: `result-notification-${body.requestId}`,
+          at: result.createdAt,
+        });
+        json(response, 200, { ...submitted, wake: wake.wake, wakeReplayed: wake.replayed === true });
+      } else if (admissionPath || resumePath) {
         if (Object.keys(body).some((key) => !["source", "event"].includes(key))) throw Object.assign(new Error("request contains unknown fields"), { code: "REQUEST_BODY_INVALID" });
         if (resumePath) {
           if (typeof store.getWake !== "function") throw Object.assign(new Error("Leader resume requires wake reads"), { code: "LEADER_RESUME_STORE_UNAVAILABLE" });

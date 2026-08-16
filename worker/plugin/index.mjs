@@ -10,6 +10,7 @@ import { createFileAdmissionResolver } from "../agent/gates/admission-context-fi
 import { createCanaryAdmissionResolver } from "../agent/gates/canary-admission.mjs";
 import { createToolResultCaptureHook, defaultToolResultCapturePath } from "../agent/gates/tool-result-capture.mjs";
 import { assertPluginApi } from "../agent/preflight/openclaw-preflight.mjs";
+import { registerMemberCoordinationHooks } from "../agent/team/member-coordination-hooks.mjs";
 import { createTiangongPiHarness } from "./openclaw-adapter.mjs";
 
 export default definePluginEntry({
@@ -42,6 +43,13 @@ export default definePluginEntry({
       api.on("tool_result_persist", createToolResultCaptureHook({
         filePath: defaultToolResultCapturePath(),
       }), { priority: 100 });
+    }
+    if (process.env.TIANGONG_MEMBER_COORDINATION_ENABLED === "1") {
+      registerMemberCoordinationHooks(api, {
+        endpoint: process.env.TIANGONG_COORDINATION_CONTROL_ENDPOINT,
+        token: process.env.TIANGONG_COORDINATION_CONTROL_TOKEN,
+        memberId: process.env.TIANGONG_MEMBER_ID,
+      });
     }
     const observability = createWorkerObservability({
       config: resolveObservabilityConfig(api.pluginConfig),

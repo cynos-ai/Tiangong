@@ -82,15 +82,23 @@ export function createRemoteOpenClawLeaderAdmissionHook({ channel, endpoint, tok
 }
 
 /**
- * HTTP-backed CoordinationStore facade for a Leader Worker outbox loop. It
- * implements only the read/claim/ack methods needed by drainLeaderOutbox;
- * the Worker still has no database connection or Team binding authority.
+ * HTTP-backed CoordinationStore facade for OpenClaw Worker coordination. It
+ * implements bounded Task/Result writes plus the read/claim/ack methods needed
+ * by the native Leader/member hooks; the Worker still has no database
+ * connection or Team binding authority.
  */
-export function createRemoteCoordinationStore({ endpoint, token, fetchImpl = globalThis.fetch } = {}) {
+export function createRemoteCoordinationStore({ endpoint, token, fetchImpl = globalThis.fetch, memberId } = {}) {
   if (typeof fetchImpl !== "function") throw new TypeError("Remote CoordinationStore requires fetch");
   const origin = controlOrigin(endpoint);
   const bearer = tokenValue(token);
+  const actorId = memberId === undefined ? undefined : required(memberId, "memberId");
   return Object.freeze({
+    async createTask({ task, actorId: requestedActorId, expectedEpoch, requestId } = {}) {
+      return controlRequest({ fetchImpl, token: bearer, url: `${origin}/v1/coordination/tasks`, method: "POST", body: { task, actorId: requestedActorId ?? actorId, expectedEpoch, requestId } });
+    },
+    async submitResult({ result, actorId: requestedActorId, expectedEpoch, requestId } = {}) {
+      return controlRequest({ fetchImpl, token: bearer, url: `${origin}/v1/coordination/results`, method: "POST", body: { result, actorId: requestedActorId ?? actorId, expectedEpoch, requestId } });
+    },
     async getWork(workId) {
       const value = await controlRequest({ fetchImpl, token: bearer, url: `${origin}/v1/coordination/works/${encodeURIComponent(required(workId, "workId"))}` });
       return value.work;
