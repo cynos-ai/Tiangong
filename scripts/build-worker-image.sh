@@ -7,6 +7,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly REPO_ROOT
 readonly IMAGE="tiangong-worker:dev"
 readonly CANARY_IMAGE="tiangong-worker-canary:dev"
+readonly CANARY_MEMBER_IMAGE="tiangong-worker-canary-member:dev"
 readonly LEADER_IMAGE="tiangong-worker-leader:dev"
 readonly DESIGNER_IMAGE="tiangong-worker-designer:dev"
 readonly IMPLEMENTOR_IMAGE="tiangong-worker-implementor:dev"
@@ -45,6 +46,8 @@ printf '[Tiangong] Building %s\n' "${IMAGE}"
 docker build "${build_args[@]}" --target default --tag "${IMAGE}" "${REPO_ROOT}/worker"
 printf '[Tiangong] Building isolated OpenClaw canary image %s\n' "${CANARY_IMAGE}"
 docker build "${build_args[@]}" --target canary --tag "${CANARY_IMAGE}" "${REPO_ROOT}/worker"
+printf '[Tiangong] Building fixed Implementor Chat bridge image %s\n' "${CANARY_MEMBER_IMAGE}"
+docker build "${build_args[@]}" --target canary-chat-bridge-implementor --tag "${CANARY_MEMBER_IMAGE}" "${REPO_ROOT}/worker"
 printf '[Tiangong] Building leader profile image %s\n' "${LEADER_IMAGE}"
 docker build "${build_args[@]}" --target leader --tag "${LEADER_IMAGE}" "${REPO_ROOT}/worker"
 for role in designer implementor assessor operator; do
@@ -92,6 +95,12 @@ actual_pi_version="$(docker run --rm --entrypoint pi "${IMAGE}" --version)"
 actual_codex_version="$(docker run --rm --entrypoint /opt/tiangong-worker/node_modules/.bin/codex "${CANARY_IMAGE}" --version)"
 [[ "${actual_codex_version}" == "${EXPECTED_CODEX_VERSION}" ]] || {
   printf 'ERROR: expected managed Codex %s, got %s.\n' "${EXPECTED_CODEX_VERSION}" "${actual_codex_version}" >&2
+  exit 1
+}
+member_canary_profile="$(docker run --rm --entrypoint node "${CANARY_MEMBER_IMAGE}" \
+  /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role implementor)"
+printf '%s\n' "${member_canary_profile}" | grep -Fq '"runtimeReady":true' || {
+  printf 'ERROR: fixed Implementor Chat bridge profile is not runtime-ready.\n' >&2
   exit 1
 }
 actual_opencodex_version="$(docker run --rm --entrypoint ocx "${OPENCODEX_SIDECAR_IMAGE}" --version)"
