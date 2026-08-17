@@ -21,6 +21,9 @@ const NEUTRALIZED_IMAGE_ENV_KEYS = Object.freeze([
   "OPENCLAW_CMS_PLUGIN_DIR",
   "PI_SKIP_VERSION_CHECK",
   "PI_TELEMETRY",
+  // Role identity belongs to the Worker control plane and must not leak into
+  // a disposable command runner, which has no professional role authority.
+  "TIANGONG_ROLE_ID",
   "TIANGONG_OTEL_EXPORTER_ENDPOINT",
   "http_proxy",
   "https_proxy",
