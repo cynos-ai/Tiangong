@@ -67,3 +67,21 @@ adapter、receipt 和确定性合同。AgentTeams v1.2.2 的 `agt` 管理面仍�
 原生的 Leader-session、Coordination 或 OpenCodex sidecar 字段，因此真实
 生产部署必须显式调用部署适配器；把路径写进 SOUL、prompt 或普通 Worker
 环境不算注入成功。
+
+### 2026-08-17 共享栈复核
+
+对当前共享 AgentTeams v1.2.2 容器做了只读、脱敏的直接探测：
+
+- Controller 当前 provider 为 `openai-compat`、DeepSeek endpoint，带容器内
+  配置凭证请求 `/v1/models` 返回 HTTP 401；Controller gateway 同样返回
+  HTTP 401。
+- Manager 容器中的 Matrix token 请求 `/_matrix/client/v3/account/whoami`
+  返回 HTTP 401。Manager 日志同时记录了历史 SQLite b-tree 损坏并隔离重建，
+  以及 `M_UNKNOWN_TOKEN`。
+- 因此 `agt get managers` 的 `welcomeSent=true` 不能作为 Phase C readiness；
+  `scripts/agentteams.sh verify` 现在还会检查 provider authentication 和
+  Manager Matrix authentication，失败时保持 No-Go，不输出凭证。
+
+这些是共享部署凭证/状态问题，不是 Tiangong native OpenClaw 代码已通过的
+证据。修复有效 provider credential、Matrix token 和 Manager 状态后，必须
+重新运行 `make phase-c-real`，不能复用这次失败结果。
