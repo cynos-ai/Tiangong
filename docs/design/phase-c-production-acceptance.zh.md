@@ -136,6 +136,10 @@ builtin runtime 默认切换到已登记的 `deepseek-chat`；Codex member 的�
   注入，但在 Leader builtin runtime 的首个模型回合等待超时；随后按精确名称清理了
   Worker 和运行目录。该结果不能算 Phase C Go。
 
+上游公开的 [AgentTeams issue #908](https://github.com/agentscope-ai/AgentTeams/issues/908)
+也记录了 K8s 模式下 Higress Provider/`modelMapping` 不同步、Worker 模型不可用和
+`aigw-local` 解析问题；截至本次复核仍是 Open，页面没有关联修复 PR。这与本地 v1.2.2
+的“部署层注入成功但 Worker 实际路由不可用”现象属于同一类上游边界风险。
 因此当前发布门禁仍是 **No-Go**。要解除它，部署层必须提供并实际传递一个可验证的
 AI gateway endpoint（或 AgentTeams 上游修复 Controller 的本地 URL 注入），并在同一
 个全新 Worker 内证明 `/v1/models` 和一次真实 Chat/Responses 回合成功；在此之前不做
