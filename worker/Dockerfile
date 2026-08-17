@@ -99,22 +99,27 @@ RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role kerne
 
 FROM worker-base AS leader
 COPY role-profiles/leader.json /opt/tiangong-worker/profile.json
+ENV TIANGONG_ROLE_ID=leader
 RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role leader
 
 FROM worker-base AS designer
 COPY role-profiles/designer.json /opt/tiangong-worker/profile.json
+ENV TIANGONG_ROLE_ID=designer
 RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role designer
 
 FROM worker-base AS implementor
 COPY role-profiles/implementor.json /opt/tiangong-worker/profile.json
+ENV TIANGONG_ROLE_ID=implementor
 RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role implementor
 
 FROM worker-base AS assessor
 COPY role-profiles/assessor.json /opt/tiangong-worker/profile.json
+ENV TIANGONG_ROLE_ID=assessor
 RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role assessor
 
 FROM worker-base AS operator
 COPY role-profiles/operator.json /opt/tiangong-worker/profile.json
+ENV TIANGONG_ROLE_ID=operator
 RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role operator
 
 FROM kernel AS default
@@ -184,3 +189,11 @@ ENV TIANGONG_RUNTIME_LANE=openclaw-canary \
     TIANGONG_CODEX_BRIDGE="${TIANGONG_CODEX_BRIDGE}" \
     OPENCLAW_AGENT_RUNTIME=codex \
     OPENCLAW_AGENT_HARNESS_FALLBACK=none
+
+# Chat-only coding canary with the fixed Implementor profile. The profile and
+# role id are image facts; deployment still supplies the Worker-scoped
+# Coordination endpoint/token and sidecar receipt.
+FROM canary-chat-bridge AS canary-chat-bridge-implementor
+COPY role-profiles/implementor.json /opt/tiangong-worker/profile.json
+ENV TIANGONG_ROLE_ID=implementor
+RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role implementor
