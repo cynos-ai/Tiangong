@@ -540,6 +540,24 @@ http_status() {
   fi
 }
 
+authenticated_http_status() {
+  local token="$1" url="$2" host_header="${3:-}" code
+  [[ -n "${token}" ]] || {
+    printf 'missing'
+    return
+  }
+  if code="$( {
+      printf 'header = "Authorization: Bearer %s"\n' "${token}"
+      [[ -z "${host_header}" ]] || printf 'header = "Host: %s"\n' "${host_header}"
+    } | \
+      curl --config - --silent --show-error --output /dev/null --write-out '%{http_code}' \
+      --connect-timeout 3 --max-time 10 "${url}" 2>/dev/null)"; then
+    printf '%s' "${code}"
+  else
+    printf 'unreachable'
+  fi
+}
+
 status() {
   require_command docker
   if [[ -f "${ENV_FILE}" ]]; then
@@ -575,7 +593,7 @@ verify() {
   load_config
   validate_stack_ownership
 
-  local failed=0 code matrix_domain
+  local failed=0 code matrix_domain provider_base provider_code manager_token matrix_code
   for container in agentteams-controller agentteams-manager; do
     if [[ "$(docker inspect -f '{{.State.Running}}' "${container}" 2>/dev/null || true)" == "true" ]]; then
       log "PASS container running: ${container}"
@@ -614,6 +632,30 @@ verify() {
     log "PASS MinIO health"
   else
     warn "FAIL MinIO health"
+    failed=1
+  fi
+
+  provider_route >/dev/null
+  provider_base="${AGENTTEAMS_OPENAI_BASE_URL:-}"
+  if [[ "${AGENTTEAMS_LLM_PROVIDER}" == "qwen" && -z "${provider_base}" ]]; then
+    provider_base="https://dashscope.aliyuncs.com/compatible-mode/v1"
+  fi
+  provider_code="$(authenticated_http_status "${AGENTTEAMS_LLM_API_KEY:-}" "${provider_base%/}/models")"
+  if [[ "${provider_code}" == "200" ]]; then
+    log "PASS provider authentication HTTP ${provider_code}"
+  else
+    warn "FAIL provider authentication HTTP ${provider_code}"
+    failed=1
+  fi
+
+  manager_token="$(docker inspect agentteams-manager --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | \
+    awk -F= '$1 == "AGENTTEAMS_MANAGER_MATRIX_TOKEN" {sub(/^[^=]*=/, ""); print; exit}')"
+  matrix_code="$(authenticated_http_status "${manager_token}" \
+    "http://127.0.0.1:${AGENTTEAMS_PORT_GATEWAY}/_matrix/client/v3/account/whoami" "${matrix_domain}")"
+  if [[ "${matrix_code}" == "200" ]]; then
+    log "PASS Manager Matrix authentication HTTP ${matrix_code}"
+  else
+    warn "FAIL Manager Matrix authentication HTTP ${matrix_code}"
     failed=1
   fi
 
