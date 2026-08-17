@@ -85,3 +85,17 @@ adapter、receipt 和确定性合同。AgentTeams v1.2.2 的 `agt` 管理面仍�
 这些是共享部署凭证/状态问题，不是 Tiangong native OpenClaw 代码已通过的
 证据。修复有效 provider credential、Matrix token 和 Manager 状态后，必须
 重新运行 `make phase-c-real`，不能复用这次失败结果。
+
+### 2026-08-17 Qwen 复测状态
+
+在隔离 canary 窗口中，部署侧临时把 `openai-compat` service source 和 provider
+切到 Qwen Coding Plan；`/v1/models`、`/v1/chat/completions`、OpenCodex
+`/v1/models` 和 Worker Codex preflight 均通过。Qwen 真实 Gate B 仍未完成：
+分步 Leader 的 Team/Matrix/设计 Result/accept/恢复报告可通过，但 dispatch 回合存在
+模型无工具响应超时，且共享 Runner broker 的旧 image-pinned binding 曾造成错误拒绝。
+这些问题已分别在 smoke 入口增加模型分步恢复、broker image/orphan binding 检查和超时边界，
+但尚未形成 Phase C Go 证据。
+
+当前共享部署的 provider 变更属于外部 canary 状态，不是仓库配置；发布前必须由部署操作恢复
+到经过认证的默认路由或明确批准的 Qwen 路由，并重新执行 `make phase-c-real`。在此之前，
+不得把 Qwen canary 当作 DeepSeek Phase C 通过，也不得创建 release 或合入 `main`。

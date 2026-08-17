@@ -29,3 +29,14 @@
 ## Gate 判定
 
 Qwen canary 当前为 **partial / blocked-at-deployment-injection**，不是 green。Phase C sidecar 合同本身已通过，但 Phase C 的生产部署注入和正式 Team ToolResult 验收仍未闭环；在该门槛关闭前不创建 `release/v0.3.0`，也不合入 `main`。
+
+## 2026-08-17 Gate B 真实复测补充
+
+本轮把 provider 路由切到隔离的 Qwen Coding Plan canary，并使用 `qwen3.7-plus` 运行完整的 B5/Gate B 入口。结果需要拆开看：
+
+- `qwen-canary-20260817-12`、`qwen-canary-20260817-16` 证明了 Qwen 下 stock OpenClaw Leader 的真实 Matrix 回合：Team 建立、设计任务派发、设计 ResultEnvelope 检查、Leader accept 决策、实现任务派发，以及阻塞后的 `RECOVERY_REQUIRED` requester report 都能进入 Tiangong smoke oracle；`20260817-16` 的 `leader_smoke_*` 全部通过。
+- `qwen-canary-20260817-12/16` 的 Implementor 也通过了 `runtime=codex-app-server`、`codex_gateway_preflight=pass`、`model=qwen3.7-plus`、`transport=responses-via-chat-bridge`、`bridge=opencodex`，sidecar `/v1/models` 和 ready receipt 均通过。没有把 key 写入 binding、receipt 或日志。
+- 复测暴露了两个部署/测试边界：共享 Runner broker 会保留旧的 image-pinned binding；Docker Desktop 慢操作会让基于 `--since 10m` 的 readiness 观察失效。代码已改为按当前 Worker image digest 检查 broker，自动回收仅指向已消失容器的 orphan binding；readiness 改为检查本次重建容器的完整生命周期日志，PostgreSQL probe 和 broker ensure 也有超时边界。
+- 分步 Leader resume 已替代一次性长 prompt（check → decide → dispatch/report），显著减少 Qwen 在恢复回合中不返回 marker 的情况。但 `qwen-canary-20260817-18` 仍在 dispatch 回合出现模型无工具回合响应超时，说明 Qwen Coding Plan 的模型行为/延迟仍不是稳定的 Gate B 生产证据；这不是 sidecar receipt 或 AgentTeams credential 失败。
+
+因此当前结论是：**Qwen + OpenClaw builtin Leader/Matrix + OpenCodex bridge 的协议和大部分真实路径可行，但 Qwen Team Full/Gate B 仍未 green。** 该结果足以继续做参数化和隔离 canary，不足以切默认 provider、迁移权威数据、删除 legacy lane、创建 `release/v0.3.0` 或合入 `main`。下一次验收必须在稳定的 AgentTeams credential/Matrix/Runner broker 部署上重复，并把 Qwen dispatch 的稳定成功、ToolResult retention、重启恢复、回滚和 cleanup 全部记录为机器证据。
