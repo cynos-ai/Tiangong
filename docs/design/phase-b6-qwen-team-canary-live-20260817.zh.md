@@ -1,5 +1,11 @@
 # Phase B6：2026-08-17 Qwen Team 真实 canary 复测
 
+> 发布范围更新（2026-08-17）：后续补丁已关闭 Leader 角色推导和固定
+> professional image 的部署注入缺口，并通过了确定性注册、镜像和 CI
+> 边界。本文仍保留 Qwen provider/catalog 的真实阻断事实；v0.3.0 不把
+> Qwen Team ToolResult 写成绿色能力，Qwen 仍是后续 provider enablement
+> 后的独立 canary。
+
 本记录对应 `phase-b6-qwen-team-canary.zh.md` 的最新复测。使用的资源均为 disposable `phaseb6-qwen-20260817-*`，结束时已逐项清理；没有把任何上游 key 写入仓库、镜像、receipt、ToolResult 或日志。
 
 ## 已证明
