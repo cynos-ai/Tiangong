@@ -291,6 +291,22 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 docker exec "${MANAGER_CONTAINER}" agt get workers -o json >/dev/null 2>&1 || fail MANAGER_NOT_READY_AFTER_INJECTION
+# A Codex Worker performs its gateway preflight during container startup. The
+# bounded injection window intentionally stops the Manager so no deployment
+# mutation races with the five recreations; a Worker that starts in that window
+# can therefore exit on a transient controller 503. Restart only the
+# run-owned Workers which exited during that window, after the Manager is
+# healthy again. Never restart a foreign or still-running container here.
+sleep 5
+for _ in $(seq 1 20); do
+  for member in "${LEADER_NAME}" "${DESIGNER_NAME}" "${IMPLEMENTOR_NAME}" "${ASSESSOR_NAME}" "${OPERATOR_NAME}"; do
+    worker_container_name="$(worker_container "${member}")"
+    if container_exists "${worker_container_name}" && [[ "$(docker inspect "${worker_container_name}" --format '{{.State.Running}}' 2>/dev/null || true)" != true ]]; then
+      docker start "${worker_container_name}" >/dev/null || fail "WORKER_${member^^}_RESTART_AFTER_MANAGER"
+    fi
+  done
+  sleep 2
+done
 for _ in $(seq 1 120); do
   metadata_ready=1
   for member in "${LEADER_NAME}" "${DESIGNER_NAME}" "${IMPLEMENTOR_NAME}" "${ASSESSOR_NAME}" "${OPERATOR_NAME}"; do
@@ -306,6 +322,11 @@ for pair in \
   "${LEADER_NAME}:leader" "${DESIGNER_NAME}:designer" \
   "${IMPLEMENTOR_NAME}:implementor" "${ASSESSOR_NAME}:assessor" "${OPERATOR_NAME}:operator"; do
   member="${pair%%:*}"; role="${pair##*:}"
+  # The Leader tool surface requires the Coordination endpoint and binding
+  # installed in the next deployment step. Member roles are independent and
+  # must become ready before we continue; Leader readiness is checked after
+  # its binding is injected below.
+  [[ "${member}" == "${LEADER_NAME}" ]] && continue
   for _ in $(seq 1 180); do
     # Role injection can take several minutes and OpenClaw emits verbose
     # MinIO/config-sync lines. The readiness marker belongs to this freshly
@@ -380,6 +401,11 @@ MSYS_NO_PATHCONV=1 \
   TIANGONG_WINDOWS_ACL_VERIFIED=1 \
   bash "${DEPLOY_COORDINATION}" start || fail COORDINATION_START
 coord_started=1
+leader_container="$(worker_container "${LEADER_NAME}")"
+if [[ "$(docker inspect "${leader_container}" --format '{{.State.Running}}' 2>/dev/null || true)" != true ]]; then
+  docker start "${leader_container}" >/dev/null || fail LEADER_START_BEFORE_BINDING
+  sleep 5
+fi
 TIANGONG_LEADER_WORKER_CONTAINER="$(worker_container "${LEADER_NAME}")" \
   TIANGONG_LEADER_RUNTIME_BINDING_FILE="${BINDING_FILE}" \
   TIANGONG_DOCKER_TEMP_DIR="${STATE_DIR}" \
@@ -388,6 +414,12 @@ TIANGONG_LEADER_WORKER_CONTAINER="$(worker_container "${LEADER_NAME}")" \
   TIANGONG_COORDINATION_CONTROL_ENDPOINT="http://${COORD_CONTAINER}:8780/v1/coordination/admit" \
   TIANGONG_COORDINATION_CONTROL_TOKEN="${CONTROL_TOKEN}" \
   bash "${INJECT_LEADER}" >"${STATE_DIR}/inject-leader.log" 2>&1 || fail LEADER_BINDING_INJECTION
+
+for _ in $(seq 1 180); do
+  if docker logs --since 10m "$(worker_container "${LEADER_NAME}")" 2>&1 | grep -Fq ' reported ready'; then break; fi
+  sleep 2
+done
+docker logs --since 10m "$(worker_container "${LEADER_NAME}")" 2>&1 | grep -Fq ' reported ready' || fail LEADER_RUNTIME_NOT_READY_AFTER_BINDING
 
 # The driver log is never printed: it may contain model/Matrix text. Only
 # stable machine markers are used as the result oracle. On failure, expose

@@ -21,6 +21,10 @@ test("requires the OpenClaw harness registration API", () => {
     pluginId: "tiangong-pi",
     harnessRegistration: "available",
   });
+  assert.deepEqual(assertPluginApi({ on() {} }, { nativeRuntime: true }), {
+    pluginId: "tiangong-pi",
+    harnessRegistration: "not-required",
+  });
   assert.throws(() => assertPluginApi({}), (error) =>
     error instanceof PreflightError && error.code === "plugin-api-unavailable");
 });

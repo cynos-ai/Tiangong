@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Phase C is a deployment boundary, not a model-prompt claim. This gate runs
+# the deterministic contracts by default and only touches AgentTeams/Docker
+# when TIANGONG_PHASE_C_REAL=1 is explicitly set.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+readonly SCRIPT_DIR REPO_ROOT
+
+failures=0
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/tiangong-phase-c.XXXXXX")"
+cleanup() { rm -rf -- "${tmp_root}"; }
+trap cleanup EXIT INT TERM
+
+node_bin="${TIANGONG_NODE_BIN:-}"
+if [[ -z "${node_bin}" ]]; then
+  node_bin="$(command -v node 2>/dev/null || true)"
+fi
+if [[ -z "${node_bin}" ]]; then
+  node_bin="$(command -v node.exe 2>/dev/null || true)"
+fi
+[[ -n "${node_bin}" ]] || {
+  printf 'phasec=fail step=node code=NODE_NOT_FOUND\n' >&2
+  exit 1
+}
+
+run_step() {
+  local label="$1"
+  shift
+  local output="${tmp_root}/${label}.out"
+  if "$@" >"${output}" 2>&1; then
+    printf 'phasec=pass step=%s\n' "${label}"
+    return 0
+  else
+    local code=$?
+    failures=$((failures + 1))
+    printf 'phasec=fail step=%s code=EXIT_%s\n' "${label}" "${code}" >&2
+    if [[ "${TIANGONG_PHASE_C_DEBUG:-0}" == 1 ]]; then
+      # Only expose stable machine markers; never print arbitrary model text,
+      # credentials, request bodies, or provider responses from the gate log.
+      grep -E '^(phasec|coordination_runtime_deployment|leader_runtime_injection|b5_role_runtime_injection|.*contract=)' "${output}" | tail -n 20 >&2 || true
+    fi
+    return 0
+  fi
+}
+
+run_step coordination-deployment-contract bash "${SCRIPT_DIR}/test-coordination-runtime-deployment.sh"
+run_step leader-injection-contract bash "${SCRIPT_DIR}/test-leader-runtime-injection.sh"
+run_step leader-injection-docker-contract bash "${SCRIPT_DIR}/test-leader-runtime-injection-docker.sh"
+run_step role-injection-docker-contract bash "${SCRIPT_DIR}/test-b5-role-runtime-injection-docker.sh"
+
+pushd "${REPO_ROOT}" >/dev/null
+run_step worker-phase-c-tests "${node_bin}" --test \
+  worker/test/codex-capability-cache.test.mjs \
+  worker/test/codex-capability-cache-remote.test.mjs \
+  worker/test/codex-capability-detection.test.mjs \
+  worker/test/codex-gateway-preflight.test.mjs \
+  worker/test/openclaw-preflight.test.mjs \
+  worker/test/runtime-routing.test.mjs \
+  worker/test/leader-role-registration.test.mjs \
+  worker/test/leader-runtime-config.test.mjs \
+  worker/test/member-coordination-hooks.test.mjs \
+  worker/test/opencodex-sidecar-receipt-service.test.mjs \
+  worker/test/opencodex-sidecar.test.mjs
+
+run_step app-phase-c-tests "${node_bin}" --test \
+  app/test/control-api.test.mjs \
+  app/test/matrix-wake-consumer.test.mjs \
+  app/test/postgres-control-api.test.mjs \
+  app/test/postgres-store.test.mjs \
+  app/test/runtime-server.test.mjs
+popd >/dev/null
+
+if [[ "${TIANGONG_PHASE_C_REAL:-0}" == 1 ]]; then
+  run_step real-agentteams-gateb bash "${REPO_ROOT}/smoke-testing/support/run-b5-gateb-smoke.sh"
+else
+  printf 'phasec=skip step=real-agentteams-gateb reason=explicit_opt_in_required\n'
+fi
+
+if ((failures > 0)); then
+  printf 'phasec=fail failures=%s\n' "${failures}" >&2
+  exit 1
+fi
+printf 'phasec=pass gate=deterministic-boundary\n'
