@@ -211,7 +211,7 @@ configure_codex_gateway() {
     # the value is still the scoped AgentTeams consumer token, never an upstream provider key.
     provider_http_headers=$'env_http_headers = { "x-opencodex-api-key" = "OPENAI_API_KEY" }\n'
   fi
-  printf 'model_provider = %s\n\n[model_providers.%s]\nname = %s\nbase_url = %s\nenv_key = "OPENAI_API_KEY"\nwire_api = "responses"\n%s\nsupports_websockets = false\n\n[features]\nresponses_websockets = false\nresponses_websockets_v2 = false\n' \
+  printf 'model_provider = %s\n\n[model_providers.%s]\nname = %s\nbase_url = %s\nenv_key = "OPENAI_API_KEY"\nwire_api = "responses"\n%s\nsupports_websockets = false\n\n[features]\nresponses_websockets = false\nresponses_websockets_v2 = false\nplugins = false\napps = false\n' \
     "${provider_toml_id}" "${provider_id}" "${provider_toml_id}" "$(printf '%s' "${provider_base_url}" | jq -Rsa .)" "${provider_http_headers}" >"${codex_home}/config.toml"
   chmod 600 "${codex_home}/config.toml"
   export CODEX_HOME="${codex_home}"

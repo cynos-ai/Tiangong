@@ -1,6 +1,6 @@
 # Phase B6：Qwen Coding Plan + AgentTeams Team canary
 
-> 状态：`rolled-back`。隔离 canary 的 Worker、Team、sidecar 和临时镜像已清理；默认 DeepSeek 路由已恢复。不能把本次结果当成 Qwen 全链路通过。
+> 状态：`rolled-back / blocked-at-gateway`。隔离 canary 的 Worker、Team、sidecar 和临时镜像已清理；默认 DeepSeek 路由已恢复。不能把本次结果当成 Qwen 全链路通过。
 
 ## 目标和隔离范围
 
@@ -69,3 +69,9 @@ AgentTeams v1.2.2 的安装/切换脚本会把 provider key 物化到 controller
 现在不能切 Qwen，也不能进入 Qwen 的数据迁移或正式 Team smoke。保留现有 DeepSeek 和 `responses` 原生路径。
 
 下一次只改一个变量：先在 AgentTeams/Higress 控制面修复或确认 `openai-compat` 到 Coding Plan 的路由/body 兼容性（尤其是 provider route、model mapping 和上游 key 注入），直到同一个 consumer-token 请求 Chat 返回 200；Worker、OpenCodex bridge 和 sidecar 合同不要先改。网关返回 200 后，再按本文件同一 Team 场景重跑真实 Leader/Worker、Matrix/WebUI、ToolResult retention、重启恢复和 cleanup，全部通过后才允许进入 shadow-read/cutover。
+
+## 2026-08-17 隔离负向 canary
+
+本轮在未改变默认 DeepSeek controller/provider 的前提下，创建了一个 disposable `codex/qwen3.7-plus` Worker。Worker 在 gateway preflight 阶段以 `gateway-model-config-missing` fail-closed，容器没有进入 ready，也没有创建 Team、sidecar 或模型 turn；随后 Worker 已删除，`agt get workers` 和 Docker 资源均无残留。
+
+这次结果确认了当前栈的边界：Qwen Coding Plan 上游连通性曾经独立验证为 HTTP 200，但当前 AgentTeams v1.2.2 embedded gateway catalog 没有 Qwen route，不能把“上游可用”误写成“AgentTeams Team 可用”。因此本轮不能声称 WebUI/Matrix、ToolResult retention、重启恢复或回滚链路对 Qwen 已通过；这些项目须在 provider route 修复后重新执行。默认 DeepSeek 路由和现有 Codex A/B 不受影响。

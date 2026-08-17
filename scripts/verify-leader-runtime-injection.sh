@@ -15,11 +15,18 @@ regular_binding() {
   [[ -n "${path}" && -f "${path}" && ! -L "${path}" ]] || return 1
   mode="$(stat -c '%a' "${path}" 2>/dev/null || stat -f '%Lp' "${path}")"
   if [[ "${mode}" == 600 || "${mode}" == 400 ]]; then return 0; fi
-  [[ "${TIANGONG_WINDOWS_ACL_VERIFIED:-0}" == 1 && "${OSTYPE:-}" =~ ^(msys|cygwin) ]] || return 1
-  command -v icacls >/dev/null 2>&1 || return 1
+  [[ "${TIANGONG_WINDOWS_ACL_VERIFIED:-0}" == 1 ]] || return 1
   local host_path acl
-  if command -v cygpath >/dev/null 2>&1; then host_path="$(cygpath -w "${path}")"; else host_path="${path}"; fi
-  acl="$(icacls "${host_path}" 2>/dev/null || true)"
+  if [[ "${OSTYPE:-}" =~ ^(msys|cygwin) ]] && command -v icacls >/dev/null 2>&1; then
+    if command -v cygpath >/dev/null 2>&1; then host_path="$(cygpath -w "${path}")"; else host_path="${path}"; fi
+    acl="$(icacls "${host_path}" 2>/dev/null || true)"
+  elif [[ "${OSTYPE:-}" == linux* ]] && command -v powershell.exe >/dev/null 2>&1 && command -v wslpath >/dev/null 2>&1; then
+    host_path="$(wslpath -w "${path}")"
+    host_path="${host_path//\\//}"
+    acl="$(powershell.exe -NoProfile -NonInteractive -Command "Get-Acl -LiteralPath '${host_path}' | Select-Object -ExpandProperty Access | Out-String" 2>/dev/null | tr -d '\r' || true)"
+  else
+    return 1
+  fi
   [[ -n "${acl}" ]] || return 1
   # Inherited ACL markers are normal on Windows; reject only broad principals
   # that would make a credential-bearing binding readable by unrelated users.
