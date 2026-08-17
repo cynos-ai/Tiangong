@@ -39,7 +39,7 @@ run_step() {
     if [[ "${TIANGONG_PHASE_C_DEBUG:-0}" == 1 ]]; then
       # Only expose stable machine markers; never print arbitrary model text,
       # credentials, request bodies, or provider responses from the gate log.
-      grep -E '^(phasec|coordination_runtime_deployment|leader_runtime_injection|b5_role_runtime_injection|.*contract=)' "${output}" | tail -n 20 >&2 || true
+      grep -E '^(phasec|gateb=|leader_smoke_|coordination_runtime_deployment|leader_runtime_injection|b5_role_runtime_injection|.*contract=)' "${output}" | tail -n 30 >&2 || true
     fi
     return 0
   fi
@@ -49,6 +49,7 @@ run_step coordination-deployment-contract bash "${SCRIPT_DIR}/test-coordination-
 run_step leader-injection-contract bash "${SCRIPT_DIR}/test-leader-runtime-injection.sh"
 run_step leader-injection-docker-contract bash "${SCRIPT_DIR}/test-leader-runtime-injection-docker.sh"
 run_step role-injection-docker-contract bash "${SCRIPT_DIR}/test-b5-role-runtime-injection-docker.sh"
+run_step openclaw-migration-default-contract bash "${SCRIPT_DIR}/test-openclaw-migration-gate.sh"
 
 pushd "${REPO_ROOT}" >/dev/null
 run_step worker-phase-c-tests "${node_bin}" --test \

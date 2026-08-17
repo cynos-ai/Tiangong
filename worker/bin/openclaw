@@ -232,7 +232,7 @@ configure_codex_gateway() {
 }
 
 configure_codex_runtime() {
-  local config_file temporary_file model_id model_ref model_alias
+  local config_file temporary_file model_id model_ref model_alias provider_id
   [[ "${TIANGONG_RUNTIME_LANE:-legacy-v0.2}" == "openclaw-canary" ]] || return 0
   [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]] || return 0
   config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
@@ -242,11 +242,21 @@ configure_codex_runtime() {
   }
   temporary_file="$(mktemp "${config_file}.tiangong-codex.XXXXXX")"
   trap 'rm -f "${temporary_file:-}"' RETURN
+  provider_id="${TIANGONG_CODEX_PROVIDER:-agentteams-gateway}"
   model_id="${TIANGONG_CODEX_MODEL:-deepseek-v4-pro}"
   model_ref="codex/${model_id}"
   model_alias="${TIANGONG_CODEX_MODEL_ALIAS:-${model_id}}"
-  jq --arg model_ref "${model_ref}" --arg model_alias "${model_alias}" '
-    .plugins = (.plugins // {})
+  jq --arg provider_id "${provider_id}" --arg model_id "${model_id}" --arg model_ref "${model_ref}" --arg model_alias "${model_alias}" '
+    .models = (.models // {})
+    | .models.providers = (.models.providers // {})
+    | if (.models.providers[$provider_id] | type) == "object"
+      then .models.providers[$provider_id].models = [
+        ((.models.providers[$provider_id].models // [])[] | select(.id != $model_id and .id != ("codex/" + $model_id))),
+        {id: $model_id, name: $model_id, reasoning: true, contextWindow: 256000, maxTokens: 65536}
+      ]
+      else .
+      end
+    | .plugins = (.plugins // {})
     | .plugins.entries = (.plugins.entries // {})
     | .plugins.entries.codex = ((.plugins.entries.codex // {}) + {enabled: true})
     | .plugins.entries.codex.config = ((.plugins.entries.codex.config // {}) + {

@@ -26,7 +26,7 @@ readonly MANAGER_MANIFEST="/tmp/tiangong-leader-smoke-team.yaml"
 readonly MANAGER_TURN="/tmp/tiangong-leader-coordination-turn.sh"
 readonly MANAGER_FOLLOWUP="/tmp/tiangong-leader-followup-turn.sh"
 readonly MANAGER_REPORT_CHECK="/tmp/tiangong-requester-report-check.sh"
-SMOKE_MODEL="${TIANGONG_SMOKE_MODEL:-deepseek-v4-flash}"
+SMOKE_MODEL="${TIANGONG_SMOKE_MODEL:-deepseek-chat}"
 PROJECT_ID="leader-smoke-$(head -c 8 /proc/sys/kernel/random/uuid)"
 TASK_ID="${PROJECT_ID}-design-0"
 owned=0
@@ -425,7 +425,8 @@ done
 
 "${BUILD_SCRIPT}"
 docker cp "${WORKERS_MANIFEST}" "${MANAGER_CONTAINER}:${MANAGER_WORKERS_MANIFEST}"
-# Keep the committed fixture pinned to the default DeepSeek smoke while
+# Keep the committed fixture pinned to the AgentTeams-supported DeepSeek Chat
+# smoke while
 # allowing an explicitly isolated provider/model canary.  The manifest is
 # rendered inside the Manager container, so Docker Desktop path handling is
 # identical for the default and canary lanes.

@@ -97,7 +97,7 @@ if [[ "${ROLE}" == implementor ]]; then
   # Match the pinned local AgentTeams fixture. A deployment using a different
   # model must pass TIANGONG_B5_CODEX_MODEL explicitly so OpenClaw metadata and
   # the Codex preflight cannot silently diverge.
-  readonly CODEX_MODEL="${TIANGONG_B5_CODEX_MODEL:-deepseek-v4-flash}"
+  readonly CODEX_MODEL="${TIANGONG_B5_CODEX_MODEL:-deepseek-v4-pro}"
   readonly CODEX_CACHE_URL="${TIANGONG_B5_CODEX_CAPABILITY_CACHE_URL:-http://tiangong-codex-capability-cache:8788}"
 else
   readonly CODEX_RUNTIME=0

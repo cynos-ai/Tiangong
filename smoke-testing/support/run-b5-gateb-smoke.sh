@@ -48,7 +48,8 @@ readonly SIDECAR_BINDING_FILE="${STATE_DIR}/opencodex-binding.json"
 # passing a host-only path that would fail with ENOENT inside the container.
 readonly SIDECAR_SNAPSHOT_FILE="/var/lib/tiangong-opencodex/opencodex-${IMPLEMENTOR_NAME}.controller.json"
 readonly SIDECAR_CONTAINER="tiangong-opencodex-${IMPLEMENTOR_NAME}"
-readonly SMOKE_MODEL="${TIANGONG_SMOKE_MODEL:-deepseek-v4-flash}"
+readonly SMOKE_MODEL="${TIANGONG_SMOKE_MODEL:-deepseek-chat}"
+readonly CODEX_MODEL="${TIANGONG_B5_CODEX_MODEL:-deepseek-v4-pro}"
 DOCKER_BINARY="$(command -v docker 2>/dev/null || true)"
 DOCKER_BINARY_REAL="$(readlink -f "${DOCKER_BINARY}" 2>/dev/null || printf '%s' "${DOCKER_BINARY}")"
 DOCKER_USES_WINDOWS_PATHS=0
@@ -136,7 +137,7 @@ provision_opencodex_sidecar() {
     --arg image "${image}" \
     --arg endpoint "${endpoint}" \
     --arg provider "${TIANGONG_B5_CODEX_PROVIDER:-agentteams-gateway}" \
-    --arg model "${SMOKE_MODEL}" \
+    --arg model "${CODEX_MODEL}" \
     --arg credential "agentteams://credentials/${IMPLEMENTOR_NAME}" \
     '{schemaVersion:1,teamId:$team,workerId:$worker,image:$image,endpoint:$endpoint,provider:$provider,model:$model,transport:"responses-via-chat-bridge",bridge:"opencodex",credentialSource:"agentteams-secret-projection",credentialRef:$credential,generation:1}' \
     >"${SIDECAR_BINDING_FILE}"
@@ -152,7 +153,7 @@ provision_opencodex_sidecar() {
     TIANGONG_OPENCODEX_WORKER_CONTAINER="$(worker_container "${IMPLEMENTOR_NAME}")" \
     bash "${OPENCODEX_DEPLOY}" lifecycle ready --snapshot "${SIDECAR_SNAPSHOT_FILE}" >/dev/null || \
     fail OPENCODEX_SIDECAR_NOT_READY
-  printf 'gateb=opencodex_sidecar_provisioned worker=%s model=%s\n' "${IMPLEMENTOR_NAME}" "${SMOKE_MODEL}"
+  printf 'gateb=opencodex_sidecar_provisioned worker=%s model=%s\n' "${IMPLEMENTOR_NAME}" "${CODEX_MODEL}"
 }
 cleanup() {
   local status=$? member
@@ -231,6 +232,7 @@ trap 'exit 143' TERM
 for command in bash docker jq timeout; do command -v "${command}" >/dev/null 2>&1 || fail "COMMAND_${command^^}_MISSING"; done
 [[ -f "${DRIVER}" && -f "${DEPLOY_COORDINATION}" && -f "${INJECT_ROLE}" && -f "${INJECT_LEADER}" && -f "${RUNNER_BROKER_SCRIPT}" && -f "${OPENCODEX_DEPLOY}" ]] || fail SMOKE_ASSET_MISSING
 [[ "${SMOKE_MODEL}" =~ ^[A-Za-z0-9._:/-]{1,128}$ ]] || fail SMOKE_MODEL_INVALID
+[[ "${CODEX_MODEL}" =~ ^[A-Za-z0-9._:/-]{1,128}$ ]] || fail CODEX_MODEL_INVALID
 container_exists "${MANAGER_CONTAINER}" || fail MANAGER_MISSING
 container_exists "${CONTROLLER_CONTAINER}" || fail CONTROLLER_MISSING
 [[ "$(docker inspect "${MANAGER_CONTAINER}" --format '{{.State.Running}}')" == true ]] || fail MANAGER_NOT_RUNNING
@@ -354,7 +356,7 @@ for pair in \
   TIANGONG_B5_ROLE_ID="${role}" \
     TIANGONG_B5_COORDINATION_CONTROL_ENDPOINT="http://${COORD_CONTAINER}:8780/v1/coordination/admit" \
     TIANGONG_B5_COORDINATION_CONTROL_TOKEN="${CONTROL_TOKEN}" \
-    TIANGONG_B5_CODEX_MODEL="${SMOKE_MODEL}" \
+    TIANGONG_B5_CODEX_MODEL="${CODEX_MODEL}" \
     TIANGONG_B5_ALLOW_STOPPED=1 \
     TIANGONG_INJECTION_DEBUG=1 \
     TIANGONG_DOCKER_TEMP_DIR="${STATE_DIR}" \
@@ -384,7 +386,7 @@ for pair in \
   TIANGONG_B5_ROLE_ID="${role}" \
   TIANGONG_B5_COORDINATION_CONTROL_ENDPOINT="http://${COORD_CONTAINER}:8780/v1/coordination/admit" \
   TIANGONG_B5_COORDINATION_CONTROL_TOKEN="${CONTROL_TOKEN}" \
-  TIANGONG_B5_CODEX_MODEL="${SMOKE_MODEL}" \
+  TIANGONG_B5_CODEX_MODEL="${CODEX_MODEL}" \
   TIANGONG_B5_ALLOW_STOPPED=1 \
   TIANGONG_INJECTION_DEBUG=1 \
     TIANGONG_DOCKER_TEMP_DIR="${STATE_DIR}" \

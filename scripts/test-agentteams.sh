@@ -54,6 +54,18 @@ config="$(make config)"
   printf 'FAIL: generated workspace is not fixed beneath the repository runtime root.\n' >&2
   exit 1
 }
+[[ "${config}" == *'AGENTTEAMS_DEFAULT_WORKER_RUNTIME=openclaw'* ]] || {
+  printf 'FAIL: new Team default Worker runtime is not OpenClaw.\n' >&2
+  exit 1
+}
+[[ "${config}" == *'AGENTTEAMS_AI_GATEWAY_URL=http://aigw-local.agentteams.io:8080'* ]] || {
+  printf 'FAIL: local Worker AI gateway route is not explicit.\n' >&2
+  exit 1
+}
+[[ "${config}" == *'AGENTTEAMS_AI_GATEWAY_DOMAIN=aigw-local.agentteams.io'* ]] || {
+  printf 'FAIL: official AgentTeams gateway domain was not derived.\n' >&2
+  exit 1
+}
 
 cp .env .env.provider-check-base
 provider_check="$(make provider-check)"
@@ -71,6 +83,16 @@ provider_check="$(make provider-check)"
 }
 ! grep -Fq 'touch ' <<<"${provider_check}" || {
   printf 'FAIL: provider-check exposed credential contents.\n' >&2
+  exit 1
+}
+
+sed -i \
+  -e 's/^AGENTTEAMS_LLM_PROVIDER=.*/AGENTTEAMS_LLM_PROVIDER=openai-compat/' \
+  -e 's#^AGENTTEAMS_OPENAI_BASE_URL=.*#AGENTTEAMS_OPENAI_BASE_URL=https://api.deepseek.com/v1#' \
+  -e 's/^AGENTTEAMS_DEFAULT_MODEL=.*/AGENTTEAMS_DEFAULT_MODEL=deepseek-chat/' .env
+provider_check="$(make provider-check)"
+[[ "${provider_check}" == *'route=codex-native-responses'* ]] || {
+  printf 'FAIL: DeepSeek Chat provider route was not classified as the native Responses route.\n' >&2
   exit 1
 }
 

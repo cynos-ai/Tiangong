@@ -20,6 +20,14 @@ readonly CONFIG_VOLUME="tiangong-runner-broker-config"
 readonly FIXTURE_VOLUME="tiangong-runner-broker-fixtures"
 readonly STATE_VOLUME="tiangong-runner-broker-state"
 readonly SEED="tiangong-runner-broker-seed"
+DOCKER_BINARY="$(command -v docker 2>/dev/null || true)"
+DOCKER_BINARY_REAL="$(readlink -f "${DOCKER_BINARY}" 2>/dev/null || printf '%s' "${DOCKER_BINARY}")"
+DOCKER_USES_WINDOWS_PATHS=0
+[[ "${DOCKER_BINARY_REAL}" == *.exe ]] && DOCKER_USES_WINDOWS_PATHS=1
+if ((DOCKER_USES_WINDOWS_PATHS == 0)) && command -v file >/dev/null 2>&1 && file "${DOCKER_BINARY_REAL}" 2>/dev/null | grep -Eiq 'PE32|MS-DOS'; then
+  DOCKER_USES_WINDOWS_PATHS=1
+fi
+readonly DOCKER_BINARY DOCKER_BINARY_REAL DOCKER_USES_WINDOWS_PATHS
 
 fail() {
   printf 'runner_broker=fail code=%s\n' "$1" >&2
@@ -125,6 +133,25 @@ bindings_are_orphaned_or_empty() {
 ensure() {
   local state running
   if ! docker inspect "$BROKER" >/dev/null 2>&1; then
+    # A previous process can remove the broker container after creating its
+    # owned volumes (for example, a host-side interruption during startup).
+    # Reclaim that exact orphaned state only when every volume is owned by this
+    # broker and no live binding still references a container.
+    local has_owned_volume=0 volume
+    for volume in "$CONFIG_VOLUME" "$FIXTURE_VOLUME" "$STATE_VOLUME"; do
+      if docker volume inspect "$volume" >/dev/null 2>&1; then
+        owned_volume "$volume" || fail FOREIGN_VOLUME
+        has_owned_volume=1
+      fi
+    done
+    if ((has_owned_volume == 1)); then
+      if docker inspect "$SEED" >/dev/null 2>&1; then
+        [[ "$(docker inspect --format '{{.Config.Image}}' "$SEED")" == "$BROKER_IMAGE" ]] || fail FOREIGN_SEED
+        docker rm --force "$SEED" >/dev/null
+      fi
+      bindings_are_orphaned_or_empty || fail ACTIVE_BINDING_STATE
+      stop --purge
+    fi
     start
     printf 'runner_broker_ensure=started managed=true\n'
     return 0
@@ -181,11 +208,17 @@ start() {
     docker image inspect "$image" >/dev/null 2>&1 || fail "IMAGE_UNAVAILABLE_${image%%:*}"
   done
 
-  local leader_image implementor_image assessor_image config_file
+  local leader_image implementor_image assessor_image config_file temp_root
   leader_image="$(docker image inspect --format '{{.Id}}' tiangong-worker-leader:dev)"
   implementor_image="$(docker image inspect --format '{{.Id}}' tiangong-worker-implementor:dev)"
   assessor_image="$(docker image inspect --format '{{.Id}}' tiangong-worker-assessor:dev)"
-  config_file="$(mktemp "${TMPDIR:-/tmp}/tiangong-runner-broker-config.XXXXXX")"
+  # Docker Desktop cannot resolve a WSL /tmp path when the CLI projects a
+  # host file into a container. Keep this disposable file under the shared
+  # repository mount so both native Windows and WSL Docker clients can read it.
+  temp_root="${TIANGONG_DOCKER_TEMP_DIR:-${REPO_ROOT}/.tmp-runner-broker}"
+  [[ -d "${temp_root}" && ! -L "${temp_root}" ]] || mkdir -p "${temp_root}"
+  chmod 700 "${temp_root}"
+  config_file="$(mktemp "${temp_root}/config.XXXXXX")"
   jq -n \
     --arg leader "$leader_image" \
     --arg implementor "$implementor_image" \
@@ -213,6 +246,9 @@ start() {
   if [[ "${OSTYPE:-}" =~ ^(msys|cygwin) ]]; then
     config_source="$(cygpath -w "$config_file")"
     fixture_source="$(cygpath -w "${REPO_ROOT}/smoke-testing/fixtures/runner-isolation/.")"
+  elif ((DOCKER_USES_WINDOWS_PATHS == 1)) && command -v wslpath >/dev/null 2>&1; then
+    config_source="$(wslpath -w "$config_file")"
+    fixture_source="$(wslpath -w "${REPO_ROOT}/smoke-testing/fixtures/runner-isolation/.")"
   else
     config_source="$config_file"
     fixture_source="${REPO_ROOT}/smoke-testing/fixtures/runner-isolation/."

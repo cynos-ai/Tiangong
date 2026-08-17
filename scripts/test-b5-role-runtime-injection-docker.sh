@@ -135,7 +135,7 @@ grep -Fq 'TIANGONG_OPENCLAW_NATIVE=1' "${TEST_ROOT}/env"
 grep -Fq 'OPENCLAW_AGENT_RUNTIME=codex' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_CODEX_CAPABILITY_CACHE_SHARED=1' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_CODEX_CAPABILITY_CACHE_URL=http://tiangong-codex-capability-cache:8788' "${TEST_ROOT}/env"
-grep -Fq 'TIANGONG_CODEX_MODEL=deepseek-v4-flash' "${TEST_ROOT}/env"
+grep -Fq 'TIANGONG_CODEX_MODEL=deepseek-v4-pro' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_MEMBER_ID=worker-test' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_MEMBER_COORDINATION_ENABLED=1' "${TEST_ROOT}/env"
 
