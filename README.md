@@ -3,7 +3,7 @@
 Tiangong is an evidence-backed AI software engineering team built on [AgentTeams](https://github.com/agentscope-ai/AgentTeams).
 
 > [!NOTE]
-> v0.1.0 is a historical source release. v0.2.0 is the current evidence-backed five-role delivery team: Team Leader, Designer, Implementor, Assessor, and Operator. Historical Reviewer experiments are not an active runtime path. The target Web product and runtime described by the design documents are planned work, not implemented capabilities. See the [v0.2.0 release notes](docs/releases/v0.2.0.md) and [changelog](CHANGELOG.md).
+> v0.1.0 and v0.2.0 are historical source releases. v0.3.0 is the current OpenClaw-first, evidence-backed five-role delivery team: Team Leader, Designer, Implementor, Assessor, and Operator. Historical Reviewer experiments are not an active runtime path. The target Web product and runtime described by the design documents are planned work, not implemented capabilities. See the [v0.3.0 release notes](docs/releases/v0.3.0.md) and [changelog](CHANGELOG.md).
 
 ## Vision
 
@@ -13,7 +13,7 @@ Tiangong coordinates specialized software-engineering agents while requiring com
 
 > New to the local stack? Read the [local development guide (中文)](docs/local-development-guide.md) first. It covers environment pitfalls (npm registry mirror, Docker mirror 404s, pinned versions), the Dashboard chat limitation, and the verified message format for talking to Workers.
 
-The bootstrap is pinned to the public AgentTeams `v1.2.0` release and verifies the upstream installer checksum before execution. Container images are still resolved by upstream tags rather than immutable digests, so this is not a fully reproducible or supply-chain-hermetic deployment.
+The bootstrap is pinned to the public AgentTeams `v1.2.2` release and verifies the upstream installer checksum before execution. Container images are still resolved by upstream tags rather than immutable digests, so this is not a fully reproducible or supply-chain-hermetic deployment.
 
 ### Prerequisites
 
@@ -67,7 +67,7 @@ Run `make help` for the complete command list. Uninstall removes the Tiangong-ow
 
 ### Pi-enabled Worker image smoke test
 
-The local Worker image extends the public AgentTeams `v1.2.0` Worker image at an immutable digest, retains its pinned Node.js `22.23.2` runtime, and installs the public MIT-licensed `@earendil-works/pi-coding-agent` package at exactly `0.82.0` from `worker/package-lock.json`.
+The local Worker image extends the public AgentTeams `v1.2.2` Worker image at an immutable digest, retains its pinned Node.js `22.23.2` runtime, and installs the public MIT-licensed `@earendil-works/pi-coding-agent` package at exactly `0.82.0` from `worker/package-lock.json`.
 
 With AgentTeams running, choose the fast channel smoke or the full approval smoke:
 
@@ -143,7 +143,7 @@ Evidence rotates at 16 MiB into ordered segments whose ranges and terminal hashe
 ### Local security model
 
 > [!WARNING]
-> This bootstrap is not a host security boundary. AgentTeams `v1.2.0` mounts the container-runtime socket into its embedded Controller so it can create the Manager and Workers. Control of that socket is effectively control of the host: a compromised Controller, Agent, tool call, or prompt-injection path may create privileged containers or mount arbitrary host paths. The `host-share` directory limits the ordinary Manager mount; it does not mitigate container-socket authority.
+> This bootstrap is not a host security boundary. AgentTeams `v1.2.2` mounts the container-runtime socket into its embedded Controller so it can create the Manager and Workers. Control of that socket is effectively control of the host: a compromised Controller, Agent, tool call, or prompt-injection path may create privileged containers or mount arbitrary host paths. The `host-share` directory limits the ordinary Manager mount; it does not mitigate container-socket authority.
 
 - Web and management ports are forced to bind to localhost.
 - Matrix end-to-end encryption is disabled for the local agent collaboration flow.
