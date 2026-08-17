@@ -12,7 +12,7 @@ import { createToolResultCaptureHook, defaultToolResultCapturePath } from "../ag
 import { assertPluginApi } from "../agent/preflight/openclaw-preflight.mjs";
 import { registerMemberCoordinationHooks } from "../agent/team/member-coordination-hooks.mjs";
 import { registerNativeRunnerTool } from "../agent/team/native-runner-tool.mjs";
-import { registerLeaderOpenClawTools } from "../agent/team/leader-openclaw-tools.mjs";
+import { isLeaderEnvironment, registerLeaderOpenClawTools } from "../agent/team/leader-openclaw-tools.mjs";
 import { registerMemberOpenClawTools } from "../agent/team/member-openclaw-tools.mjs";
 import { createTiangongPiHarness } from "./openclaw-adapter.mjs";
 
@@ -22,6 +22,7 @@ export default definePluginEntry({
   description: "Runs AgentTeams Worker turns through Tiangong's controlled pi SDK runtime.",
   register(api) {
     assertPluginApi(api);
+    const leaderEnvironment = isLeaderEnvironment(process.env);
     if (process.env.TIANGONG_CANARY_REQUIRED === "1") {
       const admissionUrl = process.env.TIANGONG_CONTROL_API_ADMISSION_URL;
       const admissionFile = process.env.TIANGONG_CONTROL_API_ADMISSION_FILE;
@@ -47,7 +48,7 @@ export default definePluginEntry({
         filePath: defaultToolResultCapturePath(),
       }), { priority: 100 });
     }
-    if (process.env.TIANGONG_MEMBER_COORDINATION_ENABLED === "1" && process.env.TIANGONG_ROLE_ID !== "leader") {
+    if (process.env.TIANGONG_MEMBER_COORDINATION_ENABLED === "1" && !leaderEnvironment) {
       registerMemberCoordinationHooks(api, {
         endpoint: process.env.TIANGONG_COORDINATION_CONTROL_ENDPOINT,
         token: process.env.TIANGONG_COORDINATION_CONTROL_TOKEN,
@@ -55,7 +56,7 @@ export default definePluginEntry({
       });
       registerNativeRunnerTool(api, { env: process.env });
     }
-    if (process.env.TIANGONG_ROLE_ID === "leader") {
+    if (leaderEnvironment) {
       registerLeaderOpenClawTools(api, { env: process.env });
     } else if (process.env.TIANGONG_MEMBER_COORDINATION_ENABLED === "1") {
       registerMemberOpenClawTools(api, { env: process.env });
