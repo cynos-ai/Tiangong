@@ -17,6 +17,7 @@ readonly DOCKER_TEMP_DIR="${TIANGONG_DOCKER_TEMP_DIR:-}"
 readonly COORDINATION_ENDPOINT="${TIANGONG_B5_COORDINATION_CONTROL_ENDPOINT:-}"
 readonly COORDINATION_TOKEN="${TIANGONG_B5_COORDINATION_CONTROL_TOKEN:-}"
 readonly ROUTING_REQUIRED="1"
+readonly NATIVE_OPENCLAW="${TIANGONG_B5_OPENCLAW_NATIVE:-1}"
 
 tmp_dir=''
 inspect_file=''
@@ -80,6 +81,7 @@ require_command "${DOCKER_COMMAND}"
 require_command jq
 [[ -n "${CONTAINER}" ]] || fail WORKER_CONTAINER_REQUIRED
 [[ -n "${ROLE}" ]] || fail ROLE_REQUIRED
+[[ "${NATIVE_OPENCLAW}" =~ ^[01]$ ]] || fail OPENCLAW_NATIVE_INVALID
 valid_name "${CONTAINER}" || fail WORKER_CONTAINER_INVALID
 valid_role "${ROLE}" || fail ROLE_INVALID
 valid_endpoint "${COORDINATION_ENDPOINT}" || fail COORDINATION_ENDPOINT_REQUIRED
@@ -102,7 +104,11 @@ else
   readonly RUNTIME_LANE=''
   readonly CANARY_REQUIRED=0
   readonly CANARY_ADMISSION=''
-  readonly OPENCLAW_RUNTIME=pi
+  if [[ "${NATIVE_OPENCLAW}" == "1" ]]; then
+    readonly OPENCLAW_RUNTIME=pi
+  else
+    readonly OPENCLAW_RUNTIME=tiangong-pi
+  fi
   readonly CODEX_PROVIDER=''
   readonly CODEX_MODEL=''
   readonly CODEX_CACHE_URL=''
@@ -188,6 +194,7 @@ jq -r '.[0].Config.Env[]?
   | select((split("=")[0]) as $key |
       ($key == "TIANGONG_ROLE_ID" or
        $key == "TIANGONG_RUNTIME_ROLE_ROUTING_REQUIRED" or
+       $key == "TIANGONG_OPENCLAW_NATIVE" or
        $key == "TIANGONG_CODEX_RUNTIME" or
        $key == "TIANGONG_RUNTIME_LANE" or
        $key == "TIANGONG_CANARY_REQUIRED" or
@@ -199,8 +206,8 @@ jq -r '.[0].Config.Env[]?
        $key == "OPENCLAW_AGENT_RUNTIME" or
        $key == "OPENCLAW_AGENT_HARNESS_FALLBACK" or
        ($key | startswith("TIANGONG_CODEX_"))) | not)' "${inspect_file}" >"${env_file}"
-printf 'TIANGONG_ROLE_ID=%s\nTIANGONG_RUNTIME_ROLE_ROUTING_REQUIRED=%s\nTIANGONG_CODEX_RUNTIME=%s\nOPENCLAW_AGENT_HARNESS_FALLBACK=none\nOPENCLAW_AGENT_RUNTIME=%s\nOPENCLAW_CODEX_DISCOVERY_LIVE=%s\nCODEX_HOME=/root/.codex\n' \
-  "${ROLE}" "${ROUTING_REQUIRED}" "${CODEX_RUNTIME}" "${OPENCLAW_RUNTIME}" "${CODEX_RUNTIME}" >>"${env_file}"
+printf 'TIANGONG_ROLE_ID=%s\nTIANGONG_RUNTIME_ROLE_ROUTING_REQUIRED=%s\nTIANGONG_OPENCLAW_NATIVE=%s\nTIANGONG_CODEX_RUNTIME=%s\nOPENCLAW_AGENT_HARNESS_FALLBACK=none\nOPENCLAW_AGENT_RUNTIME=%s\nOPENCLAW_CODEX_DISCOVERY_LIVE=%s\nCODEX_HOME=/root/.codex\n' \
+  "${ROLE}" "${ROUTING_REQUIRED}" "${NATIVE_OPENCLAW}" "${CODEX_RUNTIME}" "${OPENCLAW_RUNTIME}" "${CODEX_RUNTIME}" >>"${env_file}"
 printf 'TIANGONG_MEMBER_ID=%s\nTIANGONG_COORDINATION_CONTROL_ENDPOINT=%s\nTIANGONG_COORDINATION_CONTROL_TOKEN=%s\n' \
   "${member_id}" "${COORDINATION_ENDPOINT}" "${COORDINATION_TOKEN}" >>"${env_file}"
 if [[ "${ROLE}" == leader ]]; then

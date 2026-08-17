@@ -4,6 +4,13 @@ All notable changes to Tiangong are documented here. Tiangong follows Semantic V
 
 ## [Unreleased]
 
+### Added
+
+- Progressive Pi-to-OpenClaw migration lane: B5 Worker injection now defaults
+  to the OpenClaw native hook/tool surface, while the legacy Tiangong harness
+  remains an explicit rollback lane. Native runtime selection fails closed
+  unless the role-routing gate is present.
+
 ## [0.3.0] - 2026-08-17
 
 ### Added

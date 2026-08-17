@@ -4,7 +4,8 @@ import { runOpenClawPreflightFromFile } from "../agent/preflight/openclaw-prefli
 
 try {
   const result = await runOpenClawPreflightFromFile();
-  process.stdout.write(`tiangong_preflight=pass plugin=${result.pluginId} lane=${result.runtimeLane} control_api=${result.controlApi}\n`);
+  const runtimeMode = process.env.TIANGONG_OPENCLAW_NATIVE === "1" ? "openclaw-native" : "legacy-tiangong-pi";
+  process.stdout.write(`tiangong_preflight=pass plugin=${result.pluginId} lane=${result.runtimeLane} control_api=${result.controlApi} runtime_mode=${runtimeMode}\n`);
 } catch (error) {
   const code = typeof error?.code === "string" ? error.code : "preflight-failed";
   process.stderr.write(`[tiangong-worker] ERROR: preflight=${code}\n`);

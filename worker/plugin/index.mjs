@@ -18,10 +18,11 @@ import { createTiangongPiHarness } from "./openclaw-adapter.mjs";
 
 export default definePluginEntry({
   id: "tiangong-pi",
-  name: "Tiangong pi Harness",
-  description: "Runs AgentTeams Worker turns through Tiangong's controlled pi SDK runtime.",
+  name: "Tiangong control plugin",
+  description: "Provides Tiangong hooks and tools; the legacy pi harness is optional.",
   register(api) {
-    assertPluginApi(api);
+    const nativeRuntime = process.env.TIANGONG_OPENCLAW_NATIVE === "1";
+    assertPluginApi(api, { nativeRuntime });
     const leaderEnvironment = isLeaderEnvironment(process.env);
     if (process.env.TIANGONG_CANARY_REQUIRED === "1") {
       const admissionUrl = process.env.TIANGONG_CONTROL_API_ADMISSION_URL;
@@ -64,6 +65,8 @@ export default definePluginEntry({
     const observability = createWorkerObservability({
       config: resolveObservabilityConfig(api.pluginConfig),
     });
-    api.registerAgentHarness(createTiangongPiHarness({ observability }));
+    if (!nativeRuntime) {
+      api.registerAgentHarness(createTiangongPiHarness({ observability }));
+    }
   },
 });

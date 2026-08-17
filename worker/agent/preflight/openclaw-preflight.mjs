@@ -22,11 +22,24 @@ function isRequired(value) {
   return value === "1" || value === "true";
 }
 
-export function assertPluginApi(api) {
-  if (!api || typeof api.registerAgentHarness !== "function") {
-    fail("plugin-api-unavailable", "OpenClaw plugin API does not expose registerAgentHarness.");
+export function assertPluginApi(api, { nativeRuntime = false } = {}) {
+  if (!api || typeof api !== "object") {
+    fail("plugin-api-unavailable", "OpenClaw plugin API is unavailable.");
   }
-  return { pluginId: TIANGONG_PLUGIN_ID, harnessRegistration: "available" };
+  const harnessAvailable = typeof api.registerAgentHarness === "function";
+  const nativeSurfaceAvailable = typeof api.on === "function" || typeof api.registerTool === "function";
+  if ((!nativeRuntime && !harnessAvailable) || (nativeRuntime && !nativeSurfaceAvailable)) {
+    fail(
+      "plugin-api-unavailable",
+      nativeRuntime
+        ? "OpenClaw native plugin hooks/tools are unavailable."
+        : "OpenClaw plugin API does not expose registerAgentHarness.",
+    );
+  }
+  return {
+    pluginId: TIANGONG_PLUGIN_ID,
+    harnessRegistration: harnessAvailable ? "available" : "not-required",
+  };
 }
 
 export function assertPluginConfig(config, {
