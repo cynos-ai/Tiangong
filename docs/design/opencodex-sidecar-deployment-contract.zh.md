@@ -194,4 +194,20 @@ header, prompt, or model output. A bridge result still requires the current
 Worker's matching ready receipt, so the cache never becomes sidecar lifecycle
 ownership or an admission bypass. The default path is
 `/var/lib/tiangong-capabilities/codex.json` and must be backed by an
-AgentTeams-owned shared volume (or a future CoordinationStore adapter).
+ AgentTeams-owned shared volume (or a future CoordinationStore adapter).
+
+## Phase C production-boundary canary (2026-08-17)
+
+A disposable Worker and deployment-owned adapter completed the real lifecycle
+in order: `provision → ready → reconcile → rotate(generation 2) → reconcile →
+drain → remove`. The adapter projected the Worker-scoped gateway credential
+without writing it to the binding, snapshot, receipt, Docker labels, or logs;
+the final exact-name cleanup removed the sidecar container, state volume, and
+temporary Worker.
+
+The first attempt correctly stopped in `provisioning/uncertain` because the
+binding pointed at the adapter's receipt-service name instead of the sidecar
+container endpoint. After correcting the binding to the sidecar's internal
+port, readiness and the full lifecycle passed. This is an operational
+deployment-input boundary, not a reason to add fallback: an invalid endpoint
+must remain fail-closed.

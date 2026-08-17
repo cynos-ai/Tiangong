@@ -41,6 +41,11 @@ readonly NORMALIZED_REPORT="${STATE_DIR}/requester-report-check.sh"
 readonly NORMALIZED_DRIVER="${SCRIPT_DIR}/.run-leader-smoke-${RUN_ID}.sh"
 readonly CONTROL_TOKEN="gateb-control-${RUN_ID}-token"
 readonly PG_PASSWORD="gateb-pg-${RUN_ID}-password"
+DOCKER_BINARY="$(command -v docker 2>/dev/null || true)"
+DOCKER_BINARY_REAL="$(readlink -f "${DOCKER_BINARY}" 2>/dev/null || printf '%s' "${DOCKER_BINARY}")"
+DOCKER_USES_WINDOWS_PATHS=0
+[[ "${DOCKER_BINARY_REAL}" == *.exe ]] && DOCKER_USES_WINDOWS_PATHS=1
+readonly DOCKER_BINARY DOCKER_BINARY_REAL DOCKER_USES_WINDOWS_PATHS
 keep_failure_arg=0
 [[ "${1:-}" == --keep-failure ]] && keep_failure_arg=1
 readonly KEEP_FAILURE="${TIANGONG_GATEB_KEEP_FAILURE:-${keep_failure_arg}}"
@@ -61,6 +66,16 @@ lock_windows_file() {
   icacls "$(cygpath -w "${path}")" /inheritance:r /grant:r \
     "${USERNAME}:(R)" 'NT AUTHORITY\SYSTEM:(R)' 'BUILTIN\Administrators:(R)' >/dev/null || fail WINDOWS_ACL_LOCK
 }
+docker_host_path() {
+  local path="$1"
+  if command -v cygpath >/dev/null 2>&1 && [[ "${OSTYPE:-}" =~ ^(msys|cygwin) ]]; then
+    cygpath -w "${path}"
+  elif ((DOCKER_USES_WINDOWS_PATHS == 1)) && command -v wslpath >/dev/null 2>&1; then
+    wslpath -w "${path}"
+  else
+    printf '%s\n' "${path}"
+  fi
+}
 wait_worker_running() {
   local name="$1" container
   container="$(worker_container "${name}")"
@@ -74,6 +89,9 @@ wait_worker_ready() {
   local name="$1" container value phase matrix room
   container="$(worker_container "${name}")"
   for _ in $(seq 1 180); do
+    if [[ -n "${driver_pid}" ]] && ! kill -0 "${driver_pid}" 2>/dev/null; then
+      return 1
+    fi
     if container_exists "${container}" && [[ "$(docker inspect "${container}" --format '{{.State.Running}}' 2>/dev/null || true)" == true ]]; then
       value="$(docker exec "${MANAGER_CONTAINER}" agt get workers "${name}" -o json 2>/dev/null | tr -d '\r' || true)"
       phase="$(jq -r '.phase // empty' <<<"${value}" 2>/dev/null || true)"
@@ -120,7 +138,9 @@ cleanup() {
     bash "${RUNNER_BROKER_SCRIPT}" stop >/dev/null 2>&1 || status=1
     runner_broker_started=0
   fi
-  docker volume rm "${BINDING_VOLUME}" >/dev/null 2>&1 || status=1
+  if docker volume inspect "${BINDING_VOLUME}" >/dev/null 2>&1; then
+    docker volume rm "${BINDING_VOLUME}" >/dev/null 2>&1 || status=1
+  fi
   if [[ "${KEEP_FAILURE}" == 1 ]]; then
     printf 'gateb_failure_state=%s\n' "${STATE_DIR}"
   else
@@ -176,16 +196,35 @@ sed -i "s#^readonly TURN_HELPER=.*#readonly TURN_HELPER=\"${turn_path}\"#" "${NO
 sed -i "s#^readonly FOLLOWUP_HELPER=.*#readonly FOLLOWUP_HELPER=\"${followup_path}\"#" "${NORMALIZED_DRIVER}"
 sed -i "s#^readonly REPORT_HELPER=.*#readonly REPORT_HELPER=\"${report_path}\"#" "${NORMALIZED_DRIVER}"
 sed -i '1i export MSYS_NO_PATHCONV=1' "${NORMALIZED_DRIVER}"
-# shellcheck disable=SC2016
-sed -i '/^docker cp /s#"\${WORKERS_MANIFEST}"#"$(cygpath -w "\${WORKERS_MANIFEST}")"#' "${NORMALIZED_DRIVER}"
-# shellcheck disable=SC2016
-sed -i '/^docker cp /s#"\${MANIFEST}"#"$(cygpath -w "\${MANIFEST}")"#' "${NORMALIZED_DRIVER}"
-# shellcheck disable=SC2016
-sed -i '/^docker cp /s#"\${TURN_HELPER}"#"$(cygpath -w "\${TURN_HELPER}")"#' "${NORMALIZED_DRIVER}"
-# shellcheck disable=SC2016
-sed -i '/^docker cp /s#"\${FOLLOWUP_HELPER}"#"$(cygpath -w "\${FOLLOWUP_HELPER}")"#' "${NORMALIZED_DRIVER}"
-# shellcheck disable=SC2016
-sed -i '/^docker cp /s#"\${REPORT_HELPER}"#"$(cygpath -w "\${REPORT_HELPER}")"#' "${NORMALIZED_DRIVER}"
+# Git Bash needs Windows paths for Docker Desktop. WSL and native Linux
+# already expose POSIX paths that the Docker CLI accepts, and do not provide
+# cygpath; leave those paths unchanged instead of failing before the Team is
+# created.
+if command -v cygpath >/dev/null 2>&1 && [[ "${OSTYPE:-}" =~ ^(msys|cygwin) ]]; then
+  # shellcheck disable=SC2016
+  sed -i '/^docker cp /s#"\${WORKERS_MANIFEST}"#"$(cygpath -w "\${WORKERS_MANIFEST}")"#' "${NORMALIZED_DRIVER}"
+  # shellcheck disable=SC2016
+  sed -i '/^docker cp /s#"\${MANIFEST}"#"$(cygpath -w "\${MANIFEST}")"#' "${NORMALIZED_DRIVER}"
+  # shellcheck disable=SC2016
+  sed -i '/^docker cp /s#"\${TURN_HELPER}"#"$(cygpath -w "\${TURN_HELPER}")"#' "${NORMALIZED_DRIVER}"
+  # shellcheck disable=SC2016
+  sed -i '/^docker cp /s#"\${FOLLOWUP_HELPER}"#"$(cygpath -w "\${FOLLOWUP_HELPER}")"#' "${NORMALIZED_DRIVER}"
+  # shellcheck disable=SC2016
+  sed -i '/^docker cp /s#"\${REPORT_HELPER}"#"$(cygpath -w "\${REPORT_HELPER}")"#' "${NORMALIZED_DRIVER}"
+elif ((DOCKER_USES_WINDOWS_PATHS == 1)) && command -v wslpath >/dev/null 2>&1; then
+  # WSL uses the Windows Docker CLI, which accepts the UNC path emitted by
+  # wslpath but not the /mnt/c path passed to docker.exe directly.
+  # shellcheck disable=SC2016
+  sed -i '/^docker cp /s#"\${WORKERS_MANIFEST}"#"$(wslpath -w "\${WORKERS_MANIFEST}")"#' "${NORMALIZED_DRIVER}"
+  # shellcheck disable=SC2016
+  sed -i '/^docker cp /s#"\${MANIFEST}"#"$(wslpath -w "\${MANIFEST}")"#' "${NORMALIZED_DRIVER}"
+  # shellcheck disable=SC2016
+  sed -i '/^docker cp /s#"\${TURN_HELPER}"#"$(wslpath -w "\${TURN_HELPER}")"#' "${NORMALIZED_DRIVER}"
+  # shellcheck disable=SC2016
+  sed -i '/^docker cp /s#"\${FOLLOWUP_HELPER}"#"$(wslpath -w "\${FOLLOWUP_HELPER}")"#' "${NORMALIZED_DRIVER}"
+  # shellcheck disable=SC2016
+  sed -i '/^docker cp /s#"\${REPORT_HELPER}"#"$(wslpath -w "\${REPORT_HELPER}")"#' "${NORMALIZED_DRIVER}"
+fi
 sed -i "/^leader_json=/i printf 'leader_smoke_team_ready_for_injection=pass\\n'; : >\"${TEAM_READY_BARRIER//\//\\/}\"; while [[ ! -f \"${INJECTION_BARRIER//\//\\/}\" ]]; do sleep 1; done" "${NORMALIZED_DRIVER}"
 chmod 700 "${NORMALIZED_DRIVER}"
 printf 'TIANGONG_COORDINATION_DATABASE_URL=postgres://tiangong:%s@%s:5432/tiangong\n' "${PG_PASSWORD}" "${PG_CONTAINER}" >"${ENV_FILE}"
@@ -268,17 +307,21 @@ for pair in \
   "${IMPLEMENTOR_NAME}:implementor" "${ASSESSOR_NAME}:assessor" "${OPERATOR_NAME}:operator"; do
   member="${pair%%:*}"; role="${pair##*:}"
   for _ in $(seq 1 180); do
-    if docker logs --tail 120 "$(worker_container "${member}")" 2>&1 | grep -Fq ' reported ready'; then break; fi
+    # Role injection can take several minutes and OpenClaw emits verbose
+    # MinIO/config-sync lines. The readiness marker belongs to this freshly
+    # recreated container, so use a bounded time window rather than a small
+    # line tail that can evict the marker before the last role is checked.
+    if docker logs --since 10m "$(worker_container "${member}")" 2>&1 | grep -Fq ' reported ready'; then break; fi
     sleep 2
   done
-  docker logs --tail 120 "$(worker_container "${member}")" 2>&1 | grep -Fq ' reported ready' || fail "WORKER_${role^^}_RUNTIME_NOT_READY"
+  docker logs --since 10m "$(worker_container "${member}")" 2>&1 | grep -Fq ' reported ready' || fail "WORKER_${role^^}_RUNTIME_NOT_READY"
 done
 # Role injection recreates each Worker container. Reinstall the two reviewed
 # smoke helpers after that replacement so the Matrix sender does not retain a
 # path into the pre-injection container filesystem.
-docker cp "${NORMALIZED_TURN}" "${TURN_CONTAINER}:/tmp/tiangong-leader-coordination-turn.sh" || fail TURN_HELPER_RESTORE
-docker cp "${NORMALIZED_FOLLOWUP}" "${TURN_CONTAINER}:/tmp/tiangong-leader-followup-turn.sh" || fail FOLLOWUP_HELPER_RESTORE
-docker cp "${NORMALIZED_REPORT}" "${TURN_CONTAINER}:/tmp/tiangong-requester-report-check.sh" || fail REPORT_HELPER_RESTORE
+docker cp "$(docker_host_path "${NORMALIZED_TURN}")" "${TURN_CONTAINER}:/tmp/tiangong-leader-coordination-turn.sh" || fail TURN_HELPER_RESTORE
+docker cp "$(docker_host_path "${NORMALIZED_FOLLOWUP}")" "${TURN_CONTAINER}:/tmp/tiangong-leader-followup-turn.sh" || fail FOLLOWUP_HELPER_RESTORE
+docker cp "$(docker_host_path "${NORMALIZED_REPORT}")" "${TURN_CONTAINER}:/tmp/tiangong-requester-report-check.sh" || fail REPORT_HELPER_RESTORE
 : >"${INJECTION_BARRIER}"
 team_json="$(wait_team_active)" || fail TEAM_NOT_ACTIVE
 team_room="$(jq -r '.teamRoomID // empty' <<<"${team_json}")"
@@ -300,24 +343,29 @@ if [[ ! "${leader_uid}" =~ ^@[^:[:space:]]+:[^[:space:]]+$ ]]; then
   fail LEADER_MATRIX_ID_MISSING
 fi
 created_at="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
-env TEAM_ID="${TEAM_NAME}" ROUTE_ID="${TEAM_NAME}-matrix" PROFILE_ID="${TEAM_NAME}-profile" \
-  CREATED_AT="${created_at}" ROOM_ID="${team_room}" \
-  LEADER_NAME="${LEADER_NAME}" LEADER_UID="${leader_uid}" \
-  DESIGNER_NAME="${DESIGNER_NAME}" DESIGNER_UID="$(jq -r '.matrixUserID // empty' <<<"${designer_json}")" \
-  IMPLEMENTOR_NAME="${IMPLEMENTOR_NAME}" IMPLEMENTOR_UID="$(jq -r '.matrixUserID // empty' <<<"${implementor_json}")" \
-  ASSESSOR_NAME="${ASSESSOR_NAME}" ASSESSOR_UID="$(jq -r '.matrixUserID // empty' <<<"${assessor_json}")" \
-  OPERATOR_NAME="${OPERATOR_NAME}" OPERATOR_UID="$(jq -r '.matrixUserID // empty' <<<"${operator_json}")" \
-  BINDING_FILE="${BINDING_FILE}" node.exe --input-type=module <<'NODE'
+binding_file_arg="${BINDING_FILE}"
+if command -v wslpath >/dev/null 2>&1; then
+  binding_file_arg="$(wslpath -w "${BINDING_FILE}")"
+fi
+node.exe --input-type=module - \
+  "${TEAM_NAME}" "${TEAM_NAME}-matrix" "${TEAM_NAME}-profile" "${created_at}" "${team_room}" \
+  "${LEADER_NAME}" "${leader_uid}" \
+  "${DESIGNER_NAME}" "$(jq -r '.matrixUserID // empty' <<<"${designer_json}")" \
+  "${IMPLEMENTOR_NAME}" "$(jq -r '.matrixUserID // empty' <<<"${implementor_json}")" \
+  "${ASSESSOR_NAME}" "$(jq -r '.matrixUserID // empty' <<<"${assessor_json}")" \
+  "${OPERATOR_NAME}" "$(jq -r '.matrixUserID // empty' <<<"${operator_json}")" \
+  "${binding_file_arg}" <<'NODE'
 import { chmod, writeFile } from "node:fs/promises";
 import { createControlProfile, createMemberConfig, createTeamConfig, createTeamRouteBinding } from "./worker/agent/team/coordination-store.mjs";
-const now = process.env.CREATED_AT;
-const profile = createControlProfile({ profileId: process.env.PROFILE_ID, revision: 1, maxTimelineEntries: 4096, maxOutboxEntries: 1024, maxTasksPerWork: 256, toolResultRetentionMs: 31536000000 });
+const [teamId, routeId, profileId, now, roomId, leaderName, leaderUid, designerName, designerUid, implementorName, implementorUid, assessorName, assessorUid, operatorName, operatorUid, bindingFile] = process.argv.slice(2);
+const profile = createControlProfile({ profileId, revision: 1, maxTimelineEntries: 4096, maxOutboxEntries: 1024, maxTasksPerWork: 256, toolResultRetentionMs: 31536000000 });
 const names = ["LEADER", "DESIGNER", "IMPLEMENTOR", "ASSESSOR", "OPERATOR"];
-const members = names.map((key) => createMemberConfig({ memberId: process.env[`${key}_NAME`], teamId: process.env.TEAM_ID, workerName: process.env[`${key}_NAME`], matrixUserId: process.env[`${key}_UID`], role: key === "LEADER" ? "leader" : key.toLowerCase(), controlProfileId: profile.profileId, enabled: true, createdAt: now }));
-const team = createTeamConfig({ teamId: process.env.TEAM_ID, revision: 1, leaderMemberId: process.env.LEADER_NAME, memberIds: members.map((member) => member.memberId), controlProfileId: profile.profileId, createdAt: now });
-const route = createTeamRouteBinding({ routeId: process.env.ROUTE_ID, teamId: team.teamId, revision: 1, channel: "matrix", roomId: process.env.ROOM_ID, createdAt: now });
-await writeFile(process.env.BINDING_FILE, `${JSON.stringify({ team, route, profile, leaderMember: members[0], members }, null, 2)}\n`, { mode: 0o600 });
-await chmod(process.env.BINDING_FILE, 0o600);
+const values = { LEADER: [leaderName, leaderUid], DESIGNER: [designerName, designerUid], IMPLEMENTOR: [implementorName, implementorUid], ASSESSOR: [assessorName, assessorUid], OPERATOR: [operatorName, operatorUid] };
+const members = names.map((key) => createMemberConfig({ memberId: values[key][0], teamId, workerName: values[key][0], matrixUserId: values[key][1], role: key === "LEADER" ? "leader" : key.toLowerCase(), controlProfileId: profile.profileId, enabled: true, createdAt: now }));
+const team = createTeamConfig({ teamId, revision: 1, leaderMemberId: leaderName, memberIds: members.map((member) => member.memberId), controlProfileId: profile.profileId, createdAt: now });
+const route = createTeamRouteBinding({ routeId, teamId: team.teamId, revision: 1, channel: "matrix", roomId, createdAt: now });
+await writeFile(bindingFile, `${JSON.stringify({ team, route, profile, leaderMember: members[0], members }, null, 2)}\n`, { mode: 0o600 });
+await chmod(bindingFile, 0o600);
 NODE
 [[ -f "${BINDING_FILE}" ]] || fail BINDING_CREATE
 lock_windows_file "${BINDING_FILE}"

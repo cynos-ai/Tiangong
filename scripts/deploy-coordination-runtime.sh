@@ -19,11 +19,13 @@ owned_container() {
 require_network() { docker network inspect "${NETWORK}" >/dev/null 2>&1 || fail NETWORK_NOT_FOUND; }
 require_image() { docker image inspect "${IMAGE}" >/dev/null 2>&1 || fail IMAGE_NOT_FOUND; }
 docker_host_path() {
-  local path="$1"
-  if command -v wslpath >/dev/null 2>&1 && [[ "${path}" == /* ]]; then
-    wslpath -w "${path}"
-  elif command -v cygpath >/dev/null 2>&1 && [[ "${path}" == /* ]]; then
+  local path="$1" docker_binary docker_binary_real
+  docker_binary="$(command -v docker 2>/dev/null || true)"
+  docker_binary_real="$(readlink -f "${docker_binary}" 2>/dev/null || printf '%s' "${docker_binary}")"
+  if command -v cygpath >/dev/null 2>&1 && [[ "${OSTYPE:-}" =~ ^(msys|cygwin) && "${path}" == /* ]]; then
     cygpath -w "${path}"
+  elif [[ "${docker_binary_real}" == *.exe ]] && command -v wslpath >/dev/null 2>&1 && [[ "${path}" == /* ]]; then
+    wslpath -w "${path}"
   else
     printf '%s\n' "${path}"
   fi
@@ -41,11 +43,20 @@ regular_secret_file() {
   [[ "$(wc -c <"${path}")" -le "${max_bytes}" ]] || return 1
   mode="$(stat -c '%a' "${path}" 2>/dev/null || stat -f '%Lp' "${path}")"
   if [[ "${mode}" == 600 || "${mode}" == 400 ]]; then return 0; fi
-  [[ "${TIANGONG_WINDOWS_ACL_VERIFIED:-0}" == 1 && "${OSTYPE:-}" =~ ^(msys|cygwin) ]] || return 1
-  command -v icacls >/dev/null 2>&1 || return 1
+  [[ "${TIANGONG_WINDOWS_ACL_VERIFIED:-0}" == 1 ]] || return 1
   local host_path acl
-  host_path="$(docker_host_path "${path}")"
-  acl="$(icacls "${host_path}" 2>/dev/null || true)"
+  if [[ "${OSTYPE:-}" =~ ^(msys|cygwin) ]] && command -v icacls >/dev/null 2>&1; then
+    host_path="$(docker_host_path "${path}")"
+    acl="$(icacls "${host_path}" 2>/dev/null || true)"
+  elif [[ "${OSTYPE:-}" == linux* ]] && command -v powershell.exe >/dev/null 2>&1 && command -v wslpath >/dev/null 2>&1; then
+    # WSL mounts expose Windows ACLs as a broad synthetic mode. Query the
+    # actual ACL through PowerShell before accepting an owner-attested file.
+    host_path="$(wslpath -w "${path}")"
+    host_path="${host_path//\\//}"
+    acl="$(powershell.exe -NoProfile -NonInteractive -Command "Get-Acl -LiteralPath '${host_path}' | Select-Object -ExpandProperty Access | Out-String" 2>/dev/null | tr -d '\r' || true)"
+  else
+    return 1
+  fi
   [[ -n "${acl}" ]] || return 1
   ! grep -Eiq 'Everyone|Authenticated Users|BUILTIN\\Users|\(I\)' <<<"${acl}"
 }

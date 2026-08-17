@@ -37,7 +37,7 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund --registry=https://r
 COPY agent/ ./agent/
 COPY --from=team_playbooks . /opt/team-playbooks/
 COPY observability/ ./observability/
-COPY plugin/ ./plugin/
+COPY --chmod=755 plugin/ ./plugin/
 COPY roles/ ./roles/
 COPY skills/ ./skills/
 RUN npm run check-observability \

@@ -64,11 +64,13 @@ valid_token() {
   (( ${#1} >= 16 && ${#1} <= 512 ))
 }
 docker_host_path() {
-  local path="$1"
-  if command -v wslpath >/dev/null 2>&1 && [[ "${path}" == /* ]]; then
-    wslpath -w "${path}"
-  elif command -v cygpath >/dev/null 2>&1 && [[ "${path}" == /* ]]; then
+  local path="$1" docker_binary docker_binary_real
+  docker_binary="$(command -v "${DOCKER_COMMAND}" 2>/dev/null || true)"
+  docker_binary_real="$(readlink -f "${docker_binary}" 2>/dev/null || printf '%s' "${docker_binary}")"
+  if command -v cygpath >/dev/null 2>&1 && [[ "${OSTYPE:-}" =~ ^(msys|cygwin) && "${path}" == /* ]]; then
     cygpath -w "${path}"
+  elif [[ "${docker_binary_real}" == *.exe ]] && command -v wslpath >/dev/null 2>&1 && [[ "${path}" == /* ]]; then
+    wslpath -w "${path}"
   else
     printf '%s\n' "${path}"
   fi

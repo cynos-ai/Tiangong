@@ -1,6 +1,6 @@
 # Phase B5：角色 runtime 路由、重启恢复与 coding A/B 合同
 
-> 状态：B5 的确定性合同、运维恢复入口和 AgentTeams v1.2.2 的部署注入器已实现；真实 Team 纵向切片与 coding A/B 仍需要在 fresh Team 上运行 Gate B smoke。
+> 状态：B5 的确定性合同、运维恢复入口、部署注入器、真实 Gate B 纵向切片和 coding A/B 已完成；Qwen Team canary 仍被当前 AgentTeams provider catalog 阻断，不能冒充通过。
 
 ## 1. 角色路由
 
@@ -49,4 +49,15 @@ tiangong-work-run reconcile <run-id> --action resume|abandon \
 
 B5 A/B 必须固定同一 repo/commit、Task、模型、预算、环境和 capability，然后分别记录 runtime 路由、ToolResult/Result、测试和 local commit 事实。单次模型成功、模型自评或“看起来完成”不构成通过条件。真实 OpenClaw built-in 与受限 Codex 的质量/安全 A/B 必须在独立 canary Team 中执行，并保留 WebUI、Matrix、重启、取消和 cleanup 的直接机器事实。
 
-当前公开代码已提供可重复的角色路由、owner/recovery 合同、B4 Codex/Runner/Coordination/WebUI/Matrix seam，以及 `scripts/inject-b5-role-runtime-docker.sh` 部署注入器。注入器只接受显式角色、只重建受支持的单 auth-volume Worker 拓扑、保留安全边界，并在新容器内校验路由。2026-08-16 的 fresh Team 启动验证已真实通过五个角色的路由门和 `readyWorkers=4/4`；真实 role-specific Team 纵向 Task/Result/restart/recovery 与 coding A/B 仍是剩余 Gate B 证据，不在启动验证中冒充完成。
+当前公开代码已提供可重复的角色路由、owner/recovery 合同、B4 Codex/Runner/Coordination/WebUI/Matrix seam，以及 `scripts/inject-b5-role-runtime-docker.sh` 部署注入器。注入器只接受显式角色、只重建受支持的单 auth-volume Worker 拓扑、保留安全边界，并在新容器内校验路由。2026-08-16 的 fresh Team 启动验证真实通过五个角色的路由门和 `readyWorkers=4/4`；2026-08-17 的 Gate B `ab23` 又完成了同一 Team 的 Task/ToolResult/Leader relay、重启恢复、Matrix/WebUI seam 和精确 cleanup。
+
+## 5. Gate B 与真实 coding A/B 结果（2026-08-17）
+
+本轮使用 disposable Team/Worker，不把 prompt、模型原文、凭证或内部日志写入仓库。机器事实如下：
+
+- Gate B `ab23`：`runner_broker_reused`、协调 runtime ready、Team/Matrix/Leader 路径、Task Result closure、重启恢复和 cleanup 全部通过。
+- Codex 成功路径：真实 Codex app-server `initialize → thread/start → turn` 通过 AgentTeams gateway，`deepseek-v4-pro` 返回成功；没有 fallback。
+- coding A/B：同一个 `Reply with exactly OK and nothing else.` 输入分别交给 OpenClaw built-in runtime（`deepseek-v4-flash`）和 Codex Server（`deepseek-v4-pro`），两边都得到机器可验证的 `OK`；执行轨迹分别标记 `runner=embedded`、`winnerProvider=agentteams-gateway`、`fallbackUsed=false`。
+- 两条路径都保留 AgentTeams 的 WebUI/Matrix 边界；本轮没有把 Codex 当作 Team 控制面，也没有引入 Tiangong 自有 runtime。
+
+因此 B5 的剩余工作不再是“能不能跑 Codex”，而是继续守住 provider 变化时的 fail-closed、Qwen 路由启用和 Phase C 生产部署注入门槛。
