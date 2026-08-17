@@ -1,0 +1,47 @@
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-specialist-handoff-leader
+spec:
+  model: deepseek-v4-flash
+  runtime: copaw
+  image: higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-copaw-worker:v1.2.0
+  state: Running
+  identity: |
+    Name: AgentTeams Handoff Leader
+    Purpose: Official Leader receipt target; only the explicit Specialist handoff should wake this Worker.
+---
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-specialist-handoff-specialist
+spec:
+  model: deepseek-v4-flash
+  runtime: openclaw
+  image: tiangong-worker-designer:dev
+  state: Running
+  channelPolicy:
+    groupAllowExtra:
+      - tiangong-specialist-handoff-leader
+    dmDenyExtra:
+      - tiangong-specialist-handoff-leader
+  identity: |
+    Name: Tiangong Handoff Specialist
+    Purpose: Disposable transport probe identity; a Human source event may trigger one bounded Specialist-to-Leader handoff.
+---
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-specialist-handoff-observer
+spec:
+  model: deepseek-v4-flash
+  runtime: openclaw
+  image: tiangong-worker-designer:dev
+  state: Running
+  channelPolicy:
+    groupAllowExtra:
+      - tiangong-specialist-handoff-specialist
+      - tiangong-specialist-handoff-leader
+  identity: |
+    Name: Tiangong Handoff Observer
+    Purpose: Disposable negative control; it must retain mention gating and remain idle.

@@ -6,6 +6,8 @@ readonly SCRIPT_DIR
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly REPO_ROOT
 readonly IMAGE="tiangong-worker:dev"
+readonly CANARY_IMAGE="tiangong-worker-canary:dev"
+readonly CANARY_MEMBER_IMAGE="tiangong-worker-canary-member:dev"
 readonly LEADER_IMAGE="tiangong-worker-leader:dev"
 readonly DESIGNER_IMAGE="tiangong-worker-designer:dev"
 readonly IMPLEMENTOR_IMAGE="tiangong-worker-implementor:dev"
@@ -14,8 +16,13 @@ readonly OPERATOR_IMAGE="tiangong-worker-operator:dev"
 readonly RUNNER_BROKER_IMAGE="tiangong-runner-broker:dev"
 readonly DEPLOYMENT_SERVICE_IMAGE="tiangong-deployment-service:dev"
 readonly DEPLOYMENT_BROKER_IMAGE="tiangong-deployment-broker:dev"
+readonly CODEX_CAPABILITY_CACHE_IMAGE="tiangong-codex-capability-cache:dev"
+readonly OPENCODEX_SIDECAR_IMAGE="tiangong-opencodex-sidecar:dev"
+readonly OPENCODEX_RECEIPT_SERVICE_IMAGE="tiangong-opencodex-receipt-service:dev"
+readonly OPENCODEX_ADAPTER_IMAGE="tiangong-opencodex-adapter:dev"
 readonly EXPECTED_NODE_VERSION="v22.23.2"
 readonly EXPECTED_PI_VERSION="0.82.0"
+readonly EXPECTED_CODEX_VERSION="codex-cli 0.120.0"
 readonly EXPECTED_GIT_VERSION="git version 2.43.0"
 readonly EXPECTED_UTIL_LINUX_VERSION="2.39.3"
 readonly EXPECTED_DOCKER_CLI_VERSION="28.3.3"
@@ -37,6 +44,10 @@ fi
 
 printf '[Tiangong] Building %s\n' "${IMAGE}"
 docker build "${build_args[@]}" --target default --tag "${IMAGE}" "${REPO_ROOT}/worker"
+printf '[Tiangong] Building isolated OpenClaw canary image %s\n' "${CANARY_IMAGE}"
+docker build "${build_args[@]}" --target canary --tag "${CANARY_IMAGE}" "${REPO_ROOT}/worker"
+printf '[Tiangong] Building fixed Implementor Chat bridge image %s\n' "${CANARY_MEMBER_IMAGE}"
+docker build "${build_args[@]}" --target canary-chat-bridge-implementor --tag "${CANARY_MEMBER_IMAGE}" "${REPO_ROOT}/worker"
 printf '[Tiangong] Building leader profile image %s\n' "${LEADER_IMAGE}"
 docker build "${build_args[@]}" --target leader --tag "${LEADER_IMAGE}" "${REPO_ROOT}/worker"
 for role in designer implementor assessor operator; do
@@ -51,6 +62,14 @@ printf '[Tiangong] Building disposable deployment service image %s\n' "${DEPLOYM
 docker build "${build_args[@]}" --target deployment-service --tag "${DEPLOYMENT_SERVICE_IMAGE}" "${REPO_ROOT}/worker"
 printf '[Tiangong] Building controlled deployment broker image %s\n' "${DEPLOYMENT_BROKER_IMAGE}"
 docker build "${build_args[@]}" --target deployment-broker --tag "${DEPLOYMENT_BROKER_IMAGE}" "${REPO_ROOT}/worker"
+printf '[Tiangong] Building deployment-owned Codex capability cache image %s\n' "${CODEX_CAPABILITY_CACHE_IMAGE}"
+docker build "${build_args[@]}" --target codex-capability-cache --tag "${CODEX_CAPABILITY_CACHE_IMAGE}" "${REPO_ROOT}/worker"
+printf '[Tiangong] Building deployment-owned OpenCodex sidecar image %s\n' "${OPENCODEX_SIDECAR_IMAGE}"
+docker build "${build_args[@]}" --target opencodex-sidecar --tag "${OPENCODEX_SIDECAR_IMAGE}" "${REPO_ROOT}/worker"
+printf '[Tiangong] Building OpenCodex receipt service image %s\n' "${OPENCODEX_RECEIPT_SERVICE_IMAGE}"
+docker build "${build_args[@]}" --target opencodex-receipt-service --tag "${OPENCODEX_RECEIPT_SERVICE_IMAGE}" "${REPO_ROOT}/worker"
+printf '[Tiangong] Building OpenCodex AgentTeams adapter image %s\n' "${OPENCODEX_ADAPTER_IMAGE}"
+docker build "${build_args[@]}" --target opencodex-adapter --tag "${OPENCODEX_ADAPTER_IMAGE}" "${REPO_ROOT}/worker"
 
 actual_node_version="$(docker run --rm --entrypoint node "${IMAGE}" --version)"
 [[ "${actual_node_version}" == "${EXPECTED_NODE_VERSION}" ]] || {
@@ -69,6 +88,32 @@ actual_pi_version="$(docker run --rm --entrypoint pi "${IMAGE}" --version)"
   printf 'ERROR: expected pi %s, got %s.\n' "${EXPECTED_PI_VERSION}" "${actual_pi_version}" >&2
   exit 1
 }
+
+# `bin/codex` is the runtime app-server entrypoint and intentionally requires
+# the in-memory gateway environment. Inspect the managed CLI package directly
+# for the image-version contract instead of starting that runtime wrapper.
+actual_codex_version="$(docker run --rm --entrypoint /opt/tiangong-worker/node_modules/.bin/codex "${CANARY_IMAGE}" --version)"
+[[ "${actual_codex_version}" == "${EXPECTED_CODEX_VERSION}" ]] || {
+  printf 'ERROR: expected managed Codex %s, got %s.\n' "${EXPECTED_CODEX_VERSION}" "${actual_codex_version}" >&2
+  exit 1
+}
+member_canary_profile="$(docker run --rm --entrypoint node "${CANARY_MEMBER_IMAGE}" \
+  /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role implementor)"
+printf '%s\n' "${member_canary_profile}" | grep -Fq '"runtimeReady":true' || {
+  printf 'ERROR: fixed Implementor Chat bridge profile is not runtime-ready.\n' >&2
+  exit 1
+}
+actual_opencodex_version="$(docker run --rm --entrypoint ocx "${OPENCODEX_SIDECAR_IMAGE}" --version)"
+[[ "${actual_opencodex_version}" == *"2.15.0"* ]] || {
+  printf 'ERROR: expected OpenCodex 2.15.0, got %s.\n' "${actual_opencodex_version}" >&2
+  exit 1
+}
+# Probe the managed CLI's app-server directly; the `bin/codex` wrapper is the
+# credential-gated runtime entrypoint and is not a build-time health probe.
+docker run --rm --workdir /opt/tiangong-worker \
+  --env OPENCLAW_CODEX_APP_SERVER_BIN=/opt/tiangong-worker/node_modules/.bin/codex \
+  --entrypoint node "${CANARY_IMAGE}" \
+  scripts/probe-codex-app-server.mjs
 
 actual_git_version="$(docker run --rm --entrypoint /usr/bin/git "${IMAGE}" --version)"
 [[ "${actual_git_version}" == "${EXPECTED_GIT_VERSION}" ]] || {
@@ -101,6 +146,11 @@ docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${IMAGE}" \
 reconciliation_help="$(docker run --rm --entrypoint tiangong-reconcile "${IMAGE}" --help)"
 grep -Fq 'tiangong-reconcile inspect' <<<"${reconciliation_help}" || {
   printf 'ERROR: the Worker reconciliation entrypoint is unavailable.\n' >&2
+  exit 1
+}
+work_run_recovery_help="$(docker run --rm --entrypoint tiangong-work-run "${IMAGE}" --help)"
+grep -Fq 'tiangong-work-run inspect' <<<"${work_run_recovery_help}" || {
+  printf 'ERROR: the WorkRun recovery entrypoint is unavailable.\n' >&2
   exit 1
 }
 retention_help="$(docker run --rm --entrypoint tiangong-retain "${IMAGE}" --help)"

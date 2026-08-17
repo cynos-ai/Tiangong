@@ -21,6 +21,7 @@ import { PolicyGate } from "./gates/policy-gate.mjs";
 import { IdempotencyStore } from "./idempotency/store.mjs";
 import { ModelGateway } from "./model-gateway.mjs";
 import { PeerReplyRouter } from "./peer-reply-router.mjs";
+import { parseSpecialistHandoffCommand, SpecialistHandoffProbe } from "./handoff-transport-probe.mjs";
 import { parsePeerTransportCommand, PeerTransportProbe } from "./peer-transport-probe.mjs";
 import { createAgentTeamsPendingStorage } from "./pending-operation/agentteams-storage.mjs";
 import { PendingOperationStore } from "./pending-operation/store.mjs";
@@ -39,6 +40,7 @@ import { createRunnerBrokerPreparationClient } from "./runner/preparation-client
 import { defaultTiangongRoot } from "./team/shared-fs.mjs";
 import { workerStatePaths } from "./persistence/state-paths.mjs";
 import { createTeamChannel } from "./team/channel-adapter.mjs";
+import { createLeaderRuntimeBinding } from "./team/leader-runtime-config.mjs";
 import { projectDisposition } from "./team/project-chain.mjs";
 import { createTeamSync } from "./team/sync-adapter.mjs";
 import { TeamCoordinationGate } from "./team/tool-wrapper.mjs";
@@ -50,6 +52,8 @@ import { TurnContextController } from "./turn-context.mjs";
 import { createPiSessionTraceObserver } from "../observability/pi-session-tracing.mjs";
 import { createProviderTraceBridge } from "../observability/provider-tracing.mjs";
 import { observabilityOutcome } from "../observability/tracing.mjs";
+
+const NO_REPLY_TEXT = '{"action":"NO_REPLY"}';
 
 function assistantText(message) {
   if (message?.role !== "assistant" || !Array.isArray(message.content)) return "";
@@ -169,17 +173,40 @@ export class TiangongAgentRuntime {
       directory: sharedPaths.pendingOperationDirectory,
       remoteStorage: createAgentTeamsPendingStorage({ workspaceDir: request.workspaceDir }),
     });
-    const workRunStore = new WorkRunStore({ directory: sharedPaths.workRunDirectory });
+    const configuredWorkRunOwner = process.env.TIANGONG_WORK_RUN_OWNER_ID;
+    const workRunStore = new WorkRunStore({
+      directory: sharedPaths.workRunDirectory,
+      ...(configuredWorkRunOwner ? { ownerId: configuredWorkRunOwner } : {}),
+    });
     const turns = new TurnContextController();
     let gate;
     let registry;
+    let channel;
+    let coordinationStore;
+    let leaderRuntimeBinding;
+    let leaderIngress;
     if (profileBundle.runtimeKind === "leader") {
       gate = new TeamCoordinationGate();
       const playbook = readPlaybookManifest("software-change-delivery");
+      channel = createTeamChannel({ evidence });
+      const bindingFile = process.env.TIANGONG_LEADER_RUNTIME_BINDING_FILE;
+      if (bindingFile) {
+        if (!process.env.TIANGONG_COORDINATION_CONTROL_ENDPOINT || !process.env.TIANGONG_COORDINATION_CONTROL_TOKEN) {
+          throw new Error("Leader runtime binding requires Coordination Control endpoint and token");
+        }
+        leaderRuntimeBinding = await createLeaderRuntimeBinding({
+          filePath: bindingFile,
+          controlEndpoint: process.env.TIANGONG_COORDINATION_CONTROL_ENDPOINT,
+          controlToken: process.env.TIANGONG_COORDINATION_CONTROL_TOKEN,
+          channel,
+        });
+        coordinationStore = leaderRuntimeBinding.coordinationStore;
+        leaderIngress = leaderRuntimeBinding.leaderIngress;
+      }
       const teamDeps = {
         rootDir: defaultTiangongRoot(),
         env: process.env,
-        channel: createTeamChannel({ evidence }),
+        channel,
         sync: createTeamSync(),
         evidence,
         gate,
@@ -189,14 +216,16 @@ export class TiangongAgentRuntime {
         runnerBrokerPreparation: createRunnerBrokerPreparationClient({
           endpoint: process.env.TIANGONG_RUNNER_BROKER_PREPARATION_ENDPOINT,
         }),
+        coordinationStore,
       };
       registry = createLeaderToolRegistry({ playbook, deps: teamDeps });
     } else if (profileBundle.runtimeKind === "member") {
       gate = new TeamCoordinationGate();
+      channel = createTeamChannel({ evidence });
       const teamDeps = {
         rootDir: defaultTiangongRoot(),
         env: process.env,
-        channel: createTeamChannel({ evidence }),
+        channel,
         sync: createTeamSync(),
         evidence,
         gate,
@@ -278,8 +307,13 @@ export class TiangongAgentRuntime {
       workRunStore,
       turns,
       registry,
+      channel,
+      coordinationStore,
+      leaderRuntimeBinding,
+      leaderIngress,
       peerReplies: new PeerReplyRouter(),
       peerTransport: new PeerTransportProbe(),
+      handoffTransport: new SpecialistHandoffProbe(),
       providerTrace,
       profileDigest: profileBundle.profileDigest,
       provider: request.provider,
@@ -317,6 +351,37 @@ export class TiangongAgentRuntime {
     state.peerTransport.commit(plan);
     observability?.checkpoint(`peer.transport.${command.kind}`);
     return result;
+  }
+
+  async #handleSpecialistHandoff(request, state, route, command, observability) {
+    const plan = state.handoffTransport.plan(command, request, route);
+    if (typeof state.channel?.sendSpecialistHandoff !== "function") {
+      throw new Error("Specialist handoff channel is unavailable");
+    }
+    const delivery = await state.channel.sendSpecialistHandoff(plan.recipient.id, {
+      workId: plan.workId,
+      intentId: plan.intentId,
+      sourceEventId: plan.sourceEventId,
+      sourceSender: plan.sourceSender,
+    });
+    const replay = await state.channel.sendSpecialistHandoff(plan.recipient.id, {
+      workId: plan.workId,
+      intentId: plan.intentId,
+      sourceEventId: plan.sourceEventId,
+      sourceSender: plan.sourceSender,
+    });
+    if (delivery.transactionId !== replay.transactionId || delivery.eventId !== replay.eventId) {
+      throw new Error("Specialist handoff replay did not preserve the Matrix event");
+    }
+    appendDeterministicAssistantMessage(
+      state,
+      `TG_HANDOFF_SENDER_ACK transaction_id=${delivery.transactionId} event_id=${delivery.eventId} replay_event_id=${replay.eventId}`,
+    );
+    state.handoffTransport.commit(plan);
+    observability?.checkpoint("handoff.transport.sent");
+    // OpenClaw recognizes this exact bounded envelope as a no-reply result;
+    // returning an empty Harness result would emit its generic error message.
+    return createTurnResult(request, { text: NO_REPLY_TEXT, replyTarget: null });
   }
 
   async #handleApproval(request, state, route, command, observability) {
@@ -497,6 +562,31 @@ export class TiangongAgentRuntime {
     return this.#withSessionOperation(request.sessionId, () => this.#runTurnUnlocked(request, observability));
   }
 
+  /**
+   * Admit a deployment-authored Matrix event before a Leader turn. The
+   * binding and remote control token are loaded once with the session and the
+   * request is never passed to the model as an authority signal.
+   */
+  async admitLeaderIngress(request, context) {
+    return this.#withSessionOperation(request.sessionId, async () => {
+      const profileBundle = assertRuntimeProfileMaterialized(await this.#trustedProfileBundle());
+      if (profileBundle.runtimeKind !== "leader") throw new Error("Leader ingress is available only to the Leader runtime");
+      const resolved = await this.#gateway.resolve({
+        provider: request.provider,
+        modelId: request.modelId,
+        credential: request.credential,
+      });
+      const state = await this.#stateFor(request, resolved.model, resolved.modelRuntime, profileBundle);
+      if (typeof state.leaderIngress !== "function") throw new Error("Leader Coordination Control binding is unavailable");
+      return state.leaderIngress(context);
+    });
+  }
+
+  async isLeaderRuntime() {
+    const profileBundle = assertRuntimeProfileMaterialized(await this.#trustedProfileBundle());
+    return profileBundle.runtimeKind === "leader";
+  }
+
   async #runTurnUnlocked(request, observability) {
     if (request.images.length > 0) throw new Error("The Tiangong agent runtime does not support image input yet");
     const profileBundle = assertRuntimeProfileMaterialized(await this.#trustedProfileBundle());
@@ -534,6 +624,18 @@ export class TiangongAgentRuntime {
     if (state.session.isStreaming) throw new Error("pi session is already processing a request");
 
     const route = state.peerReplies.plan(request.replyTarget);
+    if (state.handoffTransport.hasCommittedTurn(request.turnId)) {
+      return createTurnResult(request, { text: NO_REPLY_TEXT, replyTarget: null });
+    }
+    if (route.replyTarget !== null && /TG_HANDOFF_[A-Z]+/u.test(request.prompt)) {
+      return createTurnResult(request, { text: NO_REPLY_TEXT, replyTarget: null });
+    }
+    const handoffCommand = route.replyTarget === null
+      ? parseSpecialistHandoffCommand(request.prompt)
+      : null;
+    if (handoffCommand) {
+      return this.#handleSpecialistHandoff(request, state, route, handoffCommand, observability);
+    }
     const transportCommand = parsePeerTransportCommand(request.prompt);
     if (transportCommand) {
       return this.#handlePeerTransport(request, state, route, transportCommand, observability);

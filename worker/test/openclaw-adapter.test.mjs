@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   buildAttemptResult,
   createTiangongPiHarness,
+  resolveOpenClawMatrixIngress,
   toTurnRequest,
 } from "../plugin/openclaw-adapter.mjs";
 
@@ -97,6 +98,56 @@ test("maps OpenClaw parameters to a stable non-secret TurnRequest", () => {
   assert.equal(JSON.stringify(request).includes("worker-token"), false);
   assert.equal(JSON.stringify(request).includes("matrix-secret"), false);
   assert.equal(Object.keys(request).includes("credential"), false);
+});
+
+test("extracts only an explicitly authenticated Matrix ingress binding", () => {
+  const context = resolveOpenClawMatrixIngress(attemptParams({
+    matrixIngress: { authenticated: true, route: "team-room", roomId: "!team:example.test" },
+  }));
+  assert.deepEqual(context, {
+    source: {
+      channel: "matrix",
+      authenticated: true,
+      actorId: "@user:example.test",
+      messageId: "$event-one",
+      route: "team-room",
+    },
+    roomId: "!team:example.test",
+    eventId: "$event-one",
+  });
+  assert.equal(JSON.stringify(context).includes("rawEvent"), false);
+  assert.equal(resolveOpenClawMatrixIngress(attemptParams()), null);
+  assert.throws(
+    () => resolveOpenClawMatrixIngress(attemptParams({ matrixIngress: { authenticated: false, route: "team-room", roomId: "!team:example.test" } })),
+    /incomplete or unauthenticated/u,
+  );
+  assert.throws(
+    () => resolveOpenClawMatrixIngress(attemptParams({ matrixIngress: { authenticated: true, route: "team-room", roomId: "!team:example.test", rawEvent: "not-allowed" } })),
+    /incomplete or unauthenticated/u,
+  );
+});
+
+test("derives a bounded native Matrix ingress from OpenClaw's runtime envelope", () => {
+  const context = resolveOpenClawMatrixIngress(attemptParams({
+    groupId: "!team:example.test",
+    messageTo: "room:!Team:Example.Test",
+  }));
+  assert.deepEqual(context, {
+    source: {
+      channel: "matrix",
+      authenticated: true,
+      actorId: "@user:example.test",
+      messageId: "$event-one",
+      route: "team-room",
+    },
+    roomId: "!Team:Example.Test",
+    eventId: "$event-one",
+  });
+  assert.equal(resolveOpenClawMatrixIngress(attemptParams({ groupId: "!team:example.test" })), null);
+  assert.equal(resolveOpenClawMatrixIngress(attemptParams({
+    groupId: "!team:example.test",
+    messageTo: "room:!other:example.test",
+  })), null);
 });
 
 test("derives Matrix peer authority only from authenticated effective allowlists", () => {
@@ -216,6 +267,86 @@ test("delegates the attempt and its trace through the Tiangong runtime boundary"
   });
   assert.deepEqual(recorded.attempts[0].finishes, [{ outcome: "complete", error: undefined }]);
   assert.equal(result.lastAssistant.content[0].text, "answer");
+});
+
+test("runs the optional Leader admission hook before the model runtime", async (t) => {
+  const order = [];
+  const runtime = {
+    async runTurn() { order.push("runtime"); return turnResult(); },
+    async reset() {},
+    async dispose() {},
+  };
+  const harness = createTiangongPiHarness({
+    runtime,
+    leaderIngress: async (context, params) => {
+      order.push("admission");
+      assert.equal(context.roomId, "!team:example.test");
+      assert.equal(context.source.actorId, params.senderId);
+    },
+  });
+  t.after(() => harness.dispose());
+  const result = await harness.runAttempt(attemptParams({
+    groupId: "!team:example.test",
+    messageTo: "room:!team:example.test",
+  }));
+  assert.deepEqual(order, ["admission", "runtime"]);
+  assert.equal(result.promptError, null);
+});
+
+test("uses the runtime Leader admission seam when no explicit hook is supplied", async (t) => {
+  const order = [];
+  const runtime = {
+    async admitLeaderIngress(request, context) {
+      order.push("admission");
+      assert.equal(request.sessionId, "session-one");
+      assert.equal(context.eventId, "$event-one");
+      return { resumed: true };
+    },
+    async runTurn() { order.push("runtime"); return turnResult(); },
+    async reset() {},
+    async dispose() {},
+  };
+  const harness = createTiangongPiHarness({ runtime });
+  t.after(() => harness.dispose());
+  const result = await harness.runAttempt(attemptParams({ groupId: "!team:example.test", messageTo: "room:!team:example.test" }));
+  assert.deepEqual(order, ["admission", "runtime"]);
+  assert.equal(result.promptError, null);
+});
+
+test("does not route member Matrix turns through the Leader admission seam", async (t) => {
+  let runtimeCalls = 0;
+  const harness = createTiangongPiHarness({
+    runtime: {
+      async isLeaderRuntime() { return false; },
+      async runTurn() { runtimeCalls += 1; return turnResult(); },
+      async reset() {},
+      async dispose() {},
+    },
+  });
+  t.after(() => harness.dispose());
+  const result = await harness.runAttempt(attemptParams({
+    groupId: "!team:example.test",
+    messageTo: "room:!team:example.test",
+  }));
+  assert.equal(runtimeCalls, 1);
+  assert.equal(result.promptError, null);
+});
+
+test("fails closed when a Matrix ingress binding is present but no Leader admission hook is configured", async (t) => {
+  let runtimeCalls = 0;
+  const harness = createTiangongPiHarness({
+    runtime: {
+      async runTurn() { runtimeCalls += 1; return turnResult(); },
+      async reset() {},
+      async dispose() {},
+    },
+  });
+  t.after(() => harness.dispose());
+  const result = await harness.runAttempt(attemptParams({
+    matrixIngress: { authenticated: true, route: "team-room", roomId: "!team:example.test" },
+  }));
+  assert.equal(runtimeCalls, 0);
+  assert.match(result.promptError.message, /Leader admission is not wired/u);
 });
 
 test("marks Harness ingress before waiting for the Tiangong turn", async (t) => {

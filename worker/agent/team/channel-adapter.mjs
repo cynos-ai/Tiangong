@@ -12,8 +12,10 @@ import { canonicalJson, sha256 } from "../canonical-json.mjs";
 
 const MATRIX_USER_ID = /^@[A-Za-z0-9._=\/-]+:[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/u;
 const WORKER_NAME = /^[A-Za-z0-9._:-]{1,128}$/u;
+const HANDOFF_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const DIGEST = /^[0-9a-f]{64}$/u;
 const MATRIX_EVENT_ID = /^\$[^\s]{1,255}$/u;
+const MATRIX_ROOM_ID = /^![^\s]{1,255}$/u;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_JOINED_ROOMS = 16;
 const MAX_JOINED_MEMBERS = 64;
@@ -127,11 +129,78 @@ async function assertPersonalRoomRecipient(config, recipient) {
   return config.personalRoomId;
 }
 
+async function requesterRoom(config, recipient) {
+  try {
+    return await assertPersonalRoomRecipient(config, recipient);
+  } catch (personalError) {
+    // AgentTeams v1.2.2 gives Worker-to-Worker reports only the authenticated
+    // shared Team room; a Worker personal/DM room is not guaranteed to contain
+    // another Worker. Keep the requester identity and fail closed to the one
+    // canonical Team room instead of silently dropping the terminal report.
+    try {
+      return await teamRoomFor(config, recipient);
+    } catch {
+      throw personalError;
+    }
+  }
+}
+
+async function assertJoinedRoom(config, roomId) {
+  requireString(roomId, "Matrix room id", MATRIX_ROOM_ID);
+  const rooms = await joinedRooms(config);
+  if (!rooms.includes(roomId)) throw new Error("Authenticated Worker is not joined to the requested Matrix room");
+  return roomId;
+}
+
 function escapeHtml(value) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
-function eventBody({ recipient, kind, projectId, taskId, disposition, summary }) {
+function handoffBody({ recipient, workId, intentId, sourceRoomId, sourceEventId, sourceSender, sender }) {
+  const reference = {
+    version: 1,
+    work_id: workId,
+    intent_id: intentId,
+    source: {
+      room_id: sourceRoomId,
+      event_id: sourceEventId,
+      sender: sourceSender,
+    },
+    sender,
+    recipient,
+  };
+  const serializedReference = canonicalJson(reference);
+  const target = `<a href="https://matrix.to/#/${recipient}">${escapeHtml(recipient)}</a>`;
+  const suffix = `Tiangong specialist handoff ref=${serializedReference}`;
+  return {
+    msgtype: "m.text",
+    body: `${recipient} ${suffix}`,
+    format: "org.matrix.custom.html",
+    formatted_body: `${target} ${escapeHtml(suffix)}`,
+    "m.mentions": { user_ids: [recipient] },
+    "com.tiangong.handoff": reference,
+  };
+}
+
+function eventBody(operation) {
+  if (operation.kind === "specialist-handoff") return handoffBody(operation);
+  if (operation.kind === "work-admitted") {
+    const target = `<a href="https://matrix.to/#/${operation.recipient}">${escapeHtml(operation.recipient)}</a>`;
+    const suffix = `Tiangong Work admitted: work=${operation.workId}. The native Leader session is now responsible for the bounded Work.`;
+    return {
+      msgtype: "m.text",
+      body: `${operation.recipient} ${suffix}`,
+      format: "org.matrix.custom.html",
+      formatted_body: `${target} ${escapeHtml(suffix)}`,
+      "m.mentions": { user_ids: [operation.recipient] },
+      "com.tiangong.work": {
+        version: 1,
+        work_id: operation.workId,
+        source_event_id: operation.sourceEventId,
+      },
+    };
+  }
+  const { recipient, kind, projectId, taskId, disposition, summary } = operation;
   const target = `<a href="https://matrix.to/#/${recipient}">${escapeHtml(recipient)}</a>`;
   const suffix = kind === "task-assigned"
     ? `Tiangong Task assigned: project=${projectId} task=${taskId}. Resolve the bound Task, perform the role work, then submit one bound ResultEnvelope.`
@@ -148,27 +217,53 @@ function eventBody({ recipient, kind, projectId, taskId, disposition, summary })
 }
 
 async function send(config, operation) {
-  const roomId = operation.personal
-    ? await assertPersonalRoomRecipient(config, operation.recipient)
+  const roomId = operation.roomId
+    ? await assertJoinedRoom(config, operation.roomId)
+    : operation.personal
+    ? await requesterRoom(config, operation.recipient)
     : await teamRoomFor(config, operation.recipient);
-  const transactionId = `tiangong_${sha256(canonicalJson({
-    kind: operation.kind,
-    projectId: operation.projectId,
-    taskId: operation.taskId ?? null,
-    disposition: operation.disposition ?? null,
-    bindingDigest: operation.bindingDigest,
-    recipient: operation.recipient,
-  }))}`;
+  const wireOperation = operation.kind === "specialist-handoff"
+    ? { ...operation, sourceRoomId: roomId, sender: config.selfMatrixId }
+    : operation;
+  const transactionInput = operation.kind === "specialist-handoff"
+    ? {
+        kind: wireOperation.kind,
+        workId: wireOperation.workId,
+        intentId: wireOperation.intentId,
+        sourceRoomId: wireOperation.sourceRoomId,
+        sourceEventId: wireOperation.sourceEventId,
+        sourceSender: wireOperation.sourceSender,
+        sender: wireOperation.sender,
+        recipient: wireOperation.recipient,
+      }
+    : operation.kind === "work-admitted"
+      ? {
+        kind: wireOperation.kind,
+        workId: wireOperation.workId,
+        sourceEventId: wireOperation.sourceEventId,
+        bindingDigest: wireOperation.bindingDigest,
+        recipient: wireOperation.recipient,
+        roomId,
+      }
+      : {
+        kind: operation.kind,
+        projectId: operation.projectId,
+        taskId: operation.taskId ?? null,
+        disposition: operation.disposition ?? null,
+        bindingDigest: operation.bindingDigest,
+        recipient: operation.recipient,
+      };
+  const transactionId = `tiangong_${sha256(canonicalJson(transactionInput))}`;
   const response = await matrixRequest(
     config,
     "PUT",
     `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${transactionId}`,
-    eventBody(operation),
+    eventBody(wireOperation),
   );
   if (typeof response.event_id !== "string" || !MATRIX_EVENT_ID.test(response.event_id)) {
     throw new Error("Matrix send response did not contain a valid event ID");
   }
-  return { roomIdDigest: sha256(roomId), transactionId, eventIdDigest: sha256(response.event_id) };
+  return { roomId, roomIdDigest: sha256(roomId), transactionId, eventId: response.event_id, eventIdDigest: sha256(response.event_id) };
 }
 
 export function createTeamChannel({ evidence, env = process.env, fetchImpl = globalThis.fetch } = {}) {
@@ -187,15 +282,34 @@ export function createTeamChannel({ evidence, env = process.env, fetchImpl = glo
 
   async function deliver(type, operation) {
     requireString(operation.recipient, "Matrix recipient", MATRIX_USER_ID);
-    requireString(operation.projectId, "projectId", WORKER_NAME);
-    if (operation.taskId !== undefined) requireString(operation.taskId, "taskId", WORKER_NAME);
-    requireString(operation.bindingDigest, "bindingDigest", DIGEST);
+    if (operation.kind === "specialist-handoff") {
+      requireString(operation.workId, "handoff workId", HANDOFF_ID);
+      requireString(operation.intentId, "handoff intentId", HANDOFF_ID);
+      requireString(operation.sourceEventId, "handoff source event ID", MATRIX_EVENT_ID);
+      requireString(operation.sourceSender, "handoff source sender", MATRIX_USER_ID);
+    } else if (operation.kind === "work-admitted") {
+      requireString(operation.workId, "workId", HANDOFF_ID);
+      requireString(operation.sourceEventId, "source event ID", MATRIX_EVENT_ID);
+      requireString(operation.roomId, "roomId");
+      requireString(operation.bindingDigest, "bindingDigest", DIGEST);
+    } else {
+      requireString(operation.projectId, "projectId", WORKER_NAME);
+      if (operation.taskId !== undefined) requireString(operation.taskId, "taskId", WORKER_NAME);
+      requireString(operation.bindingDigest, "bindingDigest", DIGEST);
+    }
     const sent = await send(config, operation);
     await evidence.append({
       type,
       projectId: operation.projectId,
       taskId: operation.taskId,
       disposition: operation.disposition,
+      workId: operation.kind === "specialist-handoff" || operation.kind === "work-admitted" ? operation.workId : undefined,
+      intentId: operation.intentId,
+      sourceRoomIdDigest: operation.kind === "specialist-handoff" ? sha256(sent.roomId) : undefined,
+      sourceEventIdDigest: operation.kind === "specialist-handoff" || operation.kind === "work-admitted"
+        ? sha256(operation.sourceEventId) : undefined,
+      sourceSenderDigest: operation.kind === "specialist-handoff" ? sha256(operation.sourceSender) : undefined,
+      workIdDigest: operation.kind === "work-admitted" ? sha256(operation.workId) : undefined,
       recipientDigest: sha256(operation.recipient),
       bindingDigest: operation.bindingDigest,
       roomIdDigest: sent.roomIdDigest,
@@ -207,6 +321,7 @@ export function createTeamChannel({ evidence, env = process.env, fetchImpl = glo
       queued: false,
       delivered: true,
       transactionId: sent.transactionId,
+      eventId: sent.eventId,
       eventIdDigest: sent.eventIdDigest,
     };
   }
@@ -258,6 +373,36 @@ export function createTeamChannel({ evidence, env = process.env, fetchImpl = glo
       const roomId = await teamRoomForAll(config, recipients);
       return { roomId, roomIdDigest: sha256(roomId), memberDigests: recipients.map((id) => sha256(id)).sort() };
     },
+    async readHumanEvent(roomId, eventId) {
+      const boundRoomId = await assertJoinedRoom(config, roomId);
+      requireString(eventId, "Matrix event ID", MATRIX_EVENT_ID);
+      const value = await matrixRequest(
+        config,
+        "GET",
+        `/_matrix/client/v3/rooms/${encodeURIComponent(boundRoomId)}/event/${encodeURIComponent(eventId)}`,
+      );
+      if (value?.room_id !== boundRoomId || value?.event_id !== eventId || typeof value.sender !== "string" ||
+          typeof value.type !== "string" || !value.content || typeof value.content !== "object") {
+        throw new Error("Matrix event response is not a bound event");
+      }
+      return Object.freeze({
+        eventId: value.event_id,
+        roomId: value.room_id,
+        sender: value.sender,
+        type: value.type,
+        content: structuredClone(value.content),
+      });
+    },
+    async notifyWorkAdmitted(recipient, { roomId, workId, sourceEventId, bindingDigest } = {}) {
+      return deliver("team.work.admitted", {
+        kind: "work-admitted",
+        recipient,
+        roomId,
+        workId,
+        sourceEventId,
+        bindingDigest,
+      });
+    },
     async notifyAssignee(assignee, projectId, taskId, bindingDigest) {
       return deliver("team.mention.delivered", {
         kind: "task-assigned",
@@ -274,6 +419,17 @@ export function createTeamChannel({ evidence, env = process.env, fetchImpl = glo
         projectId,
         taskId,
         bindingDigest: resultDigest,
+      });
+    },
+    async sendSpecialistHandoff(recipient, { workId, intentId, sourceEventId, sourceSender } = {}) {
+      requireString(recipient, "handoff recipient", MATRIX_USER_ID);
+      return deliver("team.specialist.handoff.delivered", {
+        kind: "specialist-handoff",
+        recipient,
+        workId,
+        intentId,
+        sourceEventId,
+        sourceSender,
       });
     },
     async reportRequester(requester, projectId, disposition, dispositionDigest, summary) {

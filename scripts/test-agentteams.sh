@@ -55,6 +55,52 @@ config="$(make config)"
   exit 1
 }
 
+cp .env .env.provider-check-base
+provider_check="$(make provider-check)"
+[[ "${provider_check}" == *'route=codex-opencodex-chat-bridge'* ]] || {
+  printf 'FAIL: Coding Plan provider route was not classified as the OpenCodex bridge.\n' >&2
+  exit 1
+}
+[[ "${provider_check}" == *'wire_api=openai-completions'* ]] || {
+  printf 'FAIL: Coding Plan provider route did not declare Chat/Completions.\n' >&2
+  exit 1
+}
+[[ "${provider_check}" == *'credential_state=present'* ]] || {
+  printf 'FAIL: provider-check did not report a configured credential without printing it.\n' >&2
+  exit 1
+}
+! grep -Fq 'touch ' <<<"${provider_check}" || {
+  printf 'FAIL: provider-check exposed credential contents.\n' >&2
+  exit 1
+}
+
+sed -i \
+  -e 's/^AGENTTEAMS_LLM_PROVIDER=.*/AGENTTEAMS_LLM_PROVIDER=qwen/' \
+  -e 's#^AGENTTEAMS_OPENAI_BASE_URL=.*#AGENTTEAMS_OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1#' \
+  -e 's/^AGENTTEAMS_DEFAULT_MODEL=.*/AGENTTEAMS_DEFAULT_MODEL=qwen3.5-plus/' .env
+provider_check="$(make provider-check)"
+[[ "${provider_check}" == *'route=agentteams-qwen-native'* ]] || {
+  printf 'FAIL: native Qwen provider route was not classified correctly.\n' >&2
+  exit 1
+}
+
+sed -i 's#^AGENTTEAMS_OPENAI_BASE_URL=.*#AGENTTEAMS_OPENAI_BASE_URL=https://coding.dashscope.aliyuncs.com/v1?leak=1#' .env
+if make provider-check >provider-unsafe.out 2>&1; then
+  printf 'FAIL: provider-check accepted a query-bearing endpoint.\n' >&2
+  exit 1
+fi
+grep -q 'without query' provider-unsafe.out
+
+sed -i 's#^AGENTTEAMS_OPENAI_BASE_URL=.*#AGENTTEAMS_OPENAI_BASE_URL=https://user:pass@coding.dashscope.aliyuncs.com/v1#' .env
+if make provider-check >provider-credentials.out 2>&1; then
+  printf 'FAIL: provider-check accepted an endpoint with embedded credentials.\n' >&2
+  exit 1
+fi
+grep -q 'embedded credentials' provider-credentials.out
+
+cp .env.provider-check-base .env
+rm -f .env.provider-check-base
+
 cp .env .env.valid
 printf 'AGENTTEAMS_WORKSPACE_DIR=/tmp/unsafe\n' >>.env
 if make config >unsupported.out 2>&1; then

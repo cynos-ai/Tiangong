@@ -1,6 +1,7 @@
 import { lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { TextDecoder } from "node:util";
 
 import { canonicalJson, sha256 } from "../canonical-json.mjs";
 import { registryEntry } from "../roles/registry.mjs";
@@ -20,6 +21,7 @@ const PACKAGE_FILES = Object.freeze([
   "tests/transition-truth-table.json",
 ]);
 const TASK_KIND_ROLE = Object.freeze({ design: "designer", implement: "implementor", assess: "assessor", release: "operator" });
+const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
 const FIELDS_MIRROR = [
   "playbookId",
   "version",
@@ -34,7 +36,10 @@ const FIELDS_MIRROR = [
 function readRegular(pathname, label) {
   const stat = lstatSync(pathname);
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`${label} must be a regular non-symlink file`);
-  return readFileSync(pathname);
+  // Keep package digests stable when Git materializes LF text as CRLF on
+  // Windows. All package members are UTF-8 text files.
+  const text = UTF8_DECODER.decode(readFileSync(pathname));
+  return Buffer.from(text.replaceAll("\r\n", "\n"), "utf8");
 }
 
 export function computePlaybookPackageDigest(packageRoot, manifest) {

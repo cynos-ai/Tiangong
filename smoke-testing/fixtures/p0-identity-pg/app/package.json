@@ -1,0 +1,17 @@
+{
+  "name": "tiangong-p0-identity-pg-probe-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "fastify": "5.11.3",
+    "pg": "8.23.0"
+  },
+  "devDependencies": {
+    "vite": "7.3.6"
+  }
+}

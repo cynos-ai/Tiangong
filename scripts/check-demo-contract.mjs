@@ -55,7 +55,8 @@ async function main() {
     const withoutSkill = buildBaseSystemPrompt(withoutSkills(bundle));
     if (!withSkill.includes(bundle.skills[0].id)) fail(`Skill is absent from the trusted ${roleId} context`);
     if (withSkill === withoutSkill) fail(`with/without Skill evaluation did not change ${roleId} context`);
-    if (bundle.profileDigest !== sha256(await readFile(join(WORKER_ROOT, "role-profiles", `${roleId}.json`)))) {
+    const profileBytes = Buffer.from((await readFile(join(WORKER_ROOT, "role-profiles", `${roleId}.json`), "utf8")).replaceAll("\r\n", "\n"), "utf8");
+    if (bundle.profileDigest !== sha256(profileBytes)) {
       fail(`profile digest mismatch for ${roleId}`);
     }
     profiles[roleId] = {

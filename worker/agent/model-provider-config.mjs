@@ -1,6 +1,9 @@
+import { validateCodingModelConfiguration } from "./coding-model-profile.mjs";
+
 const PROVIDER_FIELDS = ["api", "baseUrl"];
 const MODEL_FIELDS = [
   "api",
+  "baseUrl",
   "contextWindow",
   "cost",
   "id",
@@ -9,6 +12,22 @@ const MODEL_FIELDS = [
   "name",
   "reasoning",
 ];
+
+const COMPAT_FIELDS = [
+  "codexBridge",
+  "codexWireApi",
+  "sessionAffinityFormat",
+  "supportsDeveloperRole",
+  "supportsStrictMode",
+  "supportsOpenAIGrammarTools",
+  "supportsToolSearch",
+];
+
+function pickCompat(source) {
+  if (!source || typeof source !== "object") return undefined;
+  const compat = pick(source, COMPAT_FIELDS);
+  return Object.keys(compat).length === 0 ? undefined : compat;
+}
 
 function pick(source, fields) {
   return Object.fromEntries(fields
@@ -26,7 +45,11 @@ export function sanitizedProviderConfiguration(workerConfig, providerName) {
   }
   const provider = {
     ...pick(source, PROVIDER_FIELDS),
-    models: source.models.map((model) => pick(model, MODEL_FIELDS)),
+    ...(pickCompat(source.compat) ? { compat: pickCompat(source.compat) } : {}),
+    models: source.models.map((model) => ({
+      ...pick(model, MODEL_FIELDS),
+      ...(pickCompat(model.compat) ? { compat: pickCompat(model.compat) } : {}),
+    })),
   };
   if (typeof provider.api !== "string" || typeof provider.baseUrl !== "string") {
     throw new Error(`Provider ${providerName} is missing api or baseUrl`);
@@ -36,5 +59,5 @@ export function sanitizedProviderConfiguration(workerConfig, providerName) {
       throw new Error(`Provider ${providerName} contains a model without an id`);
     }
   }
-  return { providers: { [providerName]: provider } };
+  return validateCodingModelConfiguration({ providers: { [providerName]: provider } });
 }

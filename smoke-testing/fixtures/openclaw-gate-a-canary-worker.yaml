@@ -1,0 +1,12 @@
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-openclaw-canary
+spec:
+  model: codex/deepseek-v4-pro
+  runtime: openclaw
+  image: tiangong-worker-canary:dev
+  state: Running
+  identity: |
+    Name: Tiangong OpenClaw Gate A Canary
+    Purpose: Disposable isolated compatibility verification only.

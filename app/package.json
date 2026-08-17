@@ -1,0 +1,15 @@
+{
+  "name": "tiangong-runtime-console",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "scripts": {
+    "start": "node server.mjs",
+    "start-coordination": "node coordination/runtime-server.mjs",
+    "test": "node --test --test-concurrency=1 test/*.test.mjs"
+  },
+  "dependencies": {
+    "pg": "8.23.0"
+  }
+}

@@ -1,0 +1,12 @@
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-p0-4-identity-worker
+spec:
+  model: deepseek-v4-flash
+  runtime: openclaw
+  image: tiangong-worker-designer:dev
+  state: Running
+  identity: |
+    Name: Tiangong P0.4 Identity Probe Worker
+    Purpose: Disposable current Matrix identity for the app/PostgreSQL authorization boundary probe.

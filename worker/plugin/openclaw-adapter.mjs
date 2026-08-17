@@ -13,6 +13,8 @@ const HARNESS_EVIDENCE_FILE = "/tmp/tiangong-pi-harness.last-run";
 const SUPPORTED_PROVIDER = "agentteams-gateway";
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
 const MATRIX_USER_ID = /^@[^:\s]+:[^\s]+$/u;
+const MATRIX_EVENT_ID = /^\$[^\s]{1,255}$/u;
+const MATRIX_ROOM_ID = /^![^\s]{1,255}$/u;
 
 function stringSet(value) {
   return new Set(Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : []);
@@ -166,6 +168,66 @@ function turnId(params) {
     : `${params.messageChannel ?? params.messageProvider ?? "channel"}:${messageId}`;
 }
 
+/**
+ * Extract only the bounded, non-secret Matrix ingress facts needed by the
+ * Leader admission seam. Raw event content stays in the channel adapter and
+ * never enters TurnRequest or the model runtime.
+ */
+export function resolveOpenClawMatrixIngress(params) {
+  const channel = params?.messageChannel ?? params?.messageProvider;
+  if (params?.matrixIngress === undefined || params?.matrixIngress === null) {
+    // OpenClaw's public EmbeddedRunAttemptParams carries the runtime-delivered
+    // inbound Matrix envelope as separate fields: messageTo is the canonical
+    // `room:<roomId>` target, groupId is a normalized session-key copy, and
+    // currentMessageId is the event ID. Keep this derivation deliberately
+    // narrow; the channel adapter still re-reads the event with its own
+    // authenticated Matrix token before admission, which is the proof of
+    // sender/event authenticity. These fields never become the event-content
+    // oracle.
+    const messageTo = params?.messageTo;
+    const roomId = typeof messageTo === "string" && messageTo.startsWith("room:")
+      ? messageTo.slice("room:".length) : null;
+    if (channel !== "matrix" || typeof roomId !== "string" || !MATRIX_ROOM_ID.test(roomId) ||
+        typeof params?.groupId !== "string" || params.groupId.toLowerCase() !== roomId.toLowerCase() ||
+        typeof params?.senderId !== "string" || !MATRIX_USER_ID.test(params.senderId) ||
+        typeof params?.currentMessageId !== "string" || !MATRIX_EVENT_ID.test(params.currentMessageId)) {
+      return null;
+    }
+    return Object.freeze({
+      source: Object.freeze({
+        channel: "matrix",
+        authenticated: true,
+        actorId: params.senderId,
+        messageId: params.currentMessageId,
+        route: "team-room",
+      }),
+      roomId,
+      eventId: params.currentMessageId,
+    });
+  }
+  const ingressKeys = typeof params.matrixIngress === "object" && !Array.isArray(params.matrixIngress)
+    ? Object.keys(params.matrixIngress).sort().join(",") : "";
+  if (channel !== "matrix" || typeof params.matrixIngress !== "object" || Array.isArray(params.matrixIngress) ||
+      ingressKeys !== "authenticated,roomId,route" ||
+      params.matrixIngress.authenticated !== true || params.matrixIngress.route !== "team-room" ||
+      typeof params.senderId !== "string" || !MATRIX_USER_ID.test(params.senderId) ||
+      typeof params.currentMessageId !== "string" || !MATRIX_EVENT_ID.test(params.currentMessageId) ||
+      typeof params.matrixIngress.roomId !== "string" || !MATRIX_ROOM_ID.test(params.matrixIngress.roomId)) {
+    throw new Error("OpenClaw Matrix ingress context is incomplete or unauthenticated");
+  }
+  return Object.freeze({
+    source: Object.freeze({
+      channel: "matrix",
+      authenticated: true,
+      actorId: params.senderId,
+      messageId: params.currentMessageId,
+      route: "team-room",
+    }),
+    roomId: params.matrixIngress.roomId,
+    eventId: params.currentMessageId,
+  });
+}
+
 export function toTurnRequest(params) {
   const peerContext = matrixPeerContext(params);
   return createTurnRequest({
@@ -201,6 +263,11 @@ export function createTiangongPiHarness(options = {}) {
   });
   const harnessEvidenceFile = options.evidencePath ?? HARNESS_EVIDENCE_FILE;
   const observability = options.observability ?? DISABLED_OBSERVABILITY;
+  const leaderIngress = options.leaderIngress ?? (
+    typeof runtime.admitLeaderIngress === "function"
+      ? (context, params) => runtime.admitLeaderIngress(toTurnRequest(params), context)
+      : undefined
+  );
 
   return {
     id: HARNESS_ID,
@@ -236,6 +303,14 @@ export function createTiangongPiHarness(options = {}) {
           { mode: 0o600 },
         );
         if (effectiveParams.abortSignal.aborted) throw abortError(effectiveParams.abortSignal);
+        const matrixIngress = resolveOpenClawMatrixIngress(effectiveParams);
+        const leaderRuntime = typeof runtime.isLeaderRuntime === "function"
+          ? await runtime.isLeaderRuntime()
+          : true;
+        if (matrixIngress && leaderRuntime && typeof leaderIngress !== "function") {
+          throw new Error("OpenClaw Matrix ingress is present but Leader admission is not wired");
+        }
+        if (matrixIngress && leaderRuntime) await leaderIngress(matrixIngress, effectiveParams);
         const result = await runtime.runTurn(toTurnRequest(effectiveParams), attemptTrace);
         await writeFile(
           harnessEvidenceFile,

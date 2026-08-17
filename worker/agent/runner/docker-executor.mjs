@@ -21,6 +21,9 @@ const NEUTRALIZED_IMAGE_ENV_KEYS = Object.freeze([
   "OPENCLAW_CMS_PLUGIN_DIR",
   "PI_SKIP_VERSION_CHECK",
   "PI_TELEMETRY",
+  // Role identity belongs to the Worker control plane and must not leak into
+  // a disposable command runner, which has no professional role authority.
+  "TIANGONG_ROLE_ID",
   "TIANGONG_OTEL_EXPORTER_ENDPOINT",
   "http_proxy",
   "https_proxy",
@@ -30,6 +33,7 @@ const OWNER = "tiangong-runner-port";
 const MAX_FIXTURE_ENTRIES = 4096;
 const MAX_FIXTURE_BYTES = 64 * 1024 * 1024;
 const CONTROL_OUTPUT_LIMIT = 1024 * 1024;
+const CONTROL_STDIN_LIMIT = 8 * 1024 * 1024;
 const CAPTURE_MARKER = "TIANGONG_RUNNER_COMMAND_COMPLETE ";
 const EXECUTION_MODES = new Set(["readonly-fixture", "capture-revision"]);
 
@@ -169,9 +173,15 @@ export function createDockerCommandRunner({
   if (!path.isAbsolute(dockerPath) || !path.isAbsolute(socketPath)) {
     throw new Error("Docker executable and socket paths must be absolute");
   }
-  return async function runDocker(args, { timeoutMs = 30_000, outputLimitBytes = CONTROL_OUTPUT_LIMIT } = {}) {
+  return async function runDocker(args, { timeoutMs = 30_000, outputLimitBytes = CONTROL_OUTPUT_LIMIT, input } = {}) {
     if (!Array.isArray(args) || args.some((arg) => typeof arg !== "string")) {
       throw new TypeError("Docker arguments must be a string array");
+    }
+    if (input !== undefined && !Buffer.isBuffer(input) && typeof input !== "string") {
+      throw new TypeError("Docker stdin must be a string or Buffer");
+    }
+    if (input !== undefined && Buffer.byteLength(input) > CONTROL_STDIN_LIMIT) {
+      throw new Error("Docker stdin exceeded the bounded control limit");
     }
     return new Promise((resolve, reject) => {
       const child = spawn(dockerPath, args, {
@@ -180,7 +190,7 @@ export function createDockerCommandRunner({
           PATH: "/usr/local/bin:/usr/bin:/bin",
           DOCKER_HOST: `unix://${socketPath}`,
         },
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       });
       const stdout = [];
       const stderr = [];
@@ -210,6 +220,7 @@ export function createDockerCommandRunner({
           stderrTruncated: stderrState.truncated,
         });
       });
+      if (input !== undefined) child.stdin.end(input);
     });
   };
 }

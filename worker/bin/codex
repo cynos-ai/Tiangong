@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+exec /opt/tiangong-worker/bin/codex-app-server "$@"

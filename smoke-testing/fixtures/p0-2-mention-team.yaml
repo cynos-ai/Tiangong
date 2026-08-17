@@ -1,0 +1,12 @@
+apiVersion: agentteams.io/v1beta1
+kind: Team
+metadata:
+  name: tiangong-p0-2-mention
+spec:
+  description: Disposable P0.2 mention-gating and delivery contract probe.
+  peerMentions: true
+  workerMembers:
+    - name: tiangong-p0-2-mention-leader
+      role: team_leader
+    - name: tiangong-p0-2-mention-target
+      role: worker
