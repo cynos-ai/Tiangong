@@ -27,6 +27,23 @@ function required(value, name) {
   if (typeof value !== "string" || value === "") throw new Error(`${name} is required`);
   return value;
 }
+
+/**
+ * AgentTeams v1.2.2 already projects the authoritative Leader role as
+ * AGENTTEAMS_WORKER_ROLE=team_leader, but it has no field for Tiangong's
+ * plugin role id. Accept that one upstream identity assertion as equivalent
+ * to the explicit deployment projection; all professional roles still need
+ * their explicit Tiangong role binding.
+ */
+export function isLeaderEnvironment(env = process.env) {
+  return env?.TIANGONG_ROLE_ID === LEADER_ROLE || env?.AGENTTEAMS_WORKER_ROLE === "team_leader";
+}
+
+function effectiveLeaderEnvironment(env) {
+  if (env?.TIANGONG_ROLE_ID === LEADER_ROLE) return env;
+  return Object.freeze({ ...env, TIANGONG_ROLE_ID: LEADER_ROLE });
+}
+
 function leaderMatrixId(env) {
   const name = required(env.AGENTTEAMS_WORKER_NAME, "AGENTTEAMS_WORKER_NAME");
   const domain = required(env.AGENTTEAMS_MATRIX_DOMAIN, "AGENTTEAMS_MATRIX_DOMAIN");
@@ -67,8 +84,9 @@ export function registerLeaderOpenClawTools(api, {
   env = process.env,
   fetchImpl = globalThis.fetch,
 } = {}) {
-  if (env.TIANGONG_ROLE_ID !== LEADER_ROLE) return { enabled: false };
+  if (!isLeaderEnvironment(env)) return { enabled: false };
   if (typeof api?.registerTool !== "function") throw new Error("OpenClaw registerTool API is unavailable");
+  const leaderEnv = effectiveLeaderEnvironment(env);
   const endpoint = required(env.TIANGONG_COORDINATION_CONTROL_ENDPOINT, "TIANGONG_COORDINATION_CONTROL_ENDPOINT");
   const token = required(env.TIANGONG_COORDINATION_CONTROL_TOKEN, "TIANGONG_COORDINATION_CONTROL_TOKEN");
   const playbook = readPlaybookManifest("software-change-delivery");
@@ -80,12 +98,12 @@ export function registerLeaderOpenClawTools(api, {
     const stateDirectory = defaultStateDirectory(workspaceDir);
     const paths = workerStatePaths(stateDirectory);
     const evidence = new EvidenceRecorder({ filePath: paths.evidenceFilePath });
-    const channel = createTeamChannel({ evidence, env, fetchImpl });
+    const channel = createTeamChannel({ evidence, env: leaderEnv, fetchImpl });
     const coordinationStore = createRemoteCoordinationStore({ endpoint, token, fetchImpl });
     const invocation = invocationFor(context, env);
     const deps = {
       rootDir: defaultTiangongRoot(env),
-      env,
+      env: leaderEnv,
       channel,
       sync: createTeamSync(),
       evidence,

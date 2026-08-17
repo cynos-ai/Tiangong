@@ -18,6 +18,10 @@
 
 部署启用路由门时设置 `TIANGONG_RUNTIME_ROLE_ROUTING_REQUIRED=1`。Leader 可由 AgentTeams 的 `AGENTTEAMS_WORKER_ROLE=team_leader` 推导；其他 Worker 必须由部署层注入 `TIANGONG_ROLE_ID`。当前 pinned OpenClaw 镜像的官方内置 runtime 历史标识是 `pi`，这不是仓库里的 `tiangong-pi` plugin harness；启动包装器只在路由通过后做这个标识映射。
 
+Leader 的 OpenClaw plugin 注册也接受同一个 AgentTeams `team_leader` 身份断言，因此 v1.2.2 不必额外注入 `TIANGONG_ROLE_ID=leader` 才能出现 Leader 工具面。这个推导只适用于唯一的 Leader；普通 `worker` 不能因此获得任何 Tiangong 专业角色。Designer/Implementor/Assessor/Operator 仍必须由部署层绑定明确的 `TIANGONG_ROLE_ID`，并注入成员协调 endpoint、短期 token 和 `TIANGONG_MEMBER_ID`；这部分仍是 Phase C 的部署前置。
+
+标准的五个固定 RoleProfile 镜像现在把各自的 `TIANGONG_ROLE_ID` 作为镜像事实 materialize；Chat-only 编程路径另有 `canary-chat-bridge-implementor` target，避免把普通 bridge 镜像误当成 Implementor。镜像内角色只能缩小工具面，不能替代部署层的协调 token、binding 或 sidecar receipt 注入。
+
 ## 2. WorkRun 重启恢复
 
 每个 Task 只有一个持久化执行 owner。Worker 在进入 `executing` 时取得 owner lease；进程崩溃后 lease 仍在，因此新 Worker 看到 `executing`、`waiting_approval` 或 `verifying` 时会返回 recovery-required，不能直接重调 Runner、重复提交 Result 或关闭 Work。
