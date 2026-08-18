@@ -11,6 +11,22 @@ All notable changes to Tiangong are documented here. Tiangong follows Semantic V
   remains an explicit rollback lane. Native runtime selection fails closed
   unless the role-routing gate is present.
 
+## [0.3.1] - 2026-08-19
+
+### Fixed
+
+- Phase C role-injection contract tests now honor the selected Codex model
+  instead of hard-coding `deepseek-v4-pro`; the default remains unchanged and
+  explicit `deepseek-v4-flash` canaries are verified correctly.
+
+### Verification
+
+- Real AgentTeams Gate B passed with `deepseek-v4-flash` on the Implementor
+  Codex lane, including native Responses, role reinjection after Manager
+  restart, Matrix Result/Requester reporting, and exact cleanup.
+- Deterministic Phase C, Worker, App, repository, shell, DCO, Gitleaks, and
+  Worker package checks passed.
+
 ## [0.3.0] - 2026-08-17
 
 ### Added
