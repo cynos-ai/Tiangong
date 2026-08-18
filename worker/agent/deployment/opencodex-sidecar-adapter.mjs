@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -34,9 +35,15 @@ function endpointParts(endpoint) {
   return parsed;
 }
 
-function sidecarContainerName(workerId) {
+export function openCodexSidecarContainerName(workerId) {
+  const prefix = "tiangong-opencodex-";
   const suffix = workerId.replace(/[^A-Za-z0-9_.-]/gu, "-").slice(0, 96);
-  return `tiangong-opencodex-${suffix}`;
+  // Docker's embedded DNS follows the 63-character label limit. Keep the
+  // readable worker prefix, then add a stable digest so long Worker IDs do
+  // not alias one another when the sidecar is addressed by container name.
+  if (prefix.length + suffix.length <= 63) return `${prefix}${suffix}`;
+  const digest = createHash("sha256").update(workerId).digest("hex").slice(0, 12);
+  return `${prefix}${suffix.slice(0, 31)}-${digest}`;
 }
 
 function sidecarIdFor(workerId) { return `opencodex-${workerId}`; }
@@ -257,7 +264,7 @@ export function createDockerOpenCodexSidecarAdapter({
     async provision(binding) {
       demand(binding.image, IMAGE, "image");
       const parsed = endpointParts(binding.endpoint);
-      const containerName = sidecarContainerName(binding.workerId);
+      const containerName = openCodexSidecarContainerName(binding.workerId);
       const sidecarId = sidecarIdFor(binding.workerId);
       const info = await containerInfo(containerName);
       await assertOwned(containerName, binding, info);
@@ -283,7 +290,7 @@ export function createDockerOpenCodexSidecarAdapter({
     },
 
     async probe({ sidecarId, binding }) {
-      const info = await containerInfo(sidecarContainerName(binding.workerId));
+      const info = await containerInfo(openCodexSidecarContainerName(binding.workerId));
       if (!info?.state?.Running) fail("sidecar-not-ready", "The OpenCodex sidecar container is not running.");
       const token = await credential(binding);
       const parsed = endpointParts(binding.endpoint);
@@ -302,7 +309,7 @@ export function createDockerOpenCodexSidecarAdapter({
     },
 
     async status({ sidecarId, binding }) {
-      const containerName = sidecarContainerName(binding.workerId);
+      const containerName = openCodexSidecarContainerName(binding.workerId);
       const info = await containerInfo(containerName);
       const state = await readJson(await statePath(sidecarId));
       if (!info) return { generation: state?.generation ?? binding.generation, phase: "removed" };
@@ -325,7 +332,7 @@ export function createDockerOpenCodexSidecarAdapter({
     async drain({ sidecarId, binding }) {
       const stateFile = await statePath(sidecarId);
       const state = await readJson(stateFile);
-      const containerName = sidecarContainerName(binding.workerId);
+      const containerName = openCodexSidecarContainerName(binding.workerId);
       if (state) await atomicJson(stateFile, { ...state, phase: "draining" });
       await execIn(containerName, "touch /run/opencodex/draining");
       await stopProcess(containerName);

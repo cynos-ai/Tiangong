@@ -78,6 +78,14 @@ grep -Fq 'TIANGONG_SMOKE_TEAM_NAME:-tiangong-leader-smoke' "${REPO_ROOT}/smoke-t
   printf 'phasec=fail step=gateb-isolation-contract code=LEADER_SCOPE_NOT_CONSUMED\n' >&2
   failures=$((failures + 1))
 }
+grep -Fq 'openCodexSidecarContainerName' "${REPO_ROOT}/worker/agent/deployment/opencodex-sidecar-adapter.mjs" || {
+  printf 'phasec=fail step=sidecar-name-contract code=BOUNDED_NAME_HELPER_MISSING\n' >&2
+  failures=$((failures + 1))
+}
+grep -Fq 'sha256sum' "${REPO_ROOT}/smoke-testing/support/run-b5-gateb-smoke.sh" || {
+  printf 'phasec=fail step=sidecar-name-contract code=GATEB_NAME_HASH_MISSING\n' >&2
+  failures=$((failures + 1))
+}
 
 pushd "${REPO_ROOT}" >/dev/null
 run_step worker-phase-c-tests "${node_bin}" --test \
@@ -92,6 +100,7 @@ run_step worker-phase-c-tests "${node_bin}" --test \
   worker/test/member-coordination-hooks.test.mjs \
   worker/test/opencodex-sidecar-receipt-service.test.mjs \
   worker/test/opencodex-sidecar.test.mjs \
+  worker/test/opencodex-sidecar-adapter.test.mjs \
   worker/test/canary-admission.test.mjs
 
 run_step app-phase-c-tests "${node_bin}" --test \

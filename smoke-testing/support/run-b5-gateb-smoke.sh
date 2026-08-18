@@ -16,6 +16,17 @@ readonly RUNNER_BROKER_SCRIPT="${REPO_ROOT}/scripts/runner-broker.sh"
 readonly OPENCODEX_DEPLOY="${REPO_ROOT}/scripts/deploy-opencodex-sidecar.sh"
 readonly NORMALIZE_GATEWAY_PROVIDER="${REPO_ROOT}/scripts/normalize-agentteams-gateway-provider.sh"
 
+sidecar_container_name() {
+  local worker_id="$1" prefix='tiangong-opencodex-' suffix digest
+  suffix="$(printf '%s' "${worker_id}" | tr -cd 'A-Za-z0-9_.-' | cut -c1-96)"
+  if (( ${#prefix} + ${#suffix} <= 63 )); then
+    printf '%s%s\n' "${prefix}" "${suffix}"
+    return 0
+  fi
+  digest="$(printf '%s' "${worker_id}" | sha256sum | cut -c1-12)"
+  printf '%s%s-%s\n' "${prefix}" "${suffix:0:31}" "${digest}"
+}
+
 RUN_ID="${TIANGONG_GATEB_RUN_ID:-$(date -u +%Y%m%d%H%M%S)-$$}"
 [[ "${RUN_ID}" =~ ^[A-Za-z0-9._-]{1,48}$ ]] || { printf 'gateb=fail code=RUN_ID_INVALID\n' >&2; exit 2; }
 SMOKE_SCOPE_RAW="${TIANGONG_GATEB_RESOURCE_SCOPE:-${RUN_ID}}"
@@ -54,7 +65,7 @@ readonly SIDECAR_BINDING_FILE="${STATE_DIR}/opencodex-binding.json"
 # controller snapshot in its deployment-owned state volume rather than
 # passing a host-only path that would fail with ENOENT inside the container.
 readonly SIDECAR_SNAPSHOT_FILE="/var/lib/tiangong-opencodex/opencodex-${IMPLEMENTOR_NAME}.controller.json"
-readonly SIDECAR_CONTAINER="tiangong-opencodex-${IMPLEMENTOR_NAME}"
+readonly SIDECAR_CONTAINER="$(sidecar_container_name "${IMPLEMENTOR_NAME}")"
 readonly GATEWAY_PROVIDER_SNAPSHOT_ID="tiangong-${RUN_ID}"
 readonly SMOKE_MODEL="${TIANGONG_SMOKE_MODEL:-deepseek-chat}"
 readonly CODEX_MODEL="${TIANGONG_B5_CODEX_MODEL:-deepseek-v4-pro}"
@@ -261,7 +272,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-for command in bash docker jq timeout; do command -v "${command}" >/dev/null 2>&1 || fail "COMMAND_${command^^}_MISSING"; done
+for command in bash docker jq timeout sha256sum; do command -v "${command}" >/dev/null 2>&1 || fail "COMMAND_${command^^}_MISSING"; done
 [[ -f "${DRIVER}" && -f "${DEPLOY_COORDINATION}" && -f "${INJECT_ROLE}" && -f "${INJECT_LEADER}" && -f "${RUNNER_BROKER_SCRIPT}" && -f "${OPENCODEX_DEPLOY}" && -f "${NORMALIZE_GATEWAY_PROVIDER}" ]] || fail SMOKE_ASSET_MISSING
 [[ "${SMOKE_MODEL}" =~ ^[A-Za-z0-9._:/-]{1,128}$ ]] || fail SMOKE_MODEL_INVALID
 [[ "${CODEX_MODEL}" =~ ^[A-Za-z0-9._:/-]{1,128}$ ]] || fail CODEX_MODEL_INVALID
