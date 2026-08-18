@@ -54,6 +54,18 @@ config="$(make config)"
   printf 'FAIL: generated workspace is not fixed beneath the repository runtime root.\n' >&2
   exit 1
 }
+[[ "${config}" == *'AGENTTEAMS_DEFAULT_WORKER_RUNTIME=openclaw'* ]] || {
+  printf 'FAIL: new Team default Worker runtime is not OpenClaw.\n' >&2
+  exit 1
+}
+[[ "${config}" == *'AGENTTEAMS_AI_GATEWAY_URL=http://aigw-local.agentteams.io:8080'* ]] || {
+  printf 'FAIL: local Worker AI gateway route is not explicit.\n' >&2
+  exit 1
+}
+[[ "${config}" == *'AGENTTEAMS_AI_GATEWAY_DOMAIN=aigw-local.agentteams.io'* ]] || {
+  printf 'FAIL: official AgentTeams gateway domain was not derived.\n' >&2
+  exit 1
+}
 
 cp .env .env.provider-check-base
 provider_check="$(make provider-check)"
@@ -71,6 +83,16 @@ provider_check="$(make provider-check)"
 }
 ! grep -Fq 'touch ' <<<"${provider_check}" || {
   printf 'FAIL: provider-check exposed credential contents.\n' >&2
+  exit 1
+}
+
+sed -i \
+  -e 's/^AGENTTEAMS_LLM_PROVIDER=.*/AGENTTEAMS_LLM_PROVIDER=openai-compat/' \
+  -e 's#^AGENTTEAMS_OPENAI_BASE_URL=.*#AGENTTEAMS_OPENAI_BASE_URL=https://api.deepseek.com/v1#' \
+  -e 's/^AGENTTEAMS_DEFAULT_MODEL=.*/AGENTTEAMS_DEFAULT_MODEL=deepseek-chat/' .env
+provider_check="$(make provider-check)"
+[[ "${provider_check}" == *'route=codex-native-responses'* ]] || {
+  printf 'FAIL: DeepSeek Chat provider route was not classified as the native Responses route.\n' >&2
   exit 1
 }
 
@@ -176,15 +198,19 @@ case "${1:-}" in
   ps) exit 0 ;;
   volume|network) exit 1 ;;
   inspect)
-    if [[ "${2:-}" == "agentteams-manager" ]]; then
+    if [[ "${2:-}" == "-f" ]]; then
+      printf 'true\n'
+    elif [[ "${2:-}" == "agentteams-manager" ]]; then
       printf 'AGENTTEAMS_MANAGER_MATRIX_TOKEN=test_manager_matrix_token_1234567890\n'
     fi
     ;;
   exec)
     if [[ "${RECOVERY_SCENARIO:-}" == "forged" ]]; then
       printf '%s\n' '{"phase":"Running","runtime":"copaw","welcomeSent":false,"matrixUserID":"@manager:matrix-local.agentteams.io:18080","roomID":"!foreign:other.example"}'
-    else
+    elif [[ "${RECOVERY_SCENARIO:-}" =~ ^(invited|joined|forged)$ ]]; then
       printf '%s\n' '{"phase":"Running","runtime":"copaw","welcomeSent":false,"matrixUserID":"@manager:matrix-local.agentteams.io:18080","roomID":"!authoritative:matrix-local.agentteams.io:18080"}'
+    else
+      printf '%s\n' '{"phase":"Running","runtime":"copaw","welcomeSent":true,"matrixUserID":"@manager:matrix-local.agentteams.io:18080","roomID":"!authoritative:matrix-local.agentteams.io:18080"}'
     fi
     ;;
 esac
@@ -193,7 +219,16 @@ cat >fake-bin/curl <<'EOF'
 #!/usr/bin/env bash
 cat >/dev/null
 url="${!#}"
+if [[ " $* " == *" --write-out "* ]]; then
+  case "${url}" in
+    */models) printf '%s' "${VERIFY_PROVIDER_STATUS:-200}" ;;
+    */_matrix/client/v3/account/whoami) printf '%s' "${VERIFY_MATRIX_STATUS:-200}" ;;
+    *) printf '200' ;;
+  esac
+  exit 0
+fi
 case "${url}" in
+  */_matrix/client/versions) printf '%s\n' '{"versions":["v3"]}' ;;
   */joined_rooms)
     if [[ "${RECOVERY_SCENARIO:-}" == "joined" ]]; then
       printf '%s\n' '{"joined_rooms":["!authoritative:matrix-local.agentteams.io:18080"]}'
@@ -235,5 +270,18 @@ grep -q 'authoritative admin-DM invitation was not observable' recovery-forged.o
   printf 'FAIL: foreign Manager DM triggered a join.\n' >&2
   exit 1
 }
+
+if VERIFY_PROVIDER_STATUS=401 VERIFY_MATRIX_STATUS=401 PATH="${TEST_ROOT}/fake-bin:${PATH}" \
+    ./scripts/agentteams.sh verify >verify-invalid.out 2>&1; then
+  printf 'FAIL: verify accepted invalid provider or Manager Matrix credentials.\n' >&2
+  exit 1
+fi
+grep -q 'FAIL provider authentication HTTP 401' verify-invalid.out
+grep -q 'FAIL Manager Matrix authentication HTTP 401' verify-invalid.out
+
+VERIFY_PROVIDER_STATUS=200 VERIFY_MATRIX_STATUS=200 PATH="${TEST_ROOT}/fake-bin:${PATH}" \
+  ./scripts/agentteams.sh verify >verify-valid.out
+grep -q 'PASS provider authentication HTTP 200' verify-valid.out
+grep -q 'PASS Manager Matrix authentication HTTP 200' verify-valid.out
 
 printf 'AgentTeams bootstrap tests passed.\n'

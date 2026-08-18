@@ -77,7 +77,7 @@ sha256_file() {
 
 is_allowed_config_key() {
   case "$1" in
-    AGENTTEAMS_VERSION|AGENTTEAMS_LANGUAGE|AGENTTEAMS_LLM_PROVIDER|AGENTTEAMS_OPENAI_BASE_URL|AGENTTEAMS_DEFAULT_MODEL|AGENTTEAMS_LLM_API_KEY|AGENTTEAMS_ADMIN_USER|AGENTTEAMS_ADMIN_PASSWORD|AGENTTEAMS_PORT_GATEWAY|AGENTTEAMS_PORT_CONSOLE|AGENTTEAMS_PORT_ELEMENT_WEB|AGENTTEAMS_PORT_MANAGER_CONSOLE|AGENTTEAMS_PORT_DASHBOARD|AGENTTEAMS_MANAGER_RUNTIME|AGENTTEAMS_DEFAULT_WORKER_RUNTIME|AGENTTEAMS_MATRIX_E2EE|AGENTTEAMS_WORKER_IDLE_TIMEOUT|AGENTTEAMS_DASHBOARD|AGENTTEAMS_DASHBOARD_VERSION|AGENTTEAMS_DASHBOARD_IMAGE) return 0 ;;
+    AGENTTEAMS_VERSION|AGENTTEAMS_LANGUAGE|AGENTTEAMS_LLM_PROVIDER|AGENTTEAMS_OPENAI_BASE_URL|AGENTTEAMS_AI_GATEWAY_URL|AGENTTEAMS_DEFAULT_MODEL|AGENTTEAMS_LLM_API_KEY|AGENTTEAMS_ADMIN_USER|AGENTTEAMS_ADMIN_PASSWORD|AGENTTEAMS_PORT_GATEWAY|AGENTTEAMS_PORT_CONSOLE|AGENTTEAMS_PORT_ELEMENT_WEB|AGENTTEAMS_PORT_MANAGER_CONSOLE|AGENTTEAMS_PORT_DASHBOARD|AGENTTEAMS_MANAGER_RUNTIME|AGENTTEAMS_DEFAULT_WORKER_RUNTIME|AGENTTEAMS_MATRIX_E2EE|AGENTTEAMS_WORKER_IDLE_TIMEOUT|AGENTTEAMS_DASHBOARD|AGENTTEAMS_DASHBOARD_VERSION|AGENTTEAMS_DASHBOARD_IMAGE) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -146,6 +146,12 @@ validate_config() {
     copaw|openclaw|hermes|openhuman|qwenpaw) ;;
     *) die "Unsupported default Worker runtime: ${AGENTTEAMS_DEFAULT_WORKER_RUNTIME}" ;;
   esac
+  AGENTTEAMS_AI_GATEWAY_URL="$(normalize_base_url "${AGENTTEAMS_AI_GATEWAY_URL}")"
+  local gateway_authority="${AGENTTEAMS_AI_GATEWAY_URL#*://}"
+  gateway_authority="${gateway_authority%%/*}"
+  AGENTTEAMS_AI_GATEWAY_DOMAIN="${gateway_authority%%:*}"
+  [[ "${AGENTTEAMS_AI_GATEWAY_DOMAIN}" =~ ^[A-Za-z0-9.-]+$ ]] || \
+    die "AGENTTEAMS_AI_GATEWAY_URL has an invalid host."
 
   local name value
   declare -A used_ports=()
@@ -189,7 +195,7 @@ provider_route() {
       route="agentteams-qwen-native"
       wire_api="provider-managed"
       ;;
-    openai-compat:https://api.deepseek.com/v1:deepseek-v4-*)
+    openai-compat:https://api.deepseek.com/v1:deepseek-*)
       route="codex-native-responses"
       wire_api="openai-responses"
       ;;
@@ -231,6 +237,10 @@ load_config() {
   : "${AGENTTEAMS_VERSION:=${SUPPORTED_VERSION}}"
   : "${AGENTTEAMS_LANGUAGE:=zh}"
   : "${AGENTTEAMS_LLM_PROVIDER:=openai-compat}"
+  # Local Docker Workers must use the internal Higress AI gateway DNS name;
+  # the Manager's k8s default otherwise projects an unreachable controller
+  # URL into OpenClaw workers.
+  : "${AGENTTEAMS_AI_GATEWAY_URL:=http://aigw-local.agentteams.io:8080}"
   : "${AGENTTEAMS_DEFAULT_MODEL:=qwen3.5-plus}"
   : "${AGENTTEAMS_ADMIN_USER:=admin}"
   : "${AGENTTEAMS_PORT_GATEWAY:=18080}"
@@ -238,7 +248,10 @@ load_config() {
   : "${AGENTTEAMS_PORT_ELEMENT_WEB:=18088}"
   : "${AGENTTEAMS_PORT_MANAGER_CONSOLE:=18888}"
   : "${AGENTTEAMS_MANAGER_RUNTIME:=copaw}"
-  : "${AGENTTEAMS_DEFAULT_WORKER_RUNTIME:=copaw}"
+  # New Teams start on the AgentTeams OpenClaw Worker runtime. The legacy
+  # Tiangong pi harness remains an explicit deployment rollback lane and is
+  # never selected by this default.
+  : "${AGENTTEAMS_DEFAULT_WORKER_RUNTIME:=openclaw}"
   : "${AGENTTEAMS_MATRIX_E2EE:=0}"
   : "${AGENTTEAMS_WORKER_IDLE_TIMEOUT:=720}"
   : "${AGENTTEAMS_DASHBOARD:=1}"
@@ -252,6 +265,9 @@ load_config() {
 
   export AGENTTEAMS_VERSION AGENTTEAMS_LANGUAGE
   export AGENTTEAMS_LLM_PROVIDER AGENTTEAMS_DEFAULT_MODEL
+  # AgentTeams' official installer consumes the domain form; Worker config
+  # consumes the full URL. Keep one source of truth and derive the domain.
+  export AGENTTEAMS_AI_GATEWAY_URL AGENTTEAMS_AI_GATEWAY_DOMAIN
   export AGENTTEAMS_ADMIN_USER AGENTTEAMS_LOCAL_ONLY
   export AGENTTEAMS_PORT_GATEWAY AGENTTEAMS_PORT_CONSOLE
   export AGENTTEAMS_PORT_ELEMENT_WEB AGENTTEAMS_PORT_MANAGER_CONSOLE
@@ -540,6 +556,24 @@ http_status() {
   fi
 }
 
+authenticated_http_status() {
+  local token="$1" url="$2" host_header="${3:-}" code
+  [[ -n "${token}" ]] || {
+    printf 'missing'
+    return
+  }
+  if code="$( {
+      printf 'header = "Authorization: Bearer %s"\n' "${token}"
+      [[ -z "${host_header}" ]] || printf 'header = "Host: %s"\n' "${host_header}"
+    } | \
+      curl --config - --silent --show-error --output /dev/null --write-out '%{http_code}' \
+      --connect-timeout 3 --max-time 10 "${url}" 2>/dev/null)"; then
+    printf '%s' "${code}"
+  else
+    printf 'unreachable'
+  fi
+}
+
 status() {
   require_command docker
   if [[ -f "${ENV_FILE}" ]]; then
@@ -575,7 +609,7 @@ verify() {
   load_config
   validate_stack_ownership
 
-  local failed=0 code matrix_domain
+  local failed=0 code matrix_domain provider_base provider_code manager_token matrix_code
   for container in agentteams-controller agentteams-manager; do
     if [[ "$(docker inspect -f '{{.State.Running}}' "${container}" 2>/dev/null || true)" == "true" ]]; then
       log "PASS container running: ${container}"
@@ -617,6 +651,30 @@ verify() {
     failed=1
   fi
 
+  provider_route >/dev/null
+  provider_base="${AGENTTEAMS_OPENAI_BASE_URL:-}"
+  if [[ "${AGENTTEAMS_LLM_PROVIDER}" == "qwen" && -z "${provider_base}" ]]; then
+    provider_base="https://dashscope.aliyuncs.com/compatible-mode/v1"
+  fi
+  provider_code="$(authenticated_http_status "${AGENTTEAMS_LLM_API_KEY:-}" "${provider_base%/}/models")"
+  if [[ "${provider_code}" == "200" ]]; then
+    log "PASS provider authentication HTTP ${provider_code}"
+  else
+    warn "FAIL provider authentication HTTP ${provider_code}"
+    failed=1
+  fi
+
+  manager_token="$(docker inspect agentteams-manager --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | \
+    awk -F= '$1 == "AGENTTEAMS_MANAGER_MATRIX_TOKEN" {sub(/^[^=]*=/, ""); print; exit}')"
+  matrix_code="$(authenticated_http_status "${manager_token}" \
+    "http://127.0.0.1:${AGENTTEAMS_PORT_GATEWAY}/_matrix/client/v3/account/whoami" "${matrix_domain}")"
+  if [[ "${matrix_code}" == "200" ]]; then
+    log "PASS Manager Matrix authentication HTTP ${matrix_code}"
+  else
+    warn "FAIL Manager Matrix authentication HTTP ${matrix_code}"
+    failed=1
+  fi
+
   local manager_json
   manager_json="$(docker exec agentteams-controller agt \
     get managers default -o json 2>/dev/null || true)"
@@ -637,6 +695,8 @@ print_config() {
 AGENTTEAMS_VERSION=${AGENTTEAMS_VERSION}
 AGENTTEAMS_LLM_PROVIDER=${AGENTTEAMS_LLM_PROVIDER}
 AGENTTEAMS_OPENAI_BASE_URL=${AGENTTEAMS_OPENAI_BASE_URL:-}
+AGENTTEAMS_AI_GATEWAY_URL=${AGENTTEAMS_AI_GATEWAY_URL}
+AGENTTEAMS_AI_GATEWAY_DOMAIN=${AGENTTEAMS_AI_GATEWAY_DOMAIN}
 AGENTTEAMS_DEFAULT_MODEL=${AGENTTEAMS_DEFAULT_MODEL}
 AGENTTEAMS_LLM_API_KEY=<redacted>
 AGENTTEAMS_ADMIN_USER=${AGENTTEAMS_ADMIN_USER}

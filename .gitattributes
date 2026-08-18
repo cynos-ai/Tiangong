@@ -1,4 +1,7 @@
 * text=auto
+scripts/*.sh text eol=lf
+smoke-testing/**/*.sh text eol=lf
+worker/bin/openclaw text eol=lf
 scripts/agentteams.sh text eol=lf
 scripts/test-agentteams.sh text eol=lf
 smoke-testing/fixtures/runner-isolation/input.txt text eol=lf

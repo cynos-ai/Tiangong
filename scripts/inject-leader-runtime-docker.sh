@@ -19,6 +19,7 @@ readonly NETWORK="${TIANGONG_AGENTTEAMS_NETWORK:-agentteams-net}"
 readonly OWNER="${TIANGONG_DEPLOYMENT_OWNER:-tiangong-deployment}"
 readonly COMPONENT="${TIANGONG_LEADER_INJECTION_COMPONENT:-leader-runtime-injection}"
 readonly DOCKER_TEMP_DIR="${TIANGONG_DOCKER_TEMP_DIR:-}"
+readonly GATEWAY_URL="${TIANGONG_AGENTTEAMS_AI_GATEWAY_URL:-http://aigw-local.agentteams.io:8080}"
 
 tmp_dir=''
 inspect_file=''
@@ -86,6 +87,9 @@ valid_token() {
   [[ "$1" =~ ^[^[:space:][:cntrl:]]+$ ]] || return 1
   (( ${#1} >= 16 && ${#1} <= 512 ))
 }
+valid_gateway_url() {
+  [[ "$1" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$ ]]
+}
 docker_host_path() {
   # Docker Desktop on Windows cannot resolve a WSL /tmp path through the
   # daemon unless it is converted to a \\wsl.localhost UNC path. Keep native
@@ -125,6 +129,9 @@ if [[ -n "${DOCKER_BINDING_VOLUME}" ]]; then
 fi
 valid_endpoint "${ENDPOINT}" || fail INVALID_CONTROL_ENDPOINT
 valid_token "${CONTROL_TOKEN}" || fail INVALID_CONTROL_TOKEN
+valid_gateway_url "${GATEWAY_URL}" || fail INVALID_GATEWAY_URL
+gateway_domain="${GATEWAY_URL#*://}"
+gateway_domain="${gateway_domain%%:*}"
 
 if [[ -n "${DOCKER_TEMP_DIR}" ]]; then
   [[ -d "${DOCKER_TEMP_DIR}" && ! -L "${DOCKER_TEMP_DIR}" ]] || fail INVALID_DOCKER_TEMP_DIR
@@ -214,7 +221,9 @@ fi
 jq -r '.[0].Config.Env[]?
   | select(startswith("TIANGONG_LEADER_RUNTIME_BINDING_FILE=") | not)
   | select(startswith("TIANGONG_COORDINATION_CONTROL_ENDPOINT=") | not)
-  | select(startswith("TIANGONG_COORDINATION_CONTROL_TOKEN=") | not)' "${inspect_file}" | while IFS= read -r line; do
+  | select(startswith("TIANGONG_COORDINATION_CONTROL_TOKEN=") | not)
+  | select(startswith("AGENTTEAMS_AI_GATEWAY_URL=") | not)
+  | select(startswith("AGENTTEAMS_AI_GATEWAY_DOMAIN=") | not)' "${inspect_file}" | while IFS= read -r line; do
   line="${line%$'\r'}"
   [[ "${line}" != *$'\r'* ]] || fail WORKER_ENV_NEWLINE
   printf '%s\n' "${line}"
@@ -223,6 +232,8 @@ done >"${env_file}"
   printf 'TIANGONG_LEADER_RUNTIME_BINDING_FILE=%s\n' "${BINDING_TARGET}"
   printf 'TIANGONG_COORDINATION_CONTROL_ENDPOINT=%s\n' "${ENDPOINT}"
   printf 'TIANGONG_COORDINATION_CONTROL_TOKEN=%s\n' "${CONTROL_TOKEN}"
+  printf 'AGENTTEAMS_AI_GATEWAY_URL=%s\n' "${GATEWAY_URL}"
+  printf 'AGENTTEAMS_AI_GATEWAY_DOMAIN=%s\n' "${gateway_domain}"
 } >>"${env_file}"
 chmod 600 "${env_file}"
 sleep 1

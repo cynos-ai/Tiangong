@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 import {
+  createCoordinationDecision,
   isControlProfile,
   isMemberConfig,
   isResult,
@@ -152,6 +153,7 @@ async function readWork(client, workId) {
     epoch: row.epoch,
     status: row.status,
     currentWorkSpec: clone(row.current_work_spec),
+    closeDecision: row.close_decision_json ? clone(row.close_decision_json) : null,
     timeline: await readTimeline(client, workId),
   };
 }
@@ -162,6 +164,7 @@ function publicWork(entry) {
     epoch: entry.epoch,
     status: entry.status,
     currentWorkSpec: entry.currentWorkSpec,
+    closeDecision: entry.closeDecision ?? null,
     timeline: entry.timeline,
   });
 }
@@ -173,6 +176,7 @@ function taskFromRow(row) {
     status: row.status,
     result: row.result_json ? clone(row.result_json) : null,
     cancellation: row.cancellation_json ? clone(row.cancellation_json) : null,
+    decision: row.decision_json ? clone(row.decision_json) : null,
   };
 }
 
@@ -211,11 +215,13 @@ export class PostgresCoordinationStore {
   async migrate({ sql } = {}) {
     const migrationSql = sql ?? await readFile(new URL("./migrations/001_coordination.sql", import.meta.url), "utf8");
     const taskResultSql = sql ? "" : await readFile(new URL("./migrations/002_task_result.sql", import.meta.url), "utf8");
+    const decisionSql = sql ? "" : await readFile(new URL("./migrations/003_decision_closure.sql", import.meta.url), "utf8");
     return withTransaction(this.#pool, async (client) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtext('tiangong_coordination.migrations'))");
       await client.query(migrationSql);
       if (taskResultSql) await client.query(taskResultSql);
-      return { version: taskResultSql ? "002_task_result" : "001_coordination" };
+      if (decisionSql) await client.query(decisionSql);
+      return { version: decisionSql ? "003_decision_closure" : taskResultSql ? "002_task_result" : "001_coordination" };
     });
   }
 
@@ -528,6 +534,101 @@ export class PostgresCoordinationStore {
     });
   }
 
+  async decideTask({ taskId, team, profile, actorId, decision, resultDigest, reason, expectedEpoch, requestId } = {}) {
+    if (!isTeamConfig(team) || !isControlProfile(profile)) throw new Error("Task decision requires valid TeamConfig and ControlProfile");
+    if (actorId !== team.leaderMemberId) throw new Error("TASK_DECISION_ACTOR_NOT_LEADER");
+    const id = identifier(taskId, "taskId");
+    const action = bounded(decision, "decision", 32);
+    if (!["accept", "blocked"].includes(action)) throw new Error("TASK_DECISION_INVALID");
+    const normalizedReason = bounded(reason, "reason", 4096);
+    const normalizedResultDigest = resultDigest === undefined ? undefined : digest(resultDigest, "resultDigest");
+    const request = identifier(requestId, "requestId");
+    const requestHash = commandHash("task.decide", { taskId: id, teamId: team.teamId, actorId, decision: action, resultDigest: normalizedResultDigest ?? null, reason: normalizedReason, expectedEpoch, profileId: profile.profileId });
+    return withTransaction(this.#pool, async (client) => {
+      const replay = await readReplay(client, request);
+      if (replay) {
+        if (replay.request_hash !== requestHash) throw new Error("COMMAND_REQUEST_CONFLICT");
+        const response = clone(replay.response_json); response.replayed = true; return response;
+      }
+      const taskResult = await client.query(`SELECT * FROM ${SCHEMA}.task WHERE task_id = $1 FOR UPDATE`, [id]);
+      if (taskResult.rows.length === 0) throw new Error("TASK_NOT_FOUND");
+      const resultRow = await client.query(`SELECT result_json FROM ${SCHEMA}.result WHERE task_id = $1`, [id]);
+      const taskRow = { ...taskResult.rows[0], result_json: resultRow.rows[0]?.result_json ?? null };
+      const workResult = await client.query(`SELECT * FROM ${SCHEMA}.work WHERE work_id = $1 FOR UPDATE`, [taskRow.work_id]);
+      if (workResult.rows.length === 0) throw new Error("WORK_NOT_FOUND");
+      const work = workResult.rows[0];
+      if (work.team_id !== team.teamId || work.control_profile_id !== profile.profileId) throw new Error("TASK_TEAM_BINDING_MISMATCH");
+      if (work.status !== "open" || taskRow.decision_json || expectedEpoch !== work.epoch) throw new Error("TASK_DECISION_CONFLICT");
+      if (action === "accept" && (!taskRow.result_json || taskRow.status !== "reported" || normalizedResultDigest !== taskRow.result_json.contentDigest)) throw new Error("TASK_DECISION_RESULT_CONFLICT");
+      if (action === "blocked" && !["assigned", "reported"].includes(taskRow.status)) throw new Error("TASK_DECISION_CONFLICT");
+      const decisionRecord = createCoordinationDecision({
+        decisionId: sha256({ scope: "task", taskId: id, requestId: request, decision: action, resultDigest: normalizedResultDigest ?? null }),
+        workId: taskRow.work_id,
+        taskId: id,
+        decision: action,
+        ...(normalizedResultDigest !== undefined ? { resultDigest: normalizedResultDigest } : {}),
+        reason: normalizedReason,
+        createdAt: this.#now(),
+      });
+      const timelineCount = await client.query(`SELECT count(*)::int AS count FROM ${SCHEMA}.work_timeline WHERE work_id = $1`, [taskRow.work_id]);
+      if (Number(timelineCount.rows[0].count) >= Math.min(profile.maxTimelineEntries, this.#maxTimelineEntries)) throw new Error("WORK_TIMELINE_LIMIT_EXCEEDED");
+      const nextEpoch = work.epoch + 1;
+      const sequence = await this.#nextSequence(client, taskRow.work_id);
+      const status = action === "accept" ? "accepted" : "blocked";
+      await client.query(`UPDATE ${SCHEMA}.task SET status=$2, decision_json=$3::jsonb, updated_at=$4 WHERE task_id=$1`, [id, status, rowJson(decisionRecord), decisionRecord.createdAt]);
+      await client.query(`UPDATE ${SCHEMA}.work SET epoch=$2, updated_at=$3 WHERE work_id=$1`, [taskRow.work_id, nextEpoch, decisionRecord.createdAt]);
+      const payload = { workId: taskRow.work_id, taskId: id, actorId: bounded(actorId, "actorId", 256), expectedEpoch, decision: decisionRecord };
+      await client.query(`INSERT INTO ${SCHEMA}.work_timeline (work_id, sequence, type, occurred_at, epoch, request_id, payload) VALUES ($1,$2,'task-decided',$3,$4,$5,$6::jsonb)`, [taskRow.work_id, sequence, decisionRecord.createdAt, nextEpoch, request, rowJson(payload)]);
+      const response = { replayed: false, decision: decisionRecord, task: taskFromRow({ ...taskRow, status, decision_json: decisionRecord }), work: publicWork(await readWork(client, taskRow.work_id)) };
+      await client.query(`INSERT INTO ${SCHEMA}.request_replay (request_id, scope, request_hash, response_json) VALUES ($1,'task.decide',$2,$3::jsonb)`, [request, requestHash, rowJson(response)]);
+      return response;
+    });
+  }
+
+  async closeWork({ workId, team, profile, actorId, decision, reason, expectedEpoch, requestId } = {}) {
+    if (!isTeamConfig(team) || !isControlProfile(profile)) throw new Error("Work closure requires valid TeamConfig and ControlProfile");
+    if (actorId !== team.leaderMemberId) throw new Error("WORK_CLOSE_ACTOR_NOT_LEADER");
+    const id = identifier(workId, "workId");
+    const action = bounded(decision, "decision", 32);
+    if (!["complete", "stop"].includes(action)) throw new Error("WORK_CLOSE_INVALID");
+    const normalizedReason = bounded(reason, "reason", 4096);
+    const request = identifier(requestId, "requestId");
+    const requestHash = commandHash("work.close", { workId: id, teamId: team.teamId, actorId, decision: action, reason: normalizedReason, expectedEpoch, profileId: profile.profileId });
+    return withTransaction(this.#pool, async (client) => {
+      const replay = await readReplay(client, request);
+      if (replay) {
+        if (replay.request_hash !== requestHash) throw new Error("COMMAND_REQUEST_CONFLICT");
+        const response = clone(replay.response_json); response.replayed = true; return response;
+      }
+      const workResult = await client.query(`SELECT * FROM ${SCHEMA}.work WHERE work_id = $1 FOR UPDATE`, [id]);
+      if (workResult.rows.length === 0) throw new Error("WORK_NOT_FOUND");
+      const work = workResult.rows[0];
+      if (work.team_id !== team.teamId || work.control_profile_id !== profile.profileId) throw new Error("WORK_TEAM_BINDING_MISMATCH");
+      if (work.status !== "open" || work.close_decision_json || expectedEpoch !== work.epoch) throw new Error("WORK_CLOSE_CONFLICT");
+      const tasks = await client.query(`SELECT status FROM ${SCHEMA}.task WHERE work_id = $1`, [id]);
+      const statuses = tasks.rows.map((row) => row.status);
+      const terminal = statuses.every((status) => ["accepted", "blocked", "cancelled"].includes(status));
+      if (!terminal || (action === "complete" && statuses.some((status) => status !== "accepted" && status !== "cancelled"))) throw new Error("WORK_CLOSE_GUARD_FAILED");
+      const decisionRecord = createCoordinationDecision({
+        decisionId: sha256({ scope: "work", workId: id, requestId: request, decision: action }),
+        workId: id,
+        decision: action,
+        reason: normalizedReason,
+        createdAt: this.#now(),
+      });
+      const timelineCount = await client.query(`SELECT count(*)::int AS count FROM ${SCHEMA}.work_timeline WHERE work_id = $1`, [id]);
+      if (Number(timelineCount.rows[0].count) >= Math.min(profile.maxTimelineEntries, this.#maxTimelineEntries)) throw new Error("WORK_TIMELINE_LIMIT_EXCEEDED");
+      const nextEpoch = work.epoch + 1;
+      const sequence = await this.#nextSequence(client, id);
+      const payload = { workId: id, actorId: bounded(actorId, "actorId", 256), expectedEpoch, decision: decisionRecord };
+      await client.query(`UPDATE ${SCHEMA}.work SET status='closed', close_decision_json=$2::jsonb, epoch=$3, updated_at=$4 WHERE work_id=$1`, [id, rowJson(decisionRecord), nextEpoch, decisionRecord.createdAt]);
+      await client.query(`INSERT INTO ${SCHEMA}.work_timeline (work_id, sequence, type, occurred_at, epoch, request_id, payload) VALUES ($1,$2,'work-closed',$3,$4,$5,$6::jsonb)`, [id, sequence, decisionRecord.createdAt, nextEpoch, request, rowJson(payload)]);
+      const response = { replayed: false, decision: decisionRecord, work: publicWork(await readWork(client, id)) };
+      await client.query(`INSERT INTO ${SCHEMA}.request_replay (request_id, scope, request_hash, response_json) VALUES ($1,'work.close',$2,$3::jsonb)`, [request, requestHash, rowJson(response)]);
+      return response;
+    });
+  }
+
   async enqueueWake({ workId, taskId, targetMemberId, kind = "leader-resume", requestId, at = this.#now() } = {}) {
     if (!["task-assignment", "leader-resume", "result-notification", "human-reply"].includes(kind)) throw new Error("Unsupported outbox status");
     const normalizedRequest = identifier(requestId, "requestId");
@@ -666,6 +767,35 @@ export class PostgresCoordinationStore {
         : `SELECT result_json FROM ${SCHEMA}.result ORDER BY created_at ASC, result_id ASC`;
       const { rows } = await client.query(query, workId ? [identifier(workId, "workId")] : []);
       return rows.map(resultFromRow).filter(Boolean);
+    } finally { client.release(); }
+  }
+
+  async getDecision(decisionId) {
+    const id = identifier(decisionId, "decisionId");
+    const client = await this.#pool.connect();
+    try {
+      const task = await client.query(`SELECT decision_json FROM ${SCHEMA}.task WHERE decision_json->>'decisionId' = $1`, [id]);
+      if (task.rows[0]?.decision_json) return clone(task.rows[0].decision_json);
+      const work = await client.query(`SELECT close_decision_json FROM ${SCHEMA}.work WHERE close_decision_json->>'decisionId' = $1`, [id]);
+      return work.rows[0]?.close_decision_json ? clone(work.rows[0].close_decision_json) : undefined;
+    } finally { client.release(); }
+  }
+
+  async listDecisions({ workId, taskId } = {}) {
+    const client = await this.#pool.connect();
+    try {
+      const params = [];
+      const filters = [];
+      if (workId !== undefined) { params.push(identifier(workId, "workId")); filters.push(`work_id = $${params.length}`); }
+      if (taskId !== undefined) { params.push(identifier(taskId, "taskId")); filters.push(`task_id = $${params.length}`); }
+      const taskQuery = `SELECT decision_json FROM ${SCHEMA}.task WHERE decision_json IS NOT NULL${filters.length ? ` AND ${filters.join(" AND ")}` : ""}`;
+      const taskRows = await client.query(taskQuery, params);
+      const workParams = workId !== undefined ? [identifier(workId, "workId")] : [];
+      const workRows = taskId === undefined
+        ? await client.query(`SELECT close_decision_json FROM ${SCHEMA}.work WHERE close_decision_json IS NOT NULL${workId !== undefined ? " AND work_id = $1" : ""}`, workParams)
+        : { rows: [] };
+      return [...taskRows.rows.map((row) => clone(row.decision_json)), ...workRows.rows.map((row) => clone(row.close_decision_json))]
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.decisionId.localeCompare(right.decisionId));
     } finally { client.release(); }
   }
 

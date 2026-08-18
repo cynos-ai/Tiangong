@@ -32,6 +32,9 @@ for required in \
   grep -Fq "${required}" "${DRIVER}" || fail "missing requester-report oracle: ${required}"
 done
 
+grep -Fq 'AgentTeams-reserved shared/tasks files' "${REPO_ROOT}/smoke-testing/support/leader-coordination-turn.sh" || \
+  fail "coordination smoke must forbid writes to AgentTeams-reserved files"
+
 grep -Fq 'leader_smoke_requester_matrix_report=pass' "${REPORT_CHECK}" || \
   fail "Matrix requester report marker is missing"
 

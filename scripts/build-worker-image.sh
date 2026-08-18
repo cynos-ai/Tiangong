@@ -37,9 +37,43 @@ docker info >/dev/null 2>&1 || {
   exit 1
 }
 
+validate_codex_gateway_override() {
+  local base_url="${TIANGONG_CODEX_BASE_URL:-}" hosts="${TIANGONG_CODEX_GATEWAY_HOSTS:-}"
+  if [[ -n "${base_url}" ]]; then
+    [[ "${base_url}" =~ ^https?://[^@/?#[:space:]]+(/[^?#[:space:]]*)?$ ]] || {
+      printf 'ERROR: TIANGONG_CODEX_BASE_URL must be an HTTP(S) URL without credentials, query, or fragment.\n' >&2
+      exit 1
+    }
+  fi
+  if [[ -n "${hosts}" ]]; then
+    [[ "${hosts}" =~ ^[A-Za-z0-9.-]+(,[A-Za-z0-9.-]+)*$ ]] || {
+      printf 'ERROR: TIANGONG_CODEX_GATEWAY_HOSTS must be a comma-separated host allowlist.\n' >&2
+      exit 1
+    }
+  fi
+}
+
+validate_codex_gateway_override
+
+# Git Bash rewrites Unix-looking container paths in `docker run` arguments as
+# Windows host paths. Build contexts intentionally keep that conversion, but
+# validation entrypoints and workdirs belong inside the container namespace.
+run_image() {
+  MSYS_NO_PATHCONV=1 docker run "$@"
+}
+
 build_args=(--pull --build-context "team_playbooks=${REPO_ROOT}/team-playbooks")
 if [[ -n "${TIANGONG_OTEL_EXPORTER_ENDPOINT:-}" ]]; then
   build_args+=(--build-arg "TIANGONG_OTEL_EXPORTER_ENDPOINT=${TIANGONG_OTEL_EXPORTER_ENDPOINT}")
+fi
+# These are non-secret, deployment-owned Codex routing values. They are baked
+# into all Tiangong Worker profiles so a later runtime injection can use the
+# same explicit endpoint without copying a provider credential into the image.
+if [[ -n "${TIANGONG_CODEX_GATEWAY_HOSTS:-}" ]]; then
+  build_args+=(--build-arg "TIANGONG_CODEX_GATEWAY_HOSTS=${TIANGONG_CODEX_GATEWAY_HOSTS}")
+fi
+if [[ -n "${TIANGONG_CODEX_BASE_URL:-}" ]]; then
+  build_args+=(--build-arg "TIANGONG_CODEX_BASE_URL=${TIANGONG_CODEX_BASE_URL}")
 fi
 
 printf '[Tiangong] Building %s\n' "${IMAGE}"
@@ -71,19 +105,19 @@ docker build "${build_args[@]}" --target opencodex-receipt-service --tag "${OPEN
 printf '[Tiangong] Building OpenCodex AgentTeams adapter image %s\n' "${OPENCODEX_ADAPTER_IMAGE}"
 docker build "${build_args[@]}" --target opencodex-adapter --tag "${OPENCODEX_ADAPTER_IMAGE}" "${REPO_ROOT}/worker"
 
-actual_node_version="$(docker run --rm --entrypoint node "${IMAGE}" --version)"
+actual_node_version="$(run_image --rm --entrypoint node "${IMAGE}" --version)"
 [[ "${actual_node_version}" == "${EXPECTED_NODE_VERSION}" ]] || {
   printf 'ERROR: expected Node.js %s, got %s.\n' "${EXPECTED_NODE_VERSION}" "${actual_node_version}" >&2
   exit 1
 }
 
-actual_docker_cli_version="$(docker run --rm --entrypoint /usr/local/bin/docker "${RUNNER_BROKER_IMAGE}" --version | awk '{print $3}' | tr -d ',')"
+actual_docker_cli_version="$(run_image --rm --entrypoint /usr/local/bin/docker "${RUNNER_BROKER_IMAGE}" --version | awk '{print $3}' | tr -d ',')"
 [[ "${actual_docker_cli_version}" == "${EXPECTED_DOCKER_CLI_VERSION}" ]] || {
   printf 'ERROR: expected Runner broker Docker CLI %s, got %s.\n' "${EXPECTED_DOCKER_CLI_VERSION}" "${actual_docker_cli_version}" >&2
   exit 1
 }
 
-actual_pi_version="$(docker run --rm --entrypoint pi "${IMAGE}" --version)"
+actual_pi_version="$(run_image --rm --entrypoint pi "${IMAGE}" --version)"
 [[ "${actual_pi_version}" == "${EXPECTED_PI_VERSION}" ]] || {
   printf 'ERROR: expected pi %s, got %s.\n' "${EXPECTED_PI_VERSION}" "${actual_pi_version}" >&2
   exit 1
@@ -92,46 +126,46 @@ actual_pi_version="$(docker run --rm --entrypoint pi "${IMAGE}" --version)"
 # `bin/codex` is the runtime app-server entrypoint and intentionally requires
 # the in-memory gateway environment. Inspect the managed CLI package directly
 # for the image-version contract instead of starting that runtime wrapper.
-actual_codex_version="$(docker run --rm --entrypoint /opt/tiangong-worker/node_modules/.bin/codex "${CANARY_IMAGE}" --version)"
+actual_codex_version="$(run_image --rm --entrypoint /opt/tiangong-worker/node_modules/.bin/codex "${CANARY_IMAGE}" --version)"
 [[ "${actual_codex_version}" == "${EXPECTED_CODEX_VERSION}" ]] || {
   printf 'ERROR: expected managed Codex %s, got %s.\n' "${EXPECTED_CODEX_VERSION}" "${actual_codex_version}" >&2
   exit 1
 }
-member_canary_profile="$(docker run --rm --entrypoint node "${CANARY_MEMBER_IMAGE}" \
+member_canary_profile="$(run_image --rm --entrypoint node "${CANARY_MEMBER_IMAGE}" \
   /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role implementor)"
 printf '%s\n' "${member_canary_profile}" | grep -Fq '"runtimeReady":true' || {
   printf 'ERROR: fixed Implementor Chat bridge profile is not runtime-ready.\n' >&2
   exit 1
 }
-actual_opencodex_version="$(docker run --rm --entrypoint ocx "${OPENCODEX_SIDECAR_IMAGE}" --version)"
+actual_opencodex_version="$(run_image --rm --entrypoint ocx "${OPENCODEX_SIDECAR_IMAGE}" --version)"
 [[ "${actual_opencodex_version}" == *"2.15.0"* ]] || {
   printf 'ERROR: expected OpenCodex 2.15.0, got %s.\n' "${actual_opencodex_version}" >&2
   exit 1
 }
 # Probe the managed CLI's app-server directly; the `bin/codex` wrapper is the
 # credential-gated runtime entrypoint and is not a build-time health probe.
-docker run --rm --workdir /opt/tiangong-worker \
+run_image --rm --workdir /opt/tiangong-worker \
   --env OPENCLAW_CODEX_APP_SERVER_BIN=/opt/tiangong-worker/node_modules/.bin/codex \
   --entrypoint node "${CANARY_IMAGE}" \
   scripts/probe-codex-app-server.mjs
 
-actual_git_version="$(docker run --rm --entrypoint /usr/bin/git "${IMAGE}" --version)"
+actual_git_version="$(run_image --rm --entrypoint /usr/bin/git "${IMAGE}" --version)"
 [[ "${actual_git_version}" == "${EXPECTED_GIT_VERSION}" ]] || {
   printf 'ERROR: expected Git %s, got %s.\n' "${EXPECTED_GIT_VERSION}" "${actual_git_version}" >&2
   exit 1
 }
-actual_prlimit_version="$(docker run --rm --entrypoint /usr/bin/prlimit "${IMAGE}" --version | head -n 1)"
+actual_prlimit_version="$(run_image --rm --entrypoint /usr/bin/prlimit "${IMAGE}" --version | head -n 1)"
 [[ "${actual_prlimit_version}" == "prlimit from util-linux ${EXPECTED_UTIL_LINUX_VERSION}" ]] || {
   printf 'ERROR: expected prlimit from util-linux %s, got %s.\n' "${EXPECTED_UTIL_LINUX_VERSION}" "${actual_prlimit_version}" >&2
   exit 1
 }
-actual_flock_version="$(docker run --rm --entrypoint /usr/bin/flock "${IMAGE}" --version | head -n 1)"
+actual_flock_version="$(run_image --rm --entrypoint /usr/bin/flock "${IMAGE}" --version | head -n 1)"
 [[ "${actual_flock_version}" == "flock from util-linux ${EXPECTED_UTIL_LINUX_VERSION}" ]] || {
   printf 'ERROR: expected flock from util-linux %s, got %s.\n' "${EXPECTED_UTIL_LINUX_VERSION}" "${actual_flock_version}" >&2
   exit 1
 }
 
-docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${IMAGE}" \
+run_image --rm --workdir /opt/tiangong-worker --entrypoint node "${IMAGE}" \
   --input-type=module -e '
     import {
       createWorkerObservability,
@@ -143,35 +177,35 @@ docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${IMAGE}" \
     const observability = createWorkerObservability({ config });
     await observability.shutdown();
   '
-reconciliation_help="$(docker run --rm --entrypoint tiangong-reconcile "${IMAGE}" --help)"
+reconciliation_help="$(run_image --rm --entrypoint tiangong-reconcile "${IMAGE}" --help)"
 grep -Fq 'tiangong-reconcile inspect' <<<"${reconciliation_help}" || {
   printf 'ERROR: the Worker reconciliation entrypoint is unavailable.\n' >&2
   exit 1
 }
-work_run_recovery_help="$(docker run --rm --entrypoint tiangong-work-run "${IMAGE}" --help)"
+work_run_recovery_help="$(run_image --rm --entrypoint tiangong-work-run "${IMAGE}" --help)"
 grep -Fq 'tiangong-work-run inspect' <<<"${work_run_recovery_help}" || {
   printf 'ERROR: the WorkRun recovery entrypoint is unavailable.\n' >&2
   exit 1
 }
-retention_help="$(docker run --rm --entrypoint tiangong-retain "${IMAGE}" --help)"
+retention_help="$(run_image --rm --entrypoint tiangong-retain "${IMAGE}" --help)"
 grep -Fq 'tiangong-retain compact' <<<"${retention_help}" || {
   printf 'ERROR: the Worker retention entrypoint is unavailable.\n' >&2
   exit 1
 }
 
-kernel_profile="$(docker run --rm --entrypoint node "${IMAGE}" \
+kernel_profile="$(run_image --rm --entrypoint node "${IMAGE}" \
   /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role kernel)"
-leader_profile="$(docker run --rm --entrypoint node "${LEADER_IMAGE}" \
+leader_profile="$(run_image --rm --entrypoint node "${LEADER_IMAGE}" \
   /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role leader)"
-designer_profile="$(docker run --rm --entrypoint node "${DESIGNER_IMAGE}" \
+designer_profile="$(run_image --rm --entrypoint node "${DESIGNER_IMAGE}" \
   /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role designer)"
-implementor_profile="$(docker run --rm --entrypoint node "${IMPLEMENTOR_IMAGE}" \
+implementor_profile="$(run_image --rm --entrypoint node "${IMPLEMENTOR_IMAGE}" \
   /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role implementor)"
-assessor_profile="$(docker run --rm --entrypoint node "${ASSESSOR_IMAGE}" \
+assessor_profile="$(run_image --rm --entrypoint node "${ASSESSOR_IMAGE}" \
   /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role assessor)"
-operator_profile="$(docker run --rm --entrypoint node "${OPERATOR_IMAGE}" \
+operator_profile="$(run_image --rm --entrypoint node "${OPERATOR_IMAGE}" \
   /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role operator)"
-docker run --rm --workdir /opt/tiangong-worker --entrypoint node "${LEADER_IMAGE}" \
+run_image --rm --workdir /opt/tiangong-worker --entrypoint node "${LEADER_IMAGE}" \
   --input-type=module -e '
     const [
       { loadFixedRoleProfileBundle },

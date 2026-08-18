@@ -47,3 +47,14 @@
 ## Maintenance notes
 
 Run deterministic app/Worker tests before Basic smoke. Keep model/provider and AgentTeams version explicit in every run; never silently switch them to make readiness pass.
+
+## Phase C production boundary
+
+Run `make test-phase-c-contract` before any real resource is touched. The
+explicit `make phase-c-real` entrypoint owns a unique disposable Team, PG,
+Coordination runtime, binding volume, and Worker set; it must prove the
+Leader binding verifier, role/runtime injection, native Leader resume,
+Task/Result/ToolResult delivery, WebUI/Matrix projections, restart recovery,
+and exact cleanup. A provider/catalog rejection or a deployment injection
+failure is a No-Go; do not substitute model prose or an HTTP 2xx for the
+missing machine fact.

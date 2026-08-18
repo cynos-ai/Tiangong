@@ -119,7 +119,13 @@ case "${1:-}:${2:-}" in
   exec:*) exit 0 ;;
   rename:*) exit 0 ;;
   stop:*) exit 0 ;;
-  run:*) printf '%s\n' "$*" >"${root}/run.args" ;;
+  run:*)
+    printf '%s\n' "$*" >"${root}/run.args"
+    args=("$@")
+    for ((i=0; i<${#args[@]}; i++)); do
+      if [[ "${args[i]}" == --env-file ]]; then cp "${args[i+1]}" "${root}/env"; fi
+    done
+    ;;
   rm:*) exit 0 ;;
   *) printf 'unexpected docker call: %s\n' "$*" >&2; exit 1 ;;
 esac
@@ -145,10 +151,26 @@ grep -Fq -- '--cap-drop ALL' "${TEST_ROOT}/run.args"
 grep -Fq -- '--security-opt no-new-privileges:true' "${TEST_ROOT}/run.args"
 grep -Fq -- '--init' "${TEST_ROOT}/run.args"
 grep -Fq -- '--restart unless-stopped' "${TEST_ROOT}/run.args"
+grep -Fq 'AGENTTEAMS_AI_GATEWAY_URL=http://aigw-local.agentteams.io:8080' "${TEST_ROOT}/env"
+grep -Fq 'AGENTTEAMS_AI_GATEWAY_DOMAIN=aigw-local.agentteams.io' "${TEST_ROOT}/env"
 if grep -Fq 'test-control-token-123456' "${output}"; then
   printf 'FAIL: injection diagnostic leaked a control token.\n' >&2
   exit 1
 fi
+
+if PATH="${TEST_ROOT}/bin:${PATH}" \
+  TIANGONG_INJECTION_TEST_ROOT="${TEST_ROOT}" \
+  TIANGONG_WINDOWS_ACL_VERIFIED=1 \
+  TIANGONG_AGENTTEAMS_AI_GATEWAY_URL=http://user:password@aigw-local.agentteams.io:8080 \
+  TIANGONG_LEADER_WORKER_CONTAINER=leader-test \
+  TIANGONG_LEADER_RUNTIME_BINDING_FILE="${binding}" \
+  TIANGONG_COORDINATION_CONTROL_ENDPOINT=http://coordination-runtime:8780/v1/coordination/admit \
+  TIANGONG_COORDINATION_CONTROL_TOKEN=test-control-token-123456 \
+    "${SCRIPT_DIR}/inject-leader-runtime-docker.sh" >"${TEST_ROOT}/invalid-gateway-output" 2>&1; then
+  printf 'expected invalid gateway rejection\n' >&2
+  exit 1
+fi
+grep -Fq 'code=INVALID_GATEWAY_URL' "${TEST_ROOT}/invalid-gateway-output"
 
 if PATH="${TEST_ROOT}/bin:${PATH}" \
   TIANGONG_INJECTION_TEST_ROOT="${TEST_ROOT}" \

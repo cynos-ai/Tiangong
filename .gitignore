@@ -18,4 +18,7 @@ smoke-testing/fixtures/p0-identity-pg/app/dist/
 # normalized helper copies beside the source scripts. They are disposable
 # run state, not repository fixtures or evidence.
 /.tmp-gateb-*/
+/.tmp-*.out
+/.tmp-*.err
+/.tmp-runner-broker/
 /smoke-testing/support/.run-leader-smoke-*.sh
