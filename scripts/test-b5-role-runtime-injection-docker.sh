@@ -4,6 +4,7 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TEST_ROOT="$(mktemp -d)"
+readonly EXPECTED_CODEX_MODEL="${TIANGONG_B5_EXPECTED_CODEX_MODEL:-${TIANGONG_B5_CODEX_MODEL:-deepseek-v4-pro}}"
 trap 'rm -rf "${TEST_ROOT}"' EXIT INT TERM
 
 mkdir -p "${TEST_ROOT}/bin"
@@ -138,7 +139,7 @@ grep -Fq 'TIANGONG_OPENCLAW_NATIVE=1' "${TEST_ROOT}/env"
 grep -Fq 'OPENCLAW_AGENT_RUNTIME=codex' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_CODEX_CAPABILITY_CACHE_SHARED=1' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_CODEX_CAPABILITY_CACHE_URL=http://tiangong-codex-capability-cache:8788' "${TEST_ROOT}/env"
-grep -Fq 'TIANGONG_CODEX_MODEL=deepseek-v4-pro' "${TEST_ROOT}/env"
+grep -Fq "TIANGONG_CODEX_MODEL=${EXPECTED_CODEX_MODEL}" "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_CODEX_GATEWAY_HOSTS=agentteams-controller,aigw-local.agentteams.io' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_CODEX_BASE_URL=http://aigw-local.agentteams.io:8080/v1' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_CANARY_ADMISSION_FILE=/root/agentteams-fs/agents/worker-test/tiangong-admission.json' "${TEST_ROOT}/env"
