@@ -151,7 +151,7 @@ wait_for_ready() {
     if [[ "${phase}" == Running ]] &&
        [[ "$(docker inspect "${CONTAINER_NAME}" --format '{{.State.Running}}' 2>/dev/null)" == true ]] &&
        docker exec "${CONTAINER_NAME}" openclaw health >/dev/null 2>&1 &&
-       grep -Fq "tiangong_preflight=pass plugin=tiangong-pi lane=openclaw-canary" <<<"${logs}" &&
+       grep -Fq "tiangong_preflight=pass plugin=tiangong-control lane=openclaw-native" <<<"${logs}" &&
        grep -Fq "codex_gateway_preflight=pass provider=agentteams-gateway model=deepseek-v4-pro gateway_probe=pass gateway_probe_contract=auth-connectivity credential_source=agentteams-consumer-token" <<<"${logs}" &&
        grep -Fq "worker/${WORKER_NAME} reported ready" <<<"${logs}"; then
       return 0
@@ -174,7 +174,7 @@ wait_for_ready_since() {
     if [[ "${phase}" == Running ]] &&
        [[ "$(docker inspect "${CONTAINER_NAME}" --format '{{.State.Running}}' 2>/dev/null)" == true ]] &&
        docker exec "${CONTAINER_NAME}" openclaw health >/dev/null 2>&1 &&
-       grep -Fq "tiangong_preflight=pass plugin=tiangong-pi lane=openclaw-canary" <<<"${logs}" &&
+       grep -Fq "tiangong_preflight=pass plugin=tiangong-control lane=openclaw-native" <<<"${logs}" &&
        grep -Fq "codex_gateway_preflight=pass provider=agentteams-gateway model=deepseek-v4-pro gateway_probe=pass gateway_probe_contract=auth-connectivity credential_source=agentteams-consumer-token" <<<"${logs}" &&
        grep -Fq "worker/${WORKER_NAME} reported ready" <<<"${logs}"; then
       return 0
@@ -217,7 +217,7 @@ status_canary() {
   running="$(docker inspect "${CONTAINER_NAME}" --format '{{.State.Running}}' 2>/dev/null || true)"
   lane="$(docker exec "${CONTAINER_NAME}" printenv TIANGONG_RUNTIME_LANE 2>/dev/null || true)"
   fallback="$(docker exec "${CONTAINER_NAME}" printenv OPENCLAW_AGENT_HARNESS_FALLBACK 2>/dev/null || true)"
-  printf 'gate_a_phase=%s\nworker_running=%s\nruntime_lane=%s\nharness_fallback=%s\n' \
+  printf 'gate_a_phase=%s\nworker_running=%s\nruntime_lane=%s\nopenclaw_fallback=%s\n' \
     "${phase}" "${running}" "${lane}" "${fallback}"
   [[ "${phase}" == Running && "${running}" == true && "${lane}" == openclaw-canary && "${fallback}" == none ]] || \
     die 'Gate A canary is not in the required isolated ready state.'

@@ -19,7 +19,7 @@ const ENABLED_CONFIG = {
 
 function metadata(overrides = {}) {
   return {
-    harnessId: "tiangong-pi",
+    controlId: "tiangong-control",
     attemptId: "attempt-secret-value",
     turnId: "matrix:event-secret-value",
     sessionId: "session-secret-value",
@@ -92,7 +92,7 @@ test("observability configuration rejects ambiguous or credential-bearing endpoi
   );
 });
 
-test("exports a sanitized Harness hierarchy without content-bearing attributes", async (t) => {
+test("exports a sanitized control hierarchy without content-bearing attributes", async (t) => {
   const exporter = new InMemorySpanExporter();
   const observability = createWorkerObservability({ config: ENABLED_CONFIG, exporter });
   t.after(() => observability.shutdown());
@@ -106,7 +106,7 @@ test("exports a sanitized Harness hierarchy without content-bearing attributes",
     "gen_ai.provider.name": "agentteams-gateway",
     "gen_ai.request.model": "qwen3.5-plus",
   });
-  attempt.checkpoint("pi.turn.start");
+  attempt.checkpoint("openclaw.turn.start");
   attempt.checkpoint("model.request.ready");
   attempt.checkpoint("model.response.received");
   attempt.checkpoint("model.response.start");
@@ -117,7 +117,7 @@ test("exports a sanitized Harness hierarchy without content-bearing attributes",
 
   const spans = exporter.getFinishedSpans();
   assert.equal(spans.length, 10);
-  const root = spanByName(spans, "tiangong.harness.attempt");
+  const root = spanByName(spans, "tiangong.control.attempt");
   const setupSpan = spanByName(spans, "tiangong.runtime.setup");
   const modelSpan = spanByName(spans, "gen_ai.chat");
   assert.equal(root.status.code, SpanStatusCode.OK);
@@ -168,7 +168,7 @@ test("records timeout and abort as stable terminal outcomes without raw errors",
   aborted.finish("upstream_abort", new Error("secret abort reason"));
   await observability.forceFlush();
 
-  const roots = exporter.getFinishedSpans().filter((span) => span.name === "tiangong.harness.attempt");
+  const roots = exporter.getFinishedSpans().filter((span) => span.name === "tiangong.control.attempt");
   assert.equal(roots.length, 2);
   assert.deepEqual(
     roots.map((span) => span.attributes["tiangong.operation.outcome"]),
@@ -218,7 +218,7 @@ test("exports sanitized spans through the standard OTLP HTTP boundary", async (t
   assert.match(request.contentType, /^application\/json/u);
   const payload = JSON.parse(request.body.toString("utf8"));
   const spans = payload.resourceSpans[0].scopeSpans[0].spans;
-  const root = spans.find((span) => span.name === "tiangong.harness.attempt");
+  const root = spans.find((span) => span.name === "tiangong.control.attempt");
   const checkpoints = spans.filter((span) => span.name === "tiangong.lifecycle.checkpoint");
   assert.ok(root);
   assert.equal(checkpoints.length, 2);
@@ -271,6 +271,6 @@ test("rejects unapproved span operations and attributes before export", async (t
   attempt.finish("error", Object.assign(new Error("secret"), { code: "INVALID CODE WITH SPACES" }));
   await observability.forceFlush();
 
-  const root = spanByName(exporter.getFinishedSpans(), "tiangong.harness.attempt");
+  const root = spanByName(exporter.getFinishedSpans(), "tiangong.control.attempt");
   assert.equal(root.attributes["error.type"], "internal_error");
 });

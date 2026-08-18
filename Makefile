@@ -121,7 +121,7 @@ test-leader-runtime-injection-docker: ## Validate the Docker Worker recreation/i
 test-b5-role-runtime-injection-docker: ## Validate deployment-owned B5 role/runtime injection and rollback boundary
 	@$(B5_ROLE_RUNTIME_INJECTION_TEST)
 
-test-openclaw-migration-gate: ## Prove the new-Team OpenClaw default and explicit Pi rollback seam
+test-openclaw-migration-gate: ## Prove the native OpenClaw default and no-runtime-fallback seam
 	@./scripts/test-openclaw-migration-gate.sh
 
 test-phase-c-contract: ## Run the deterministic Phase C production-boundary gate
@@ -130,10 +130,10 @@ test-phase-c-contract: ## Run the deterministic Phase C production-boundary gate
 phase-c-real: ## Run the real, disposable AgentTeams Phase C/Gate B smoke (explicit opt-in)
 	@TIANGONG_PHASE_C_REAL=1 ./scripts/test-phase-c-production-boundary.sh
 
-test-worker-image-basic: ## Run the fast Matrix-to-pi Worker smoke and clean up
+test-worker-image-basic: ## Run the fast Matrix-to-OpenClaw Worker smoke and clean up
 	@TIANGONG_WORKER_SMOKE_LEVEL=basic $(WORKER_IMAGE_TEST)
 
-test-worker-image: ## Run the full Gate/approval/recovery Worker smoke and clean up
+test-worker-image: ## Run the full Gate/approval/recovery OpenClaw Worker smoke and clean up
 	@TIANGONG_WORKER_SMOKE_LEVEL=full $(WORKER_IMAGE_TEST)
 
 test-leader-smoke-contract: ## Validate Leader smoke requester-report and in-container oracle semantics

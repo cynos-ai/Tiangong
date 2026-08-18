@@ -3,7 +3,7 @@ import { TeamCoordinationGate } from "./tool-wrapper.mjs";
 import { createTeamChannel } from "./channel-adapter.mjs";
 import { createRemoteCoordinationStore } from "./coordination-control-client.mjs";
 import { createTeamSync } from "./sync-adapter.mjs";
-import { defaultStateDirectory } from "../session-store.mjs";
+import { defaultStateDirectory } from "../persistence/state-directory.mjs";
 import { workerStatePaths } from "../persistence/state-paths.mjs";
 import { defaultTiangongRoot } from "./shared-fs.mjs";
 import { readPlaybookManifest } from "../playbook/resolver.mjs";

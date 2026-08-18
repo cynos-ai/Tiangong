@@ -248,9 +248,9 @@ load_config() {
   : "${AGENTTEAMS_PORT_ELEMENT_WEB:=18088}"
   : "${AGENTTEAMS_PORT_MANAGER_CONSOLE:=18888}"
   : "${AGENTTEAMS_MANAGER_RUNTIME:=copaw}"
-  # New Teams start on the AgentTeams OpenClaw Worker runtime. The legacy
-  # Tiangong pi harness remains an explicit deployment rollback lane and is
-  # never selected by this default.
+  # New Teams start on the AgentTeams OpenClaw Worker runtime. Tiangong does
+  # not ship a model harness or a runtime fallback; rollback is an image/config
+  # deployment decision owned by the operator.
   : "${AGENTTEAMS_DEFAULT_WORKER_RUNTIME:=openclaw}"
   : "${AGENTTEAMS_MATRIX_E2EE:=0}"
   : "${AGENTTEAMS_WORKER_IDLE_TIMEOUT:=720}"

@@ -1,6 +1,4 @@
-import {
-  createReadToolDefinition,
-} from "@earendil-works/pi-coding-agent";
+import { createReadToolDefinition } from "./openclaw-tool-definitions.mjs";
 
 import { createConstrainedWrite } from "./constrained-write.mjs";
 import { summarizeRead, summarizeWrite } from "./operations.mjs";
@@ -27,17 +25,6 @@ export class TiangongToolRegistry {
     return [...this.#tools.keys()];
   }
 
-  assertSession(session) {
-    const active = session.agent.state.tools;
-    const expected = this.names();
-    if (active.length !== expected.length) throw new Error("Unexpected active pi tool count");
-    for (const tool of active) {
-      const registered = this.#tools.get(tool.name);
-      if (!registered || tool.label !== registered.label || tool.executionMode !== "sequential") {
-        throw new Error(`Unwrapped or unexpected pi tool is active: ${tool.name}`);
-      }
-    }
-  }
 }
 
 export function createCoreToolRegistry({

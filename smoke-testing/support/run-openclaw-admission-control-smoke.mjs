@@ -176,7 +176,7 @@ async function applyWorker() {
         const logResult = await docker(["logs", WORKER_CONTAINER], { timeout: 10_000 });
         const logs = `${logResult.stdout}\n${logResult.stderr}`;
         return health.stdout !== undefined &&
-          logs.includes(`tiangong_preflight=pass plugin=tiangong-pi lane=openclaw-canary`) &&
+          logs.includes(`tiangong_preflight=pass plugin=tiangong-control lane=openclaw-native`) &&
           logs.includes(`worker/${WORKER_NAME} reported ready`);
       } catch {
         return false;

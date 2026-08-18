@@ -8,7 +8,7 @@ ARG TIANGONG_CODEX_GATEWAY_HOSTS=agentteams-controller
 ARG TIANGONG_CODEX_BASE_URL=
 
 LABEL org.opencontainers.image.title="Tiangong Worker"
-LABEL org.opencontainers.image.description="AgentTeams Worker image with the public pi coding agent"
+LABEL org.opencontainers.image.description="AgentTeams Worker image with OpenClaw native runtime and Codex app-server"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 LABEL org.opencontainers.image.source="https://github.com/cynos-ai/Tiangong"
 
@@ -16,10 +16,8 @@ WORKDIR /opt/tiangong-worker
 COPY package.json package-lock.json ./
 COPY scripts/ ./scripts/
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/ \
-    && npm run patch-dependencies \
     && ln -s /opt/openclaw ./node_modules/openclaw \
     && npm cache clean --force \
-    && ./node_modules/.bin/pi --version \
     && test -x /usr/bin/git \
     && test -x /usr/bin/prlimit \
     && test -x /usr/bin/flock \
@@ -43,16 +41,14 @@ COPY --chmod=755 plugin/ ./plugin/
 COPY roles/ ./roles/
 COPY skills/ ./skills/
 RUN npm run check-observability \
-    && node -e 'import("./plugin/index.mjs").then((module) => { if (module.default?.id !== "tiangong-pi") process.exit(1); })'
+    && node -e 'import("./plugin/index.mjs").then((module) => { if (module.default?.id !== "tiangong-control") process.exit(1); })'
 
 COPY --chmod=755 bin/codex bin/codex-app-server bin/openclaw bin/tiangong-reconcile bin/tiangong-retain bin/tiangong-work-run /opt/tiangong-worker/bin/
 COPY scripts/codex-app-server-proxy.mjs /opt/tiangong-worker/scripts/codex-app-server-proxy.mjs
 
 ENV PATH="/opt/tiangong-worker/bin:/opt/tiangong-worker/node_modules/.bin:${PATH}" \
     OPENCLAW_AGENT_HARNESS_FALLBACK=none \
-    OPENCLAW_AGENT_RUNTIME=tiangong-pi \
-    PI_SKIP_VERSION_CHECK=1 \
-    PI_TELEMETRY=0 \
+    OPENCLAW_AGENT_RUNTIME=pi \
     TIANGONG_CODEX_GATEWAY_HOSTS="${TIANGONG_CODEX_GATEWAY_HOSTS}" \
     TIANGONG_CODEX_BASE_URL="${TIANGONG_CODEX_BASE_URL}" \
     TIANGONG_OTEL_EXPORTER_ENDPOINT="${TIANGONG_OTEL_EXPORTER_ENDPOINT}"

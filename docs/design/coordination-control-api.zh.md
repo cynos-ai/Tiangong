@@ -99,5 +99,5 @@ projection，不把 PG 或 Team authority 暴露给 Worker；Worker facade 只�
 读取 TaskSpec，`agent_end` 提交一次 Result。它不是 Tiangong 自己的 runtime，
 也不把数据库、Team binding 或 Matrix token 放进 Worker；部署层只注入
 `TIANGONG_COORDINATION_CONTROL_ENDPOINT`、Worker-scoped token 和
-`TIANGONG_MEMBER_ID`。Leader 仍使用 OpenClaw built-in runtime；`tiangong-pi`
+`TIANGONG_MEMBER_ID`。Leader 仍使用 OpenClaw built-in runtime；历史 Pi harness
 只在 Gate B/B6 之前作为 legacy 回滚路径保留。

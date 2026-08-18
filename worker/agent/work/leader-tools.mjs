@@ -1,4 +1,4 @@
-// Leader pi tool registry (architecture §6): exposes the software-change-
+// Leader OpenClaw tool registry (architecture §6): exposes the software-change-
 // delivery coordination operations to the Tiangong Team Leader model as a
 // closed, sequential tool surface. Every mutating operation is bound to the
 // authenticated Leader identity and the immutable manifests; the deterministic

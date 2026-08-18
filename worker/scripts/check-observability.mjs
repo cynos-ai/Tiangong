@@ -8,7 +8,7 @@ const observability = createWorkerObservability({
   exporter,
 });
 const attempt = observability.startAttempt({
-  harnessId: "tiangong-pi",
+  controlId: "tiangong-control",
   attemptId: "image-contract-attempt",
   turnId: "image-contract-turn",
   sessionId: "image-contract-session",
@@ -21,7 +21,7 @@ attempt.finish("complete");
 await observability.forceFlush();
 
 const spans = exporter.getFinishedSpans();
-const root = spans.find((span) => span.name === "tiangong.harness.attempt");
+const root = spans.find((span) => span.name === "tiangong.control.attempt");
 const checkpoints = spans.filter((span) => span.name === "tiangong.lifecycle.checkpoint");
 if (!root || checkpoints.length !== 2 ||
     checkpoints.some((span) => span.parentSpanContext?.spanId !== root.spanContext().spanId)) {

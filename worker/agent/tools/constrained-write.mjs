@@ -10,7 +10,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { createWriteToolDefinition } from "@earendil-works/pi-coding-agent";
+import { createWriteToolDefinition } from "./openclaw-tool-definitions.mjs";
 
 import { resolveWorkspacePath } from "./operations.mjs";
 

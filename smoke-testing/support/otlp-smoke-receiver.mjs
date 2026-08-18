@@ -9,12 +9,12 @@ if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
 const MAX_BODY_BYTES = 1_048_576;
 const outputPath = resolve(process.argv[2] ?? "/data/spans.jsonl");
 const ALLOWED_SPAN_NAMES = new Set([
-  "tiangong.harness.attempt",
+  "tiangong.control.attempt",
   "tiangong.lifecycle.checkpoint",
   "tiangong.runtime.setup",
   "tiangong.gateway.resolve",
   "tiangong.session.open_or_reuse",
-  "tiangong.pi.agent_turn",
+  "tiangong.openclaw.agent_turn",
   "gen_ai.chat",
   "execute_tool",
 ]);
@@ -26,7 +26,7 @@ const ALLOWED_ATTRIBUTE_KEYS = new Set([
   "tiangong.approval.pending",
   "tiangong.attempt.id",
   "tiangong.gate.outcome",
-  "tiangong.harness.id",
+  "tiangong.control.id",
   "tiangong.operation.outcome",
   "tiangong.phase",
   "tiangong.retry.attempt",

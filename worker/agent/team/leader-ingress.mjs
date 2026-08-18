@@ -79,7 +79,7 @@ export async function admitLeaderMatrixIngress({
 
 /**
  * Bind the durable admission dependencies once at Worker startup so the
- * OpenClaw Harness hook can pass only per-event ingress facts.
+ * OpenClaw control hook can pass only per-event ingress facts.
  */
 export function createOpenClawLeaderAdmissionHook(bindings = {}) {
   const {

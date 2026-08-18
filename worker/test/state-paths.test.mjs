@@ -33,7 +33,6 @@ test("state path resolver keeps transcript, WorkRun, and side-effect roots separ
   assert.equal(Object.isFrozen(paths), true);
   assert.equal(paths.sessionHash, sessionHash);
   assert.equal(paths.sessionDirectory, join(stateDirectory, "sessions", sessionHash));
-  assert.equal(paths.piDirectory, join(stateDirectory, "sessions", sessionHash, "pi"));
   assert.equal(paths.workRunDirectory, join(stateDirectory, "work-runs", sessionHash));
   assert.equal(paths.evidenceFilePath, join(stateDirectory, "evidence", sessionHash, "events.jsonl"));
   assert.equal(paths.idempotencyFilePath, join(stateDirectory, "idempotency", sessionHash, "idempotency.jsonl"));

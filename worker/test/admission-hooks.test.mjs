@@ -66,7 +66,7 @@ test("passes only the exact two-stage admission result", async () => {
   assert.equal(await handlers.beforeToolCall({ toolName: "read" }, {}), undefined);
 });
 
-test("requires the hook API in the canary lane but leaves legacy registration unchanged", () => {
+test("requires the OpenClaw hook API in the canary lane", () => {
   assert.deepEqual(registerAdmissionHooks({}, { resolveContext: () => {}, required: false }), {
     enabled: false,
     reason: "hook-api-unavailable",
