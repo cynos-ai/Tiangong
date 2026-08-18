@@ -57,6 +57,38 @@ grep -Fq "/api/v1/gateway/consumers/\${consumer_name}/bind" "${REPO_ROOT}/smoke-
   failures=$((failures + 1))
 }
 
+# Gate B must not reuse the fixed smoke Team/Matrix namespace. Shared
+# AgentTeams history keeps immutable project/result records, so a rerun gets a
+# run-scoped manifest and passes the same names into the Leader oracle.
+grep -Fq 'SMOKE_SCOPE_RAW=' "${REPO_ROOT}/smoke-testing/support/run-b5-gateb-smoke.sh" || {
+  printf 'phasec=fail step=gateb-isolation-contract code=RESOURCE_SCOPE_MISSING\n' >&2
+  failures=$((failures + 1))
+}
+# shellcheck disable=SC2016
+isolation_team_injection='TIANGONG_SMOKE_TEAM_NAME="${TEAM_NAME}"'
+grep -Fq "${isolation_team_injection}" "${REPO_ROOT}/smoke-testing/support/run-b5-gateb-smoke.sh" || {
+  printf 'phasec=fail step=gateb-isolation-contract code=TEAM_SCOPE_NOT_INJECTED\n' >&2
+  failures=$((failures + 1))
+}
+# shellcheck disable=SC2016
+isolation_manifest_injection='TIANGONG_SMOKE_WORKERS_MANIFEST="${SMOKE_WORKERS_MANIFEST}"'
+grep -Fq "${isolation_manifest_injection}" "${REPO_ROOT}/smoke-testing/support/run-b5-gateb-smoke.sh" || {
+  printf 'phasec=fail step=gateb-isolation-contract code=WORKER_MANIFEST_SCOPE_NOT_INJECTED\n' >&2
+  failures=$((failures + 1))
+}
+grep -Fq 'TIANGONG_SMOKE_TEAM_NAME:-tiangong-leader-smoke' "${REPO_ROOT}/smoke-testing/support/run-leader-smoke.sh" || {
+  printf 'phasec=fail step=gateb-isolation-contract code=LEADER_SCOPE_NOT_CONSUMED\n' >&2
+  failures=$((failures + 1))
+}
+grep -Fq 'openCodexSidecarContainerName' "${REPO_ROOT}/worker/agent/deployment/opencodex-sidecar-adapter.mjs" || {
+  printf 'phasec=fail step=sidecar-name-contract code=BOUNDED_NAME_HELPER_MISSING\n' >&2
+  failures=$((failures + 1))
+}
+grep -Fq 'sha256sum' "${REPO_ROOT}/smoke-testing/support/run-b5-gateb-smoke.sh" || {
+  printf 'phasec=fail step=sidecar-name-contract code=GATEB_NAME_HASH_MISSING\n' >&2
+  failures=$((failures + 1))
+}
+
 pushd "${REPO_ROOT}" >/dev/null
 run_step worker-phase-c-tests "${node_bin}" --test \
   worker/test/codex-capability-cache.test.mjs \
@@ -70,6 +102,7 @@ run_step worker-phase-c-tests "${node_bin}" --test \
   worker/test/member-coordination-hooks.test.mjs \
   worker/test/opencodex-sidecar-receipt-service.test.mjs \
   worker/test/opencodex-sidecar.test.mjs \
+  worker/test/opencodex-sidecar-adapter.test.mjs \
   worker/test/canary-admission.test.mjs
 
 run_step app-phase-c-tests "${node_bin}" --test \

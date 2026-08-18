@@ -261,3 +261,23 @@ provider billing/credential 外部阻断处理；没有伪造 Task/Result/Leader
 测试超时后已验证精确 Team/Worker/Coordination/PG/sidecar 资源不存在，原
 provider 配置也已恢复。当前 Phase C 仍保持 No-Go，下一次必须使用确实有余额
 的 provider credential，不能只满足 `/v1/models` 的认证探测。
+
+### 2026-08-18 DeepSeek v4 Flash 真实 Gate B 通过
+
+本轮使用临时 provider credential，仅在 Controller 内存中切换到 `openai-compat`，模型为
+`deepseek-v4-flash`；Leader 仍使用 AgentTeams 目录中可用的 `deepseek-chat`，Implementor
+走 OpenClaw 内置 Codex app-server。临时 credential 在结束后已恢复，未写入仓库、镜像、日志
+或 Worker 状态。
+
+- 真实 `phasec=pass step=real-agentteams-gateb`：五个 Worker、动态 Team/Matrix、PG/Coordination、
+  Consumer bind、Leader builtin runtime、Designer Result/Decision、Matrix handoff、终态报告和
+  精确 cleanup 全部通过。
+- Implementor 机器证据：`codex_gateway_preflight=pass`，`model=deepseek-v4-flash`，
+  `transport=native-responses`，`bridge=none`；Codex app-server 已启动并完成本轮 Agent 处理。
+- 这次还修复了两类可重复性问题：Gate B 按 run-id 派生 Team/Worker manifest；长 Worker 名称的
+  OpenCodex sidecar 使用不超过 63 字符且带稳定哈希的 Docker DNS 名称。
+- smoke 提示词明确禁止模型写 `shared/tasks/**/result.md`、`spec.md` 等 AgentTeams 保留文件，
+  结果只能经 `team_submit_result` 产生，避免不可变记录冲突。
+
+因此，DeepSeek Flash 的真实 Gate B 已通过；Phase C 仍需在合并前完成本地/CI 门禁和发布流程，
+并保留 AgentTeams 部署层的 endpoint、provider normalize、consumer bind 注入边界。
