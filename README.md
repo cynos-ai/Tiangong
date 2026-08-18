@@ -3,7 +3,7 @@
 Tiangong is an evidence-backed AI software engineering team built on [AgentTeams](https://github.com/agentscope-ai/AgentTeams).
 
 > [!NOTE]
-> v0.1.0, v0.2.0, and v0.3.0 are historical source releases. v0.3.1 is the current OpenClaw-first, evidence-backed five-role delivery team: Team Leader, Designer, Implementor, Assessor, and Operator. Historical Reviewer experiments are not an active runtime path. The target Web product and runtime described by the design documents are planned work, not implemented capabilities. See the [v0.3.1 release notes](docs/releases/v0.3.1.md) and [changelog](CHANGELOG.md).
+> v0.1.0, v0.2.0, v0.3.0, and v0.3.1 are historical source releases. v0.4.0 is the current OpenClaw-native, evidence-backed five-role delivery team: Team Leader, Designer, Implementor, Assessor, and Operator. Historical Reviewer experiments and the Tiangong-owned Pi runtime are not active paths. The target Web product and runtime described by the design documents are planned work, not implemented capabilities. See the [v0.4.0 release notes](docs/releases/v0.4.0.md) and [changelog](CHANGELOG.md).
 
 ## Vision
 
@@ -92,7 +92,7 @@ The current runtime is intentionally constrained:
 
 - it claims only the Worker-scoped `agentteams-gateway` provider and disables OpenClaw's fallback to another agent harness;
 - provider credentials stay deployment-scoped and are injected by the selected OpenClaw runtime only in memory;
-- pi extensions, skills, prompt templates, and automatic repository context are disabled;
+- unapproved OpenClaw extensions, prompt templates, and automatic repository context are disabled;
 - every image loads a strict, digest-bound RoleProfile plus code-owned SOUL and Skill resources from `/opt/tiangong-worker`; environment variables, Worker names, prompts, and tool arguments cannot select or elevate its role;
 - OpenClaw owns its conversation/session persistence; Tiangong WorkRun, Evidence, idempotency, pending payload, and rollback state use independent roots beneath the synchronized state directory, so conversation reset cannot erase business state;
 - restartable writes persist a digest-bound operation envelope and a separate mode-`600` content payload under that state directory; raw write content never enters Evidence, but is visible to principals with Worker storage administration access and follows explicit operation retention;
@@ -103,7 +103,7 @@ To build and inspect the image without creating a Worker:
 
 ```bash
 make build-worker-image
-docker run --rm --entrypoint pi tiangong-worker:dev --version
+docker run --rm --entrypoint openclaw tiangong-worker:dev --version
 ```
 
 The build also produces dedicated `tiangong-worker-leader:dev`, `tiangong-worker-designer:dev`, `tiangong-worker-implementor:dev`, `tiangong-worker-assessor:dev`, and `tiangong-worker-operator:dev` images. Each image contains the same controlled runtime but a fixed RoleProfile and closed tool surface. The professional images bind their Task, role, Skill, WorkRun, ResultEnvelope, and Evidence through code; Implementor and Assessor commands use the isolated Runner boundary, while Operator uses only the structured deployment boundary. No historical Reviewer image or Practice compatibility path is built.
