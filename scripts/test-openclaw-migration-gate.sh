@@ -13,7 +13,9 @@ fail() {
   exit 1
 }
 
-grep -Fqx 'AGENTTEAMS_DEFAULT_WORKER_RUNTIME=openclaw' "${REPO_ROOT}/.env.example" || fail ENV_DEFAULT_NOT_OPENCLAW
+# `.env.example` is checked out with the platform's native line ending on
+# Windows; normalize only this static contract before matching it.
+grep -Fqx 'AGENTTEAMS_DEFAULT_WORKER_RUNTIME=openclaw' <(tr -d '\r' < "${REPO_ROOT}/.env.example") || fail ENV_DEFAULT_NOT_OPENCLAW
 grep -Fq ": \"\${AGENTTEAMS_DEFAULT_WORKER_RUNTIME:=openclaw}\"" "${REPO_ROOT}/scripts/agentteams.sh" || fail BOOTSTRAP_DEFAULT_NOT_OPENCLAW
 grep -Fq "readonly NATIVE_OPENCLAW=\"\${TIANGONG_B5_OPENCLAW_NATIVE:-1}\"" "${REPO_ROOT}/scripts/inject-b5-role-runtime-docker.sh" || fail NATIVE_DEFAULT_NOT_ENABLED
 grep -Fq 'TIANGONG_B5_OPENCLAW_NATIVE=0' "${REPO_ROOT}/scripts/test-b5-role-runtime-injection-docker.sh" || fail PI_ROLLBACK_NOT_TESTED

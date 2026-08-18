@@ -293,6 +293,44 @@ export function isResult(value) {
   }), "Result");
 }
 
+// A CoordinationDecision is a typed source fact, not a second editable
+// workflow state machine. Task decisions are attached to the Task and Work
+// closure decisions are attached to the Work timeline/projection.
+export function createCoordinationDecision(input) {
+  assertObject(input, "CoordinationDecision input");
+  assertExactKeys(input, new Set(["decisionId", "workId", "taskId", "decision", "resultDigest", "reason", "createdAt"]), "CoordinationDecision");
+  const decision = bounded(input.decision, "decision", 32);
+  if (!["accept", "blocked", "complete", "stop"].includes(decision)) throw new Error("CoordinationDecision has an unsupported decision");
+  const taskDecision = decision === "accept" || decision === "blocked";
+  if (taskDecision !== (input.taskId !== undefined)) throw new Error("CoordinationDecision task binding is invalid");
+  const hasResultDigest = input.resultDigest !== undefined;
+  if (decision === "accept" ? !hasResultDigest : hasResultDigest) throw new Error("CoordinationDecision result binding is invalid");
+  const record = {
+    kind: "tiangong.coordination-decision",
+    schemaVersion: 1,
+    decisionId: identifier(input.decisionId, "decisionId"),
+    workId: identifier(input.workId, "workId"),
+    decision,
+    reason: bounded(input.reason, "reason", 4096),
+    createdAt: timestamp(input.createdAt, "createdAt"),
+  };
+  if (input.taskId !== undefined) record.taskId = identifier(input.taskId, "taskId");
+  if (input.resultDigest !== undefined) record.resultDigest = digest(input.resultDigest, "resultDigest");
+  return freezeWithDigest(record);
+}
+
+export function isCoordinationDecision(value) {
+  return assertDigestRecord(value, (entry) => createCoordinationDecision({
+    decisionId: entry.decisionId,
+    workId: entry.workId,
+    ...(entry.taskId !== undefined ? { taskId: entry.taskId } : {}),
+    decision: entry.decision,
+    ...(entry.resultDigest !== undefined ? { resultDigest: entry.resultDigest } : {}),
+    reason: entry.reason,
+    createdAt: entry.createdAt,
+  }), "CoordinationDecision");
+}
+
 function workRecord(input) {
   return freezeWithDigest({
     kind: "tiangong.work",
@@ -326,7 +364,7 @@ function isWorkRecord(value) {
 }
 
 function emptyState() {
-  return { sequence: 0, previousHash: GENESIS_HASH, works: {}, tasks: {}, results: {}, wakes: {}, commands: {} };
+  return { sequence: 0, previousHash: GENESIS_HASH, works: {}, tasks: {}, results: {}, decisions: {}, wakes: {}, commands: {} };
 }
 
 function commandKey(scope, requestId) {
@@ -368,6 +406,7 @@ function snapshotWork(entry) {
     epoch: entry.epoch,
     status: entry.status,
     currentWorkSpec: entry.currentWorkSpec,
+    closeDecision: entry.closeDecision ?? null,
     timeline: entry.timeline,
   });
 }
@@ -457,6 +496,7 @@ function applyRecord(state, record) {
       currentWorkSpec: payload.spec,
       epoch: 0,
       status: "open",
+      closeDecision: null,
       timeline: [],
     };
     state.works[payload.work.workId] = entry;
@@ -502,6 +542,34 @@ function applyRecord(state, record) {
     task.status = "reported";
     task.result = payload.result;
     state.results[payload.result.resultId] = payload.result;
+    appendTimeline(entry, record, payload, entry.epoch);
+  } else if (record.type === "task-decided") {
+    const entry = state.works[payload.workId];
+    const task = state.tasks[payload.taskId];
+    const decision = payload.decision;
+    if (!entry || !task || entry.status !== "open" || task.spec.workId !== payload.workId ||
+        payload.expectedEpoch !== entry.epoch || task.decision || !isCoordinationDecision(decision) ||
+        decision.workId !== payload.workId || decision.taskId !== payload.taskId ||
+        !["accept", "blocked"].includes(decision.decision)) throw new Error("TASK_DECISION_CONFLICT");
+    if (decision.decision === "accept" && (!task.result || task.status !== "reported" || decision.resultDigest !== task.result.contentDigest)) {
+      throw new Error("TASK_DECISION_RESULT_CONFLICT");
+    }
+    if (decision.decision === "blocked" && !["assigned", "reported"].includes(task.status)) throw new Error("TASK_DECISION_CONFLICT");
+    entry.epoch += 1;
+    task.status = decision.decision === "accept" ? "accepted" : "blocked";
+    task.decision = decision;
+    state.decisions[decision.decisionId] = decision;
+    appendTimeline(entry, record, payload, entry.epoch);
+  } else if (record.type === "work-closed") {
+    const entry = state.works[payload.workId];
+    const decision = payload.decision;
+    if (!entry || entry.status !== "open" || payload.expectedEpoch !== entry.epoch || entry.closeDecision ||
+        !isCoordinationDecision(decision) || decision.workId !== payload.workId || decision.taskId !== undefined ||
+        !["complete", "stop"].includes(decision.decision)) throw new Error("WORK_CLOSE_CONFLICT");
+    entry.epoch += 1;
+    entry.status = "closed";
+    entry.closeDecision = decision;
+    state.decisions[decision.decisionId] = decision;
     appendTimeline(entry, record, payload, entry.epoch);
   } else if (record.type === "wake-enqueued") {
     const wake = payload.wake;
@@ -735,6 +803,94 @@ export class CoordinationStore {
     }).then(async (value) => value?.result ? value : { ...value, result: await this.getResult(result.resultId) });
   }
 
+  async decideTask({ taskId, team, profile, actorId, decision, resultDigest, reason, expectedEpoch, requestId } = {}) {
+    const currentProfile = profileFor(profile);
+    if (!isTeamConfig(team)) throw new Error("Task decision requires a valid TeamConfig");
+    if (actorId !== team.leaderMemberId) throw new Error("TASK_DECISION_ACTOR_NOT_LEADER");
+    const normalizedTaskId = identifier(taskId, "taskId");
+    const normalizedDecision = bounded(decision, "decision", 32);
+    if (!["accept", "blocked"].includes(normalizedDecision)) throw new Error("TASK_DECISION_INVALID");
+    const normalizedReason = bounded(reason, "reason", 4096);
+    const normalizedResultDigest = resultDigest === undefined ? undefined : digest(resultDigest, "resultDigest");
+    const request = command("task.decide", requestId, {
+      taskId: normalizedTaskId, teamId: team.teamId, actorId, decision: normalizedDecision,
+      resultDigest: normalizedResultDigest ?? null, reason: normalizedReason,
+      expectedEpoch, profileId: currentProfile.profileId,
+    });
+    return this.#mutate((state) => {
+      const task = state.tasks[normalizedTaskId];
+      const entry = task ? state.works[task.spec.workId] : null;
+      if (!entry || !task) throw new Error("TASK_NOT_FOUND");
+      verifyProfile(entry.work, currentProfile);
+      if (entry.work.teamId !== team.teamId) throw new Error("TASK_TEAM_BINDING_MISMATCH");
+      const existing = checkCommand(state, request, () => task.decision && same(task.decision, task.decision));
+      if (existing) return { events: [], result: { replayed: true, decision: clone(task.decision), task: snapshotTask(task), work: snapshotWork(entry) } };
+      if (entry.status !== "open" || task.decision || expectedEpoch !== entry.epoch) throw new Error("TASK_DECISION_CONFLICT");
+      if (normalizedDecision === "accept" && (!task.result || task.status !== "reported" || normalizedResultDigest !== task.result.contentDigest)) {
+        throw new Error("TASK_DECISION_RESULT_CONFLICT");
+      }
+      if (normalizedDecision === "blocked" && !["assigned", "reported"].includes(task.status)) throw new Error("TASK_DECISION_CONFLICT");
+      const createdAt = this.#now();
+      const decisionRecord = createCoordinationDecision({
+        decisionId: sha256({ scope: "task", taskId: normalizedTaskId, requestId, decision: normalizedDecision, resultDigest: normalizedResultDigest ?? null }),
+        workId: task.spec.workId,
+        taskId: normalizedTaskId,
+        decision: normalizedDecision,
+        ...(normalizedResultDigest !== undefined ? { resultDigest: normalizedResultDigest } : {}),
+        reason: normalizedReason,
+        createdAt,
+      });
+      return {
+        events: [{ type: "task-decided", at: decisionRecord.createdAt, command: request, payload: {
+          workId: task.spec.workId, taskId: normalizedTaskId, actorId, expectedEpoch, decision: decisionRecord,
+        } }],
+        result: { replayed: false, decision: null, task: null, work: null },
+      };
+    }).then(async (result) => {
+      if (result?.decision) return result;
+      const task = await this.getTask(normalizedTaskId);
+      return { ...result, decision: task.decision, task, work: await this.getWork(task.spec.workId) };
+    });
+  }
+
+  async closeWork({ workId, team, profile, actorId, decision, reason, expectedEpoch, requestId } = {}) {
+    const currentProfile = profileFor(profile);
+    if (!isTeamConfig(team)) throw new Error("Work closure requires a valid TeamConfig");
+    if (actorId !== team.leaderMemberId) throw new Error("WORK_CLOSE_ACTOR_NOT_LEADER");
+    const normalizedWorkId = identifier(workId, "workId");
+    const normalizedDecision = bounded(decision, "decision", 32);
+    if (!["complete", "stop"].includes(normalizedDecision)) throw new Error("WORK_CLOSE_INVALID");
+    const normalizedReason = bounded(reason, "reason", 4096);
+    const request = command("work.close", requestId, { workId: normalizedWorkId, teamId: team.teamId, actorId, decision: normalizedDecision, reason: normalizedReason, expectedEpoch, profileId: currentProfile.profileId });
+    return this.#mutate((state) => {
+      const entry = state.works[normalizedWorkId];
+      if (!entry) throw new Error("WORK_NOT_FOUND");
+      verifyProfile(entry.work, currentProfile);
+      if (entry.work.teamId !== team.teamId) throw new Error("WORK_TEAM_BINDING_MISMATCH");
+      const replay = checkCommand(state, request, () => entry.closeDecision && entry.closeDecision.decision === normalizedDecision);
+      if (replay) return { events: [], result: { replayed: true, decision: clone(entry.closeDecision), work: snapshotWork(entry) } };
+      if (entry.status !== "open" || entry.closeDecision || expectedEpoch !== entry.epoch) throw new Error("WORK_CLOSE_CONFLICT");
+      const tasks = Object.values(state.tasks).filter((task) => task.spec.workId === normalizedWorkId);
+      const terminal = tasks.every((task) => ["accepted", "blocked", "cancelled"].includes(task.status));
+      if (!terminal || (normalizedDecision === "complete" && tasks.some((task) => task.status !== "accepted" && task.status !== "cancelled"))) {
+        throw new Error("WORK_CLOSE_GUARD_FAILED");
+      }
+      const decisionRecord = createCoordinationDecision({
+        decisionId: sha256({ scope: "work", workId: normalizedWorkId, requestId, decision: normalizedDecision }),
+        workId: normalizedWorkId,
+        decision: normalizedDecision,
+        reason: normalizedReason,
+        createdAt: this.#now(),
+      });
+      return {
+        events: [{ type: "work-closed", at: decisionRecord.createdAt, command: request, payload: {
+          workId: normalizedWorkId, actorId, expectedEpoch, decision: decisionRecord,
+        } }],
+        result: { replayed: false, decision: null, work: null },
+      };
+    }).then(async (result) => result?.decision ? result : { ...result, decision: (await this.getWork(normalizedWorkId)).closeDecision, work: await this.getWork(normalizedWorkId) });
+  }
+
   async enqueueWake({ workId, taskId, targetMemberId, kind = "leader-resume", requestId, at = this.#now() } = {}) {
     if (!["task-assignment", "leader-resume", "result-notification", "human-reply"].includes(kind)) throw new Error("Unsupported wake kind");
     const wake = { wakeId: sha256({ kind, workId, taskId: taskId ?? null, requestId }), kind, ...(workId ? { workId: identifier(workId, "workId") } : {}), ...(taskId ? { taskId: identifier(taskId, "taskId") } : {}), targetMemberId: identifier(targetMemberId, "targetMemberId"), status: "pending", createdAt: timestamp(at, "at") };
@@ -806,6 +962,19 @@ export class CoordinationStore {
     if (workId !== undefined) identifier(workId, "workId");
     return this.#read((state) => Object.values(state.results)
       .filter((result) => workId === undefined || result.workId === workId)
+      .map(clone));
+  }
+
+  async getDecision(decisionId) {
+    const id = identifier(decisionId, "decisionId");
+    return this.#read((state) => state.decisions[id] ? clone(state.decisions[id]) : undefined);
+  }
+
+  async listDecisions({ workId, taskId } = {}) {
+    if (workId !== undefined) identifier(workId, "workId");
+    if (taskId !== undefined) identifier(taskId, "taskId");
+    return this.#read((state) => Object.values(state.decisions)
+      .filter((decision) => (workId === undefined || decision.workId === workId) && (taskId === undefined || decision.taskId === taskId))
       .map(clone));
   }
 

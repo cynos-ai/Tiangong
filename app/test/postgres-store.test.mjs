@@ -162,5 +162,10 @@ test("Postgres CoordinationStore persists immutable Task/Result and serializes t
   assert.equal((await store.getTask(task.taskId)).status, "reported");
   assert.equal((await store.getResult(result.resultId)).contentDigest, result.contentDigest);
   assert.equal((await store.health()).taskCount, 1);
+  const accepted = await store.decideTask({ taskId: task.taskId, team, profile, actorId: leader.memberId, decision: "accept", resultDigest: result.contentDigest, reason: "current result", expectedEpoch: 2, requestId: "request-pg-task-decision" });
+  assert.equal(accepted.task.status, "accepted");
+  assert.equal((await store.listDecisions({ taskId: task.taskId })).length, 1);
+  const closed = await store.closeWork({ workId: task.workId, team, profile, actorId: leader.memberId, decision: "complete", reason: "task accepted", expectedEpoch: 3, requestId: "request-pg-task-close" });
+  assert.equal(closed.work.status, "closed");
   await assert.rejects(() => store.cancelTask({ workId: task.workId, taskId: task.taskId, profile, actorId: leader.memberId, reason: "too late", expectedEpoch: 2, requestId: "request-pg-task-cancel" }), /TASK_CANCEL_CONFLICT/u);
 });
