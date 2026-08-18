@@ -76,8 +76,18 @@ prepare_state() {
 build_canary_image() {
   [[ "${TIANGONG_BUILD_CANARY:-0}" == 1 ]] || return 0
   log "Building isolated canary image ${IMAGE}"
-  docker build --pull --build-context "team_playbooks=${BUILD_CONTEXT}" \
-    --target canary --tag "${IMAGE}" "${REPO_ROOT}/worker"
+  local build_args=(--pull --build-context "team_playbooks=${BUILD_CONTEXT}")
+  if [[ -n "${TIANGONG_CODEX_GATEWAY_HOSTS:-}" ]]; then
+    [[ "${TIANGONG_CODEX_GATEWAY_HOSTS}" =~ ^[A-Za-z0-9.-]+(,[A-Za-z0-9.-]+)*$ ]] || \
+      die 'Invalid TIANGONG_CODEX_GATEWAY_HOSTS.'
+    build_args+=(--build-arg "TIANGONG_CODEX_GATEWAY_HOSTS=${TIANGONG_CODEX_GATEWAY_HOSTS}")
+  fi
+  if [[ -n "${TIANGONG_CODEX_BASE_URL:-}" ]]; then
+    [[ "${TIANGONG_CODEX_BASE_URL}" =~ ^https?://[^@/?#[:space:]]+(/[^?#[:space:]]*)?$ ]] || \
+      die 'Invalid TIANGONG_CODEX_BASE_URL.'
+    build_args+=(--build-arg "TIANGONG_CODEX_BASE_URL=${TIANGONG_CODEX_BASE_URL}")
+  fi
+  docker build "${build_args[@]}" --target canary --tag "${IMAGE}" "${REPO_ROOT}/worker"
 }
 
 write_state() {

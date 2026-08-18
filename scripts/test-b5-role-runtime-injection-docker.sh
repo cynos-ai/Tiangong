@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "${TEST_ROOT}"' EXIT INT TERM
 
@@ -112,6 +113,8 @@ grep -Fq 'CODEX_HOME=/root/.codex' "${TEST_ROOT}/env"
 grep -Fq 'OPENCLAW_CODEX_DISCOVERY_LIVE=0' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_MEMBER_ID=worker-test' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_MEMBER_COORDINATION_ENABLED=0' "${TEST_ROOT}/env"
+grep -Fq 'AGENTTEAMS_AI_GATEWAY_URL=http://aigw-local.agentteams.io:8080' "${TEST_ROOT}/env"
+grep -Fq 'AGENTTEAMS_AI_GATEWAY_DOMAIN=aigw-local.agentteams.io' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_COORDINATION_CONTROL_ENDPOINT=http://coordination-runtime:8780/v1/coordination/admit' "${TEST_ROOT}/env"
 if grep -Fq 'secret-must-not-print' "${output}" || grep -Fq 'secret-must-not-print' "${TEST_ROOT}/run.args"; then
   printf 'FAIL: injection diagnostic leaked a secret.\n' >&2
@@ -136,6 +139,9 @@ grep -Fq 'OPENCLAW_AGENT_RUNTIME=codex' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_CODEX_CAPABILITY_CACHE_SHARED=1' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_CODEX_CAPABILITY_CACHE_URL=http://tiangong-codex-capability-cache:8788' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_CODEX_MODEL=deepseek-v4-pro' "${TEST_ROOT}/env"
+grep -Fq 'TIANGONG_CODEX_GATEWAY_HOSTS=agentteams-controller,aigw-local.agentteams.io' "${TEST_ROOT}/env"
+grep -Fq 'TIANGONG_CODEX_BASE_URL=http://aigw-local.agentteams.io:8080/v1' "${TEST_ROOT}/env"
+grep -Fq 'TIANGONG_CANARY_ADMISSION_FILE=/root/agentteams-fs/agents/worker-test/tiangong-admission.json' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_MEMBER_ID=worker-test' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_MEMBER_COORDINATION_ENABLED=1' "${TEST_ROOT}/env"
 
@@ -153,11 +159,31 @@ TIANGONG_B5_COORDINATION_CONTROL_TOKEN=test-control-token-123456 \
 grep -Fq 'TIANGONG_OPENCLAW_NATIVE=0' "${TEST_ROOT}/env"
 grep -Fq 'OPENCLAW_AGENT_RUNTIME=tiangong-pi' "${TEST_ROOT}/env"
 
+if PATH="${TEST_ROOT}/bin:${PATH}" \
+  TIANGONG_B5_WORKER_CONTAINER=worker-test TIANGONG_B5_ROLE_ID=leader \
+  TIANGONG_AGENTTEAMS_AI_GATEWAY_URL=http://user:password@aigw-local.agentteams.io:8080 \
+  TIANGONG_B5_COORDINATION_CONTROL_ENDPOINT=http://coordination-runtime:8780/v1/coordination/admit \
+  TIANGONG_B5_COORDINATION_CONTROL_TOKEN=test-control-token-123456 \
+    "${SCRIPT_DIR}/inject-b5-role-runtime-docker.sh" >"${TEST_ROOT}/invalid-gateway.out" 2>&1; then
+  printf 'expected invalid gateway rejection\n' >&2
+  exit 1
+fi
+grep -Fq 'code=GATEWAY_URL_INVALID' "${TEST_ROOT}/invalid-gateway.out"
+
 if PATH="${TEST_ROOT}/bin:${PATH}" TIANGONG_B5_WORKER_CONTAINER=worker-test TIANGONG_B5_ROLE_ID=unknown \
   "${SCRIPT_DIR}/inject-b5-role-runtime-docker.sh" >"${TEST_ROOT}/invalid.out" 2>&1; then
   printf 'expected invalid role rejection\n' >&2
   exit 1
 fi
 grep -Fq 'code=ROLE_INVALID' "${TEST_ROOT}/invalid.out"
+
+# The Gate B readiness probe must consume the complete docker logs stream;
+# grep -q would close the pipe early and be reported as SIGPIPE under
+# pipefail, producing a false runtime-not-ready result.
+if grep -Fq "grep -Fq ' reported ready'" "${REPO_ROOT}/smoke-testing/support/run-b5-gateb-smoke.sh"; then
+  printf 'unsafe readiness grep found\n' >&2
+  exit 1
+fi
+grep -Fq "grep -F ' reported ready' >/dev/null" "${REPO_ROOT}/smoke-testing/support/run-b5-gateb-smoke.sh"
 
 printf 'b5_role_runtime_injection_docker_contract=pass\n'

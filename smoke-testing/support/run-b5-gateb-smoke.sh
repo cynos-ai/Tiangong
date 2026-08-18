@@ -21,6 +21,7 @@ readonly INJECT_ROLE="${REPO_ROOT}/scripts/inject-b5-role-runtime-docker.sh"
 readonly INJECT_LEADER="${REPO_ROOT}/scripts/inject-leader-runtime-docker.sh"
 readonly RUNNER_BROKER_SCRIPT="${REPO_ROOT}/scripts/runner-broker.sh"
 readonly OPENCODEX_DEPLOY="${REPO_ROOT}/scripts/deploy-opencodex-sidecar.sh"
+readonly NORMALIZE_GATEWAY_PROVIDER="${REPO_ROOT}/scripts/normalize-agentteams-gateway-provider.sh"
 
 RUN_ID="${TIANGONG_GATEB_RUN_ID:-$(date -u +%Y%m%d%H%M%S)-$$}"
 [[ "${RUN_ID}" =~ ^[A-Za-z0-9._-]{1,48}$ ]] || { printf 'gateb=fail code=RUN_ID_INVALID\n' >&2; exit 2; }
@@ -48,6 +49,7 @@ readonly SIDECAR_BINDING_FILE="${STATE_DIR}/opencodex-binding.json"
 # passing a host-only path that would fail with ENOENT inside the container.
 readonly SIDECAR_SNAPSHOT_FILE="/var/lib/tiangong-opencodex/opencodex-${IMPLEMENTOR_NAME}.controller.json"
 readonly SIDECAR_CONTAINER="tiangong-opencodex-${IMPLEMENTOR_NAME}"
+readonly GATEWAY_PROVIDER_SNAPSHOT_ID="tiangong-${RUN_ID}"
 readonly SMOKE_MODEL="${TIANGONG_SMOKE_MODEL:-deepseek-chat}"
 readonly CODEX_MODEL="${TIANGONG_B5_CODEX_MODEL:-deepseek-v4-pro}"
 DOCKER_BINARY="$(command -v docker 2>/dev/null || true)"
@@ -66,6 +68,8 @@ runner_broker_started=0
 manager_stopped=0
 sidecar_provisioned=0
 sidecar_attempted=0
+gateway_api_token=''
+gateway_provider_attempted=0
 
 fail() { printf 'gateb=fail code=%s\n' "$1" >&2; exit 1; }
 container_exists() { docker container inspect "$1" >/dev/null 2>&1; }
@@ -155,6 +159,22 @@ provision_opencodex_sidecar() {
     fail OPENCODEX_SIDECAR_NOT_READY
   printf 'gateb=opencodex_sidecar_provisioned worker=%s model=%s\n' "${IMPLEMENTOR_NAME}" "${CODEX_MODEL}"
 }
+bind_gateway_consumer() {
+  local worker_name="$1" consumer_name status
+  consumer_name="worker-${worker_name}"
+  [[ "${consumer_name}" =~ ^worker-[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || fail GATEWAY_CONSUMER_INVALID
+  status="$(printf 'header = "Authorization: Bearer %s"\n' "${gateway_api_token}" | \
+    docker exec -i "${CONTROLLER_CONTAINER}" curl --silent --show-error --max-time 15 \
+      -K - -o /dev/null -w '%{http_code}' -X POST \
+      "http://127.0.0.1:8090/api/v1/gateway/consumers/${consumer_name}/bind")" || fail GATEWAY_CONSUMER_BIND
+  [[ "${status}" == 204 || "${status}" == 200 ]] || fail GATEWAY_CONSUMER_BIND
+}
+normalize_gateway_provider() {
+  gateway_provider_attempted=1
+  TIANGONG_DOCKER_COMMAND="${DOCKER_BINARY:-docker}" \
+    TIANGONG_GATEWAY_PROVIDER_SNAPSHOT_ID="${GATEWAY_PROVIDER_SNAPSHOT_ID}" \
+    bash "${NORMALIZE_GATEWAY_PROVIDER}" normalize || fail GATEWAY_PROVIDER_NORMALIZE
+}
 cleanup() {
   local status=$? member
   trap - EXIT INT TERM
@@ -166,6 +186,12 @@ cleanup() {
   if [[ -n "${driver_pid}" ]] && kill -0 "${driver_pid}" 2>/dev/null; then
     kill -TERM "${driver_pid}" 2>/dev/null || true
     wait "${driver_pid}" 2>/dev/null || true
+  fi
+  if ((gateway_provider_attempted == 1)); then
+    TIANGONG_DOCKER_COMMAND="${DOCKER_BINARY:-docker}" \
+      TIANGONG_GATEWAY_PROVIDER_SNAPSHOT_ID="${GATEWAY_PROVIDER_SNAPSHOT_ID}" \
+      bash "${NORMALIZE_GATEWAY_PROVIDER}" restore >/dev/null 2>&1 || status=1
+    gateway_provider_attempted=0
   fi
   if ((sidecar_attempted == 1)); then
     if ((sidecar_provisioned == 1)); then
@@ -230,13 +256,17 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 for command in bash docker jq timeout; do command -v "${command}" >/dev/null 2>&1 || fail "COMMAND_${command^^}_MISSING"; done
-[[ -f "${DRIVER}" && -f "${DEPLOY_COORDINATION}" && -f "${INJECT_ROLE}" && -f "${INJECT_LEADER}" && -f "${RUNNER_BROKER_SCRIPT}" && -f "${OPENCODEX_DEPLOY}" ]] || fail SMOKE_ASSET_MISSING
+[[ -f "${DRIVER}" && -f "${DEPLOY_COORDINATION}" && -f "${INJECT_ROLE}" && -f "${INJECT_LEADER}" && -f "${RUNNER_BROKER_SCRIPT}" && -f "${OPENCODEX_DEPLOY}" && -f "${NORMALIZE_GATEWAY_PROVIDER}" ]] || fail SMOKE_ASSET_MISSING
 [[ "${SMOKE_MODEL}" =~ ^[A-Za-z0-9._:/-]{1,128}$ ]] || fail SMOKE_MODEL_INVALID
 [[ "${CODEX_MODEL}" =~ ^[A-Za-z0-9._:/-]{1,128}$ ]] || fail CODEX_MODEL_INVALID
 container_exists "${MANAGER_CONTAINER}" || fail MANAGER_MISSING
 container_exists "${CONTROLLER_CONTAINER}" || fail CONTROLLER_MISSING
 [[ "$(docker inspect "${MANAGER_CONTAINER}" --format '{{.State.Running}}')" == true ]] || fail MANAGER_NOT_RUNNING
 [[ "$(docker inspect "${CONTROLLER_CONTAINER}" --format '{{.State.Running}}')" == true ]] || fail CONTROLLER_NOT_RUNNING
+gateway_api_token="$(docker exec "${MANAGER_CONTAINER}" printenv AGENTTEAMS_AUTH_TOKEN 2>/dev/null || true)"
+[[ -n "${gateway_api_token}" ]] || fail GATEWAY_API_TOKEN_MISSING
+normalize_gateway_provider
+printf 'gateb=ai_gateway_provider_normalize=pass provider=%s\n' "${TIANGONG_GATEWAY_PROVIDER_ID:-openai-compat}"
 docker exec "${MANAGER_CONTAINER}" agt get teams "${TEAM_NAME}" -o json >/dev/null 2>&1 && fail RESERVED_TEAM_EXISTS
 broker_result="$(timeout 60s bash "${RUNNER_BROKER_SCRIPT}" ensure 2>&1)" || {
   printf '%s\n' "${broker_result}" >&2
@@ -340,6 +370,10 @@ for pair in \
   member="${pair%%:*}"; role="${pair##*:}"
   wait_worker_ready "${member}" || fail "WORKER_${role^^}_NOT_READY"
 done
+for member in "${LEADER_NAME}" "${DESIGNER_NAME}" "${IMPLEMENTOR_NAME}" "${ASSESSOR_NAME}" "${OPERATOR_NAME}"; do
+  bind_gateway_consumer "${member}"
+done
+printf 'gateb=ai_gateway_consumer_binding=pass consumers=5\n'
 for _ in $(seq 1 360); do
   [[ -f "${TEAM_READY_BARRIER}" ]] && break
   if ! kill -0 "${driver_pid}" 2>/dev/null; then fail TEAM_SETUP_CHILD_EXITED; fi
@@ -439,10 +473,13 @@ for pair in \
     # MinIO/config-sync lines. Injection recreates this exact container, so
     # inspect its complete lifecycle; a wall-clock window could expire while
     # a slow Docker Desktop operation is still preparing the next role.
-    if docker logs "$(worker_container "${member}")" 2>&1 | grep -Fq ' reported ready'; then break; fi
+    # Do not use grep -q here: with pipefail, a verbose docker logs stream can
+    # receive SIGPIPE after grep exits early and turn an existing ready marker
+    # into a false negative.
+    if docker logs "$(worker_container "${member}")" 2>&1 | grep -F ' reported ready' >/dev/null; then break; fi
     sleep 2
   done
-  docker logs "$(worker_container "${member}")" 2>&1 | grep -Fq ' reported ready' || fail "WORKER_${role^^}_RUNTIME_NOT_READY"
+  docker logs "$(worker_container "${member}")" 2>&1 | grep -F ' reported ready' >/dev/null || fail "WORKER_${role^^}_RUNTIME_NOT_READY"
 done
 # Role injection recreates each Worker container. Reinstall the two reviewed
 # smoke helpers after that replacement so the Matrix sender does not retain a
@@ -523,10 +560,10 @@ TIANGONG_LEADER_WORKER_CONTAINER="$(worker_container "${LEADER_NAME}")" \
   bash "${INJECT_LEADER}" >"${STATE_DIR}/inject-leader.log" 2>&1 || fail LEADER_BINDING_INJECTION
 
 for _ in $(seq 1 180); do
-  if docker logs "$(worker_container "${LEADER_NAME}")" 2>&1 | grep -Fq ' reported ready'; then break; fi
+  if docker logs "$(worker_container "${LEADER_NAME}")" 2>&1 | grep -F ' reported ready' >/dev/null; then break; fi
   sleep 2
 done
-docker logs "$(worker_container "${LEADER_NAME}")" 2>&1 | grep -Fq ' reported ready' || fail LEADER_RUNTIME_NOT_READY_AFTER_BINDING
+docker logs "$(worker_container "${LEADER_NAME}")" 2>&1 | grep -F ' reported ready' >/dev/null || fail LEADER_RUNTIME_NOT_READY_AFTER_BINDING
 
 # The driver log is never printed: it may contain model/Matrix text. Only
 # stable machine markers are used as the result oracle. On failure, expose
@@ -539,4 +576,7 @@ driver_pid=''
 grep -Eq 'leader_smoke_real_team=pass' "${DRIVER_LOG}" || fail TEAM_VERTICAL_MARKER_MISSING
 grep -Eq 'leader_smoke_design_roundtrip=pass' "${DRIVER_LOG}" || fail DESIGN_ROUNDTRIP_MISSING
 grep -Eq 'leader_smoke_requester_report=pass' "${DRIVER_LOG}" || fail CLOSURE_MARKER_MISSING
+# Expose only the allowlisted machine markers on success too. The driver log
+# itself may contain model/Matrix text and remains run-local evidence.
+grep -E '^(leader_smoke_(real_team|design_roundtrip|matrix_handoff|implementor_blocker(_result|_without_result)?|requester_report|gate3)=(pass|partial_blocked_terminal_only)|leader_followup=(pass|timeout))' "${DRIVER_LOG}" | tail -n 20 || true
 printf 'gateb_matrix_work_task_result_closure=pass run=%s\n' "${RUN_ID}"

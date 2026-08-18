@@ -144,3 +144,88 @@ builtin runtime 默认切换到已登记的 `deepseek-chat`；Codex member 的�
 AI gateway endpoint（或 AgentTeams 上游修复 Controller 的本地 URL 注入），并在同一
 个全新 Worker 内证明 `/v1/models` 和一次真实 Chat/Responses 回合成功；在此之前不做
 Qwen 数据迁移、不创建 release、不合并 `main`。
+
+### Tiangong 侧显式绕过（等待上游修复期间）
+
+等待 AgentTeams Controller 修复 embedded 模式地址覆盖期间，Tiangong canary
+镜像支持一个部署层的、非密钥的 endpoint override。它只影响 Tiangong
+Codex/OpenClaw Worker 的模型目标，不绕过 AgentTeams Consumer 鉴权，也不把
+DeepSeek Key 写入镜像、Worker 配置或日志。
+
+构建 canary/profile 镜像时显式传入：
+
+```bash
+TIANGONG_CODEX_GATEWAY_HOSTS=agentteams-controller,aigw-local.agentteams.io \\
+TIANGONG_CODEX_BASE_URL=http://aigw-local.agentteams.io:8080/v1 \\
+make build-worker-image
+```
+
+`TIANGONG_CODEX_BASE_URL` 仅接受无凭证、无 query/fragment 的 HTTP(S) URL；
+`TIANGONG_CODEX_GATEWAY_HOSTS` 是 Worker preflight 的显式 host allowlist。
+没有传入这些变量时，镜像保持原有默认行为。运行时仍必须通过
+`/v1/models` 认证探测和真实模型 smoke；探测失败会 fail closed。
+
+AgentTeams v1.2.2 的 B5/Phase C 部署注入还会对每个被重建的 Worker
+重新写入 `AGENTTEAMS_AI_GATEWAY_URL` 和 `AGENTTEAMS_AI_GATEWAY_DOMAIN`，默认指向
+`http://aigw-local.agentteams.io:8080`；Leader 仍使用 OpenClaw 内置 runtime，
+所以这个修正同样覆盖 Leader 的内置模型请求。Implementor 的 Codex 路由同时
+重写 `TIANGONG_CODEX_BASE_URL` 和 host allowlist。两条注入路径都拒绝带凭证的
+URL，并从 env-file 中排除旧值，避免 AgentTeams 错误的 `agentteams-controller`
+地址在重建时再次生效。
+
+### AgentTeams v1.2.2 网关路由的第二个绕过点
+
+仅修正 Worker endpoint 仍不够。当前 v1.2.2 的 embedded Higress 初始化会把
+`AGENTTEAMS_OPENAI_BASE_URL=https://api.deepseek.com/v1` 原样写入 AI Proxy，
+而 AI Proxy 还会为请求追加 `/v1`。真实请求因此变成 `/v1/v1/...`，上游返回
+404；这不是 DeepSeek Key 或 OpenClaw/Codex transport 失败。
+
+部署侧现在提供 `scripts/normalize-agentteams-gateway-provider.sh`：
+
+```bash
+TIANGONG_GATEWAY_PROVIDER_SNAPSHOT_ID=phasec-<run-id> \\
+bash scripts/normalize-agentteams-gateway-provider.sh normalize
+```
+
+脚本在 `agentteams-controller` 容器内用已有的 Higress 管理凭证读取并更新
+`openai-compat` provider 和对应 service source，把精确的 `/v1` 后缀改成服务
+根地址；凭证只在 Controller 进程边界内使用，不写入宿主机参数、日志或镜像。
+它会在 Controller 的临时目录建立回滚快照，失败或 smoke 结束时执行：
+
+```bash
+TIANGONG_GATEWAY_PROVIDER_SNAPSHOT_ID=phasec-<run-id> \\
+bash scripts/normalize-agentteams-gateway-provider.sh restore
+```
+
+B5 驱动会在创建 Worker 前自动执行 normalize，并在清理阶段无条件 restore。
+Provider、Manager 或 Controller 被重新初始化后必须再次执行 normalize；不能把
+一次 smoke 的结果当作永久配置。另一个部署侧动作是通过 Controller 的
+`POST /api/v1/gateway/consumers/{worker-<name>}/bind` 为本次 run 的五个精确
+Worker consumer 授权 AI route，未绑定或绑定失败即 fail closed。
+
+这两个动作共同绕过 v1.2.2 的“地址覆盖 + provider 路径 + consumer route”
+缺口，但仍不等于 Phase C Go：必须在同一全新 run 内看到 `/v1/models`、Leader
+builtin Chat、Implementor Codex ToolResult、重启恢复和精确清理全部通过。
+
+### 真实 B5 验证记录（2026-08-18）
+
+在全新 `codex-bypass-verified-*` run 中，绕过链路和业务闭环均通过：
+
+- `agentteams_gateway_provider=skip ... reason=already_normalized`：Provider
+  已处于服务根地址，normalize/restore 生命周期正常；
+- `gateb=ai_gateway_consumer_binding=pass consumers=5`：五个精确 Worker
+  Consumer 均完成授权；
+- `gateb=opencodex_sidecar_provisioned`、`role_runtime_reinjected_after_manager=pass`、
+  `coordination_runtime_deployment=ready`：Codex sidecar、Manager 重启后的
+  角色投影和协调服务均就绪；
+- `leader_smoke_real_team=pass`、`leader_smoke_design_roundtrip=pass`、
+  `leader_smoke_matrix_handoff=pass`、`leader_smoke_implementor_blocker_result=pass`、
+  `leader_smoke_requester_report=pass`：Leader 内置 runtime、设计交接、
+  Implementor Codex ToolResult/阻断结果以及 Matrix requester report 均通过；
+- `gateb_matrix_work_task_result_closure=pass`、`gateb_cleanup=pass`：任务闭环和
+  精确清理通过。`leader_smoke_gate3=partial_blocked_terminal_only` 是当前
+  smoke 的预期边界：环境没有真实终端执行器，Leader 正确生成
+  `RECOVERY_REQUIRED`，不代表网关或 Codex 路由失败。
+
+因此这条部署侧绕过路径已经有真实可重复的 B5 证据；上游 AgentTeams 修复
+合并前仍需由部署层保留 normalize、consumer bind 和 endpoint 注入三项动作。

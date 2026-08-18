@@ -49,7 +49,13 @@ run_step coordination-deployment-contract bash "${SCRIPT_DIR}/test-coordination-
 run_step leader-injection-contract bash "${SCRIPT_DIR}/test-leader-runtime-injection.sh"
 run_step leader-injection-docker-contract bash "${SCRIPT_DIR}/test-leader-runtime-injection-docker.sh"
 run_step role-injection-docker-contract bash "${SCRIPT_DIR}/test-b5-role-runtime-injection-docker.sh"
+run_step gateway-provider-normalizer-contract bash "${SCRIPT_DIR}/test-agentteams-gateway-provider-normalizer.sh"
 run_step openclaw-migration-default-contract bash "${SCRIPT_DIR}/test-openclaw-migration-gate.sh"
+
+grep -Fq '/api/v1/gateway/consumers/${consumer_name}/bind' "${REPO_ROOT}/smoke-testing/support/run-b5-gateb-smoke.sh" || {
+  printf 'phasec=fail step=gateway-consumer-binding-contract code=BIND_ENDPOINT_MISSING\n' >&2
+  failures=$((failures + 1))
+}
 
 pushd "${REPO_ROOT}" >/dev/null
 run_step worker-phase-c-tests "${node_bin}" --test \
@@ -63,7 +69,8 @@ run_step worker-phase-c-tests "${node_bin}" --test \
   worker/test/leader-runtime-config.test.mjs \
   worker/test/member-coordination-hooks.test.mjs \
   worker/test/opencodex-sidecar-receipt-service.test.mjs \
-  worker/test/opencodex-sidecar.test.mjs
+  worker/test/opencodex-sidecar.test.mjs \
+  worker/test/canary-admission.test.mjs
 
 run_step app-phase-c-tests "${node_bin}" --test \
   app/test/control-api.test.mjs \
