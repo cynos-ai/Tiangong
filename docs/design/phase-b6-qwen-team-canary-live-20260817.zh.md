@@ -40,3 +40,12 @@ Qwen canary 当前为 **partial / blocked-at-deployment-injection**，不是 gre
 - 分步 Leader resume 已替代一次性长 prompt（check → decide → dispatch/report），显著减少 Qwen 在恢复回合中不返回 marker 的情况。但 `qwen-canary-20260817-18` 仍在 dispatch 回合出现模型无工具回合响应超时，说明 Qwen Coding Plan 的模型行为/延迟仍不是稳定的 Gate B 生产证据；这不是 sidecar receipt 或 AgentTeams credential 失败。
 
 因此当前结论是：**Qwen + OpenClaw builtin Leader/Matrix + OpenCodex bridge 的协议和大部分真实路径可行，但 Qwen Team Full/Gate B 仍未 green。** 该结果足以继续做参数化和隔离 canary，不足以切默认 provider、迁移权威数据、删除 legacy lane、创建 `release/v0.3.0` 或合入 `main`。下一次验收必须在稳定的 AgentTeams credential/Matrix/Runner broker 部署上重复，并把 Qwen dispatch 的稳定成功、ToolResult retention、重启恢复、回滚和 cleanup 全部记录为机器证据。
+
+## 2026-08-18 绕过路径复测
+
+在部署侧完成 gateway endpoint、provider 根地址和 Consumer bind 绕过后，重新做了两次全新 B5：
+
+- `qwen3.7-plus`：上游 Coding Plan `/v1/models` 返回 200；Provider 临时切换、五个 Consumer、Codex sidecar、Manager 重启后角色注入、协调服务和 `leader_smoke_real_team=pass` 均通过；随后在 Leader 设计任务回合进入 `LEADER_MATRIX_VERTICAL`，没有得到稳定的设计交接闭环。
+- `qwen3.5-plus`：同样通过 provider/Consumer/sidecar/角色注入/Team Active；仍在第一轮 Leader 纵向回合后进入 `LEADER_MATRIX_VERTICAL`。这说明更换 Coding Plan 模型名没有消除当前失败。
+
+两次 canary 都使用 Controller 内部临时快照，结束后恢复 `api.deepseek.com` Provider 和 service source；未把 Qwen Key 写入仓库、镜像、Worker binding、receipt 或日志。当前结论仍是 **Qwen 上游可达、AgentTeams 路由可达，但 Qwen Team Full 续回合不稳定**，因此保持 DeepSeek 默认，不切 provider、不迁移数据、不创建 release。
