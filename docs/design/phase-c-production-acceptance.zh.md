@@ -248,3 +248,16 @@ provider billing/credential 外部阻断处理；没有伪造 Task/Result/Leader
 `make phase-c-real`，收集 `/v1/models`、真实 Chat/Responses、ToolResult、
 重启恢复和 cleanup 的机器事实。凭证不得写入仓库、镜像、命令行、Worker 状态
 或 Evidence；在该证据闭合前不创建新的 release、不迁移数据、不合入 `main`。
+
+### 2026-08-18 临时 credential 复测补充
+
+部署层使用一次性临时 DeepSeek credential 做了可回滚轮换：provider 快照、
+`apiTokens` 替换和恢复均在 Controller 内完成，临时值没有进入仓库、命令输出
+或 Worker 状态。替换后的 `/v1/models` 认证探测返回 HTTP 200，说明 key 的
+认证链路可达；但同一全新 Gate B 的 Leader 首轮真实 Chat 仍返回 HTTP 402
+`Insufficient Balance`。Codex gateway preflight、OpenCodex sidecar ready、
+五角色注入和 cleanup 均通过，不能把这次结果归因于 runtime 或 adapter。
+
+测试超时后已验证精确 Team/Worker/Coordination/PG/sidecar 资源不存在，原
+provider 配置也已恢复。当前 Phase C 仍保持 No-Go，下一次必须使用确实有余额
+的 provider credential，不能只满足 `/v1/models` 的认证探测。
