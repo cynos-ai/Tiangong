@@ -49,3 +49,14 @@ Qwen canary 当前为 **partial / blocked-at-deployment-injection**，不是 gre
 - `qwen3.5-plus`：同样通过 provider/Consumer/sidecar/角色注入/Team Active；仍在第一轮 Leader 纵向回合后进入 `LEADER_MATRIX_VERTICAL`。这说明更换 Coding Plan 模型名没有消除当前失败。
 
 两次 canary 都使用 Controller 内部临时快照，结束后恢复 `api.deepseek.com` Provider 和 service source；未把 Qwen Key 写入仓库、镜像、Worker binding、receipt 或日志。当前结论仍是 **Qwen 上游可达、AgentTeams 路由可达，但 Qwen Team Full 续回合不稳定**，因此保持 DeepSeek 默认，不切 provider、不迁移数据、不创建 release。
+
+## 2026-08-18 上游 tool-call 基线与真实 Leader 复跑
+
+为区分模型协议能力和 AgentTeams/OpenClaw 纵向回合，先在 Coding Plan 上做了最小 Chat/Completions 探针：
+
+- `qwen3.7-plus` 在默认 thinking 模式、`tools` + `tool_choice=auto` 下返回原生 `tool_calls`；同一模型显式使用 `tool_choice=required` 时返回 HTTP 400，错误为 thinking 模式不支持 required/object 型选择。
+- `qwen3.5-plus` 的 `tool_choice=required` 同样返回 HTTP 400；在 `auto` 下返回 HTTP 200，但本次响应把工具调用写成文本 JSON，没有 `tool_calls` 字段。
+
+随后使用 bash 内联环境变量重新跑了一次真实 `qwen3.7-plus` B5，确认 Leader marker 为 `runtime=openclaw-built-in`、`provider=agentteams-gateway`、`model=qwen3.7-plus`。Team Active、五个 Consumer、sidecar、角色重注入和 Leader 进程启动均通过，但首个 Leader Matrix 任务回合在 40 次 bounded polling 后只有 `leader_response_timeout=1`，没有 `LEADER_DONE` 或工具结果；资源清理完成，Provider 恢复 DeepSeek。
+
+因此可以确认：Qwen 3.7 的上游原生 tool call 能力存在，但这不能推出 AgentTeams Leader 的完整纵向回合可用；当前失败点仍在 AgentTeams/OpenClaw Leader 会话与工具回合的组合路径。生产建议保持 **DeepSeek Leader + Qwen Codex/OpenCodex member canary**，直到 AgentTeams Leader 续回合有稳定机器证据。
