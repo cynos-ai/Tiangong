@@ -37,6 +37,24 @@ docker info >/dev/null 2>&1 || {
   exit 1
 }
 
+validate_codex_gateway_override() {
+  local base_url="${TIANGONG_CODEX_BASE_URL:-}" hosts="${TIANGONG_CODEX_GATEWAY_HOSTS:-}"
+  if [[ -n "${base_url}" ]]; then
+    [[ "${base_url}" =~ ^https?://[^@/?#[:space:]]+(/[^?#[:space:]]*)?$ ]] || {
+      printf 'ERROR: TIANGONG_CODEX_BASE_URL must be an HTTP(S) URL without credentials, query, or fragment.\n' >&2
+      exit 1
+    }
+  fi
+  if [[ -n "${hosts}" ]]; then
+    [[ "${hosts}" =~ ^[A-Za-z0-9.-]+(,[A-Za-z0-9.-]+)*$ ]] || {
+      printf 'ERROR: TIANGONG_CODEX_GATEWAY_HOSTS must be a comma-separated host allowlist.\n' >&2
+      exit 1
+    }
+  fi
+}
+
+validate_codex_gateway_override
+
 # Git Bash rewrites Unix-looking container paths in `docker run` arguments as
 # Windows host paths. Build contexts intentionally keep that conversion, but
 # validation entrypoints and workdirs belong inside the container namespace.
@@ -47,6 +65,15 @@ run_image() {
 build_args=(--pull --build-context "team_playbooks=${REPO_ROOT}/team-playbooks")
 if [[ -n "${TIANGONG_OTEL_EXPORTER_ENDPOINT:-}" ]]; then
   build_args+=(--build-arg "TIANGONG_OTEL_EXPORTER_ENDPOINT=${TIANGONG_OTEL_EXPORTER_ENDPOINT}")
+fi
+# These are non-secret, deployment-owned Codex routing values. They are baked
+# into all Tiangong Worker profiles so a later runtime injection can use the
+# same explicit endpoint without copying a provider credential into the image.
+if [[ -n "${TIANGONG_CODEX_GATEWAY_HOSTS:-}" ]]; then
+  build_args+=(--build-arg "TIANGONG_CODEX_GATEWAY_HOSTS=${TIANGONG_CODEX_GATEWAY_HOSTS}")
+fi
+if [[ -n "${TIANGONG_CODEX_BASE_URL:-}" ]]; then
+  build_args+=(--build-arg "TIANGONG_CODEX_BASE_URL=${TIANGONG_CODEX_BASE_URL}")
 fi
 
 printf '[Tiangong] Building %s\n' "${IMAGE}"

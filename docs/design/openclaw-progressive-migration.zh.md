@@ -49,3 +49,16 @@ binding、endpoint 和 token 验证全部通过后才删除旧容器；失败则
 当前真实 Phase C 仍受共享 AgentTeams 栈的 controller STS 503 和
 Implementor capability-cache timeout 阻塞；这属于部署环境 No-Go，不是
 原生 OpenClaw 车道已经通过的证据。
+
+## 2026-08-17 迁移前默认门
+
+新 Team 的默认 Worker runtime 已在仓库配置中设为 `openclaw`：
+`.env.example` 和 `scripts/agentteams.sh` 都不会再把新 Team 默认到旧的
+AgentTeams Worker runtime。这个默认只影响新建 Team，不会偷偷改写已有 Team。
+
+Pi 仍是显式回滚车道。部署注入器默认
+`TIANGONG_B5_OPENCLAW_NATIVE=1`，需要回滚时必须显式设置
+`TIANGONG_B5_OPENCLAW_NATIVE=0`；`OPENCLAW_AGENT_HARNESS_FALLBACK=none`
+保持 fail-closed，缺少原生 runtime、Codex、凭证或 sidecar readiness 时不会
+静默切换。`make test-openclaw-migration-gate` 是迁移前静态门，只证明默认和
+回滚边界，不能替代真实 Phase C、provider canary 或 PG/MinIO snapshot。

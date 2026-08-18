@@ -24,6 +24,21 @@ const NEUTRALIZED_IMAGE_ENV_KEYS = Object.freeze([
   // Role identity belongs to the Worker control plane and must not leak into
   // a disposable command runner, which has no professional role authority.
   "TIANGONG_ROLE_ID",
+  // The Worker image carries deployment-owned Codex routing metadata. A
+  // disposable command runner must not inherit provider/model selection or
+  // capability-cache endpoints from that image.
+  "TIANGONG_CODEX_RUNTIME",
+  "TIANGONG_CODEX_GATEWAY_HOSTS",
+  "TIANGONG_CODEX_PROVIDER",
+  "TIANGONG_CODEX_MODEL",
+  "TIANGONG_CODEX_MODEL_ALIAS",
+  "TIANGONG_CODEX_BASE_URL",
+  "TIANGONG_CODEX_CREDENTIAL_SOURCE",
+  "TIANGONG_CODEX_TRANSPORT",
+  "TIANGONG_CODEX_BRIDGE",
+  "TIANGONG_CODEX_CAPABILITY_CACHE_PATH",
+  "TIANGONG_CODEX_CAPABILITY_CACHE_URL",
+  "TIANGONG_CODEX_CAPABILITY_CACHE_SHARED",
   "TIANGONG_OTEL_EXPORTER_ENDPOINT",
   "http_proxy",
   "https_proxy",

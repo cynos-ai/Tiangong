@@ -26,6 +26,7 @@ readonly MANAGER_MANIFEST="/tmp/tiangong-leader-smoke-team.yaml"
 readonly MANAGER_TURN="/tmp/tiangong-leader-coordination-turn.sh"
 readonly MANAGER_FOLLOWUP="/tmp/tiangong-leader-followup-turn.sh"
 readonly MANAGER_REPORT_CHECK="/tmp/tiangong-requester-report-check.sh"
+SMOKE_MODEL="${TIANGONG_SMOKE_MODEL:-deepseek-chat}"
 PROJECT_ID="leader-smoke-$(head -c 8 /proc/sys/kernel/random/uuid)"
 TASK_ID="${PROJECT_ID}-design-0"
 owned=0
@@ -83,6 +84,24 @@ if (matches.length !== 1 || matches[0].disposition !== "RECOVERY_REQUIRED" || ma
 }
 JS
 }
+
+capture_failure_markers() {
+  local evidence_dir="${TIANGONG_SMOKE_EVIDENCE_DIR:-}" member container
+  [[ -n "${evidence_dir}" ]] || return 0
+  mkdir -p "${evidence_dir}" 2>/dev/null || return 0
+  for member in "${MEMBERS[@]}"; do
+    container="agentteams-worker-${member}"
+    if docker inspect "${container}" >/dev/null 2>&1; then
+      # Keep evidence machine-oriented and redact token-like values before
+      # writing it to the ignored local smoke state directory.
+      docker logs --since 20m "${container}" 2>&1 |
+        grep -E 'tiangong_|codex_|embedded run (start|end)|embedded run tool (start|end)|tool.*(error|Error)|reported ready' |
+        sed -E 's/[A-Za-z0-9_./:-]{32,}/[redacted]/g' |
+        tail -n 120 >"${evidence_dir}/worker-${member}-markers.log" || true
+    fi
+  done
+}
+
 team_roster_ready() {
   local room_id=$1
   docker exec -i "agentteams-worker-${LEADER_NAME}" sh -s -- "${room_id}" "${MEMBERS[@]}" <<'SH'
@@ -242,6 +261,7 @@ cleanup() {
   local -a project_tasks=("${TASK_ID}")
   trap - EXIT INT TERM
   set +e
+  ((status == 0)) || capture_failure_markers
   while IFS= read -r discovered_id; do
     [[ "${discovered_id}" =~ ^[A-Za-z0-9._:-]{1,128}$ ]] || continue
     [[ " ${project_tasks[*]} " == *" ${discovered_id} "* ]] || project_tasks+=("${discovered_id}")
@@ -372,6 +392,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 for cmd in awk docker jq grep sha256sum; do command -v "${cmd}" >/dev/null 2>&1 || die "Missing command: ${cmd}"; done
+[[ "${SMOKE_MODEL}" =~ ^[A-Za-z0-9._:/-]{1,128}$ ]] || die "Invalid TIANGONG_SMOKE_MODEL"
 for path in "${WORKERS_MANIFEST}" "${MANIFEST}" "${TURN_HELPER}" "${FOLLOWUP_HELPER}" "${REPORT_HELPER}" "${BUILD_SCRIPT}"; do
   [[ -f "${path}" && ! -L "${path}" ]] || die "Missing or symlinked smoke asset: ${path}"
 done
@@ -404,6 +425,19 @@ done
 
 "${BUILD_SCRIPT}"
 docker cp "${WORKERS_MANIFEST}" "${MANAGER_CONTAINER}:${MANAGER_WORKERS_MANIFEST}"
+# Keep the committed fixture pinned to the AgentTeams-supported DeepSeek Chat
+# smoke while
+# allowing an explicitly isolated provider/model canary.  The manifest is
+# rendered inside the Manager container, so Docker Desktop path handling is
+# identical for the default and canary lanes.
+docker exec -i "${MANAGER_CONTAINER}" sh -s -- "${SMOKE_MODEL}" "${MANAGER_WORKERS_MANIFEST}" <<'SH'
+set -eu
+model="$1"
+manifest="$2"
+sed -E -i "s#^  model: .*#  model: ${model}#" "${manifest}"
+grep -Fqx "  model: ${model}" "${manifest}"
+SH
+printf 'leader_smoke_model=%s\n' "${SMOKE_MODEL}"
 docker cp "${MANIFEST}" "${MANAGER_CONTAINER}:${MANAGER_MANIFEST}"
 owned=1
 log "Creating disposable Workers before binding the Team"

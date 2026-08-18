@@ -231,8 +231,39 @@ configure_codex_gateway() {
   trap cleanup_codex_home EXIT INT TERM
 }
 
+configure_builtin_gateway() {
+  local config_file gateway_url gateway_base_url provider_id temporary_file
+  [[ "${TIANGONG_OPENCLAW_NATIVE:-0}" == "1" ]] || return 0
+  [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]] && return 0
+  config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
+  gateway_url="${AGENTTEAMS_AI_GATEWAY_URL:-}"
+  [[ -n "${gateway_url}" ]] || return 0
+  [[ "${gateway_url}" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$ ]] || {
+    printf '[tiangong-worker] ERROR: AgentTeams gateway URL is invalid for the built-in runtime.\n' >&2
+    return 1
+  }
+  [[ -f "${config_file}" ]] || {
+    printf '[tiangong-worker] ERROR: OpenClaw config not found: %s\n' "${config_file}" >&2
+    return 1
+  }
+  gateway_base_url="${gateway_url%/}/v1"
+  provider_id="${TIANGONG_CODEX_PROVIDER:-agentteams-gateway}"
+  temporary_file="$(mktemp "${config_file}.tiangong-gateway.XXXXXX")"
+  trap 'rm -f "${temporary_file:-}"' RETURN
+  jq --arg provider_id "${provider_id}" --arg base_url "${gateway_base_url}" '
+    if (.models.providers[$provider_id] | type) == "object"
+    then .models.providers[$provider_id].baseUrl = $base_url
+    else error("AgentTeams gateway provider is missing")
+    end
+  ' "${config_file}" >"${temporary_file}"
+  chmod 600 "${temporary_file}"
+  mv "${temporary_file}" "${config_file}"
+  trap - RETURN
+  printf '[tiangong-worker] builtin_gateway_override=pass provider=%s\n' "${provider_id}" >&2
+}
+
 configure_codex_runtime() {
-  local config_file temporary_file model_id model_ref model_alias
+  local config_file temporary_file model_id model_ref model_alias provider_id
   [[ "${TIANGONG_RUNTIME_LANE:-legacy-v0.2}" == "openclaw-canary" ]] || return 0
   [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]] || return 0
   config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
@@ -242,11 +273,21 @@ configure_codex_runtime() {
   }
   temporary_file="$(mktemp "${config_file}.tiangong-codex.XXXXXX")"
   trap 'rm -f "${temporary_file:-}"' RETURN
+  provider_id="${TIANGONG_CODEX_PROVIDER:-agentteams-gateway}"
   model_id="${TIANGONG_CODEX_MODEL:-deepseek-v4-pro}"
   model_ref="codex/${model_id}"
   model_alias="${TIANGONG_CODEX_MODEL_ALIAS:-${model_id}}"
-  jq --arg model_ref "${model_ref}" --arg model_alias "${model_alias}" '
-    .plugins = (.plugins // {})
+  jq --arg provider_id "${provider_id}" --arg model_id "${model_id}" --arg model_ref "${model_ref}" --arg model_alias "${model_alias}" '
+    .models = (.models // {})
+    | .models.providers = (.models.providers // {})
+    | if (.models.providers[$provider_id] | type) == "object"
+      then .models.providers[$provider_id].models = [
+        ((.models.providers[$provider_id].models // [])[] | select(.id != $model_id and .id != ("codex/" + $model_id))),
+        {id: $model_id, name: $model_id, reasoning: true, contextWindow: 256000, maxTokens: 65536}
+      ]
+      else .
+      end
+    | .plugins = (.plugins // {})
     | .plugins.entries = (.plugins.entries // {})
     | .plugins.entries.codex = ((.plugins.entries.codex // {}) + {enabled: true})
     | .plugins.entries.codex.config = ((.plugins.entries.codex.config // {}) + {
@@ -320,6 +361,7 @@ if [[ "${1:-}" == "gateway" && "${2:-}" == "run" ]]; then
   # must fail closed without enabling a plugin or rewriting the OpenClaw
   # configuration on disk.
   configure_tiangong_plugin
+  configure_builtin_gateway
   configure_codex_runtime
   configure_codex_gateway
   /usr/bin/node "${PREFLIGHT}"

@@ -20,6 +20,8 @@ readonly DEPLOY_COORDINATION="${REPO_ROOT}/scripts/deploy-coordination-runtime.s
 readonly INJECT_ROLE="${REPO_ROOT}/scripts/inject-b5-role-runtime-docker.sh"
 readonly INJECT_LEADER="${REPO_ROOT}/scripts/inject-leader-runtime-docker.sh"
 readonly RUNNER_BROKER_SCRIPT="${REPO_ROOT}/scripts/runner-broker.sh"
+readonly OPENCODEX_DEPLOY="${REPO_ROOT}/scripts/deploy-opencodex-sidecar.sh"
+readonly NORMALIZE_GATEWAY_PROVIDER="${REPO_ROOT}/scripts/normalize-agentteams-gateway-provider.sh"
 
 RUN_ID="${TIANGONG_GATEB_RUN_ID:-$(date -u +%Y%m%d%H%M%S)-$$}"
 [[ "${RUN_ID}" =~ ^[A-Za-z0-9._-]{1,48}$ ]] || { printf 'gateb=fail code=RUN_ID_INVALID\n' >&2; exit 2; }
@@ -41,6 +43,15 @@ readonly NORMALIZED_REPORT="${STATE_DIR}/requester-report-check.sh"
 readonly NORMALIZED_DRIVER="${SCRIPT_DIR}/.run-leader-smoke-${RUN_ID}.sh"
 readonly CONTROL_TOKEN="gateb-control-${RUN_ID}-token"
 readonly PG_PASSWORD="gateb-pg-${RUN_ID}-password"
+readonly SIDECAR_BINDING_FILE="${STATE_DIR}/opencodex-binding.json"
+# The lifecycle CLI runs inside the shared adapter container. Keep the
+# controller snapshot in its deployment-owned state volume rather than
+# passing a host-only path that would fail with ENOENT inside the container.
+readonly SIDECAR_SNAPSHOT_FILE="/var/lib/tiangong-opencodex/opencodex-${IMPLEMENTOR_NAME}.controller.json"
+readonly SIDECAR_CONTAINER="tiangong-opencodex-${IMPLEMENTOR_NAME}"
+readonly GATEWAY_PROVIDER_SNAPSHOT_ID="tiangong-${RUN_ID}"
+readonly SMOKE_MODEL="${TIANGONG_SMOKE_MODEL:-deepseek-chat}"
+readonly CODEX_MODEL="${TIANGONG_B5_CODEX_MODEL:-deepseek-v4-pro}"
 DOCKER_BINARY="$(command -v docker 2>/dev/null || true)"
 DOCKER_BINARY_REAL="$(readlink -f "${DOCKER_BINARY}" 2>/dev/null || printf '%s' "${DOCKER_BINARY}")"
 DOCKER_USES_WINDOWS_PATHS=0
@@ -55,6 +66,10 @@ coord_started=0
 pg_started=0
 runner_broker_started=0
 manager_stopped=0
+sidecar_provisioned=0
+sidecar_attempted=0
+gateway_api_token=''
+gateway_provider_attempted=0
 
 fail() { printf 'gateb=fail code=%s\n' "$1" >&2; exit 1; }
 container_exists() { docker container inspect "$1" >/dev/null 2>&1; }
@@ -114,6 +129,52 @@ wait_team_active() {
   done
   return 1
 }
+provision_opencodex_sidecar() {
+  local image="${TIANGONG_OPENCODEX_SIDECAR_IMAGE:-tiangong-opencodex-sidecar:dev}"
+  # OpenCodex serves its data-plane API below /v1; /models is the HTML
+  # dashboard and would make the Worker gateway probe accept HTML as a 200
+  # response before JSON parsing. Bind the receipt to the API base explicitly.
+  local endpoint="http://${SIDECAR_CONTAINER}:8791/v1"
+  jq -n \
+    --arg team "${TEAM_NAME}" \
+    --arg worker "${IMPLEMENTOR_NAME}" \
+    --arg image "${image}" \
+    --arg endpoint "${endpoint}" \
+    --arg provider "${TIANGONG_B5_CODEX_PROVIDER:-agentteams-gateway}" \
+    --arg model "${CODEX_MODEL}" \
+    --arg credential "agentteams://credentials/${IMPLEMENTOR_NAME}" \
+    '{schemaVersion:1,teamId:$team,workerId:$worker,image:$image,endpoint:$endpoint,provider:$provider,model:$model,transport:"responses-via-chat-bridge",bridge:"opencodex",credentialSource:"agentteams-secret-projection",credentialRef:$credential,generation:1}' \
+    >"${SIDECAR_BINDING_FILE}"
+  chmod 600 "${SIDECAR_BINDING_FILE}"
+  sidecar_attempted=1
+  TIANGONG_OPENCODEX_ADAPTER_IMAGE="${TIANGONG_OPENCODEX_ADAPTER_IMAGE:-tiangong-opencodex-adapter:dev}" \
+    TIANGONG_OPENCODEX_WORKER_CONTAINER="$(worker_container "${IMPLEMENTOR_NAME}")" \
+    bash "${OPENCODEX_DEPLOY}" lifecycle provision \
+      --binding "${SIDECAR_BINDING_FILE}" --snapshot "${SIDECAR_SNAPSHOT_FILE}" >/dev/null || \
+    fail OPENCODEX_SIDECAR_PROVISION
+  sidecar_provisioned=1
+  TIANGONG_OPENCODEX_ADAPTER_IMAGE="${TIANGONG_OPENCODEX_ADAPTER_IMAGE:-tiangong-opencodex-adapter:dev}" \
+    TIANGONG_OPENCODEX_WORKER_CONTAINER="$(worker_container "${IMPLEMENTOR_NAME}")" \
+    bash "${OPENCODEX_DEPLOY}" lifecycle ready --snapshot "${SIDECAR_SNAPSHOT_FILE}" >/dev/null || \
+    fail OPENCODEX_SIDECAR_NOT_READY
+  printf 'gateb=opencodex_sidecar_provisioned worker=%s model=%s\n' "${IMPLEMENTOR_NAME}" "${CODEX_MODEL}"
+}
+bind_gateway_consumer() {
+  local worker_name="$1" consumer_name status
+  consumer_name="worker-${worker_name}"
+  [[ "${consumer_name}" =~ ^worker-[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || fail GATEWAY_CONSUMER_INVALID
+  status="$(printf 'header = "Authorization: Bearer %s"\n' "${gateway_api_token}" | \
+    docker exec -i "${CONTROLLER_CONTAINER}" curl --silent --show-error --max-time 15 \
+      -K - -o /dev/null -w '%{http_code}' -X POST \
+      "http://127.0.0.1:8090/api/v1/gateway/consumers/${consumer_name}/bind")" || fail GATEWAY_CONSUMER_BIND
+  [[ "${status}" == 204 || "${status}" == 200 ]] || fail GATEWAY_CONSUMER_BIND
+}
+normalize_gateway_provider() {
+  gateway_provider_attempted=1
+  TIANGONG_DOCKER_COMMAND="${DOCKER_BINARY:-docker}" \
+    TIANGONG_GATEWAY_PROVIDER_SNAPSHOT_ID="${GATEWAY_PROVIDER_SNAPSHOT_ID}" \
+    bash "${NORMALIZE_GATEWAY_PROVIDER}" normalize || fail GATEWAY_PROVIDER_NORMALIZE
+}
 cleanup() {
   local status=$? member
   trap - EXIT INT TERM
@@ -125,6 +186,36 @@ cleanup() {
   if [[ -n "${driver_pid}" ]] && kill -0 "${driver_pid}" 2>/dev/null; then
     kill -TERM "${driver_pid}" 2>/dev/null || true
     wait "${driver_pid}" 2>/dev/null || true
+  fi
+  if ((gateway_provider_attempted == 1)); then
+    TIANGONG_DOCKER_COMMAND="${DOCKER_BINARY:-docker}" \
+      TIANGONG_GATEWAY_PROVIDER_SNAPSHOT_ID="${GATEWAY_PROVIDER_SNAPSHOT_ID}" \
+      bash "${NORMALIZE_GATEWAY_PROVIDER}" restore >/dev/null 2>&1 || status=1
+    gateway_provider_attempted=0
+  fi
+  if ((sidecar_attempted == 1)); then
+    if ((sidecar_provisioned == 1)); then
+      TIANGONG_OPENCODEX_ADAPTER_IMAGE="${TIANGONG_OPENCODEX_ADAPTER_IMAGE:-tiangong-opencodex-adapter:dev}" \
+        bash "${OPENCODEX_DEPLOY}" lifecycle drain --snapshot "${SIDECAR_SNAPSHOT_FILE}" >/dev/null 2>&1 || status=1
+      TIANGONG_OPENCODEX_ADAPTER_IMAGE="${TIANGONG_OPENCODEX_ADAPTER_IMAGE:-tiangong-opencodex-adapter:dev}" \
+        bash "${OPENCODEX_DEPLOY}" lifecycle remove --snapshot "${SIDECAR_SNAPSHOT_FILE}" >/dev/null 2>&1 || status=1
+    fi
+    # A failed provision may create the owned container before writing its
+    # controller snapshot. Remove only that exact run-owned identity so a
+    # later canary cannot inherit a foreign image or stale process.
+    if container_exists "${SIDECAR_CONTAINER}"; then
+      labels="$(docker inspect "${SIDECAR_CONTAINER}" --format '{{range $k,$v := .Config.Labels}}{{$k}}={{$v}} {{end}}' 2>/dev/null || true)"
+      if [[ "${labels}" == *'io.tiangong.owner=agentteams-deployment '* &&
+            "${labels}" == *'io.tiangong.component=opencodex-sidecar '* &&
+            "${labels}" == *"io.tiangong.team-id=${TEAM_NAME} "* &&
+            "${labels}" == *"io.tiangong.worker-id=${IMPLEMENTOR_NAME} "* ]]; then
+        docker rm -f "${SIDECAR_CONTAINER}" >/dev/null 2>&1 || status=1
+      else
+        status=1
+      fi
+    fi
+    sidecar_provisioned=0
+    sidecar_attempted=0
   fi
   if ((coord_started == 1)); then
     TIANGONG_COORDINATION_CONTAINER="${COORD_CONTAINER}" \
@@ -164,20 +255,29 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-for command in bash docker jq; do command -v "${command}" >/dev/null 2>&1 || fail "COMMAND_${command^^}_MISSING"; done
-[[ -f "${DRIVER}" && -f "${DEPLOY_COORDINATION}" && -f "${INJECT_ROLE}" && -f "${INJECT_LEADER}" && -f "${RUNNER_BROKER_SCRIPT}" ]] || fail SMOKE_ASSET_MISSING
+for command in bash docker jq timeout; do command -v "${command}" >/dev/null 2>&1 || fail "COMMAND_${command^^}_MISSING"; done
+[[ -f "${DRIVER}" && -f "${DEPLOY_COORDINATION}" && -f "${INJECT_ROLE}" && -f "${INJECT_LEADER}" && -f "${RUNNER_BROKER_SCRIPT}" && -f "${OPENCODEX_DEPLOY}" && -f "${NORMALIZE_GATEWAY_PROVIDER}" ]] || fail SMOKE_ASSET_MISSING
+[[ "${SMOKE_MODEL}" =~ ^[A-Za-z0-9._:/-]{1,128}$ ]] || fail SMOKE_MODEL_INVALID
+[[ "${CODEX_MODEL}" =~ ^[A-Za-z0-9._:/-]{1,128}$ ]] || fail CODEX_MODEL_INVALID
 container_exists "${MANAGER_CONTAINER}" || fail MANAGER_MISSING
 container_exists "${CONTROLLER_CONTAINER}" || fail CONTROLLER_MISSING
 [[ "$(docker inspect "${MANAGER_CONTAINER}" --format '{{.State.Running}}')" == true ]] || fail MANAGER_NOT_RUNNING
 [[ "$(docker inspect "${CONTROLLER_CONTAINER}" --format '{{.State.Running}}')" == true ]] || fail CONTROLLER_NOT_RUNNING
+gateway_api_token="$(docker exec "${MANAGER_CONTAINER}" printenv AGENTTEAMS_AUTH_TOKEN 2>/dev/null || true)"
+[[ -n "${gateway_api_token}" ]] || fail GATEWAY_API_TOKEN_MISSING
+normalize_gateway_provider
+printf 'gateb=ai_gateway_provider_normalize=pass provider=%s\n' "${TIANGONG_GATEWAY_PROVIDER_ID:-openai-compat}"
 docker exec "${MANAGER_CONTAINER}" agt get teams "${TEAM_NAME}" -o json >/dev/null 2>&1 && fail RESERVED_TEAM_EXISTS
-if container_exists tiangong-runner-broker; then
-  bash "${RUNNER_BROKER_SCRIPT}" status >/dev/null 2>&1 || fail RUNNER_BROKER_NOT_READY
-  printf 'gateb=runner_broker_reused name=tiangong-runner-broker\n'
-else
-  bash "${RUNNER_BROKER_SCRIPT}" start >/dev/null || fail RUNNER_BROKER_START
+broker_result="$(timeout 60s bash "${RUNNER_BROKER_SCRIPT}" ensure 2>&1)" || {
+  printf '%s\n' "${broker_result}" >&2
+  fail RUNNER_BROKER_NOT_READY
+}
+printf '%s\n' "${broker_result}"
+if grep -Eq 'managed=true' <<<"${broker_result}"; then
   runner_broker_started=1
-  printf 'gateb=runner_broker_started name=tiangong-runner-broker\n'
+  printf 'gateb=runner_broker_managed name=tiangong-runner-broker\n'
+else
+  printf 'gateb=runner_broker_reused name=tiangong-runner-broker\n'
 fi
 mkdir -p "${STATE_DIR}"
 chmod 700 "${STATE_DIR}"
@@ -238,17 +338,27 @@ docker run -d --name "${PG_CONTAINER}" --network agentteams-net \
   -e POSTGRES_USER=tiangong -e "POSTGRES_PASSWORD=${PG_PASSWORD}" -e POSTGRES_DB=tiangong postgres:16-alpine >/dev/null || fail POSTGRES_START
 pg_started=1
 printf 'gateb=postgres_started running=%s\n' "$(docker inspect "${PG_CONTAINER}" --format '{{.State.Running}}' 2>/dev/null || printf false)"
+pg_ready_checks=0
 for _ in $(seq 1 90); do
-  docker exec "${PG_CONTAINER}" pg_isready -U tiangong -d tiangong >/dev/null 2>&1 && break
+  # Docker Desktop can leave a CLI exec attached while PostgreSQL is still
+  # replacing its init process. Bound the probe so one stale attachment cannot
+  # stall the entire Gate B run indefinitely.
+  if timeout 10s docker exec "${PG_CONTAINER}" pg_isready -U tiangong -d tiangong >/dev/null 2>&1; then
+    pg_ready_checks=$((pg_ready_checks + 1))
+    ((pg_ready_checks >= 2)) && break
+  else
+    pg_ready_checks=0
+  fi
   sleep 1
 done
-docker exec "${PG_CONTAINER}" pg_isready -U tiangong -d tiangong >/dev/null 2>&1 || {
+((pg_ready_checks >= 2)) || {
   printf 'gateb=postgres_probe_failed state=%s\n' "$(docker inspect "${PG_CONTAINER}" --format '{{.State.Status}}' 2>/dev/null || printf missing)"
   fail POSTGRES_NOT_READY
 }
 
 printf 'gateb=started run=%s\n' "${RUN_ID}"
 TIANGONG_MATRIX_SENDER_CONTAINER="agentteams-worker-${DESIGNER_NAME}" \
+TIANGONG_SMOKE_EVIDENCE_DIR="${STATE_DIR}" \
   bash "${NORMALIZED_DRIVER}" >"${DRIVER_LOG}" 2>&1 & driver_pid=$!
 
 # AgentTeams owns the initial Worker and Team shape. Wait for all five before
@@ -260,6 +370,10 @@ for pair in \
   member="${pair%%:*}"; role="${pair##*:}"
   wait_worker_ready "${member}" || fail "WORKER_${role^^}_NOT_READY"
 done
+for member in "${LEADER_NAME}" "${DESIGNER_NAME}" "${IMPLEMENTOR_NAME}" "${ASSESSOR_NAME}" "${OPERATOR_NAME}"; do
+  bind_gateway_consumer "${member}"
+done
+printf 'gateb=ai_gateway_consumer_binding=pass consumers=5\n'
 for _ in $(seq 1 360); do
   [[ -f "${TEAM_READY_BARRIER}" ]] && break
   if ! kill -0 "${driver_pid}" 2>/dev/null; then fail TEAM_SETUP_CHILD_EXITED; fi
@@ -276,6 +390,8 @@ for pair in \
   TIANGONG_B5_ROLE_ID="${role}" \
     TIANGONG_B5_COORDINATION_CONTROL_ENDPOINT="http://${COORD_CONTAINER}:8780/v1/coordination/admit" \
     TIANGONG_B5_COORDINATION_CONTROL_TOKEN="${CONTROL_TOKEN}" \
+    TIANGONG_B5_CODEX_MODEL="${CODEX_MODEL}" \
+    TIANGONG_B5_ALLOW_STOPPED=1 \
     TIANGONG_INJECTION_DEBUG=1 \
     TIANGONG_DOCKER_TEMP_DIR="${STATE_DIR}" \
     bash "${INJECT_ROLE}" >>"${STATE_DIR}/inject-${role}.log" 2>&1 || {
@@ -291,6 +407,31 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 docker exec "${MANAGER_CONTAINER}" agt get workers -o json >/dev/null 2>&1 || fail MANAGER_NOT_READY_AFTER_INJECTION
+# AgentTeams v1.2.2 reconciles the public Worker shape after the Manager comes
+# back. Reapply the deployment-owned runtime projection once the control plane
+# is healthy; otherwise the controller may restore its legacy runtime env
+# before the readiness gate observes it. This remains a narrow, idempotent
+# replacement of the same run-owned Worker containers.
+for pair in \
+  "${LEADER_NAME}:leader" "${DESIGNER_NAME}:designer" \
+  "${IMPLEMENTOR_NAME}:implementor" "${ASSESSOR_NAME}:assessor" "${OPERATOR_NAME}:operator"; do
+  member="${pair%%:*}"; role="${pair##*:}"
+  TIANGONG_B5_WORKER_CONTAINER="$(worker_container "${member}")" \
+  TIANGONG_B5_ROLE_ID="${role}" \
+  TIANGONG_B5_COORDINATION_CONTROL_ENDPOINT="http://${COORD_CONTAINER}:8780/v1/coordination/admit" \
+  TIANGONG_B5_COORDINATION_CONTROL_TOKEN="${CONTROL_TOKEN}" \
+  TIANGONG_B5_CODEX_MODEL="${CODEX_MODEL}" \
+  TIANGONG_B5_ALLOW_STOPPED=1 \
+  TIANGONG_INJECTION_DEBUG=1 \
+    TIANGONG_DOCKER_TEMP_DIR="${STATE_DIR}" \
+    bash "${INJECT_ROLE}" >>"${STATE_DIR}/reinject-${role}.log" 2>&1 || {
+      code="$(sed -n 's/^b5_role_runtime_injection=fail code=//p' "${STATE_DIR}/reinject-${role}.log" | tail -n 1)"
+      printf 'gateb=role_reinjection_failed role=%s code=%s\n' "${role}" "${code:-UNKNOWN}"
+      fail "ROLE_${role^^}_REINJECTION"
+    }
+done
+provision_opencodex_sidecar
+printf 'gateb=role_runtime_reinjected_after_manager=pass\n'
 # A Codex Worker performs its gateway preflight during container startup. The
 # bounded injection window intentionally stops the Manager so no deployment
 # mutation races with the five recreations; a Worker that starts in that window
@@ -329,13 +470,16 @@ for pair in \
   [[ "${member}" == "${LEADER_NAME}" ]] && continue
   for _ in $(seq 1 180); do
     # Role injection can take several minutes and OpenClaw emits verbose
-    # MinIO/config-sync lines. The readiness marker belongs to this freshly
-    # recreated container, so use a bounded time window rather than a small
-    # line tail that can evict the marker before the last role is checked.
-    if docker logs --since 10m "$(worker_container "${member}")" 2>&1 | grep -Fq ' reported ready'; then break; fi
+    # MinIO/config-sync lines. Injection recreates this exact container, so
+    # inspect its complete lifecycle; a wall-clock window could expire while
+    # a slow Docker Desktop operation is still preparing the next role.
+    # Do not use grep -q here: with pipefail, a verbose docker logs stream can
+    # receive SIGPIPE after grep exits early and turn an existing ready marker
+    # into a false negative.
+    if docker logs "$(worker_container "${member}")" 2>&1 | grep -F ' reported ready' >/dev/null; then break; fi
     sleep 2
   done
-  docker logs --since 10m "$(worker_container "${member}")" 2>&1 | grep -Fq ' reported ready' || fail "WORKER_${role^^}_RUNTIME_NOT_READY"
+  docker logs "$(worker_container "${member}")" 2>&1 | grep -F ' reported ready' >/dev/null || fail "WORKER_${role^^}_RUNTIME_NOT_READY"
 done
 # Role injection recreates each Worker container. Reinstall the two reviewed
 # smoke helpers after that replacement so the Matrix sender does not retain a
@@ -416,10 +560,10 @@ TIANGONG_LEADER_WORKER_CONTAINER="$(worker_container "${LEADER_NAME}")" \
   bash "${INJECT_LEADER}" >"${STATE_DIR}/inject-leader.log" 2>&1 || fail LEADER_BINDING_INJECTION
 
 for _ in $(seq 1 180); do
-  if docker logs --since 10m "$(worker_container "${LEADER_NAME}")" 2>&1 | grep -Fq ' reported ready'; then break; fi
+  if docker logs "$(worker_container "${LEADER_NAME}")" 2>&1 | grep -F ' reported ready' >/dev/null; then break; fi
   sleep 2
 done
-docker logs --since 10m "$(worker_container "${LEADER_NAME}")" 2>&1 | grep -Fq ' reported ready' || fail LEADER_RUNTIME_NOT_READY_AFTER_BINDING
+docker logs "$(worker_container "${LEADER_NAME}")" 2>&1 | grep -F ' reported ready' >/dev/null || fail LEADER_RUNTIME_NOT_READY_AFTER_BINDING
 
 # The driver log is never printed: it may contain model/Matrix text. Only
 # stable machine markers are used as the result oracle. On failure, expose
@@ -432,4 +576,7 @@ driver_pid=''
 grep -Eq 'leader_smoke_real_team=pass' "${DRIVER_LOG}" || fail TEAM_VERTICAL_MARKER_MISSING
 grep -Eq 'leader_smoke_design_roundtrip=pass' "${DRIVER_LOG}" || fail DESIGN_ROUNDTRIP_MISSING
 grep -Eq 'leader_smoke_requester_report=pass' "${DRIVER_LOG}" || fail CLOSURE_MARKER_MISSING
+# Expose only the allowlisted machine markers on success too. The driver log
+# itself may contain model/Matrix text and remains run-local evidence.
+grep -E '^(leader_smoke_(real_team|design_roundtrip|matrix_handoff|implementor_blocker(_result|_without_result)?|requester_report|gate3)=(pass|partial_blocked_terminal_only)|leader_followup=(pass|timeout))' "${DRIVER_LOG}" | tail -n 20 || true
 printf 'gateb_matrix_work_task_result_closure=pass run=%s\n' "${RUN_ID}"

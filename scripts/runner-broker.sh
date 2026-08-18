@@ -20,6 +20,14 @@ readonly CONFIG_VOLUME="tiangong-runner-broker-config"
 readonly FIXTURE_VOLUME="tiangong-runner-broker-fixtures"
 readonly STATE_VOLUME="tiangong-runner-broker-state"
 readonly SEED="tiangong-runner-broker-seed"
+DOCKER_BINARY="$(command -v docker 2>/dev/null || true)"
+DOCKER_BINARY_REAL="$(readlink -f "${DOCKER_BINARY}" 2>/dev/null || printf '%s' "${DOCKER_BINARY}")"
+DOCKER_USES_WINDOWS_PATHS=0
+[[ "${DOCKER_BINARY_REAL}" == *.exe ]] && DOCKER_USES_WINDOWS_PATHS=1
+if ((DOCKER_USES_WINDOWS_PATHS == 0)) && command -v file >/dev/null 2>&1 && file "${DOCKER_BINARY_REAL}" 2>/dev/null | grep -Eiq 'PE32|MS-DOS'; then
+  DOCKER_USES_WINDOWS_PATHS=1
+fi
+readonly DOCKER_BINARY DOCKER_BINARY_REAL DOCKER_USES_WINDOWS_PATHS
 
 fail() {
   printf 'runner_broker=fail code=%s\n' "$1" >&2
@@ -27,13 +35,13 @@ fail() {
 }
 
 usage() {
-  printf 'Usage: %s start|status|stop [--purge]\n' "$0" >&2
+  printf 'Usage: %s start|status|ensure|stop [--purge]\n' "$0" >&2
 }
 
 [[ $# -ge 1 && $# -le 2 ]] || { usage; fail INVALID_ARGUMENTS; }
 readonly ACTION="$1"
 readonly PURGE="${2:-}"
-[[ "$ACTION" == start || "$ACTION" == status || "$ACTION" == stop ]] || { usage; fail INVALID_ACTION; }
+[[ "$ACTION" == start || "$ACTION" == status || "$ACTION" == ensure || "$ACTION" == stop ]] || { usage; fail INVALID_ACTION; }
 [[ -z "$PURGE" || "$PURGE" == --purge ]] || { usage; fail INVALID_ARGUMENTS; }
 [[ "$ACTION" == stop || -z "$PURGE" ]] || { usage; fail INVALID_ARGUMENTS; }
 
@@ -80,11 +88,12 @@ status() {
 }
 
 stop() {
+  local purge="${1:-$PURGE}"
   if docker inspect "$BROKER" >/dev/null 2>&1; then
     owned_container "$BROKER" || fail FOREIGN_CONTAINER
     docker rm --force "$BROKER" >/dev/null
   fi
-  if [[ "$PURGE" == --purge ]]; then
+  if [[ "$purge" == --purge ]]; then
     for volume in "$CONFIG_VOLUME" "$FIXTURE_VOLUME" "$STATE_VOLUME"; do
       if docker volume inspect "$volume" >/dev/null 2>&1; then
         owned_volume "$volume" || fail FOREIGN_VOLUME
@@ -92,7 +101,100 @@ stop() {
       fi
     done
   fi
-  printf 'runner_broker=stopped purge=%s\n' "$([[ "$PURGE" == --purge ]] && echo true || echo false)"
+  printf 'runner_broker=stopped purge=%s\n' "$([[ "$purge" == --purge ]] && echo true || echo false)"
+}
+
+preparation_matches_current_images() {
+  local config leader implementor assessor
+  leader="$(docker image inspect --format '{{.Id}}' tiangong-worker-leader:dev 2>/dev/null || true)"
+  implementor="$(docker image inspect --format '{{.Id}}' tiangong-worker-implementor:dev 2>/dev/null || true)"
+  assessor="$(docker image inspect --format '{{.Id}}' tiangong-worker-assessor:dev 2>/dev/null || true)"
+  [[ -n "$leader" && -n "$implementor" && -n "$assessor" ]] || return 1
+  config="$(docker run --rm --entrypoint cat \
+    --mount "type=volume,src=${CONFIG_VOLUME},dst=/config,readonly" \
+    "$BROKER_IMAGE" /config/config.json 2>/dev/null || true)"
+  jq -e --arg leader "$leader" --arg implementor "$implementor" --arg assessor "$assessor" \
+    '.preparation.leaderImageId == $leader and .preparation.runnerImageIds.implementor == $implementor and .preparation.runnerImageIds.assessor == $assessor' \
+    <<<"$config" >/dev/null
+}
+
+bindings_are_orphaned_or_empty() {
+  local state container
+  state="$(docker run --rm --entrypoint cat \
+    --mount "type=volume,src=${STATE_VOLUME},dst=/state,readonly" \
+    "$BROKER_IMAGE" /state/bindings.json 2>/dev/null || printf '{"bindings":[]}\n')"
+  while IFS= read -r container; do
+    [[ -n "$container" ]] || continue
+    docker inspect "$container" >/dev/null 2>&1 && return 1
+  done < <(jq -r '.bindings[]?.containerName // empty' <<<"$state")
+  return 0
+}
+
+ensure() {
+  local state running
+  if ! docker inspect "$BROKER" >/dev/null 2>&1; then
+    # A previous process can remove the broker container after creating its
+    # owned volumes (for example, a host-side interruption during startup).
+    # Reclaim that exact orphaned state only when every volume is owned by this
+    # broker and no live binding still references a container.
+    local has_owned_volume=0 volume
+    for volume in "$CONFIG_VOLUME" "$FIXTURE_VOLUME" "$STATE_VOLUME"; do
+      if docker volume inspect "$volume" >/dev/null 2>&1; then
+        owned_volume "$volume" || fail FOREIGN_VOLUME
+        has_owned_volume=1
+      fi
+    done
+    if ((has_owned_volume == 1)); then
+      if docker inspect "$SEED" >/dev/null 2>&1; then
+        [[ "$(docker inspect --format '{{.Config.Image}}' "$SEED")" == "$BROKER_IMAGE" ]] || fail FOREIGN_SEED
+        docker rm --force "$SEED" >/dev/null
+      fi
+      bindings_are_orphaned_or_empty || fail ACTIVE_BINDING_STATE
+      stop --purge
+    fi
+    start
+    printf 'runner_broker_ensure=started managed=true\n'
+    return 0
+  fi
+  owned_container "$BROKER" || fail FOREIGN_CONTAINER
+  running="$(docker inspect --format '{{.State.Running}}' "$BROKER")"
+  if [[ "$running" != true ]]; then
+    # A stopped broker cannot serve a new Task, but its state may still carry
+    # immutable bindings. Reclaim it only when every such binding points to a
+    # container that is already gone; a live binding remains fail-closed.
+    bindings_are_orphaned_or_empty || fail ACTIVE_BINDING_STATE
+    stop --purge
+    start
+    printf 'runner_broker_ensure=restarted_stopped managed=true\n'
+    return 0
+  fi
+  status >/dev/null
+  # Even when image pins are unchanged, an interrupted smoke can leave
+  # immutable bindings whose Worker containers are gone. Reclaim that exact
+  # orphaned state before another run fills the broker registry.
+  if ! bindings_are_orphaned_or_empty; then
+    fail ACTIVE_BINDING_STATE
+  fi
+  state="$(docker run --rm --entrypoint cat \
+    --mount "type=volume,src=${STATE_VOLUME},dst=/state,readonly" \
+    "$BROKER_IMAGE" /state/bindings.json 2>/dev/null || printf '{"bindings":[]}\n')"
+  if jq -e '.bindings | length > 0' <<<"$state" >/dev/null; then
+    stop --purge
+    start
+    printf 'runner_broker_ensure=restarted_orphaned managed=true\n'
+    return 0
+  fi
+  if preparation_matches_current_images; then
+    printf 'runner_broker_ensure=ready managed=false\n'
+    return 0
+  fi
+  # Replacing the image-pinned broker while another Task is registered would
+  # invalidate its immutable runner binding. Fail closed instead of purging a
+  # live broker state volume.
+  bindings_are_orphaned_or_empty || fail STALE_IMAGE_BINDING_ACTIVE
+  stop --purge
+  start
+  printf 'runner_broker_ensure=restarted managed=true\n'
 }
 
 start() {
@@ -106,11 +208,17 @@ start() {
     docker image inspect "$image" >/dev/null 2>&1 || fail "IMAGE_UNAVAILABLE_${image%%:*}"
   done
 
-  local leader_image implementor_image assessor_image config_file
+  local leader_image implementor_image assessor_image config_file temp_root
   leader_image="$(docker image inspect --format '{{.Id}}' tiangong-worker-leader:dev)"
   implementor_image="$(docker image inspect --format '{{.Id}}' tiangong-worker-implementor:dev)"
   assessor_image="$(docker image inspect --format '{{.Id}}' tiangong-worker-assessor:dev)"
-  config_file="$(mktemp "${TMPDIR:-/tmp}/tiangong-runner-broker-config.XXXXXX")"
+  # Docker Desktop cannot resolve a WSL /tmp path when the CLI projects a
+  # host file into a container. Keep this disposable file under the shared
+  # repository mount so both native Windows and WSL Docker clients can read it.
+  temp_root="${TIANGONG_DOCKER_TEMP_DIR:-${REPO_ROOT}/.tmp-runner-broker}"
+  [[ -d "${temp_root}" && ! -L "${temp_root}" ]] || mkdir -p "${temp_root}"
+  chmod 700 "${temp_root}"
+  config_file="$(mktemp "${temp_root}/config.XXXXXX")"
   jq -n \
     --arg leader "$leader_image" \
     --arg implementor "$implementor_image" \
@@ -138,12 +246,19 @@ start() {
   if [[ "${OSTYPE:-}" =~ ^(msys|cygwin) ]]; then
     config_source="$(cygpath -w "$config_file")"
     fixture_source="$(cygpath -w "${REPO_ROOT}/smoke-testing/fixtures/runner-isolation/.")"
+  elif ((DOCKER_USES_WINDOWS_PATHS == 1)) && command -v wslpath >/dev/null 2>&1; then
+    config_source="$(wslpath -w "$config_file")"
+    fixture_source="$(wslpath -w "${REPO_ROOT}/smoke-testing/fixtures/runner-isolation/.")"
   else
     config_source="$config_file"
     fixture_source="${REPO_ROOT}/smoke-testing/fixtures/runner-isolation/."
   fi
   MSYS_NO_PATHCONV=1 docker cp "$config_source" "$SEED:/config/config.json"
-  MSYS_NO_PATHCONV=1 docker exec "$SEED" chmod 600 /config/config.json
+  # The broker image runs as its unprivileged worker user. The projected file
+  # contains only image IDs and fixed policy, so it may be world-readable
+  # inside the private config volume; keeping mode 600 would make a fresh
+  # Docker Desktop volume unreadable to the broker process.
+  MSYS_NO_PATHCONV=1 docker exec "$SEED" chmod 644 /config/config.json
   MSYS_NO_PATHCONV=1 docker exec "$SEED" mkdir -p /fixture/isolation
   MSYS_NO_PATHCONV=1 docker cp "$fixture_source" "$SEED:/fixture/isolation/"
   docker rm --force "$SEED" >/dev/null
@@ -182,5 +297,6 @@ start() {
 case "$ACTION" in
   start) start ;;
   status) status ;;
+  ensure) ensure ;;
   stop) stop ;;
 esac

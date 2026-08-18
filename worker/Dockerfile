@@ -4,6 +4,8 @@ FROM ${DOCKER_CLI_IMAGE} AS docker-cli
 FROM ${AGENTTEAMS_WORKER_IMAGE} AS worker-base
 
 ARG TIANGONG_OTEL_EXPORTER_ENDPOINT=""
+ARG TIANGONG_CODEX_GATEWAY_HOSTS=agentteams-controller
+ARG TIANGONG_CODEX_BASE_URL=
 
 LABEL org.opencontainers.image.title="Tiangong Worker"
 LABEL org.opencontainers.image.description="AgentTeams Worker image with the public pi coding agent"
@@ -51,6 +53,8 @@ ENV PATH="/opt/tiangong-worker/bin:/opt/tiangong-worker/node_modules/.bin:${PATH
     OPENCLAW_AGENT_RUNTIME=tiangong-pi \
     PI_SKIP_VERSION_CHECK=1 \
     PI_TELEMETRY=0 \
+    TIANGONG_CODEX_GATEWAY_HOSTS="${TIANGONG_CODEX_GATEWAY_HOSTS}" \
+    TIANGONG_CODEX_BASE_URL="${TIANGONG_CODEX_BASE_URL}" \
     TIANGONG_OTEL_EXPORTER_ENDPOINT="${TIANGONG_OTEL_EXPORTER_ENDPOINT}"
 
 WORKDIR /root/agentteams-fs

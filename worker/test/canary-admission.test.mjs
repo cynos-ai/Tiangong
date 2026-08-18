@@ -58,3 +58,20 @@ test("fails closed for an actor outside the Matrix allowlist", async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("reuses the bounded file admission when model and tool hooks run in different processes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "tiangong-canary-admission-file-"));
+  const configPath = join(directory, "openclaw.json");
+  const admissionFile = join(directory, "admission.json");
+  try {
+    await writeFile(configPath, JSON.stringify({ channels: { matrix: { groupAllowFrom: ["@manager:example.test"] } } }), { mode: 0o600 });
+    const modelResolver = createCanaryAdmissionResolver({ configPath, admissionFile, workerName: "worker-one", runtimeLane: "openclaw-canary" });
+    await modelResolver({ phase: "model", event: { senderId: "@manager:example.test", messageId: "$event-file", sessionKey: "matrix:file" }, ctx: {} });
+    const toolResolver = createCanaryAdmissionResolver({ configPath, admissionFile, workerName: "worker-one", runtimeLane: "openclaw-canary" });
+    const tool = await toolResolver({ phase: "tool", event: { toolName: "read", sessionKey: "matrix:file" }, ctx: {} });
+    assert.equal(tool.admission.phase, "model");
+    assert.equal(tool.toolName, "read");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
