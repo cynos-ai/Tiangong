@@ -6,13 +6,6 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 readonly SCRIPT_DIR REPO_ROOT
-readonly TEAM_NAME="tiangong-leader-smoke"
-readonly LEADER_NAME="tiangong-leader-smoke-leader"
-readonly DESIGNER_NAME="tiangong-leader-smoke-designer"
-readonly IMPLEMENTOR_NAME="tiangong-leader-smoke-implementor"
-readonly ASSESSOR_NAME="tiangong-leader-smoke-assessor"
-readonly OPERATOR_NAME="tiangong-leader-smoke-operator"
-readonly TURN_CONTAINER="agentteams-worker-${DESIGNER_NAME}"
 readonly MANAGER_CONTAINER="agentteams-manager"
 readonly CONTROLLER_CONTAINER="agentteams-controller"
 readonly DRIVER="${SCRIPT_DIR}/run-leader-smoke.sh"
@@ -25,6 +18,17 @@ readonly NORMALIZE_GATEWAY_PROVIDER="${REPO_ROOT}/scripts/normalize-agentteams-g
 
 RUN_ID="${TIANGONG_GATEB_RUN_ID:-$(date -u +%Y%m%d%H%M%S)-$$}"
 [[ "${RUN_ID}" =~ ^[A-Za-z0-9._-]{1,48}$ ]] || { printf 'gateb=fail code=RUN_ID_INVALID\n' >&2; exit 2; }
+SMOKE_SCOPE_RAW="${TIANGONG_GATEB_RESOURCE_SCOPE:-${RUN_ID}}"
+SMOKE_SCOPE="$(printf '%s' "${SMOKE_SCOPE_RAW}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' | cut -c1-24)"
+[[ -n "${SMOKE_SCOPE}" ]] || { printf 'gateb=fail code=RESOURCE_SCOPE_INVALID\n' >&2; exit 2; }
+readonly SMOKE_SCOPE
+readonly TEAM_NAME="tiangong-leader-smoke-${SMOKE_SCOPE}"
+readonly LEADER_NAME="${TEAM_NAME}-leader"
+readonly DESIGNER_NAME="${TEAM_NAME}-designer"
+readonly IMPLEMENTOR_NAME="${TEAM_NAME}-implementor"
+readonly ASSESSOR_NAME="${TEAM_NAME}-assessor"
+readonly OPERATOR_NAME="${TEAM_NAME}-operator"
+readonly TURN_CONTAINER="agentteams-worker-${DESIGNER_NAME}"
 readonly PG_CONTAINER="tiangong-b5-gateb-pg-${RUN_ID}"
 readonly COORD_CONTAINER="tiangong-b5-gateb-coordination-${RUN_ID}"
 readonly BINDING_VOLUME="tiangong-b5-gateb-binding-${RUN_ID}"
@@ -40,6 +44,8 @@ readonly INJECTION_BARRIER="${STATE_DIR}/injection-complete"
 readonly NORMALIZED_TURN="${STATE_DIR}/leader-coordination-turn.sh"
 readonly NORMALIZED_FOLLOWUP="${STATE_DIR}/leader-followup-turn.sh"
 readonly NORMALIZED_REPORT="${STATE_DIR}/requester-report-check.sh"
+readonly SMOKE_WORKERS_MANIFEST="${STATE_DIR}/leader-smoke-workers.yaml"
+readonly SMOKE_TEAM_MANIFEST="${STATE_DIR}/leader-smoke-team.yaml"
 readonly NORMALIZED_DRIVER="${SCRIPT_DIR}/.run-leader-smoke-${RUN_ID}.sh"
 readonly CONTROL_TOKEN="gateb-control-${RUN_ID}-token"
 readonly PG_PASSWORD="gateb-pg-${RUN_ID}-password"
@@ -281,6 +287,14 @@ else
 fi
 mkdir -p "${STATE_DIR}"
 chmod 700 "${STATE_DIR}"
+# Every Gate B run gets a fresh Team/Worker namespace. AgentTeams preserves
+# immutable project/result records in the shared Matrix/MinIO history, so
+# reusing the old smoke names can make a new run collide with stale records.
+sed "s/tiangong-leader-smoke/${TEAM_NAME}/g" \
+  "${REPO_ROOT}/smoke-testing/fixtures/leader-smoke-workers.yaml" >"${SMOKE_WORKERS_MANIFEST}"
+sed "s/tiangong-leader-smoke/${TEAM_NAME}/g" \
+  "${REPO_ROOT}/smoke-testing/fixtures/leader-smoke-team.yaml" >"${SMOKE_TEAM_MANIFEST}"
+chmod 600 "${SMOKE_WORKERS_MANIFEST}" "${SMOKE_TEAM_MANIFEST}"
 # shellcheck disable=SC2016
 tr -d '\r' <"${DRIVER}" | sed \
   -e '/^"\${BUILD_SCRIPT}"$/d' \
@@ -358,6 +372,14 @@ done
 
 printf 'gateb=started run=%s\n' "${RUN_ID}"
 TIANGONG_MATRIX_SENDER_CONTAINER="agentteams-worker-${DESIGNER_NAME}" \
+TIANGONG_SMOKE_TEAM_NAME="${TEAM_NAME}" \
+TIANGONG_SMOKE_LEADER_NAME="${LEADER_NAME}" \
+TIANGONG_SMOKE_DESIGNER_NAME="${DESIGNER_NAME}" \
+TIANGONG_SMOKE_IMPLEMENTOR_NAME="${IMPLEMENTOR_NAME}" \
+TIANGONG_SMOKE_ASSESSOR_NAME="${ASSESSOR_NAME}" \
+TIANGONG_SMOKE_OPERATOR_NAME="${OPERATOR_NAME}" \
+TIANGONG_SMOKE_WORKERS_MANIFEST="${SMOKE_WORKERS_MANIFEST}" \
+TIANGONG_SMOKE_TEAM_MANIFEST="${SMOKE_TEAM_MANIFEST}" \
 TIANGONG_SMOKE_EVIDENCE_DIR="${STATE_DIR}" \
   bash "${NORMALIZED_DRIVER}" >"${DRIVER_LOG}" 2>&1 & driver_pid=$!
 
