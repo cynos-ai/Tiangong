@@ -229,3 +229,22 @@ builtin Chat、Implementor Codex ToolResult、重启恢复和精确清理全部�
 
 因此这条部署侧绕过路径已经有真实可重复的 B5 证据；上游 AgentTeams 修复
 合并前仍需由部署层保留 normalize、consumer bind 和 endpoint 注入三项动作。
+
+### 2026-08-18 Alpha.1 合并后的最新门禁状态
+
+Alpha.1 控制面已经合并到 `develop`（合并提交 `dbcafaa`）。合并后的
+`test-phase-c-production-boundary.sh`、Worker 协调回归和 App 回归仍全部通过；
+这只能证明代码和部署合同的确定性边界，没有把真实模型请求变成通过证据。
+
+同日用全新、唯一 run-id 重跑真实 Gate B：Team、五个 Worker、Coordination/PG、
+OpenCodex sidecar、角色注入和精确 cleanup 均按合同执行。Implementor 的真实
+OpenCodex `/v1/responses` 请求返回 HTTP 402 `Insufficient Balance`，随后按
+provider billing/credential 外部阻断处理；没有伪造 Task/Result/Leader 成功，
+本次资源已全部清理。因此当前 Phase C 仍为 **No-Go**，不是 Tiangong 控制面
+或 sidecar 生命周期失败。
+
+解除 No-Go 的唯一下一步是由部署层通过 AgentTeams secret/credential 注入一个
+有余额的、scope 正确的 provider credential，然后在同一类全新 run 中重新执行
+`make phase-c-real`，收集 `/v1/models`、真实 Chat/Responses、ToolResult、
+重启恢复和 cleanup 的机器事实。凭证不得写入仓库、镜像、命令行、Worker 状态
+或 Evidence；在该证据闭合前不创建新的 release、不迁移数据、不合入 `main`。
