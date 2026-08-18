@@ -224,29 +224,31 @@ jq -r '.[0].Config.Env[]?
        $key == "OPENCLAW_AGENT_RUNTIME" or
        $key == "OPENCLAW_AGENT_HARNESS_FALLBACK" or
        ($key | startswith("TIANGONG_CODEX_"))) | not)' "${inspect_file}" >"${env_file}"
-printf 'TIANGONG_ROLE_ID=%s\nTIANGONG_RUNTIME_ROLE_ROUTING_REQUIRED=%s\nTIANGONG_OPENCLAW_NATIVE=%s\nTIANGONG_CODEX_RUNTIME=%s\nOPENCLAW_AGENT_HARNESS_FALLBACK=none\nOPENCLAW_AGENT_RUNTIME=%s\nOPENCLAW_CODEX_DISCOVERY_LIVE=%s\nCODEX_HOME=/root/.codex\n' \
-  "${ROLE}" "${ROUTING_REQUIRED}" "${NATIVE_OPENCLAW}" "${CODEX_RUNTIME}" "${OPENCLAW_RUNTIME}" "${CODEX_RUNTIME}" >>"${env_file}"
-printf 'TIANGONG_MEMBER_ID=%s\nTIANGONG_COORDINATION_CONTROL_ENDPOINT=%s\nTIANGONG_COORDINATION_CONTROL_TOKEN=%s\n' \
-  "${member_id}" "${COORDINATION_ENDPOINT}" "${COORDINATION_TOKEN}" >>"${env_file}"
-printf 'AGENTTEAMS_AI_GATEWAY_URL=%s\nAGENTTEAMS_AI_GATEWAY_DOMAIN=%s\n' \
-  "${GATEWAY_URL}" "${gateway_domain}" >>"${env_file}"
-if [[ "${TIANGONG_ADMISSION_DEBUG:-0}" == 1 ]]; then
-  printf 'TIANGONG_ADMISSION_DEBUG=1\n' >>"${env_file}"
-fi
-if [[ "${ROLE}" == leader ]]; then
-  printf 'TIANGONG_MEMBER_COORDINATION_ENABLED=0\n' >>"${env_file}"
-else
-  printf 'TIANGONG_MEMBER_COORDINATION_ENABLED=1\n' >>"${env_file}"
-fi
-if [[ -n "${RUNTIME_LANE}" ]]; then
-  printf 'TIANGONG_RUNTIME_LANE=%s\nTIANGONG_CANARY_REQUIRED=%s\nTIANGONG_CANARY_ADMISSION=%s\n' \
-    "${RUNTIME_LANE}" "${CANARY_REQUIRED}" "${CANARY_ADMISSION}" >>"${env_file}"
-  printf 'TIANGONG_CODEX_PROVIDER=%s\nTIANGONG_CODEX_MODEL=%s\nTIANGONG_CODEX_CREDENTIAL_SOURCE=agentteams-consumer-token\nTIANGONG_CODEX_TRANSPORT=auto\nTIANGONG_CODEX_BRIDGE=auto\nTIANGONG_CODEX_CAPABILITY_CACHE_PATH=/var/lib/tiangong-capabilities/codex.json\nTIANGONG_CODEX_CAPABILITY_CACHE_URL=%s\nTIANGONG_CODEX_CAPABILITY_CACHE_SHARED=1\n' \
-    "${CODEX_PROVIDER}" "${CODEX_MODEL}" "${CODEX_CACHE_URL}" >>"${env_file}"
-  printf 'TIANGONG_CODEX_GATEWAY_HOSTS=%s\nTIANGONG_CODEX_BASE_URL=%s\n' \
-    "${GATEWAY_HOSTS}" "${CODEX_BASE_URL}" >>"${env_file}"
-  printf 'TIANGONG_CANARY_ADMISSION_FILE=%s/tiangong-admission.json\n' "${working_dir}" >>"${env_file}"
-fi
+{
+  printf 'TIANGONG_ROLE_ID=%s\nTIANGONG_RUNTIME_ROLE_ROUTING_REQUIRED=%s\nTIANGONG_OPENCLAW_NATIVE=%s\nTIANGONG_CODEX_RUNTIME=%s\nOPENCLAW_AGENT_HARNESS_FALLBACK=none\nOPENCLAW_AGENT_RUNTIME=%s\nOPENCLAW_CODEX_DISCOVERY_LIVE=%s\nCODEX_HOME=/root/.codex\n' \
+    "${ROLE}" "${ROUTING_REQUIRED}" "${NATIVE_OPENCLAW}" "${CODEX_RUNTIME}" "${OPENCLAW_RUNTIME}" "${CODEX_RUNTIME}"
+  printf 'TIANGONG_MEMBER_ID=%s\nTIANGONG_COORDINATION_CONTROL_ENDPOINT=%s\nTIANGONG_COORDINATION_CONTROL_TOKEN=%s\n' \
+    "${member_id}" "${COORDINATION_ENDPOINT}" "${COORDINATION_TOKEN}"
+  printf 'AGENTTEAMS_AI_GATEWAY_URL=%s\nAGENTTEAMS_AI_GATEWAY_DOMAIN=%s\n' \
+    "${GATEWAY_URL}" "${gateway_domain}"
+  if [[ "${TIANGONG_ADMISSION_DEBUG:-0}" == 1 ]]; then
+    printf 'TIANGONG_ADMISSION_DEBUG=1\n'
+  fi
+  if [[ "${ROLE}" == leader ]]; then
+    printf 'TIANGONG_MEMBER_COORDINATION_ENABLED=0\n'
+  else
+    printf 'TIANGONG_MEMBER_COORDINATION_ENABLED=1\n'
+  fi
+  if [[ -n "${RUNTIME_LANE}" ]]; then
+    printf 'TIANGONG_RUNTIME_LANE=%s\nTIANGONG_CANARY_REQUIRED=%s\nTIANGONG_CANARY_ADMISSION=%s\n' \
+      "${RUNTIME_LANE}" "${CANARY_REQUIRED}" "${CANARY_ADMISSION}"
+    printf 'TIANGONG_CODEX_PROVIDER=%s\nTIANGONG_CODEX_MODEL=%s\nTIANGONG_CODEX_CREDENTIAL_SOURCE=agentteams-consumer-token\nTIANGONG_CODEX_TRANSPORT=auto\nTIANGONG_CODEX_BRIDGE=auto\nTIANGONG_CODEX_CAPABILITY_CACHE_PATH=/var/lib/tiangong-capabilities/codex.json\nTIANGONG_CODEX_CAPABILITY_CACHE_URL=%s\nTIANGONG_CODEX_CAPABILITY_CACHE_SHARED=1\n' \
+      "${CODEX_PROVIDER}" "${CODEX_MODEL}" "${CODEX_CACHE_URL}"
+    printf 'TIANGONG_CODEX_GATEWAY_HOSTS=%s\nTIANGONG_CODEX_BASE_URL=%s\n' \
+      "${GATEWAY_HOSTS}" "${CODEX_BASE_URL}"
+    printf 'TIANGONG_CANARY_ADMISSION_FILE=%s/tiangong-admission.json\n' "${working_dir}"
+  fi
+} >>"${env_file}"
 chmod 600 "${env_file}"
 # Docker Desktop reads the file through the Windows host when this script runs
 # under WSL; allow the host projection to observe the just-created file.

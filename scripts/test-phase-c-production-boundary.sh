@@ -52,7 +52,7 @@ run_step role-injection-docker-contract bash "${SCRIPT_DIR}/test-b5-role-runtime
 run_step gateway-provider-normalizer-contract bash "${SCRIPT_DIR}/test-agentteams-gateway-provider-normalizer.sh"
 run_step openclaw-migration-default-contract bash "${SCRIPT_DIR}/test-openclaw-migration-gate.sh"
 
-grep -Fq '/api/v1/gateway/consumers/${consumer_name}/bind' "${REPO_ROOT}/smoke-testing/support/run-b5-gateb-smoke.sh" || {
+grep -Fq "/api/v1/gateway/consumers/\${consumer_name}/bind" "${REPO_ROOT}/smoke-testing/support/run-b5-gateb-smoke.sh" || {
   printf 'phasec=fail step=gateway-consumer-binding-contract code=BIND_ENDPOINT_MISSING\n' >&2
   failures=$((failures + 1))
 }
