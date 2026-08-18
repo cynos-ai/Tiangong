@@ -73,11 +73,14 @@ export function createCoordinationAdmissionHandler({ store, bearerToken, team, r
     const workMatch = url.pathname.match(/^\/v1\/coordination\/works\/([^/]+)$/u);
     const taskMatch = url.pathname.match(/^\/v1\/coordination\/tasks\/([^/]+)$/u);
     const resultMatch = url.pathname.match(/^\/v1\/coordination\/results\/([^/]+)$/u);
+    const decisionMatch = url.pathname.match(/^\/v1\/coordination\/decisions\/([^/]+)$/u);
+    const workCloseMatch = url.pathname.match(/^\/v1\/coordination\/works\/([^/]+)\/close$/u);
     const taskCreatePath = url.pathname === "/v1/coordination/tasks";
     const resultSubmitPath = url.pathname === "/v1/coordination/results";
+    const decisionCreatePath = url.pathname === "/v1/coordination/decisions";
     const wakesPath = url.pathname === "/v1/coordination/wakes";
-    if (!admissionPath && !resumePath && !claimPath && !ackPath && !workMatch && !taskMatch && !resultMatch && !taskCreatePath && !resultSubmitPath && !wakesPath) return false;
-    if (workMatch || taskMatch || resultMatch || wakesPath) {
+    if (!admissionPath && !resumePath && !claimPath && !ackPath && !workMatch && !workCloseMatch && !taskMatch && !resultMatch && !decisionMatch && !taskCreatePath && !resultSubmitPath && !decisionCreatePath && !wakesPath) return false;
+    if (workMatch || taskMatch || resultMatch || decisionMatch || wakesPath) {
       if (request.method !== "GET") {
         json(response, 405, { error: "method_not_allowed" });
         return true;
@@ -101,6 +104,11 @@ export function createCoordinationAdmissionHandler({ store, bearerToken, team, r
           const result = await store.getResult(decodeURIComponent(resultMatch[1]));
           if (!result) json(response, 404, { error: "result_not_found" });
           else json(response, 200, { result });
+        } else if (decisionMatch) {
+          if (typeof store.getDecision !== "function") throw Object.assign(new Error("Decision gateway is unavailable"), { code: "DECISION_GATEWAY_UNAVAILABLE" });
+          const decision = await store.getDecision(decodeURIComponent(decisionMatch[1]));
+          if (!decision) json(response, 404, { error: "decision_not_found" });
+          else json(response, 200, { decision });
         } else {
           const status = url.searchParams.get("status") ?? undefined;
           json(response, 200, { wakes: await store.listOutbox({ status }) });
@@ -159,6 +167,35 @@ export function createCoordinationAdmissionHandler({ store, bearerToken, team, r
           at: result.createdAt,
         });
         json(response, 200, { ...submitted, wake: wake.wake, wakeReplayed: wake.replayed === true });
+      } else if (decisionCreatePath) {
+        if (Object.keys(body).some((key) => !["taskId", "decision", "resultDigest", "reason", "actorId", "expectedEpoch", "requestId"].includes(key))) throw Object.assign(new Error("request contains unknown fields"), { code: "REQUEST_BODY_INVALID" });
+        if (body.actorId !== leaderMember.memberId) throw Object.assign(new Error("Only the bound Leader may decide a Task"), { code: "TASK_DECISION_ACTOR_NOT_LEADER" });
+        if (typeof store.decideTask !== "function") throw Object.assign(new Error("Decision gateway is unavailable"), { code: "DECISION_GATEWAY_UNAVAILABLE" });
+        json(response, 200, await store.decideTask({
+          taskId: body.taskId,
+          team,
+          profile,
+          actorId: body.actorId,
+          decision: body.decision,
+          resultDigest: body.resultDigest,
+          reason: body.reason,
+          expectedEpoch: body.expectedEpoch,
+          requestId: body.requestId,
+        }));
+      } else if (workCloseMatch) {
+        if (Object.keys(body).some((key) => !["decision", "reason", "actorId", "expectedEpoch", "requestId"].includes(key))) throw Object.assign(new Error("request contains unknown fields"), { code: "REQUEST_BODY_INVALID" });
+        if (body.actorId !== leaderMember.memberId) throw Object.assign(new Error("Only the bound Leader may close a Work"), { code: "WORK_CLOSE_ACTOR_NOT_LEADER" });
+        if (typeof store.closeWork !== "function") throw Object.assign(new Error("Work closure gateway is unavailable"), { code: "WORK_CLOSE_GATEWAY_UNAVAILABLE" });
+        json(response, 200, await store.closeWork({
+          workId: decodeURIComponent(workCloseMatch[1]),
+          team,
+          profile,
+          actorId: body.actorId,
+          decision: body.decision,
+          reason: body.reason,
+          expectedEpoch: body.expectedEpoch,
+          requestId: body.requestId,
+        }));
       } else if (admissionPath || resumePath) {
         if (Object.keys(body).some((key) => !["source", "event"].includes(key))) throw Object.assign(new Error("request contains unknown fields"), { code: "REQUEST_BODY_INVALID" });
         if (resumePath) {

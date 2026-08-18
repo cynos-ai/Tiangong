@@ -39,9 +39,26 @@ test("runtime console exposes health and honest unknown state by default", async
     taskSource: "coordination-store-not-configured",
     results: [],
     resultSource: "coordination-store-not-configured",
+    decisions: [],
+    decisionSource: "coordination-store-not-configured",
   });
   const ready = await fetch(`http://127.0.0.1:${address.port}/readyz`);
   assert.equal(ready.status, 503);
+});
+
+test("runtime console streams the same bounded projection over SSE", async (t) => {
+  const server = createRuntimeConsoleServer({ sseIntervalMs: 100 }).listen(0);
+  t.after(() => server.close());
+  const address = server.address();
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/runtime/events`);
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type"), /text\/event-stream/u);
+  const reader = response.body.getReader();
+  const first = await reader.read();
+  const text = new TextDecoder().decode(first.value);
+  assert.match(text, /event: runtime/u);
+  assert.match(text, /"decisions":\[\]/u);
+  await reader.cancel();
 });
 
 test("runtime console projects bounded ToolResult metadata without raw payloads", async (t) => {
@@ -126,6 +143,17 @@ test("runtime console projects CoordinationStore Work cards, timeline, and durab
     expectedEpoch: 1,
     requestId: "request-console-result",
   });
+  await store.decideTask({
+    taskId: task.taskId,
+    team,
+    profile,
+    actorId: leader.memberId,
+    decision: "accept",
+    resultDigest: (await store.getResult("result-console-1")).contentDigest,
+    reason: "the console Result is current",
+    expectedEpoch: 2,
+    requestId: "request-console-decision",
+  });
   const server = createRuntimeConsoleServer({ coordinationFile }).listen(0);
   t.after(() => server.close());
   const address = server.address();
@@ -134,13 +162,15 @@ test("runtime console projects CoordinationStore Work cards, timeline, and durab
   assert.equal(facts.workSource, "coordination-store");
   assert.equal(facts.works.length, 1);
   assert.deepEqual(facts.works[0].currentWorkSpec, { revision: 1, objective: "Inspect runtime", scope: "bounded", completionContract: "visible reply" });
-  assert.equal(facts.works[0].timeline.length, 3);
+  assert.equal(facts.works[0].timeline.length, 4);
   assert.equal(facts.deliveries.length, 2);
   assert.deepEqual(facts.deliveries.map((wake) => wake.kind).sort(), ["human-reply", "leader-resume"]);
   assert.equal(facts.tasks.length, 1);
-  assert.equal(facts.tasks[0].status, "reported");
+  assert.equal(facts.tasks[0].status, "accepted");
   assert.equal(facts.tasks[0].result.resultId, "result-console-1");
+  assert.equal(facts.tasks[0].decision.decision, "accept");
   assert.equal(facts.results.length, 1);
   assert.equal(facts.results[0].claim, "runtime is observable");
+  assert.equal(facts.decisions.length, 1);
   assert.equal(JSON.stringify(facts).includes("profile-1"), false);
 });

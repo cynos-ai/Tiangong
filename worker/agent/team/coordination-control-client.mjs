@@ -99,6 +99,12 @@ export function createRemoteCoordinationStore({ endpoint, token, fetchImpl = glo
     async submitResult({ result, actorId: requestedActorId, expectedEpoch, requestId } = {}) {
       return controlRequest({ fetchImpl, token: bearer, url: `${origin}/v1/coordination/results`, method: "POST", body: { result, actorId: requestedActorId ?? actorId, expectedEpoch, requestId } });
     },
+    async decideTask({ taskId, decision, resultDigest, reason, actorId: requestedActorId, expectedEpoch, requestId } = {}) {
+      return controlRequest({ fetchImpl, token: bearer, url: `${origin}/v1/coordination/decisions`, method: "POST", body: { taskId, decision, ...(resultDigest === undefined ? {} : { resultDigest }), reason, actorId: requestedActorId ?? actorId, expectedEpoch, requestId } });
+    },
+    async closeWork({ workId, decision, reason, actorId: requestedActorId, expectedEpoch, requestId } = {}) {
+      return controlRequest({ fetchImpl, token: bearer, url: `${origin}/v1/coordination/works/${encodeURIComponent(required(workId, "workId"))}/close`, method: "POST", body: { decision, reason, actorId: requestedActorId ?? actorId, expectedEpoch, requestId } });
+    },
     async getWork(workId) {
       const value = await controlRequest({ fetchImpl, token: bearer, url: `${origin}/v1/coordination/works/${encodeURIComponent(required(workId, "workId"))}` });
       return value.work;
@@ -110,6 +116,10 @@ export function createRemoteCoordinationStore({ endpoint, token, fetchImpl = glo
     async getResult(resultId) {
       const value = await controlRequest({ fetchImpl, token: bearer, url: `${origin}/v1/coordination/results/${encodeURIComponent(required(resultId, "resultId"))}` });
       return value.result;
+    },
+    async getDecision(decisionId) {
+      const value = await controlRequest({ fetchImpl, token: bearer, url: `${origin}/v1/coordination/decisions/${encodeURIComponent(required(decisionId, "decisionId"))}` });
+      return value.decision;
     },
     async listOutbox({ status } = {}) {
       const query = status === undefined ? "" : `?status=${encodeURIComponent(status)}`;

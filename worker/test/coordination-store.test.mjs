@@ -339,3 +339,35 @@ test("cancellation wins the Result race and journal tampering fails closed", asy
   await import("node:fs/promises").then(({ writeFile }) => writeFile(fixtureValue.filePath, tampered));
   await assert.rejects(new CoordinationStore({ filePath: fixtureValue.filePath, now: () => NOW }).health(), /Invalid coordination journal/u);
 });
+
+test("Leader Task decision and Work closure are typed, replay-safe, and durable", async (t) => {
+  const fixtureValue = await fixture(t);
+  await admitted(fixtureValue);
+  await fixtureValue.store.createTask({
+    task: taskSpec(),
+    team: fixtureValue.team,
+    member: fixtureValue.member,
+    profile: fixtureValue.controlProfile,
+    actorId: "leader-1",
+    expectedEpoch: 0,
+    requestId: "decision-task-create",
+  });
+  const result = createResult({ resultId: "decision-result-1", workId: "work-1", taskId: "task-1", producerMemberId: "member-1", claim: "bounded result", createdAt: "2026-08-15T00:00:02.000Z" });
+  await fixtureValue.store.submitResult({ result, team: fixtureValue.team, member: fixtureValue.member, profile: fixtureValue.controlProfile, actorId: "worker-member-1", expectedEpoch: 1, requestId: "decision-result-submit" });
+  await assert.rejects(() => fixtureValue.store.decideTask({ taskId: "task-1", team: fixtureValue.team, profile: fixtureValue.controlProfile, actorId: "leader-1", decision: "accept", resultDigest: "a".repeat(64), reason: "wrong digest", expectedEpoch: 2, requestId: "decision-wrong-digest" }), /TASK_DECISION_RESULT_CONFLICT/u);
+  const accepted = await fixtureValue.store.decideTask({ taskId: "task-1", team: fixtureValue.team, profile: fixtureValue.controlProfile, actorId: "leader-1", decision: "accept", resultDigest: result.contentDigest, reason: "matches the submitted Result", expectedEpoch: 2, requestId: "decision-accept-1" });
+  assert.equal(accepted.decision.decision, "accept");
+  assert.equal(accepted.task.status, "accepted");
+  assert.equal((await fixtureValue.store.listDecisions()).length, 1);
+  const replay = await fixtureValue.store.decideTask({ taskId: "task-1", team: fixtureValue.team, profile: fixtureValue.controlProfile, actorId: "leader-1", decision: "accept", resultDigest: result.contentDigest, reason: "matches the submitted Result", expectedEpoch: 2, requestId: "decision-accept-1" });
+  assert.equal(replay.replayed, true);
+  const closed = await fixtureValue.store.closeWork({ workId: "work-1", team: fixtureValue.team, profile: fixtureValue.controlProfile, actorId: "leader-1", decision: "complete", reason: "all Tasks accepted", expectedEpoch: 3, requestId: "decision-close-1" });
+  assert.equal(closed.work.status, "closed");
+  assert.equal(closed.decision.decision, "complete");
+  assert.equal((await fixtureValue.store.getWork("work-1")).epoch, 4);
+  const reopened = new CoordinationStore({ filePath: fixtureValue.filePath, now: () => NOW });
+  assert.equal((await reopened.getTask("task-1")).decision.decision, "accept");
+  assert.equal((await reopened.getWork("work-1")).closeDecision.decision, "complete");
+  assert.equal((await reopened.listDecisions()).length, 2);
+  await assert.rejects(() => reopened.closeWork({ workId: "work-1", team: fixtureValue.team, profile: fixtureValue.controlProfile, actorId: "member-1", decision: "stop", reason: "wrong actor", expectedEpoch: 4, requestId: "decision-wrong-actor" }), /WORK_CLOSE_ACTOR_NOT_LEADER/u);
+});

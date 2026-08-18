@@ -23,7 +23,7 @@
       <pre id="facts">{}</pre>
     </section>
     <script>
-      fetch('/api/runtime', { cache: 'no-store' }).then((response) => response.json()).then((facts) => {
+      function render(facts) {
         document.querySelector('#status').textContent = facts.status === 'observed' ? 'Runtime facts observed' : 'Runtime facts unavailable';
         const toolResults = Array.isArray(facts.toolResults) ? facts.toolResults : [];
         document.querySelector('#tool-summary').textContent = facts.toolResultsSource === 'tool-result-capture-file'
@@ -31,8 +31,9 @@
           : 'ToolResult observations: unknown';
         const works = Array.isArray(facts.works) ? facts.works : [];
         const workContainer = document.querySelector('#works');
+        workContainer.replaceChildren();
         workContainer.textContent = facts.workSource === 'coordination-store'
-          ? `Work projection: ${works.length} Work(s), ${Array.isArray(facts.deliveries) ? facts.deliveries.length : 0} durable wake(s)`
+          ? `Work projection: ${works.length} Work(s), ${Array.isArray(facts.deliveries) ? facts.deliveries.length : 0} durable wake(s), ${Array.isArray(facts.decisions) ? facts.decisions.length : 0} decision(s)`
           : 'Work projection: unknown';
         for (const work of works) {
           const card = document.createElement('article');
@@ -47,12 +48,29 @@
             .filter((delivery) => delivery.workId === work.workId)
             .map((delivery) => `${delivery.kind}:${delivery.status}`)
             .join(', ');
-          timeline.textContent = `Leader session ${work.leaderSessionId}; timeline ${Array.isArray(work.timeline) ? work.timeline.length : 0}; wakes ${deliveries || 'none'}.`;
+          const decisions = (Array.isArray(facts.decisions) ? facts.decisions : [])
+            .filter((decision) => decision.workId === work.workId)
+            .map((decision) => `${decision.decision}${decision.taskId ? `:${decision.taskId}` : ''}`)
+            .join(', ');
+          timeline.textContent = `Leader session ${work.leaderSessionId}; timeline ${Array.isArray(work.timeline) ? work.timeline.length : 0}; wakes ${deliveries || 'none'}; decisions ${decisions || 'none'}.`;
           card.append(heading, summary, timeline);
           workContainer.append(card);
         }
         document.querySelector('#facts').textContent = JSON.stringify(facts, null, 2);
-      }).catch(() => { document.querySelector('#status').textContent = 'Runtime facts unavailable'; });
+      }
+      function fallback() {
+        fetch('/api/runtime', { cache: 'no-store' }).then((response) => response.json()).then(render)
+          .catch(() => { document.querySelector('#status').textContent = 'Runtime facts unavailable'; });
+      }
+      if (typeof EventSource === 'function') {
+        const stream = new EventSource('/api/runtime/events');
+        stream.addEventListener('runtime', (event) => {
+          try { render(JSON.parse(event.data)); } catch { fallback(); }
+        });
+        stream.onerror = () => { stream.close(); fallback(); };
+      } else {
+        fallback();
+      }
     </script>
   </body>
 </html>

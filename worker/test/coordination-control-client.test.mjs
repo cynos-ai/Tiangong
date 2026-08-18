@@ -69,6 +69,29 @@ test("remote CoordinationStore routes bound Task/Result writes through the deplo
   assert.equal(JSON.parse(calls[1][1].body).actorId, "member-remote");
 });
 
+test("remote CoordinationStore routes Leader decisions and Work closure through the deployment gateway", async () => {
+  const calls = [];
+  const store = createRemoteCoordinationStore({
+    endpoint: "http://control.example.test/v1/coordination/admit",
+    token: "client-control-token",
+    fetchImpl: async (url, options) => {
+      calls.push([url, options]);
+      if (url.endsWith("/decisions")) return new Response(JSON.stringify({ decision: { decisionId: "decision-1", decision: "accept" } }), { status: 200 });
+      if (url.includes("/close")) return new Response(JSON.stringify({ work: { status: "closed" }, decision: { decision: "complete" } }), { status: 200 });
+      return new Response(JSON.stringify({ decision: { decisionId: "decision-1", taskId: "task-remote" } }), { status: 200 });
+    },
+  });
+  const decision = await store.decideTask({ taskId: "task-remote", decision: "accept", resultDigest: "a".repeat(64), reason: "accepted", actorId: "leader-remote", expectedEpoch: 2, requestId: "decision-remote-request" });
+  const closed = await store.closeWork({ workId: "work-remote", decision: "complete", reason: "closed", actorId: "leader-remote", expectedEpoch: 3, requestId: "close-remote-request" });
+  const read = await store.getDecision("decision-1");
+  assert.equal(decision.decision.decision, "accept");
+  assert.equal(closed.work.status, "closed");
+  assert.equal(read.taskId, "task-remote");
+  assert.equal(calls[0][0], "http://control.example.test/v1/coordination/decisions");
+  assert.equal(calls[1][0], "http://control.example.test/v1/coordination/works/work-remote/close");
+  assert.equal(calls[2][0], "http://control.example.test/v1/coordination/decisions/decision-1");
+});
+
 test("remote Leader admission routes a machine resume envelope to the resume endpoint", async () => {
   const calls = [];
   const event = {
