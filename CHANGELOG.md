@@ -4,6 +4,10 @@ All notable changes to Tiangong are documented here. Tiangong follows Semantic V
 
 ## [Unreleased]
 
+No unreleased changes.
+
+## [0.4.0] - 2026-08-19
+
 ### Changed
 
 - DeepSeek-only runtime clean-cut: the Tiangong-owned `tiangong-pi` harness,
