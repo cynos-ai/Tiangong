@@ -24,7 +24,7 @@ cat >"${TEST_ROOT}/inspect.json" <<'JSON'
         "AGENTTEAMS_WORKER_GATEWAY_KEY=secret-must-not-print",
         "TIANGONG_ROLE_ID=stale",
         "TIANGONG_CODEX_RUNTIME=0",
-        "OPENCLAW_AGENT_RUNTIME=tiangong-pi"
+        "OPENCLAW_AGENT_RUNTIME=pi"
       ],
       "Labels": {"example.label": "value"},
       "ExposedPorts": {"8088/tcp": {}}
@@ -74,7 +74,7 @@ case "${1:-}:${2:-}" in
   exec:*)
     grep -Fq "TIANGONG_ROLE_ID=${TIANGONG_B5_EXPECTED_ROLE}" "${root}/env"
     grep -Fq 'TIANGONG_RUNTIME_ROLE_ROUTING_REQUIRED=1' "${root}/env"
-    grep -Fq "TIANGONG_OPENCLAW_NATIVE=${TIANGONG_B5_EXPECTED_NATIVE:-1}" "${root}/env"
+    test "$(grep -Fc 'TIANGONG_OPENCLAW_NATIVE=' "${root}/env" || true)" = 0
     grep -Fq 'OPENCLAW_AGENT_HARNESS_FALLBACK=none' "${root}/env"
     ;;
   rm:*) exit 0 ;;
@@ -92,7 +92,6 @@ output="${TEST_ROOT}/output"
 PATH="${TEST_ROOT}/bin:${PATH}" \
 TIANGONG_B5_INJECTION_TEST_ROOT="${TEST_ROOT}" \
 TIANGONG_B5_EXPECTED_ROLE=leader \
-TIANGONG_B5_EXPECTED_NATIVE=1 \
 TIANGONG_B5_WORKER_CONTAINER=worker-test \
 TIANGONG_B5_ROLE_ID=leader \
 TIANGONG_B5_COORDINATION_CONTROL_ENDPOINT=http://coordination-runtime:8780/v1/coordination/admit \
@@ -108,7 +107,7 @@ grep -Fq -- '--init' "${TEST_ROOT}/run.args"
 grep -Fq -- '--restart unless-stopped' "${TEST_ROOT}/run.args"
 grep -Fq 'TIANGONG_ROLE_ID=leader' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_CODEX_RUNTIME=0' "${TEST_ROOT}/env"
-grep -Fq 'TIANGONG_OPENCLAW_NATIVE=1' "${TEST_ROOT}/env"
+test "$(grep -Fc 'TIANGONG_OPENCLAW_NATIVE=' "${TEST_ROOT}/env" || true)" = 0
 grep -Fq 'OPENCLAW_AGENT_RUNTIME=pi' "${TEST_ROOT}/env"
 grep -Fq 'CODEX_HOME=/root/.codex' "${TEST_ROOT}/env"
 grep -Fq 'OPENCLAW_CODEX_DISCOVERY_LIVE=0' "${TEST_ROOT}/env"
@@ -126,7 +125,6 @@ output="${TEST_ROOT}/implementor-output"
 PATH="${TEST_ROOT}/bin:${PATH}" \
 TIANGONG_B5_INJECTION_TEST_ROOT="${TEST_ROOT}" \
 TIANGONG_B5_EXPECTED_ROLE=implementor \
-TIANGONG_B5_EXPECTED_NATIVE=1 \
 TIANGONG_B5_WORKER_CONTAINER=worker-test \
 TIANGONG_B5_ROLE_ID=implementor \
 TIANGONG_B5_COORDINATION_CONTROL_ENDPOINT=http://coordination-runtime:8780/v1/coordination/admit \
@@ -135,7 +133,7 @@ TIANGONG_B5_COORDINATION_CONTROL_TOKEN=test-control-token-123456 \
 grep -Fq 'runtime=codex-app-server' "${output}"
 grep -Fq 'TIANGONG_RUNTIME_LANE=openclaw-canary' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_CODEX_RUNTIME=1' "${TEST_ROOT}/env"
-grep -Fq 'TIANGONG_OPENCLAW_NATIVE=1' "${TEST_ROOT}/env"
+test "$(grep -Fc 'TIANGONG_OPENCLAW_NATIVE=' "${TEST_ROOT}/env" || true)" = 0
 grep -Fq 'OPENCLAW_AGENT_RUNTIME=codex' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_CODEX_CAPABILITY_CACHE_SHARED=1' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_CODEX_CAPABILITY_CACHE_URL=http://tiangong-codex-capability-cache:8788' "${TEST_ROOT}/env"
@@ -145,20 +143,6 @@ grep -Fq 'TIANGONG_CODEX_BASE_URL=http://aigw-local.agentteams.io:8080/v1' "${TE
 grep -Fq 'TIANGONG_CANARY_ADMISSION_FILE=/root/agentteams-fs/agents/worker-test/tiangong-admission.json' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_MEMBER_ID=worker-test' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_MEMBER_COORDINATION_ENABLED=1' "${TEST_ROOT}/env"
-
-output="${TEST_ROOT}/legacy-output"
-PATH="${TEST_ROOT}/bin:${PATH}" \
-TIANGONG_B5_INJECTION_TEST_ROOT="${TEST_ROOT}" \
-TIANGONG_B5_EXPECTED_ROLE=leader \
-TIANGONG_B5_EXPECTED_NATIVE=0 \
-TIANGONG_B5_OPENCLAW_NATIVE=0 \
-TIANGONG_B5_WORKER_CONTAINER=worker-test \
-TIANGONG_B5_ROLE_ID=leader \
-TIANGONG_B5_COORDINATION_CONTROL_ENDPOINT=http://coordination-runtime:8780/v1/coordination/admit \
-TIANGONG_B5_COORDINATION_CONTROL_TOKEN=test-control-token-123456 \
-  "${SCRIPT_DIR}/inject-b5-role-runtime-docker.sh" >"${output}"
-grep -Fq 'TIANGONG_OPENCLAW_NATIVE=0' "${TEST_ROOT}/env"
-grep -Fq 'OPENCLAW_AGENT_RUNTIME=tiangong-pi' "${TEST_ROOT}/env"
 
 if PATH="${TEST_ROOT}/bin:${PATH}" \
   TIANGONG_B5_WORKER_CONTAINER=worker-test TIANGONG_B5_ROLE_ID=leader \

@@ -78,7 +78,8 @@ ToolResult retention、WorkRun finalized 和精确 cleanup。刚刚复核的机�
 AgentTeams Implementor Worker 的 native coding session，并证明本地修改、构建/测试、
 ChangeRevision 和 Result 能经 Matrix/WebUI 回到 Leader。非编程 Leader 仍以 OpenClaw
 内置 runtime 为目标；Implementor 才在该真实纵切中验证 OpenClaw Codex runtime。
-在 B4/B5、Gate B 证据闭合前，`tiangong-pi` 继续保留，不做 clean-cut。
+这段是迁移期历史约束；B4/B5、Gate B 证据已经闭合，当前版本按
+`deepseek-only-clean-cut.zh.md` 删除 `tiangong-pi`，不提供 legacy fallback。
 
 ## 2026-08-16 B4 原生 Codex Worker smoke
 
@@ -98,7 +99,7 @@ DeepSeek V4 Pro。OpenClaw 自带 Codex app-server 接收 Matrix Task；Tiangong
 ChangeRevision、WorkRun、ToolResult retention、重启恢复和 cleanup 闭环。下一步
 是把同一条 Codex session 接到已通过的 Runner broker，再做 B5 role/recovery
 证据。`OPENCLAW_AGENT_RUNTIME=pi` 是当前 pinned OpenClaw 内置 runtime 的历史
-标识，不等于仓库的 `tiangong-pi`；后者仍只作为 Gate B 前的 legacy rollback
+标识，不等于仓库的历史 `tiangong-pi`；后者不再作为生产 rollback
 保留，不能提前删除。
 当前剩余卡点不是再造一个 runtime，而是权限记录的接缝：原生 Codex 这次收到的
 是 PG Coordination `TaskSpec`，而既有 Runner broker 只接受带 immutable
@@ -188,5 +189,5 @@ ChangeRevision/replay”这条真实容器链可行；仍未替代真实 Codex a
 `exec/process/shell/bash/terminal` 做 fail-closed 的 hook 合约测试；生产部署在 Gate B 前必须
 继续保持 Codex sandbox/host-exec deny，不能把 hook 合约测试误当成 app-server 工具拦截证据。
 
-本节证明 B4 的真实 Codex/Runner/Result/WebUI/Matrix 闭环已经可运行；`tiangong-pi` 仍只作
-legacy rollback，下一阶段是 B5 的 role/recovery 与 Gate B 证据，之后再决定 B6 清理旧 lane。
+本节证明 B4 的真实 Codex/Runner/Result/WebUI/Matrix 闭环已经可运行；历史 `tiangong-pi` 仅作
+legacy runtime 的迁移期记录，下一阶段历史上是 B5 的 role/recovery 与 Gate B；这些门槛已完成，当前 clean-cut 由 DeepSeek-only 文档定义。

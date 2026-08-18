@@ -57,7 +57,7 @@ and `TIANGONG_MEMBER_ID` is injected by the deployment owner.
 
 This is the intended B3 Full path for a non-Leader Worker. The target role split
 keeps the Leader on OpenClaw's built-in runtime, while the existing
-`tiangong-pi` harness remains a retained legacy lane until the internal plan's
+The historical `tiangong-pi` harness was retained during the migration plan;
 Gate B review and B6 clean-cut PR. The current B3 smoke proves the member lane;
 the role-specific Leader/Implementor A/B is still a B4/B5 gate. A contract test
 proves Task binding, one Result submission, and the absence of the bearer token
@@ -72,4 +72,5 @@ one bounded Result. Task reporting, Result projection, and all assignment/
 notification wake deliveries were acked. The Matrix wake consumer emits a
 `formatted_body` `matrix.to` mention because OpenClaw otherwise drops an
 `m.mentions`-only event. This closes the B3 member Full smoke; it does not
-authorize B4/B5, Gate B, or deletion of `tiangong-pi`.
+those historical records do not authorize a current runtime fallback or block
+the completed DeepSeek-only clean-cut.

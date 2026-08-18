@@ -1,10 +1,7 @@
 import { readFile } from "node:fs/promises";
 
-export const TIANGONG_PLUGIN_ID = "tiangong-pi";
+export const TIANGONG_PLUGIN_ID = "tiangong-control";
 export const DEFAULT_PLUGIN_PATH = "/opt/tiangong-worker/plugin";
-export const LEGACY_RUNTIME_LANE = "legacy-v0.2";
-export const CANARY_RUNTIME_LANE = "openclaw-canary";
-const RUNTIME_LANES = new Set([LEGACY_RUNTIME_LANE, CANARY_RUNTIME_LANE]);
 
 export class PreflightError extends Error {
   constructor(code, message) {
@@ -22,23 +19,20 @@ function isRequired(value) {
   return value === "1" || value === "true";
 }
 
-export function assertPluginApi(api, { nativeRuntime = false } = {}) {
+export function assertPluginApi(api) {
   if (!api || typeof api !== "object") {
     fail("plugin-api-unavailable", "OpenClaw plugin API is unavailable.");
   }
-  const harnessAvailable = typeof api.registerAgentHarness === "function";
   const nativeSurfaceAvailable = typeof api.on === "function" || typeof api.registerTool === "function";
-  if ((!nativeRuntime && !harnessAvailable) || (nativeRuntime && !nativeSurfaceAvailable)) {
+  if (!nativeSurfaceAvailable) {
     fail(
       "plugin-api-unavailable",
-      nativeRuntime
-        ? "OpenClaw native plugin hooks/tools are unavailable."
-        : "OpenClaw plugin API does not expose registerAgentHarness.",
+      "OpenClaw native plugin hooks/tools are unavailable.",
     );
   }
   return {
     pluginId: TIANGONG_PLUGIN_ID,
-    harnessRegistration: harnessAvailable ? "available" : "not-required",
+    nativeRegistration: "not-supported",
   };
 }
 
@@ -61,25 +55,11 @@ export function assertPluginConfig(config, {
     fail("required-plugin-disabled", "The required Tiangong plugin is not enabled.");
   }
 
-  const configuredLane = entry.config?.runtimeLane ?? LEGACY_RUNTIME_LANE;
-  const requestedLane = typeof env.TIANGONG_RUNTIME_LANE === "string" && env.TIANGONG_RUNTIME_LANE !== ""
-    ? env.TIANGONG_RUNTIME_LANE
-    : configuredLane;
-  if (!RUNTIME_LANES.has(configuredLane) || !RUNTIME_LANES.has(requestedLane)) {
-    fail("runtime-lane-invalid", "The Tiangong runtime lane is not recognized.");
-  }
-  if (configuredLane !== requestedLane) {
-    fail("runtime-lane-mismatch", "The requested runtime lane does not match the Worker configuration.");
-  }
-  if (env.TIANGONG_CANARY_REQUIRED === "1" && requestedLane !== CANARY_RUNTIME_LANE) {
-    fail("canary-lane-required", "The canary probe requires an explicitly configured OpenClaw lane.");
-  }
-
   return {
     pluginId,
     pluginPath,
     pluginEnabled: true,
-    runtimeLane: requestedLane,
+    runtimeLane: "openclaw-native",
     conversationHooks: false,
   };
 }

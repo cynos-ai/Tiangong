@@ -1,5 +1,5 @@
 {
-  "name": "tiangong-openclaw-pi-harness",
+  "name": "tiangong-openclaw-control",
   "version": "0.0.0",
   "private": true,
   "type": "module",

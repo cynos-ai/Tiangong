@@ -50,8 +50,8 @@ for required in \
 done
 grep -Fq -- 'com.tiangong.handoff' "${REPO_ROOT}/worker/agent/team/channel-adapter.mjs" || \
   fail 'channel adapter is missing the namespaced handoff reference.'
-grep -Fq -- '{"action":"NO_REPLY"}' "${REPO_ROOT}/worker/agent/runtime.mjs" || \
-  fail 'handoff runtime is missing the official OpenClaw no-reply envelope.'
+grep -Fq -- 'registerMemberOpenClawTools' "${REPO_ROOT}/worker/plugin/index.mjs" || \
+  fail 'handoff plugin is missing the official OpenClaw member tool registration.'
 if grep -Eqi 'password|access_token|apiKey|secret|token:' "${TEAM_FIXTURE}" "${WORKER_FIXTURE}"; then
   fail 'handoff fixtures contain credential-bearing fields.'
 fi

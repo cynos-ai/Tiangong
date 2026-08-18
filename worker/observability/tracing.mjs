@@ -23,12 +23,12 @@ const OPERATIONS = new Set([
   "tiangong.runtime.setup",
   "tiangong.gateway.resolve",
   "tiangong.session.open_or_reuse",
-  "tiangong.pi.agent_turn",
+  "tiangong.openclaw.agent_turn",
   "gen_ai.chat",
   "execute_tool",
 ]);
 const PHASES = new Set([
-  "harness.start",
+  "control.start",
   "runtime.start",
   "gateway.resolved",
   "session.ready",
@@ -36,8 +36,8 @@ const PHASES = new Set([
   "peer.transport.ping",
   "peer.transport.pong",
   "handoff.transport.sent",
-  "pi.agent_turn.start",
-  "pi.turn.start",
+  "openclaw.agent_turn.start",
+  "openclaw.turn.start",
   "model.request.ready",
   "model.response.received",
   "model.response.start",
@@ -55,7 +55,7 @@ const ATTRIBUTE_KEYS = new Set([
   "tiangong.approval.pending",
   "tiangong.attempt.id",
   "tiangong.gate.outcome",
-  "tiangong.harness.id",
+  "tiangong.control.id",
   "tiangong.operation.outcome",
   "tiangong.phase",
   "tiangong.retry.attempt",
@@ -295,19 +295,19 @@ export function createWorkerObservability(options = {}) {
     enabled: true,
     startAttempt(metadata) {
       if (!metadata || typeof metadata !== "object") {
-        throw new TypeError("Harness attempt observability metadata is required");
+        throw new TypeError("Control attempt observability metadata is required");
       }
-      const timeoutMs = safeInteger(Math.floor(metadata.timeoutMs), "Harness timeout", MAX_TIMEOUT_MS);
-      if (timeoutMs === 0) throw new TypeError("Harness timeout must be positive");
+      const timeoutMs = safeInteger(Math.floor(metadata.timeoutMs), "Control timeout", MAX_TIMEOUT_MS);
+      if (timeoutMs === 0) throw new TypeError("Control timeout must be positive");
       const correlationAttributes = {
         "tiangong.attempt.id": correlationDigest("attempt", metadata.attemptId),
         "tiangong.turn.id": correlationDigest("turn", metadata.turnId),
         "tiangong.session.id": correlationDigest("session", metadata.sessionId),
       };
-      const rootSpan = tracer.startSpan("tiangong.harness.attempt", {
+      const rootSpan = tracer.startSpan("tiangong.control.attempt", {
         kind: SpanKind.INTERNAL,
         attributes: safeAttributes({
-          "tiangong.harness.id": safeToken(metadata.harnessId, "Harness id"),
+          "tiangong.control.id": safeToken(metadata.controlId, "Control id"),
           ...correlationAttributes,
           "gen_ai.provider.name": safeToken(metadata.provider, "Provider"),
           "gen_ai.request.model": safeToken(metadata.modelId, "Model id"),
@@ -315,7 +315,7 @@ export function createWorkerObservability(options = {}) {
         }),
       });
       const attempt = attemptHandle(tracer, rootSpan, correlationAttributes);
-      attempt.checkpoint("harness.start");
+      attempt.checkpoint("control.start");
       return attempt;
     },
     async forceFlush() {

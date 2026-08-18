@@ -1,15 +1,11 @@
 {
-  "id": "tiangong-pi",
-  "name": "Tiangong pi Harness",
-  "description": "Runs AgentTeams Worker turns through Tiangong's controlled pi SDK runtime.",
+  "id": "tiangong-control",
+  "name": "Tiangong control plugin",
+  "description": "Registers Tiangong's fail-closed OpenClaw tools and coordination hooks.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "runtimeLane": {
-        "type": "string",
-        "enum": ["legacy-v0.2", "openclaw-canary"]
-      },
       "observability": {
         "type": "object",
         "additionalProperties": false,

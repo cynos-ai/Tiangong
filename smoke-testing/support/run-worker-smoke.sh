@@ -6,15 +6,15 @@ readonly SCRIPT_DIR
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 readonly REPO_ROOT
 readonly IMAGE="tiangong-worker:dev"
-readonly WORKER_NAME="tiangong-pi-smoke"
+readonly WORKER_NAME="tiangong-openclaw-smoke"
 readonly CONTAINER_NAME="agentteams-worker-${WORKER_NAME}"
 readonly CONTROLLER_CONTAINER="agentteams-controller"
 readonly MANAGER_CONTAINER="agentteams-manager"
-readonly MANIFEST="${REPO_ROOT}/smoke-testing/fixtures/pi-smoke-worker.yaml"
+readonly MANIFEST="${REPO_ROOT}/smoke-testing/fixtures/openclaw-smoke-worker.yaml"
 readonly BUILD_WORKER_IMAGE="${REPO_ROOT}/scripts/build-worker-image.sh"
 readonly MATRIX_ROUNDTRIP="${SCRIPT_DIR}/matrix-roundtrip.sh"
 readonly MATRIX_APPROVAL_ROUNDTRIP="${SCRIPT_DIR}/matrix-approval-roundtrip.sh"
-readonly MANAGER_MANIFEST="/tmp/tiangong-pi-smoke-worker.yaml"
+readonly MANAGER_MANIFEST="/tmp/tiangong-openclaw-smoke-worker.yaml"
 readonly MANAGER_MATRIX_ROUNDTRIP="/tmp/tiangong-matrix-roundtrip.sh"
 readonly MANAGER_MATRIX_APPROVAL_ROUNDTRIP="/tmp/tiangong-matrix-approval-roundtrip.sh"
 readonly SMOKE_LEVEL="${TIANGONG_WORKER_SMOKE_LEVEL:-full}"
@@ -155,10 +155,10 @@ actual_image="$(docker inspect "${CONTAINER_NAME}" --format '{{.Config.Image}}')
 [[ "${actual_image}" == "${IMAGE}" ]] || die "Expected image ${IMAGE}, got ${actual_image}."
 
 actual_node_version="$(docker exec "${CONTAINER_NAME}" node --version)"
-actual_pi_version="$(docker exec "${CONTAINER_NAME}" pi --version)"
 [[ "${actual_node_version}" == "v22.23.2" ]] || die "Unexpected Node.js version: ${actual_node_version}."
-[[ "${actual_pi_version}" == "0.82.0" ]] || die "Unexpected pi version: ${actual_pi_version}."
-printf 'node_version=%s\npi_version=%s\n' "${actual_node_version}" "${actual_pi_version}"
+[[ "$(docker exec "${CONTAINER_NAME}" printenv OPENCLAW_AGENT_RUNTIME)" == "pi" ]] || \
+  die "The pinned OpenClaw built-in runtime was not selected."
+printf 'node_version=%s\nopenclaw_runtime=pi\n' "${actual_node_version}"
 
 worker_user_id="$(docker exec "${CONTAINER_NAME}" jq -r \
   '.channels.matrix.userId // empty' \
@@ -172,11 +172,11 @@ agent_root="/root/agentteams-fs/agents/${WORKER_NAME}"
 read_target="matrix-read-probe-${nonce}.txt"
 printf '%s' "${nonce}" | docker exec -i "${CONTAINER_NAME}" \
   sh -c 'umask 077; cat >"$1/$2"' _ "${agent_root}" "${read_target}"
-log "Testing Matrix -> gated pi read -> Matrix round trip"
+log "Testing Matrix -> gated OpenClaw read -> Matrix round trip"
 matrix_output="$(docker exec "${MANAGER_CONTAINER}" \
   "${MANAGER_MATRIX_ROUNDTRIP}" "${room_id}" "${worker_user_id}" "${nonce}" "${read_target}")"
 printf '%s\n' "${matrix_output}"
-grep -Fqx 'matrix_to_pi_response=pass' <<<"${matrix_output}" || die "Matrix-to-pi round trip failed."
+grep -Fqx 'matrix_to_openclaw_response=pass' <<<"${matrix_output}" || die "Matrix-to-OpenClaw round trip failed."
 read_evidence_files="$(docker exec "${CONTAINER_NAME}" grep -RlF --include=events.jsonl \
   "\"target\":\"${read_target}\"" \
   "${agent_root}/.tiangong/runtime/evidence" || true)"
@@ -197,12 +197,10 @@ read_execution_count="$(docker exec "${CONTAINER_NAME}" jq -s --arg turn "${read
 ' "${read_evidence_files}")"
 [[ "${read_execution_count}" == "1" ]] || die "Matrix read tool did not execute exactly once."
 printf 'read_tool_event=pass\nfinal_response=pass\n'
-harness_evidence="$(docker exec "${CONTAINER_NAME}" cat /tmp/tiangong-pi-harness.last-run)"
-grep -Fqx 'harness=tiangong-pi' <<<"${harness_evidence}" || die "Tiangong pi harness was not selected."
-grep -Fqx 'provider=agentteams-gateway' <<<"${harness_evidence}" || die "Unexpected pi harness provider."
-grep -Fqx 'model=deepseek-v4-flash' <<<"${harness_evidence}" || die "Unexpected pi harness model."
-grep -Fqx 'status=pass' <<<"${harness_evidence}" || die "Pi harness did not complete successfully."
-printf 'pi_harness_selection=pass\n'
+plugin_info="$(docker exec "${CONTAINER_NAME}" openclaw plugins info tiangong-control 2>/dev/null)" || \
+  die "OpenClaw could not inspect the Tiangong control plugin."
+grep -Fqx 'Status: loaded' <<<"${plugin_info}" || die "Tiangong control plugin is not loaded."
+printf 'openclaw_control_plugin=pass\n'
 
 log "Checking persistent session and in-memory-only credential boundary"
 docker exec "${CONTAINER_NAME}" node --input-type=module -e '
@@ -213,13 +211,6 @@ docker exec "${CONTAINER_NAME}" node --input-type=module -e '
   const statePath = `/root/agentteams-fs/agents/${worker}/.tiangong/runtime`;
   const config = JSON.parse(await readFile(configPath, "utf8"));
   const credential = config.models.providers["agentteams-gateway"].apiKey;
-  const runtimeDirectories = (await readdir("/tmp", { withFileTypes: true }))
-    .filter((entry) => entry.isDirectory() && entry.name.startsWith("tiangong-model-gateway-"));
-  if (runtimeDirectories.length !== 1) throw new Error("expected exactly one Tiangong model runtime directory");
-  const models = await readFile(join("/tmp", runtimeDirectories[0].name, "models.json"), "utf8");
-  if (models.includes(credential) || /"(?:apiKey|headers|authorization)"/iu.test(models)) {
-    throw new Error("credential-bearing fields entered the temporary model configuration");
-  }
   const sessionFiles = [];
   async function walk(path) {
     for (const entry of await readdir(path, { withFileTypes: true })) {
@@ -229,14 +220,15 @@ docker exec "${CONTAINER_NAME}" node --input-type=module -e '
     }
   }
   await walk(join(statePath, "sessions"));
-  if (sessionFiles.length === 0) throw new Error("persistent pi session was not created");
+  const toolResultPath = join(statePath, "tool-results", "openclaw.json");
+  await readFile(toolResultPath, "utf8");
   for (const file of sessionFiles) {
     if ((await readFile(file, "utf8")).includes(credential)) {
       throw new Error("Worker gateway credential entered a persistent session");
     }
   }
 '
-printf 'persistent_pi_session=pass\n'
+printf 'openclaw_tool_result_state=pass\n'
 printf 'runtime_credentials_in_memory=pass\n'
 
 if [[ "${SMOKE_LEVEL}" == "basic" ]]; then
@@ -274,7 +266,6 @@ if ! approve_output="$(docker exec "${MANAGER_CONTAINER}" \
     find "$1/.tiangong/runtime/idempotency" -type f -name idempotency.jsonl -exec \
       jq -c --arg id "$2" "select(.entry.approvalId == \$id) | {status:.entry.status,errorCode:.entry.errorCode}" {} +
   ' _ "${agent_root}" "${approval_id}" >&2 || true
-  docker exec "${CONTAINER_NAME}" cat /tmp/tiangong-pi-harness.last-run >&2 || true
   docker logs --tail 80 "${CONTAINER_NAME}" 2>&1 | \
     grep -E 'embedded run done|ERROR|Error|error' >&2 || true
   die "Matrix approval turn failed."
@@ -331,4 +322,4 @@ fi
   "payload-erased" ]] || die "Terminal payload marker is invalid."
 printf 'terminal_write_payload_erasure=pass\n'
 
-log "Upstream Matrix, Worker-scoped gateway, and Tiangong pi harness passed."
+log "Upstream Matrix, Worker-scoped gateway, and Tiangong OpenClaw control plugin passed."

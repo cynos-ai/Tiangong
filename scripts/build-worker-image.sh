@@ -21,7 +21,6 @@ readonly OPENCODEX_SIDECAR_IMAGE="tiangong-opencodex-sidecar:dev"
 readonly OPENCODEX_RECEIPT_SERVICE_IMAGE="tiangong-opencodex-receipt-service:dev"
 readonly OPENCODEX_ADAPTER_IMAGE="tiangong-opencodex-adapter:dev"
 readonly EXPECTED_NODE_VERSION="v22.23.2"
-readonly EXPECTED_PI_VERSION="0.82.0"
 readonly EXPECTED_CODEX_VERSION="codex-cli 0.120.0"
 readonly EXPECTED_GIT_VERSION="git version 2.43.0"
 readonly EXPECTED_UTIL_LINUX_VERSION="2.39.3"
@@ -117,11 +116,9 @@ actual_docker_cli_version="$(run_image --rm --entrypoint /usr/local/bin/docker "
   exit 1
 }
 
-actual_pi_version="$(run_image --rm --entrypoint pi "${IMAGE}" --version)"
-[[ "${actual_pi_version}" == "${EXPECTED_PI_VERSION}" ]] || {
-  printf 'ERROR: expected pi %s, got %s.\n' "${EXPECTED_PI_VERSION}" "${actual_pi_version}" >&2
-  exit 1
-}
+run_image --rm --entrypoint node "${IMAGE}" --input-type=module -e '
+  if (await import("node:fs").then(({ existsSync }) => existsSync("/opt/tiangong-worker/node_modules/@earendil-works/pi-coding-agent"))) process.exit(1);
+'
 
 # `bin/codex` is the runtime app-server entrypoint and intentionally requires
 # the in-memory gateway environment. Inspect the managed CLI package directly
@@ -233,7 +230,14 @@ run_image --rm --workdir /opt/tiangong-worker --entrypoint node "${LEADER_IMAGE}
     });
     if (registry.names().join(",") !== "team_create_project,team_dispatch_task,team_check_result,team_decide_task,team_report") process.exit(1);
   '
-node -e '
+# Keep the final profile comparison runnable from both a native developer
+# shell and WSL, where Node may exist only inside the just-built Worker image.
+if command -v node >/dev/null 2>&1; then
+  node_command=(node)
+else
+  node_command=(docker run --rm --entrypoint node "${IMAGE}")
+fi
+"${node_command[@]}" -e '
   const [kernel, leader, ...professionals] = process.argv.slice(1).map(JSON.parse);
   if (kernel.roleId !== "kernel" || kernel.runtimeReady !== true) process.exit(1);
   if (leader.roleId !== "leader" || leader.runtimeReady !== true) process.exit(1);
@@ -248,8 +252,8 @@ node -e '
   if (professionals.some((profile) => profile.runtimeReady !== true || profile.toolIds.join(",") !== expectedProfessionalTools[profile.roleId])) process.exit(1);
 ' "${kernel_profile}" "${leader_profile}" "${designer_profile}" "${implementor_profile}" "${assessor_profile}" "${operator_profile}"
 
-printf '[Tiangong] Worker image ready: %s (Node.js %s, pi %s, fixed core profile)\n' \
-  "${IMAGE}" "${actual_node_version}" "${actual_pi_version}"
+printf '[Tiangong] Worker image ready: %s (Node.js %s, OpenClaw-native control profile)\n' \
+  "${IMAGE}" "${actual_node_version}"
 printf '[Tiangong] Leader profile image validated: %s (runtimeReady=true; closed coordination tool surface)\n' \
   "${LEADER_IMAGE}"
 printf '[Tiangong] Professional profile images validated: %s, %s, %s, %s (runtimeReady=true; role-scoped closed tools)\n' \

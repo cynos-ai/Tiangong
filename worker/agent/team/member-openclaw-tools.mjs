@@ -5,7 +5,7 @@ import { runnerBrokerEndpointForWorker } from "../runner/broker-client.mjs";
 import { deploymentBrokerEndpointForWorker } from "../deployment/client.mjs";
 import { DeploymentReceiptStore } from "../deployment/receipt-store.mjs";
 import { registryEntry } from "../roles/registry.mjs";
-import { defaultStateDirectory } from "../session-store.mjs";
+import { defaultStateDirectory } from "../persistence/state-directory.mjs";
 import { workerStatePaths } from "../persistence/state-paths.mjs";
 import { IdempotencyStore } from "../idempotency/store.mjs";
 import { PendingOperationStore } from "../pending-operation/store.mjs";

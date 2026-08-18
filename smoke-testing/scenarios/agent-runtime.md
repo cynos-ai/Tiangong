@@ -1,107 +1,50 @@
-# Agent runtime smoke scenarios
+# OpenClaw Worker runtime smoke scenarios
 
 ## Ownership
 
-- Related implementation: `worker/agent/`, `worker/plugin/openclaw-adapter.mjs`
-- Related skill: none; this is a cross-cutting runtime scenario
-- Related checkpoints/evidence: persistent pi session, `EvidenceRecorder` hash chain, Gate decision, approval checkpoint, idempotency record, cleanup proof
-- Update triggers: changes to OpenClaw Harness DTOs, pi version, tool registration, Gate/approval parsing, Evidence records, session paths, Worker restart behavior, Matrix mention handling, or smoke Worker ownership
+- Related implementation: `worker/agent/`, `worker/plugin/`, and `worker/bin/openclaw`
+- AgentTeams owns Worker/Team/Matrix/storage lifecycle; Tiangong owns control hooks, roles, Gates, Evidence, approvals, ToolResult, and recovery state.
+- OpenClaw owns model turns and conversations. Tiangong does not ship a model loop, Pi harness, or runtime fallback.
+- Update triggers: OpenClaw hook/tool contracts, role registration, Gate/approval parsing, Evidence records, ToolResult capture, state paths, Worker restart behavior, Matrix delivery, or Worker image ownership.
 
 ## Basic smoke
 
-### B1: Worker-scoped Matrix-to-pi response
+### B1: Worker-scoped Matrix-to-OpenClaw response
 
-- Purpose: Prove that the pinned Worker image can use its generated Gateway credential and that official OpenClaw Matrix delivery reaches the Tiangong runtime.
-- Target project: reserved temporary AgentTeams Worker `tiangong-pi-smoke`.
-- Setup: local AgentTeams readiness passes; build `tiangong-worker:dev`; remove stale storage owned by the reserved smoke Worker.
-- Prompt: send a mentioned Matrix message requesting one exact random nonce response.
+- Purpose: prove that the pinned Worker image starts OpenClaw, loads `tiangong-control`, joins Matrix, and reaches a bounded Tiangong tool path.
+- Target: disposable AgentTeams Worker `tiangong-openclaw-smoke` and its exact storage prefix.
 - Expected observations:
-  - Node.js is `22.23.2` and pi is `0.82.0`;
-  - Matrix drives one real gated pi `read` against a disposable fixture;
-  - Matrix returns the exact random nonce through the Tiangong Harness;
+  - Node.js is `22.23.2` and the pinned OpenClaw built-in runtime is selected with upstream id `pi`;
+  - Matrix reaches one real gated `read` tool call;
   - the matching Evidence chain records one successful read completion;
-  - one persistent pi session exists;
-  - temporary model configuration and persistent session do not contain the Worker Gateway credential.
-- Required evidence: `read_tool_event=pass`, `matrix_to_pi_response=pass`, `pi_harness_selection=pass`, `persistent_pi_session=pass`, `runtime_credentials_in_memory=pass`.
-- Skip/block rules: block if Docker, the pinned AgentTeams stack, Gateway model, Matrix, or reserved Worker ownership is unavailable. Never replace the real Matrix result with a mocked green result.
+  - the OpenClaw `ToolResult` store contains bounded metadata only;
+  - the temporary Worker and exact storage prefix are removed during cleanup.
+- Required evidence: `read_tool_event=pass`, `matrix_to_openclaw_response=pass`, `openclaw_control_plugin=pass`, `openclaw_tool_result_state=pass`, and cleanup proof.
+- Skip/block rules: block if Docker, AgentTeams, Gateway, Matrix, or reserved Worker ownership is unavailable. Never replace a real Matrix result with a mocked green result.
 
 ## Full smoke
 
 ### F1: Pending write, restart recovery, and exactly-once approval
 
-- Purpose: Prove the complete Matrix → Gate → persisted pending checkpoint → restart → approval → constrained write → Evidence path.
-- Target project: reserved temporary AgentTeams Worker `tiangong-pi-smoke`; a random file beneath only that Worker's workspace.
-- Setup: complete B1, then generate a unique target and content nonce.
-- Prompt:
-  1. request exactly one `write` tool call;
-  2. wait for the code-generated approval summary;
-  3. restart the Worker before approval;
-  4. send the exact `APPROVE <approval-id>` command;
-  5. replay the same approval command.
-- Expected observations:
-  - target does not exist while Gate is pending;
-  - approval summary contains machine-derived tool, target, operation digest, content digest, and exact commands, but not write content;
-  - Matrix channel readiness is re-established after restart before sending approval;
-  - approved file content equals the nonce;
-  - replay returns the deterministic replay message;
-  - the Evidence chain associated with that approval contains one `tool.execution.started` and one `tool.execution.replayed`;
-  - no terminal `write-content` object retains non-empty raw payload before cleanup;
-  - temporary Worker, its exact MinIO prefix, and its fixed Manager/Controller local mirrors are removed.
-- Required evidence: pending/approve/replay Matrix event IDs, file-content check, approval-specific Evidence path, execution/replay counts, Worker absence, and empty reserved MinIO prefix.
-- Skip/block rules: block rather than approve if the sender identity, operation digest, original tool call, persistent checkpoint, or Matrix readiness cannot be verified. Never inspect or delete storage outside the exact reserved Worker prefix.
+- Purpose: prove Matrix → Gate → persisted pending checkpoint → Worker restart → approval → constrained write → Evidence → replay.
+- Target: the same disposable Worker and a random file beneath only that Worker's workspace.
+- Required outcomes: pending writes never execute early; approval is bound to the original operation digest; restart preserves the checkpoint; approved content is written once; replay is deterministic; terminal payloads are erased; the exact Worker and storage prefix are cleaned.
+- Verification: `make test-worker-image` plus focused recovery tests. Do not infer recovery from model prose.
 
 ### F2: Rejection path
 
-- Purpose: Prove that rejection is persistent, subject-bound, and never invokes the write backend.
-- Target project: the same reserved smoke Worker with a second unique target.
-- Setup: produce a pending write without reusing F1's approval identifier.
-- Prompt: send exact `REJECT <approval-id>`, then replay the rejection.
-- Expected observations: deterministic rejection response; no target file; state remains rejected across restart; no execution-start event for the rejected tool call.
-- Required evidence: `approval.rejected`, rejected idempotency state, absent target, zero matching execution-start records.
-- Skip/block rules: currently blocked until the automated full-smoke helper gains a rejection phase. Do not infer rejection coverage from the approval test.
+- Purpose: prove rejection is persistent, subject-bound, and never invokes the write backend.
+- Current status: deterministic rejection coverage is maintained in Worker tests; promotion to the full Matrix smoke remains blocked until the helper gains a rejection phase.
 
 ## Deterministic recovery fixtures
 
-### R1: Interrupted write reconciliation
+- Interrupted writes, retention boundaries, RoleProfile/Skill loading, WorkRun binding, idempotency, Evidence, and rollback are verified by deterministic Worker tests and image-level CLI checks.
+- Runtime and maintenance state remain under the independent Worker state root: `WorkRun`, Evidence, idempotency, pending-operation, rollback, and `tool-results/openclaw.json`.
+- A missing or stale model/runtime marker is never treated as proof of a completed operation; machine Evidence and ToolResult records are authoritative for those facts.
 
-- Purpose: Prove that stale `executing` and known `failed` writes never retry from elapsed time alone and have an operator recovery entry.
-- Inputs: protected pending envelope/payload, target observation, approved precondition, rollback snapshot, and stable operator reason code.
-- Required outcomes:
-  - unchanged precondition → `approved`, requiring explicit requester replay;
-  - approved content already present → `completed` with a safe replay result and no backend execution;
-  - unexpected target or invalid snapshot → conflict recorded while the original status remains fail-closed;
-  - recent `executing` state → reconciliation denied by the stale threshold;
-  - independent runtime/CLI writers serialize idempotency mutations and Evidence appends without stale-cache overwrite or hash-chain fork.
-- Required Evidence: `operation.reconciliation.decided` followed by `operation.reconciliation.state_updated`; neither event may claim an observed tool execution or contain raw write content.
-- Verification layer: deterministic Worker tests plus image-level `tiangong-reconcile --help`; this is not yet a Matrix Full-smoke phase.
+## Environment sensitivities
 
-### R2: Runtime retention boundaries
-
-- Purpose: Bound sensitive payload, terminal idempotency, Evidence-file, and transcript growth without silently weakening recovery or auditability.
-- Required outcomes:
-  - transcript reset or deletion of its entire per-session root cannot alter independent Evidence/idempotency/pending/rollback state;
-  - runtime and maintenance CLIs use the clean-cut independent layout without scanning legacy co-located paths;
-  - completed/rejected/applied-reconciled payloads are removed; uncertain/conflict payloads remain;
-  - only completed/rejected records older than 90 days are eligible for explicitly confirmed compaction;
-  - normal idempotency transitions append to a verified journal and key/invocation/approval indexes remain unique across independent writers;
-  - compaction appends `retention.idempotency.expired` before physically removing expired journal history;
-  - active/pending/approved/executing/failed records are not compacted;
-  - Evidence rotates at 16 MiB with continuous sequence, previous hash, segment range, and terminal hash verification;
-  - new model turns fail at transcript capacity while deterministic approval/rejection commands remain reachable.
-- Verification layer: deterministic Worker tests plus image-level `tiangong-retain --help`; Evidence segments are not automatically deleted.
-
-### R3: RoleProfile, Skill, and WorkRun boundaries
-
-- Purpose: Prove that the five responsibility profiles load only code-owned, digest-validated SOUL/Skill resources and that each professional Task can bind one role-neutral WorkRun.
-- Required outcomes: unknown role, unknown Skill, duplicate Skill, profile mutation, missing resource, symlink, invalid UTF-8, oversized resource, and digest mismatch fail closed; environment variables, Worker names, prompts, and assignment text cannot select a role; WorkRun bindings are immutable, phases are guarded, and replay detects journal tampering.
-- Verification layer: deterministic `role-profile.test.mjs` and `work-run.test.mjs` plus image profile checks. No Reviewer or Practice runtime path is part of the active smoke contract.
-
-## Maintenance notes
-
-- **Current status (2026-08-04)**: the active runtime uses five Team responsibility profiles, closed SOUL/Skill loading, and role-neutral WorkRun state. Historical Reviewer runs remain dated records only.
-- Promotion candidates from past runs: sender mismatch, operation mutation after approval, executing-state reconciliation, and Evidence tamper detection may move into Full once their runtime contracts stabilize.
-- Known environment sensitivities:
-  - Worker `Running` and `openclaw health` do not alone prove Matrix sync readiness; wait for the room join observation after restart.
-  - deleting a Worker does not necessarily delete its MinIO data; the smoke owns and purges only `agents/tiangong-pi-smoke/`.
-  - model tool-call phrasing is nondeterministic; Gate, approval, idempotency, and Evidence assertions must remain deterministic.
-  - `deepseek-chat` or another fast model may review or cross-check scenarios, but it does not replace the pinned real-model smoke required for the release path.
+- Worker `Running` and `openclaw health` do not alone prove Matrix readiness; wait for the room-join observation after restart.
+- Deleting a Worker does not necessarily delete MinIO data; cleanup owns only the exact disposable Worker prefix.
+- Model tool-call wording is nondeterministic; Gates, approvals, idempotency, Evidence, and ToolResult assertions remain deterministic.
+- DeepSeek Flash is the current release canary. Qwen/Coding Plan remains an explicitly later optional canary and is not part of this release gate.

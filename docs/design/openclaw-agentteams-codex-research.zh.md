@@ -1,5 +1,7 @@
 # OpenClaw × AgentTeams × Codex/DeepSeek 可行性调查
 
+> **历史调查记录**：本文记录迁移期间的研究和验证，不是当前 runtime 合同。当前主线已完成 DeepSeek-only clean-cut：非编程角色走 OpenClaw 内置 runtime，Implementor 走官方 Codex app-server，Tiangong 只提供 `tiangong-control` 插件；旧 Pi harness/fallback 不得按本文早期段落部署。现行决策见 [`deepseek-only-clean-cut.zh.md`](deepseek-only-clean-cut.zh.md)。
+
 ## 当前状态（2026-08-16）
 
 Phase B 的真实 AgentTeams 部署纵切已闭合：Human Matrix → 原生 OpenClaw Leader →
@@ -486,3 +488,8 @@ Runner broker 的唯一执行权和恢复闭环，B4/B5 尚未整体 Go。
 版本试用 `registerHook` 时出现 Codex app-server 动态工具目录重建且未产出
 Result，因此暂不升级该注册方式；这不改变“runtime 由 OpenClaw 提供、Tiangong
 只做控制插件”的架构结论。
+# 迁移期研究记录（历史）
+
+> 本文保留迁移期的验证证据。关于当前运行时结论，以
+> `deepseek-only-clean-cut.zh.md` 和 `openclaw-native-runtime-split.zh.md` 为准：
+> `tiangong-pi` 已删除，Qwen B6 是后续可选 canary。

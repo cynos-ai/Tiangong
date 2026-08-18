@@ -1,6 +1,6 @@
 // The shapes in this adapter are taken from the scripts and references
 // actually deployed in the AgentTeams v1.2.0 Manager image. They are not the
-// similarly named TeamHarness design-document types. The validated Team room
+// similarly named design-document types. The validated Team room
 // is used as project_room_id by the Tiangong Team contingency; Tiangong does
 // not claim that it invoked the Manager's create-project.sh side effects.
 

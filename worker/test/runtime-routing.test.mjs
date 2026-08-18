@@ -46,7 +46,7 @@ test("B5 rejects a Codex runtime accidentally selected for the Leader", () => {
 
 test("B5 rejects fallback and unknown role metadata", () => {
   assert.throws(
-    () => assertRoleRuntimeRoute({ roleId: "implementor", runtime: "codex-app-server", fallback: "tiangong-pi" }),
+    () => assertRoleRuntimeRoute({ roleId: "implementor", runtime: "codex-app-server", fallback: "legacy-runtime" }),
     (error) => error.reasonCode === "FALLBACK_FORBIDDEN",
   );
   assert.throws(() => roleIdFromEnvironment({ AGENTTEAMS_WORKER_ROLE: "worker" }), (error) => error.reasonCode === "ROLE_MISSING");

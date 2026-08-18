@@ -38,7 +38,6 @@ export function statePathsForSessionHash({ stateDirectory, sessionHash }) {
     ...roots,
     sessionHash,
     sessionDirectory,
-    piDirectory: join(sessionDirectory, "pi"),
     workRunDirectory,
     evidenceDirectory,
     evidenceFilePath: join(evidenceDirectory, "events.jsonl"),
