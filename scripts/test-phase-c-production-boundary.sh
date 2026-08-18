@@ -64,11 +64,13 @@ grep -Fq 'SMOKE_SCOPE_RAW=' "${REPO_ROOT}/smoke-testing/support/run-b5-gateb-smo
   printf 'phasec=fail step=gateb-isolation-contract code=RESOURCE_SCOPE_MISSING\n' >&2
   failures=$((failures + 1))
 }
+# shellcheck disable=SC2016
 isolation_team_injection='TIANGONG_SMOKE_TEAM_NAME="${TEAM_NAME}"'
 grep -Fq "${isolation_team_injection}" "${REPO_ROOT}/smoke-testing/support/run-b5-gateb-smoke.sh" || {
   printf 'phasec=fail step=gateb-isolation-contract code=TEAM_SCOPE_NOT_INJECTED\n' >&2
   failures=$((failures + 1))
 }
+# shellcheck disable=SC2016
 isolation_manifest_injection='TIANGONG_SMOKE_WORKERS_MANIFEST="${SMOKE_WORKERS_MANIFEST}"'
 grep -Fq "${isolation_manifest_injection}" "${REPO_ROOT}/smoke-testing/support/run-b5-gateb-smoke.sh" || {
   printf 'phasec=fail step=gateb-isolation-contract code=WORKER_MANIFEST_SCOPE_NOT_INJECTED\n' >&2

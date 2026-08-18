@@ -65,7 +65,8 @@ readonly SIDECAR_BINDING_FILE="${STATE_DIR}/opencodex-binding.json"
 # controller snapshot in its deployment-owned state volume rather than
 # passing a host-only path that would fail with ENOENT inside the container.
 readonly SIDECAR_SNAPSHOT_FILE="/var/lib/tiangong-opencodex/opencodex-${IMPLEMENTOR_NAME}.controller.json"
-readonly SIDECAR_CONTAINER="$(sidecar_container_name "${IMPLEMENTOR_NAME}")"
+SIDECAR_CONTAINER="$(sidecar_container_name "${IMPLEMENTOR_NAME}")"
+readonly SIDECAR_CONTAINER
 readonly GATEWAY_PROVIDER_SNAPSHOT_ID="tiangong-${RUN_ID}"
 readonly SMOKE_MODEL="${TIANGONG_SMOKE_MODEL:-deepseek-chat}"
 readonly CODEX_MODEL="${TIANGONG_B5_CODEX_MODEL:-deepseek-v4-pro}"
