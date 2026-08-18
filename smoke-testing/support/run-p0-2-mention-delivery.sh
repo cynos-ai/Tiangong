@@ -5,7 +5,7 @@
 #   1. Dashboard bug class: a message whose formatted_body carries NO matrix.to
 #      anchor (only body=@DisplayName + m.mentions) does NOT wake the Worker.
 #   2. The standard rich mention (formatted_body matrix.to anchor + m.mentions)
-#      DOES wake the Worker (harness turn observed).
+#      DOES wake the Worker (OpenClaw control state observed).
 #   3. Worker-owned delivery contract: the Matrix event_id is the stable echo and
 #      the Matrix transaction id is the send-idempotency key (duplicate PUT with
 #      the same txn id returns the same event id; the event is queryable).
@@ -52,11 +52,12 @@ container_exists() { docker inspect "$1" >/dev/null 2>&1; }
 team_json() { docker exec "${MANAGER_CONTAINER}" agt get teams "${TEAM_NAME}" -o json 2>/dev/null; }
 member_json() { docker exec "${MANAGER_CONTAINER}" agt get workers "$1" -o json 2>/dev/null; }
 
-harness_snapshot() {
-  if ! docker exec "${TARGET_CONTAINER}" test -f /tmp/tiangong-pi-harness.last-run 2>/dev/null; then
+control_snapshot() {
+  local state_path="/root/agentteams-fs/agents/${TARGET_NAME}/.tiangong/runtime/tool-results/openclaw.json"
+  if ! docker exec "${TARGET_CONTAINER}" test -f "${state_path}" 2>/dev/null; then
     printf 'absent\n'; return
   fi
-  docker exec "${TARGET_CONTAINER}" stat -c '%y:%s' /tmp/tiangong-pi-harness.last-run 2>/dev/null || printf 'absent\n'
+  docker exec "${TARGET_CONTAINER}" stat -c '%y:%s' "${state_path}" 2>/dev/null || printf 'absent\n'
 }
 
 assert_no_turn() {
@@ -64,13 +65,13 @@ assert_no_turn() {
   for _ in $(seq 1 "$((seconds * 2))"); do
     sleep 0.5
   done
-  [[ "$(harness_snapshot)" == "${baseline}" ]] || die "Dashboard-format mention woke the requireMention Worker (regression failed)."
+  [[ "$(control_snapshot)" == "${baseline}" ]] || die "Dashboard-format mention woke the requireMention Worker (regression failed)."
 }
 
 assert_turn() {
   local baseline="$1" _ current
   for _ in $(seq 1 240); do
-    current="$(harness_snapshot)"
+    current="$(control_snapshot)"
     [[ "${current}" != "${baseline}" && "${current}" != "absent" ]] && return 0
     sleep 1
   done
@@ -313,8 +314,8 @@ docker exec "${TARGET_CONTAINER}" jq -e '.channels.matrix.groups["*"].requireMen
   die "Target Worker did not retain requireMention:true in the team room."
 admin_login
 
-target_before="$(harness_snapshot)"
-log "Baseline target harness snapshot: ${target_before}"
+target_before="$(control_snapshot)"
+log "Baseline target control snapshot: ${target_before}"
 
 # (1) NEGATIVE: Dashboard-format mention must NOT wake the Worker.
 dash_body="@Tiangong P0.2 Target Worker dashboard-mention nonce=${nonce}"

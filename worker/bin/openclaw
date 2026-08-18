@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 readonly UPSTREAM_OPENCLAW="/usr/local/bin/openclaw"
-readonly PLUGIN_ID="tiangong-pi"
+readonly PLUGIN_ID="tiangong-control"
 readonly PLUGIN_PATH="/opt/tiangong-worker/plugin"
 readonly PREFLIGHT="/opt/tiangong-worker/scripts/openclaw-preflight.mjs"
 readonly CODEX_GATEWAY_PREFLIGHT="/opt/tiangong-worker/agent/preflight/codex-gateway-preflight.mjs"
@@ -13,14 +13,6 @@ readonly RUNTIME_ROUTE_PREFLIGHT="/opt/tiangong-worker/scripts/runtime-route-pre
 codex_home=""
 
 assert_role_runtime_route() {
-  [[ "${TIANGONG_OPENCLAW_NATIVE:-0}" =~ ^[01]$ ]] || {
-    printf '[tiangong-worker] ERROR: TIANGONG_OPENCLAW_NATIVE must be 0 or 1.\n' >&2
-    return 1
-  }
-  if [[ "${TIANGONG_OPENCLAW_NATIVE:-0}" == "1" && "${TIANGONG_RUNTIME_ROLE_ROUTING_REQUIRED:-0}" != "1" ]]; then
-    printf '[tiangong-worker] ERROR: native OpenClaw requires the role runtime routing gate.\n' >&2
-    return 1
-  fi
   [[ "${TIANGONG_RUNTIME_ROLE_ROUTING_REQUIRED:-0}" == "1" ]] || return 0
   local selected_runtime="openclaw-built-in"
   if [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]]; then
@@ -28,12 +20,10 @@ assert_role_runtime_route() {
   fi
   if [[ "${selected_runtime}" == "codex-app-server" ]]; then
     export OPENCLAW_AGENT_RUNTIME="codex"
-  elif [[ "${TIANGONG_OPENCLAW_NATIVE:-0}" == "1" ]]; then
-    # The pinned OpenClaw image names its built-in runtime `pi`; the legacy
-    # Tiangong harness remains an explicit rollback choice.
-    export OPENCLAW_AGENT_RUNTIME="pi"
   else
-    export OPENCLAW_AGENT_RUNTIME="tiangong-pi"
+    # The pinned OpenClaw image names its built-in runtime `pi`; this is an
+    # upstream identifier and not a Tiangong harness.
+    export OPENCLAW_AGENT_RUNTIME="pi"
   fi
   TIANGONG_CODEX_RUNTIME="${TIANGONG_CODEX_RUNTIME:-0}" \
   OPENCLAW_AGENT_HARNESS_FALLBACK="${OPENCLAW_AGENT_HARNESS_FALLBACK:-none}" \
@@ -82,7 +72,6 @@ cleanup_codex_home() {
 
 configure_codex_gateway() {
   local config_file provider_base_url provider_api_key provider_id model_id provider_toml_id temporary_file base_url_override credential_source bridge_mode provider_http_headers sidecar_receipt_path sidecar_receipt_url transport_mode cache_path cache_url cache_result resolved_transport resolved_bridge resolved_base_url cache_hit
-  [[ "${TIANGONG_RUNTIME_LANE:-legacy-v0.2}" == "openclaw-canary" ]] || return 0
   [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]] || return 0
   config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
   [[ -f "${config_file}" ]] || {
@@ -233,7 +222,6 @@ configure_codex_gateway() {
 
 configure_builtin_gateway() {
   local config_file gateway_url gateway_base_url provider_id temporary_file
-  [[ "${TIANGONG_OPENCLAW_NATIVE:-0}" == "1" ]] || return 0
   [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]] && return 0
   config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
   gateway_url="${AGENTTEAMS_AI_GATEWAY_URL:-}"
@@ -264,7 +252,6 @@ configure_builtin_gateway() {
 
 configure_codex_runtime() {
   local config_file temporary_file model_id model_ref model_alias provider_id
-  [[ "${TIANGONG_RUNTIME_LANE:-legacy-v0.2}" == "openclaw-canary" ]] || return 0
   [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]] || return 0
   config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
   [[ -f "${config_file}" ]] || {
@@ -312,7 +299,7 @@ configure_codex_runtime() {
 }
 
 configure_tiangong_plugin() {
-  local config_file temporary_file runtime_lane
+  local config_file temporary_file
   config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
   [[ -f "${config_file}" ]] || {
     printf '[tiangong-worker] ERROR: OpenClaw config not found: %s\n' "${config_file}" >&2
@@ -321,21 +308,14 @@ configure_tiangong_plugin() {
 
   temporary_file="$(mktemp "${config_file}.tiangong.XXXXXX")"
   trap 'rm -f "${temporary_file:-}"' RETURN
-  runtime_lane="${TIANGONG_RUNTIME_LANE:-legacy-v0.2}"
-  [[ "${runtime_lane}" == "legacy-v0.2" || "${runtime_lane}" == "openclaw-canary" ]] || {
-    printf '[tiangong-worker] ERROR: unsupported runtime lane: %s\n' "${runtime_lane}" >&2
-    return 1
-  }
   jq --arg plugin_id "${PLUGIN_ID}" --arg plugin_path "${PLUGIN_PATH}" \
-    --arg runtime_lane "${runtime_lane}" \
     --argjson disable_codex_discovery "$([[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]] && printf false || printf true)" '
     .plugins = (.plugins // {})
     | .plugins.load = (.plugins.load // {})
     | .plugins.load.paths = ([((.plugins.load.paths // [])[]), $plugin_path] | unique)
     | .plugins.entries = (.plugins.entries // {})
     | .plugins.entries[$plugin_id] = ((.plugins.entries[$plugin_id] // {}) + {
-        enabled: true,
-        config: ((.plugins.entries[$plugin_id].config // {}) + {runtimeLane: $runtime_lane})
+        enabled: true
       })
     | .plugins.allow = if (.plugins.allow | type) == "array"
         then ([.plugins.allow[], $plugin_id] | unique)
@@ -365,18 +345,14 @@ if [[ "${1:-}" == "gateway" && "${2:-}" == "run" ]]; then
   configure_codex_runtime
   configure_codex_gateway
   /usr/bin/node "${PREFLIGHT}"
-  if [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" && "${TIANGONG_RUNTIME_LANE:-legacy-v0.2}" == "openclaw-canary" ]]; then
-    printf '[tiangong-worker] Starting upstream OpenClaw with the native Codex harness.\n' >&2
+  if [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]]; then
+    printf '[tiangong-worker] Starting upstream OpenClaw with the native Codex app-server runtime.\n' >&2
     "${UPSTREAM_OPENCLAW}" "$@"
     status=$?
     cleanup_codex_home
     exit "${status}"
-  elif [[ "${TIANGONG_OPENCLAW_NATIVE:-0}" == "1" ]]; then
-    # OpenClaw 2026.4.14 calls its built-in runtime `pi`; the Tiangong
-    # `tiangong-pi` harness is not loaded in this explicitly native lane.
-    printf '[tiangong-worker] Starting upstream OpenClaw built-in runtime (pinned id pi).\n' >&2
   else
-    printf '[tiangong-worker] Starting upstream OpenClaw with the Tiangong pi harness.\n' >&2
+    printf '[tiangong-worker] Starting upstream OpenClaw built-in runtime (pinned id pi).\n' >&2
   fi
 fi
 

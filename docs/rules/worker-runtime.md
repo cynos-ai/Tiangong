@@ -15,10 +15,10 @@ prepared execution, exact Approval, recovery, and Work closure.
 - Tiangong owns its Worker control runtime, professional delegation, logical
   sessions, prepared execution boundary, top-level tools, Skills, Adapters,
   Operation policy, exact Approval, recovery, and product experience.
-- Keep `worker/plugin/openclaw-adapter.mjs` a thin DTO adapter. Do not place
-  Tiangong business logic in the Channel adapter.
-- Keep OpenClaw's bundled pi dependencies isolated from Tiangong's pinned pi
-  runtime.
+- Keep `worker/plugin/index.mjs` a thin OpenClaw control-plugin entrypoint. Do
+  not place Tiangong business logic in the Channel adapter or model runtime.
+- Do not add a Tiangong-owned model runtime; OpenClaw and its official Codex
+  app-server own provider turns and conversation state.
 - Do not enable an OpenClaw Agent Harness fallback that can hide a Tiangong
   failure.
 

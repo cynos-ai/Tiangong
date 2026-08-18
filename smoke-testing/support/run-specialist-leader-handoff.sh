@@ -7,7 +7,6 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 readonly REPO_ROOT
 readonly IMAGE="tiangong-worker-designer:dev"
 readonly STOCK_LEADER_IMAGE="higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-copaw-worker:v1.2.0"
-readonly MODEL="deepseek-v4-flash"
 readonly TEAM_NAME="tiangong-specialist-handoff"
 readonly LEADER_NAME="tiangong-specialist-handoff-leader"
 readonly SPECIALIST_NAME="tiangong-specialist-handoff-specialist"
@@ -266,8 +265,8 @@ assert_worker_runtime() {
     die "Expected ${IMAGE}, got ${actual_image} for ${member}."
   [[ "$(docker exec "${container}" printenv AGENTTEAMS_WORKER_NAME)" == "${member}" ]] || \
     die "Worker identity environment is wrong for ${member}."
-  [[ "$(docker exec "${container}" printenv OPENCLAW_AGENT_RUNTIME)" == tiangong-pi ]] || \
-    die "Tiangong Harness is not selected for ${member}."
+  [[ "$(docker exec "${container}" printenv OPENCLAW_AGENT_RUNTIME)" == pi ]] || \
+    die "The pinned OpenClaw built-in runtime is not selected for ${member}."
   [[ "$(docker exec "${container}" printenv TIANGONG_OTEL_EXPORTER_ENDPOINT)" == "${OTLP_ENDPOINT}" ]] || \
     die "Worker observability endpoint is not the owned smoke receiver for ${member}."
 }
@@ -384,38 +383,32 @@ assert_handoff_channel_stable() {
   return 1
 }
 
-harness_snapshot() {
-  local container="$1"
-  if ! docker exec "${container}" test -f /tmp/tiangong-pi-harness.last-run; then
+control_snapshot() {
+  local container="$1" worker state_path
+  worker="$(docker exec "${container}" printenv AGENTTEAMS_WORKER_NAME)"
+  state_path="/root/agentteams-fs/agents/${worker}/.tiangong/runtime/tool-results/openclaw.json"
+  if ! docker exec "${container}" test -f "${state_path}"; then
     printf 'absent\n'
     return
   fi
-  docker exec "${container}" stat -c '%y:%s' /tmp/tiangong-pi-harness.last-run
+  docker exec "${container}" stat -c '%y:%s' "${state_path}"
 }
 
-assert_harness() {
-  local container="$1" member="$2" baseline="$3" marker current
+assert_control() {
+  local container="$1" member="$2" baseline="$3" current worker state_path
   for _ in $(seq 1 30); do
-    current="$(harness_snapshot "${container}")"
+    current="$(control_snapshot "${container}")"
     if [[ "${current}" != "${baseline}" ]]; then
-      marker="$(docker exec "${container}" cat /tmp/tiangong-pi-harness.last-run 2>/dev/null || true)"
-      grep -Fqx 'harness=tiangong-pi' <<<"${marker}" || die "Wrong Harness for ${member}."
-      grep -Fqx 'provider=agentteams-gateway' <<<"${marker}" || die "Wrong provider for ${member}."
-      grep -Fqx "model=${MODEL}" <<<"${marker}" || die "Wrong model for ${member}."
-      if grep -Fqx 'status=pass' <<<"${marker}"; then
-        printf 'handoff_%s_harness=pass\n' "${member##*-}"
+      worker="$(docker exec "${container}" printenv AGENTTEAMS_WORKER_NAME)"
+      state_path="/root/agentteams-fs/agents/${worker}/.tiangong/runtime/tool-results/openclaw.json"
+      if docker exec "${container}" jq -e '.results | length > 0' "${state_path}" >/dev/null; then
+        printf 'handoff_%s_control=pass\n' "${member##*-}"
         return 0
-      fi
-      if grep -Fqx 'status=error' <<<"${marker}"; then
-        if [[ "${member}" == "${SPECIALIST_NAME}" ]]; then
-          diagnose_specialist_failure
-        fi
-        die "Harness turn failed for ${member}."
       fi
     fi
     sleep 1
   done
-  die "Harness marker did not complete for ${member}."
+  die "OpenClaw ToolResult marker did not complete for ${member}."
 }
 
 observability_turn_digest() {
@@ -492,7 +485,7 @@ assert_trace_complete() {
     if [[ -f "${OTLP_SPANS_FILE}" ]] && jq -se \
       --arg digest "${digest}" --arg phase "${expected_phase}" '
       any(.[];
-        .name == "tiangong.harness.attempt" and
+        .name == "tiangong.control.attempt" and
         .attributes["tiangong.turn.id"] == $digest and
         .attributes["tiangong.operation.outcome"] == "complete" and
         .statusCode == 1
@@ -504,7 +497,7 @@ assert_trace_complete() {
         .statusCode == 1
       ) and
       all(.[] | select(.attributes["tiangong.turn.id"] == $digest);
-        .name != "tiangong.pi.agent_turn" and .name != "gen_ai.chat"
+        .name != "tiangong.openclaw.agent_turn" and .name != "gen_ai.chat"
       )
     ' "${OTLP_SPANS_FILE}" >/dev/null; then
       printf 'handoff_%s_observability=pass\n' "${label}"
@@ -882,9 +875,8 @@ diagnose_specialist_failure() {
     "/root/agentteams-fs/agents/${SPECIALIST_NAME}/openclaw.json" 2>/dev/null || printf '{"observable":false}'
   printf '[Tiangong] Sanitized Specialist channel: '
   matrix_channel_status "${SPECIALIST_CONTAINER}" 2>/dev/null || printf '{"observable":false}'
-  printf '[Tiangong] Sanitized Specialist Harness: '
-  docker exec "${SPECIALIST_CONTAINER}" grep -E '^(harness|provider|model|status)=' \
-    /tmp/tiangong-pi-harness.last-run 2>/dev/null || printf 'absent\n'
+  printf '[Tiangong] Sanitized Specialist ToolResult state: '
+  docker exec "${SPECIALIST_CONTAINER}" printenv AGENTTEAMS_WORKER_NAME 2>/dev/null || printf 'absent\n'
   printf '[Tiangong] Specialist session facts: '
   docker exec -i "${SPECIALIST_CONTAINER}" sh -s -- "${SPECIALIST_NAME}" "${source_event_id}" <<'SPECIALIST_FACTS' 2>/dev/null || true
 member="$1"
@@ -1034,8 +1026,8 @@ NO_WORK_EVIDENCE
 }
 
 leader_snapshot_before="$(stock_session_snapshot)"
-specialist_harness_before="$(harness_snapshot "${SPECIALIST_CONTAINER}")"
-observer_harness_before="$(harness_snapshot "${OBSERVER_CONTAINER}")"
+specialist_control_before="$(control_snapshot "${SPECIALIST_CONTAINER}")"
+observer_control_before="$(control_snapshot "${OBSERVER_CONTAINER}")"
 admin_login
 nonce="$(cat /proc/sys/kernel/random/uuid)"
 work_id="work-${nonce}"
@@ -1077,7 +1069,7 @@ read -r sender_transaction_id handoff_event_id replay_event_id < <(
 printf 'handoff_specialist_sender_ack=pass\n'
 printf 'handoff_transaction_id=%s\n' "${sender_transaction_id}"
 printf 'handoff_event_id=%s\n' "${handoff_event_id}"
-assert_harness "${SPECIALIST_CONTAINER}" "${SPECIALIST_NAME}" "${specialist_harness_before}"
+assert_control "${SPECIALIST_CONTAINER}" "${SPECIALIST_NAME}" "${specialist_control_before}"
 
 messages=''
 for _ in $(seq 1 30); do
@@ -1122,7 +1114,7 @@ fi
 printf 'handoff_leader_receipt=pass\n'
 printf 'handoff_leader_session_changed=pass\n'
 assert_no_work_admission "${work_id}" "${intent_id}"
-[[ "$(harness_snapshot "${OBSERVER_CONTAINER}")" == "${observer_harness_before}" ]] || \
+[[ "$(control_snapshot "${OBSERVER_CONTAINER}")" == "${observer_control_before}" ]] || \
   die "Unmentioned observer Worker was woken by the handoff path."
 printf 'handoff_observer_non_interference=pass\n'
 assert_trace_complete "${source_event_id}" specialist_handoff handoff.transport.sent || \

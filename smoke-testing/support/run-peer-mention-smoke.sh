@@ -7,7 +7,6 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 readonly REPO_ROOT
 readonly IMAGE="tiangong-worker:dev"
 readonly STOCK_LEADER_IMAGE="higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-copaw-worker:v1.2.0"
-readonly MODEL="qwen3.5-plus"
 readonly TEAM_NAME="tiangong-peer-smoke"
 readonly LEADER_NAME="tiangong-peer-smoke-leader"
 readonly COORDINATOR_NAME="tiangong-peer-smoke-coordinator"
@@ -267,8 +266,8 @@ assert_worker_runtime() {
     die "Expected ${IMAGE}, got ${actual_image} for ${member}."
   [[ "$(docker exec "${container}" printenv AGENTTEAMS_WORKER_NAME)" == "${member}" ]] || \
     die "Worker identity environment is wrong for ${member}."
-  [[ "$(docker exec "${container}" printenv OPENCLAW_AGENT_RUNTIME)" == tiangong-pi ]] || \
-    die "Tiangong Harness is not selected for ${member}."
+  [[ "$(docker exec "${container}" printenv OPENCLAW_AGENT_RUNTIME)" == pi ]] || \
+    die "The pinned OpenClaw built-in runtime is not selected for ${member}."
   [[ "$(docker exec "${container}" printenv TIANGONG_OTEL_EXPORTER_ENDPOINT)" == "${OTLP_ENDPOINT}" ]] || \
     die "Worker observability endpoint is not the owned smoke receiver for ${member}."
 }
@@ -385,26 +384,26 @@ assert_peer_channel_stable() {
   return 1
 }
 
-harness_snapshot() {
-  local container="$1"
-  if ! docker exec "${container}" test -f /tmp/tiangong-pi-harness.last-run; then
+control_snapshot() {
+  local container="$1" worker state_path
+  worker="$(docker exec "${container}" printenv AGENTTEAMS_WORKER_NAME)"
+  state_path="/root/agentteams-fs/agents/${worker}/.tiangong/runtime/tool-results/openclaw.json"
+  if ! docker exec "${container}" test -f "${state_path}"; then
     printf 'absent\n'
     return
   fi
-  docker exec "${container}" stat -c '%y:%s' /tmp/tiangong-pi-harness.last-run
+  docker exec "${container}" stat -c '%y:%s' "${state_path}"
 }
 
-assert_harness() {
-  local container="$1" member="$2" baseline="$3" marker current
-  current="$(harness_snapshot "${container}")"
-  [[ "${current}" != "${baseline}" ]] || die "Harness marker did not change for ${member}."
-  marker="$(docker exec "${container}" cat /tmp/tiangong-pi-harness.last-run)" || \
-    die "Harness marker is absent for ${member}."
-  grep -Fqx 'harness=tiangong-pi' <<<"${marker}" || die "Wrong Harness for ${member}."
-  grep -Fqx 'provider=agentteams-gateway' <<<"${marker}" || die "Wrong provider for ${member}."
-  grep -Fqx "model=${MODEL}" <<<"${marker}" || die "Wrong model for ${member}."
-  grep -Fqx 'status=pass' <<<"${marker}" || die "Harness turn failed for ${member}."
-  printf 'peer_%s_harness=pass\n' "${member##*-}"
+assert_control() {
+  local container="$1" member="$2" baseline="$3" current worker state_path
+  current="$(control_snapshot "${container}")"
+  [[ "${current}" != "${baseline}" ]] || die "Control ToolResult marker did not change for ${member}."
+  worker="$(docker exec "${container}" printenv AGENTTEAMS_WORKER_NAME)"
+  state_path="/root/agentteams-fs/agents/${worker}/.tiangong/runtime/tool-results/openclaw.json"
+  docker exec "${container}" jq -e '.results | length > 0' "${state_path}" >/dev/null || \
+    die "No bounded OpenClaw ToolResult was captured for ${member}."
+  printf 'peer_%s_control=pass\n' "${member##*-}"
 }
 
 assert_nonce_persisted() {
@@ -496,7 +495,7 @@ assert_trace_complete() {
     if [[ -f "${OTLP_SPANS_FILE}" ]] && jq -se \
       --arg digest "${digest}" --arg phase "${expected_phase}" '
       any(.[];
-        .name == "tiangong.harness.attempt" and
+        .name == "tiangong.control.attempt" and
         .attributes["tiangong.turn.id"] == $digest and
         .attributes["tiangong.operation.outcome"] == "complete" and
         .statusCode == 1
@@ -508,7 +507,7 @@ assert_trace_complete() {
         .statusCode == 1
       ) and
       all(.[] | select(.attributes["tiangong.turn.id"] == $digest);
-        .name != "tiangong.pi.agent_turn" and .name != "gen_ai.chat"
+        .name != "tiangong.openclaw.agent_turn" and .name != "gen_ai.chat"
       )
     ' "${OTLP_SPANS_FILE}" >/dev/null; then
       printf 'peer_%s_observability=pass\n' "${label}"
@@ -809,30 +808,29 @@ fi
 
 sleep 5
 leader_snapshot_before="$(stock_session_snapshot)"
-coordinator_harness_before="$(harness_snapshot "${COORDINATOR_CONTAINER}")"
-engineer_harness_before="$(harness_snapshot "${ENGINEER_CONTAINER}")"
+coordinator_control_before="$(control_snapshot "${COORDINATOR_CONTAINER}")"
+engineer_control_before="$(control_snapshot "${ENGINEER_CONTAINER}")"
 nonce="$(cat /proc/sys/kernel/random/uuid)"
 log "Testing Coordinator -> Engineer -> Coordinator through the real Team Room"
 if ! peer_output="$(docker exec "${CONTROLLER_CONTAINER}" "${CONTROLLER_PEER_ROUNDTRIP}" run \
   "${team_room_id}" "${leader_user_id}" "${coordinator_user_id}" "${engineer_user_id}" "${nonce}")"; then
   for diagnostic_container in "${COORDINATOR_CONTAINER}" "${ENGINEER_CONTAINER}"; do
     diagnostic_member="${diagnostic_container#agentteams-worker-}"
-    if docker exec "${diagnostic_container}" test -f /tmp/tiangong-pi-harness.last-run; then
-      printf '[Tiangong] Harness status for %s:\n' "${diagnostic_member}" >&2
-      docker exec "${diagnostic_container}" grep -E \
-        '^(harness|provider|model|status)=' /tmp/tiangong-pi-harness.last-run >&2 || true
+    if [[ "$(control_snapshot "${diagnostic_container}")" != absent ]]; then
+      printf '[Tiangong] Control ToolResult status for %s:\n' "${diagnostic_member}" >&2
+      docker exec "${diagnostic_container}" printenv AGENTTEAMS_WORKER_NAME >&2 || true
     else
-      printf '[Tiangong] Harness status for %s: no turn marker\n' "${diagnostic_member}" >&2
+      printf '[Tiangong] Control ToolResult status for %s: no result marker\n' "${diagnostic_member}" >&2
     fi
     if [[ "${diagnostic_container}" == "${COORDINATOR_CONTAINER}" ]]; then
-      harness_before="${coordinator_harness_before}"
+      control_before="${coordinator_control_before}"
     else
-      harness_before="${engineer_harness_before}"
+      control_before="${engineer_control_before}"
     fi
-    if [[ "$(harness_snapshot "${diagnostic_container}")" == "${harness_before}" ]]; then
-      printf '[Tiangong] Harness marker changed for %s: no\n' "${diagnostic_member}" >&2
+    if [[ "$(control_snapshot "${diagnostic_container}")" == "${control_before}" ]]; then
+      printf '[Tiangong] Control marker changed for %s: no\n' "${diagnostic_member}" >&2
     else
-      printf '[Tiangong] Harness marker changed for %s: yes\n' "${diagnostic_member}" >&2
+      printf '[Tiangong] Control marker changed for %s: yes\n' "${diagnostic_member}" >&2
     fi
     nonce_file_count="$(
       { docker exec "${diagnostic_container}" grep -RlF --include='*.jsonl' \
@@ -880,8 +878,8 @@ fi
 printf '%s\n' "${peer_output}"
 grep -Fqx 'worker_peer_event_chain=pass' <<<"${peer_output}" || die "Worker peer event chain failed."
 grep -Fqx 'stock_leader_message_count=0' <<<"${peer_output}" || die "Stock Leader emitted a message."
-assert_harness "${COORDINATOR_CONTAINER}" "${COORDINATOR_NAME}" "${coordinator_harness_before}"
-assert_harness "${ENGINEER_CONTAINER}" "${ENGINEER_NAME}" "${engineer_harness_before}"
+assert_control "${COORDINATOR_CONTAINER}" "${COORDINATOR_NAME}" "${coordinator_control_before}"
+assert_control "${ENGINEER_CONTAINER}" "${ENGINEER_NAME}" "${engineer_control_before}"
 start_event_id="$(probe_output_value "${peer_output}" peer_start_event)" || \
   die "Peer output omitted the start event correlation."
 ping_event_id="$(probe_output_value "${peer_output}" peer_ping_event)" || \

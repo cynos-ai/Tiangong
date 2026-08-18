@@ -88,7 +88,7 @@ for _ in $(seq 1 24); do
       | .event_id' <<<"${sync_response}" | tail -n 1)"
   if [[ -n "${response_event_id}" ]]; then
     printf 'matrix_event=%s\n' "${response_event_id}"
-    printf 'matrix_to_pi_response=pass\n'
+    printf 'matrix_to_openclaw_response=pass\n'
     exit 0
   fi
   since="$(jq -r '.next_batch // empty' <<<"${sync_response}")"
@@ -98,5 +98,5 @@ for _ in $(seq 1 24); do
   }
 done
 
-printf 'ERROR: timed out waiting for the pi response in Matrix.\n' >&2
+printf 'ERROR: timed out waiting for the OpenClaw response in Matrix.\n' >&2
 exit 1

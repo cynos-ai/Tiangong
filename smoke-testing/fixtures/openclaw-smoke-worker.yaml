@@ -1,12 +1,12 @@
 apiVersion: agentteams.io/v1beta1
 kind: Worker
 metadata:
-  name: tiangong-pi-smoke
+  name: tiangong-openclaw-smoke
 spec:
   model: deepseek-v4-flash
   runtime: openclaw
   image: tiangong-worker:dev
   state: Running
   identity: |
-    Name: Tiangong Pi Smoke Worker
+    Name: Tiangong OpenClaw Smoke Worker
     Purpose: Local runtime integration verification only.

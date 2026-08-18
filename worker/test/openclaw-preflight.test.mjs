@@ -12,60 +12,48 @@ import {
 const config = {
   plugins: {
     load: { paths: ["/opt/tiangong-worker/plugin"] },
-    entries: { "tiangong-pi": { enabled: true } },
+    entries: { "tiangong-control": { enabled: true } },
   },
 };
 
-test("requires the OpenClaw harness registration API", () => {
-  assert.deepEqual(assertPluginApi({ registerAgentHarness() {} }), {
-    pluginId: "tiangong-pi",
-    harnessRegistration: "available",
+test("requires native OpenClaw hooks/tools and never exposes a Tiangong harness", () => {
+  assert.deepEqual(assertPluginApi({ registerTool() {} }), {
+    pluginId: "tiangong-control",
+    nativeRegistration: "not-supported",
   });
-  assert.deepEqual(assertPluginApi({ on() {} }, { nativeRuntime: true }), {
-    pluginId: "tiangong-pi",
-    harnessRegistration: "not-required",
+  assert.deepEqual(assertPluginApi({ on() {} }), {
+    pluginId: "tiangong-control",
+    nativeRegistration: "not-supported",
   });
   assert.throws(() => assertPluginApi({}), (error) =>
     error instanceof PreflightError && error.code === "plugin-api-unavailable");
 });
 
-test("requires the Tiangong plugin to be loaded and enabled", () => {
+test("requires the Tiangong control plugin to be loaded and enabled", () => {
   assert.deepEqual(assertPluginConfig(config), {
-    pluginId: "tiangong-pi",
+    pluginId: "tiangong-control",
     pluginPath: "/opt/tiangong-worker/plugin",
     pluginEnabled: true,
-    runtimeLane: "legacy-v0.2",
+    runtimeLane: "openclaw-native",
     conversationHooks: false,
   });
   assert.throws(() => assertPluginConfig({}), (error) =>
     error instanceof PreflightError && error.code === "required-plugin-not-loaded");
-  assert.throws(() => assertPluginConfig({ plugins: { load: { paths: ["/opt/tiangong-worker/plugin"] }, entries: { "tiangong-pi": { enabled: false } } } }), (error) =>
+  assert.throws(() => assertPluginConfig({ plugins: { load: { paths: ["/opt/tiangong-worker/plugin"] }, entries: { "tiangong-control": { enabled: false } } } }), (error) =>
     error instanceof PreflightError && error.code === "required-plugin-disabled");
 });
 
-test("binds the canary lane explicitly and rejects cross-lane configuration", () => {
-  const canary = {
+test("does not select a legacy runtime lane even when stale config is present", () => {
+  const stale = {
     plugins: {
       load: { paths: ["/opt/tiangong-worker/plugin"] },
-      entries: { "tiangong-pi": { enabled: true, config: { runtimeLane: "openclaw-canary" } } },
+      entries: { "tiangong-control": { enabled: true, config: { runtimeLane: "legacy-v0.2" } } },
     },
   };
-  assert.equal(assertPluginConfig(canary, { env: { TIANGONG_CANARY_REQUIRED: "1" } }).runtimeLane, "openclaw-canary");
-  assert.throws(
-    () => assertPluginConfig(config, { env: { TIANGONG_CANARY_REQUIRED: "1" } }),
-    (error) => error instanceof PreflightError && error.code === "canary-lane-required",
-  );
-  assert.throws(
-    () => assertPluginConfig(canary, { env: { TIANGONG_RUNTIME_LANE: "legacy-v0.2" } }),
-    (error) => error instanceof PreflightError && error.code === "runtime-lane-mismatch",
-  );
-  assert.throws(
-    () => assertPluginConfig({ plugins: { load: { paths: ["/opt/tiangong-worker/plugin"] }, entries: { "tiangong-pi": { enabled: true, config: { runtimeLane: "unknown" } } } } }),
-    (error) => error instanceof PreflightError && error.code === "runtime-lane-invalid",
-  );
+  assert.equal(assertPluginConfig(stale, { env: { TIANGONG_RUNTIME_LANE: "legacy-v0.2" } }).runtimeLane, "openclaw-native");
 });
 
-test("keeps the control API optional for the legacy lane", async () => {
+test("keeps the control API optional", async () => {
   assert.deepEqual(await checkControlApi({ env: {} }), { controlApi: "disabled" });
 });
 
@@ -106,10 +94,10 @@ test("accepts only a bounded 2xx control API readiness response", async () => {
     },
   });
   assert.deepEqual(result, {
-    pluginId: "tiangong-pi",
+    pluginId: "tiangong-control",
     pluginPath: "/opt/tiangong-worker/plugin",
     pluginEnabled: true,
-    runtimeLane: "legacy-v0.2",
+    runtimeLane: "openclaw-native",
     conversationHooks: false,
     controlApi: "healthy",
   });

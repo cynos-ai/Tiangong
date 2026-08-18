@@ -2,7 +2,7 @@
 //
 // OpenClaw remains the runtime owner. Tiangong only binds a professional role
 // to the one upstream runtime that the deployment has approved for that role;
-// it never implements another model loop or a fallback harness.
+// it never implements another model loop or a runtime fallback.
 
 import { canonicalJson, sha256 } from "./canonical-json.mjs";
 

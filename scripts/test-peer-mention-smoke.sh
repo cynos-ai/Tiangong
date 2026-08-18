@@ -90,11 +90,11 @@ node --check "${OTLP_RECEIVER}"
 # These are literal source fragments; expansion would invalidate the contract check.
 # shellcheck disable=SC2016
 for required_runner_contract in \
-  'coordinator_harness_before="$(harness_snapshot "${COORDINATOR_CONTAINER}")"' \
-  'engineer_harness_before="$(harness_snapshot "${ENGINEER_CONTAINER}")"' \
+  'coordinator_control_before="$(control_snapshot "${COORDINATOR_CONTAINER}")"' \
+  'engineer_control_before="$(control_snapshot "${ENGINEER_CONTAINER}")"' \
   '[[ "${current}" != "${baseline}" ]]' \
-  "^(harness|provider|model|status)=" \
-  'Harness marker changed for %s' \
+  'control_snapshot' \
+  'Control marker changed for %s' \
   '"${ENGINEER_ROOM_MEMBERS}" event-visible' \
   'openclaw channels status --json' \
   '.lastConnectedAt >= .lastStartAt' \
@@ -110,10 +110,10 @@ for required_runner_contract in \
   'assert_trace_complete "${start_event_id}" coordinator_start peer.transport.start' \
   'assert_trace_complete "${ping_event_id}" engineer_ping peer.transport.ping' \
   'assert_trace_complete "${pong_event_id}" coordinator_pong peer.transport.pong' \
-  '.name != "tiangong.pi.agent_turn" and .name != "gen_ai.chat"' \
+  '.name != "tiangong.openclaw.agent_turn" and .name != "gen_ai.chat"' \
   'rm -rf -- "${OTLP_DATA_DIRECTORY}"'; do
   grep -Fq -- "${required_runner_contract}" "${RUNNER}" || \
-    fail "runner is missing a deterministic readiness or Harness contract: ${required_runner_contract}"
+  fail "runner is missing a deterministic readiness or control contract: ${required_runner_contract}"
 done
 # These are literal source fragments; expansion would invalidate the contract check.
 # shellcheck disable=SC2016
@@ -131,7 +131,7 @@ fi
 
 progress_activity="$(jq -c -f "${OTLP_ACTIVITY_QUERY}" <<'JSON'
 [
-  {"name":"tiangong.lifecycle.checkpoint","phase":"pi.turn.start","outcome":null,"private":"secret"},
+  {"name":"tiangong.lifecycle.checkpoint","phase":"openclaw.turn.start","outcome":null,"private":"secret"},
   {"name":"tiangong.lifecycle.checkpoint","phase":"model.request.ready","outcome":null},
   {"name":"tiangong.lifecycle.checkpoint","phase":"model.response.received","outcome":null},
   {"name":"tiangong.lifecycle.checkpoint","phase":"model.response.start","outcome":null},
@@ -140,27 +140,27 @@ progress_activity="$(jq -c -f "${OTLP_ACTIVITY_QUERY}" <<'JSON'
 ]
 JSON
 )"
-[[ "${progress_activity}" == '{"peerTransportStart":false,"peerTransportPing":false,"peerTransportPong":false,"piTurnStarted":true,"requestReady":true,"responseReceived":true,"responseStarted":true,"responseProgress":true,"retryObserved":false,"modelComplete":true,"modelTimedOut":false,"modelAborted":false}' ]] || \
+[[ "${progress_activity}" == '{"peerTransportStart":false,"peerTransportPing":false,"peerTransportPong":false,"openclawTurnStarted":true,"requestReady":true,"responseReceived":true,"responseStarted":true,"responseProgress":true,"retryObserved":false,"modelComplete":true,"modelTimedOut":false,"modelAborted":false}' ]] || \
   fail 'turn activity query did not classify real stream progress.'
 [[ "${progress_activity}" != *secret* ]] || fail 'turn activity query leaked an unallowlisted input field.'
 silent_activity="$(jq -c -f "${OTLP_ACTIVITY_QUERY}" <<'JSON'
 [
-  {"name":"tiangong.lifecycle.checkpoint","phase":"pi.turn.start","outcome":null},
+  {"name":"tiangong.lifecycle.checkpoint","phase":"openclaw.turn.start","outcome":null},
   {"name":"tiangong.lifecycle.checkpoint","phase":"model.request.ready","outcome":null},
   {"name":"gen_ai.chat","phase":null,"outcome":"timeout"}
 ]
 JSON
 )"
-[[ "${silent_activity}" == '{"peerTransportStart":false,"peerTransportPing":false,"peerTransportPong":false,"piTurnStarted":true,"requestReady":true,"responseReceived":false,"responseStarted":false,"responseProgress":false,"retryObserved":false,"modelComplete":false,"modelTimedOut":true,"modelAborted":false}' ]] || \
+[[ "${silent_activity}" == '{"peerTransportStart":false,"peerTransportPing":false,"peerTransportPong":false,"openclawTurnStarted":true,"requestReady":true,"responseReceived":false,"responseStarted":false,"responseProgress":false,"retryObserved":false,"modelComplete":false,"modelTimedOut":true,"modelAborted":false}' ]] || \
   fail 'turn activity query did not classify a silent provider timeout.'
 transport_activity="$(jq -c -f "${OTLP_ACTIVITY_QUERY}" <<'JSON'
 [
   {"name":"tiangong.lifecycle.checkpoint","phase":"peer.transport.start","outcome":null},
-  {"name":"tiangong.harness.attempt","phase":null,"outcome":"complete"}
+  {"name":"tiangong.control.attempt","phase":null,"outcome":"complete"}
 ]
 JSON
 )"
-[[ "${transport_activity}" == '{"peerTransportStart":true,"peerTransportPing":false,"peerTransportPong":false,"piTurnStarted":false,"requestReady":false,"responseReceived":false,"responseStarted":false,"responseProgress":false,"retryObserved":false,"modelComplete":false,"modelTimedOut":false,"modelAborted":false}' ]] || \
+[[ "${transport_activity}" == '{"peerTransportStart":true,"peerTransportPing":false,"peerTransportPong":false,"openclawTurnStarted":false,"requestReady":false,"responseReceived":false,"responseStarted":false,"responseProgress":false,"retryObserved":false,"modelComplete":false,"modelTimedOut":false,"modelAborted":false}' ]] || \
   fail 'turn activity query did not classify a deterministic peer transport control.'
 
 assert_exact_line_count 1 'apiVersion: agentteams.io/v1beta1'

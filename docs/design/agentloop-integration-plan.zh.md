@@ -1,5 +1,7 @@
 # Tiangong 接入阿里云 AgentLoop 方案
 
+> **历史研究，已被当前主线取代（2026-08-19）**：本文保留当时的可观测性研究和边界讨论，不描述现行 Worker runtime。当前版本使用 OpenClaw 原生运行时和 `tiangong-control` 控制插件；Tiangong 不再维护自有 Pi harness、模型循环或 legacy runtime fallback。现行决策见 [`deepseek-only-clean-cut.zh.md`](deepseek-only-clean-cut.zh.md)。文中的旧文件名、trace 名称和示例配置仅可作为历史记录，不得直接用于部署。
+
 > 状态：调研与接入设计（未实施）
 >
 > 调研基线：2026-08-08。外部产品会演进；正式实施前必须重新核对本文中的版本、Endpoint、计费和权限。

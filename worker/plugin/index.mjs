@@ -14,15 +14,13 @@ import { registerMemberCoordinationHooks } from "../agent/team/member-coordinati
 import { registerNativeRunnerTool } from "../agent/team/native-runner-tool.mjs";
 import { isLeaderEnvironment, registerLeaderOpenClawTools } from "../agent/team/leader-openclaw-tools.mjs";
 import { registerMemberOpenClawTools } from "../agent/team/member-openclaw-tools.mjs";
-import { createTiangongPiHarness } from "./openclaw-adapter.mjs";
 
 export default definePluginEntry({
-  id: "tiangong-pi",
+  id: "tiangong-control",
   name: "Tiangong control plugin",
-  description: "Provides Tiangong hooks and tools; the legacy pi harness is optional.",
+  description: "Provides Tiangong admission, coordination, ToolResult, and role tools to OpenClaw.",
   register(api) {
-    const nativeRuntime = process.env.TIANGONG_OPENCLAW_NATIVE === "1";
-    assertPluginApi(api, { nativeRuntime });
+    assertPluginApi(api);
     const leaderEnvironment = isLeaderEnvironment(process.env);
     if (process.env.TIANGONG_CANARY_REQUIRED === "1") {
       const admissionUrl = process.env.TIANGONG_CONTROL_API_ADMISSION_URL;
@@ -62,11 +60,8 @@ export default definePluginEntry({
     } else if (process.env.TIANGONG_MEMBER_COORDINATION_ENABLED === "1") {
       registerMemberOpenClawTools(api, { env: process.env });
     }
-    const observability = createWorkerObservability({
+    createWorkerObservability({
       config: resolveObservabilityConfig(api.pluginConfig),
     });
-    if (!nativeRuntime) {
-      api.registerAgentHarness(createTiangongPiHarness({ observability }));
-    }
   },
 });

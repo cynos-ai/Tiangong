@@ -13,7 +13,7 @@ docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1 || fail "${CONTAINER_NAME} do
 [[ "$(docker inspect "${CONTAINER_NAME}" --format '{{.State.Running}}')" == true ]] ||
   fail "${CONTAINER_NAME} is not running."
 
-info="$(docker exec "${CONTAINER_NAME}" openclaw plugins info tiangong-pi 2>/dev/null)" ||
+info="$(docker exec "${CONTAINER_NAME}" openclaw plugins info tiangong-control 2>/dev/null)" ||
   fail 'OpenClaw could not inspect the required Tiangong plugin.'
 grep -Fqx 'Status: loaded' <<<"${info}" || fail 'Tiangong plugin is not loaded.'
 grep -Fqx 'before_dispatch (priority 100)' <<<"${info}" ||

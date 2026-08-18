@@ -6,17 +6,17 @@ Tiangong can export a sanitized Worker turn trace through the OpenTelemetry Prot
 
 OpenTelemetry traces are diagnostic telemetry. They may be delayed, dropped, sampled, or unavailable and therefore are **not** Tiangong Evidence. A trace cannot authorize an operation, prove an external side effect, or certify a result. Tiangong's hash-chained Evidence remains the audit record.
 
-Official OpenClaw remains responsible for Matrix ingress and delivery. The first Tiangong-owned span begins when OpenClaw invokes the registered Harness.
+Official OpenClaw remains responsible for Matrix ingress and delivery. The first Tiangong-owned span begins when OpenClaw invokes the registered control-plugin hook or tool.
 
 ## Configuration
 
-Configure the `tiangong-pi` OpenClaw plugin with an OTLP HTTP trace endpoint:
+Configure the `tiangong-control` OpenClaw plugin with an OTLP HTTP trace endpoint:
 
 ```json
 {
   "plugins": {
     "entries": {
-      "tiangong-pi": {
+      "tiangong-control": {
         "enabled": true,
         "config": {
           "observability": {
@@ -46,12 +46,12 @@ The build validates the embedded endpoint inside the finished image. Explicit pl
 A completed attempt can contain:
 
 ```text
-tiangong.harness.attempt
+tiangong.control.attempt
 ├── tiangong.lifecycle.checkpoint
 ├── tiangong.runtime.setup
 ├── tiangong.gateway.resolve
 ├── tiangong.session.open_or_reuse
-├── tiangong.pi.agent_turn
+├── tiangong.openclaw.agent_turn
 ├── gen_ai.chat
 └── execute_tool
 ```
@@ -61,7 +61,7 @@ Short checkpoint spans make phase entry observable even while a later operation 
 Model activity uses these sanitized phases:
 
 ```text
-pi.turn.start
+openclaw.turn.start
 model.request.ready
 model.response.received
 model.response.start
@@ -69,17 +69,17 @@ model.response.progress
 model.retry
 ```
 
-`pi.turn.start` is deliberately separate from provider activity: pi emits it before context conversion, credential resolution, and the provider stream call. A trusted built-in inline hook emits `model.request.ready` immediately before pi sends a provider request and `model.response.received` after response headers arrive; discovered external extensions remain disabled. Assistant stream start and update events emit the response phases without reading their content. Progress is coalesced to at most one checkpoint per minute and 32 checkpoints per model operation rather than producing a span per token. `model.retry` represents pi session auto-retry; the pinned public API does not expose lower-level provider-internal retry attempts, so Tiangong does not invent that evidence.
+`openclaw.turn.start` is deliberately separate from provider activity. Control hooks emit the request/response checkpoints without reading prompt or response content. Progress is coalesced to at most one checkpoint per minute and 32 checkpoints per model operation rather than producing a span per token. Provider-internal retry details are not invented when the upstream API does not expose them.
 
 A progress checkpoint proves real response-stream activity. A local timer heartbeat would prove only that the Worker event loop can schedule a timer, not that the provider is progressing, so it is not labeled as model activity. Interpret the furthest correlated fact without promoting telemetry into Evidence:
 
 | Correlated facts | Diagnostic interpretation |
 |---|---|
-| `pi.turn.start` only | pi turn started; provider dispatch is not established |
+| `openclaw.turn.start` only | OpenClaw turn started; provider dispatch is not established |
 | `model.request.ready` without a response | waiting at the provider boundary; silence is only a suspected stall |
 | `model.response.received` / `model.response.start` | provider responded and the response stream opened |
 | recent `model.response.progress` | real response-stream activity was observed |
-| `model.retry` | pi session retry was observed; the turn is degraded, not proven stuck |
+| `model.retry` | upstream retry was observed; the turn is degraded, not proven stuck |
 | terminal `timeout` / `upstream_abort` | the corresponding explicit bound or cancellation fired |
 | no correlated telemetry or receiver failure | `unknown`, never inferred as deadlock |
 

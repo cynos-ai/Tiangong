@@ -100,7 +100,7 @@ Docker Desktop/WSL 的 Windows bind mount 会把文件权限呈现为过宽，Ti
 
 重启后的 runtime 重新 ready，扫描并重放遗留 wake；第一次发送和重放使用同一个 transaction pathname，两个 Work wake 最终均为 `acked`，`/api/runtime` 能看到 durable delivery state，测试资源随后精确清理，原 runtime 已恢复到 `source=postgres-and-matrix` ready。
 
-因此 B2 Basic/Full/F1 的 disposable deployment seam 现在通过；B3/B4、B5 runtime A/B 与 Gate B 仍未完成，所以仍不能删除 `tiangong-pi`。按 internal 计划，下一切片是 B3 跨 Gateway Task/Result，不是提前做 B6 clean-cut。
+因此 B2 Basic/Full/F1 的 disposable deployment seam 现在通过；B3/B4、B5 runtime A/B 与 Gate B 的历史记录已完成。该文档的旧结论由 `deepseek-only-clean-cut.zh.md` supersede：当前主线已删除 `tiangong-pi`，Qwen B6 只作为后续可选 canary。
 ## 2026-08-16 B3 native member hook boundary
 
 The member-side implementation now uses OpenClaw's native lifecycle hooks
@@ -111,5 +111,5 @@ Control API token and `TIANGONG_MEMBER_ID`. A rebuilt real Worker has now
 completed the member-session Full smoke with `OPENCLAW_AGENT_RUNTIME=pi`
 (OpenClaw's upstream embedded harness), Task/Result projection, and acked
 assignment/notification wakes. This closes the B3 member seam; B4 prepared
-local coding, B5 recovery/coding A/B, Gate B, and the B6 `tiangong-pi`
+local coding, B5 recovery/coding A/B, Gate B, and the historical B6
 clean-cut remain future work.

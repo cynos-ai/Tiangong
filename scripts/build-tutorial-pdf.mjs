@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Build the team-control tutorial (docs/design/evidence-backed-team-control-tutorial/)
 // into a PDF using only local tools — no internet needed:
-//   - marked (resolved from the installed pi coding agent) for markdown -> HTML
+//   - marked (installed separately when building this optional artifact) for markdown -> HTML
 //   - a hand-written mini mermaid-flowchart -> SVG renderer (no mermaid.js)
 //   - a headless chromium (from the playwright cache) for --print-to-pdf
 //
@@ -9,7 +9,7 @@
 // Default output: ./evidence-backed-team-control-tutorial.zh.pdf
 //
 // Env deps (must pre-exist on this machine):
-//   - @earendil-works/pi-coding-agent (provides marked)
+//   - marked (provides markdown -> HTML)
 //   - a chromium under ~/.cache/ms-playwright (provides the headless browser)
 //   - a CJK font (e.g. WenQuanYi Zen Hei) for Chinese text
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
@@ -23,18 +23,10 @@ const REPO = path.resolve(new URL("..", import.meta.url).pathname);
 const TUT = path.join(REPO, "docs/design/evidence-backed-team-control-tutorial");
 const OUT = process.argv[2] || path.join(REPO, "evidence-backed-team-control-tutorial.zh.pdf");
 
-// --- locate marked via the installed pi coding agent ---
+// --- locate marked from this optional build environment ---
 function findMarked() {
-  const globalRoot = path.join(os.homedir(), ".nvm/versions/node");
-  if (existsSync(globalRoot)) {
-    for (const nodeDir of readdirSync(globalRoot)) {
-      const candidate = path.join(globalRoot, nodeDir, "lib/node_modules/@earendil-works/pi-coding-agent/node_modules/marked");
-      if (existsSync(candidate)) return candidate;
-    }
-  }
-  // fall back to resolving from this script's own deps
   try { return require.resolve("marked"); } catch {}
-  throw new Error("marked not found; install @earendil-works/pi-coding-agent or marked");
+  throw new Error("marked not found; install the optional marked package before building the tutorial");
 }
 import { readdirSync } from "node:fs";
 const { marked } = require(findMarked());
