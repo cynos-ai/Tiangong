@@ -6,6 +6,29 @@ All notable changes to Tiangong are documented here. Tiangong follows Semantic V
 
 No unreleased changes.
 
+## [0.4.1] - 2026-08-19
+
+### Verification
+
+- Verified the bare official AgentTeams v1.2.2 baseline: Worker readiness,
+  Active Team convergence, Team-scoped MinIO access, and Matrix delivery all
+  work without Tiangong images or plugins.
+- Verified the official-infrastructure plus Tiangong-orchestration canary with
+  DeepSeek v4 Flash, including Leader resume, Work/Task/Result, Matrix handoff,
+  fail-closed Implementor blocking, requester reporting, and exact cleanup.
+- Kept the Phase C deterministic boundary green and documented the remaining
+  conservative full-Gate terminal-branch oracle limitation.
+- Passed the full Worker and App test suites in the Linux Node 22 release
+  environment; disposable PostgreSQL cases remain opt-in when no test database
+  is injected.
+
+### Boundaries
+
+- OpenClaw remains the model/session runtime; Codex app-server remains the
+  Implementor coding runtime; Tiangong owns only programmatic coordination,
+  gates, evidence, recovery, and control tools.
+- The historical Tiangong Pi runtime is not restored.
+
 ## [0.4.0] - 2026-08-19
 
 ### Changed
