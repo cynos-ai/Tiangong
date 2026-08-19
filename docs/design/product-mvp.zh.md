@@ -175,7 +175,8 @@ skills/<skill-name>/
 ├─ SKILL.md
 ├─ scripts/       可选
 ├─ references/    可选
-└─ assets/        可选
+├─ assets/        可选
+└─ tests/         触发与行为边界
 ```
 
 Agent 包固定 Skill 版本和内容摘要。实际解析的 Skill 名称、版本、触发和调用元数据进入 Execution Record，后续可在 Web 和 AgentLoop 中关联，但不成为 Task 授权。
@@ -192,6 +193,20 @@ Agent 包固定 Skill 版本和内容摘要。实际解析的 Skill 名称、版
 - 场景测试。
 
 这些是方法默认值，不在 Kernel 中硬编码为固定执行顺序。
+
+### 5.4 当前实现状态
+
+当前开发分支已实现 M1/M2 底座：
+
+- `worker/agent-packages/` 提供六个版本化 Agent 包，固定责任、runtime/model、能力画像、会话策略和 Skill digest lock；
+- MemberConfig v3 投影 revision、Agent package、capability profile 和 `allowedSkills`，部署入口在修改 OpenClaw 配置前以及每个新 turn/顶层工具调用重新校验；未知 generic host tool fail closed；
+- Leader 每个 Work、其他成员每个 Task 使用独立逻辑 SessionRef；Session 仍不承担授权或产品事实；
+- `worker/skills/` 预装六个可移植产品 Skill，每个包含触发正例、负例、歧义例以及 success/blocked/cleanup 行为案例；
+- 有效 Skill 由代码计算 installed ∩ allowed，未安装、digest 不匹配、越权选择和配置漂移 fail closed；
+- Agent 通过 `tiangong_use_skill` 自主选择已启用 Skill，ToolResult 只记录有界 Skill ID、版本、内容摘要和触发说明，不把 Skill 当作权限；
+- 只读 runtime console 已可投影 Agent、模型、当前 Task、逻辑 Session、允许 Skill 和实际使用 Skill。
+
+这不等于 M3 chat-first Web、真实项目闭环或模型质量评估已经完成。
 
 ## 6. 真实项目本地交付
 

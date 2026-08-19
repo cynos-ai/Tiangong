@@ -30,7 +30,7 @@ async function profileFixture(t, roleId = "leader") {
   t.after(() => rm(root, { recursive: true, force: true }));
   await cp(join(WORKER_ROOT, "role-profiles"), join(root, "role-profiles"), { recursive: true });
   await cp(join(WORKER_ROOT, "roles"), join(root, "roles"), { recursive: true });
-  await cp(join(WORKER_ROOT, "skills"), join(root, "skills"), { recursive: true });
+  await cp(join(WORKER_ROOT, "legacy"), join(root, "legacy"), { recursive: true });
   return { profilePath: join(root, "role-profiles", `${roleId}.json`), resourceRoot: root };
 }
 
@@ -112,7 +112,7 @@ test("missing, symlinked, oversized, invalid UTF-8, and digest-mismatched resour
   await rejectsProfile(missingSoul, /missing/u);
 
   const linkedSkill = await profileFixture(t);
-  const skillPath = join(linkedSkill.resourceRoot, "skills", "leader", "coordination.md");
+  const skillPath = join(linkedSkill.resourceRoot, "legacy", "skills", "leader", "coordination.md");
   const originalSkill = `${skillPath}.original`;
   await cp(skillPath, originalSkill);
   await rm(skillPath);
@@ -120,15 +120,15 @@ test("missing, symlinked, oversized, invalid UTF-8, and digest-mismatched resour
   await rejectsProfile(linkedSkill, /symbolic link/u);
 
   const oversized = await profileFixture(t);
-  await writeFile(join(oversized.resourceRoot, "skills", "leader", "coordination.md"), "x".repeat(16 * 1024 + 1));
+  await writeFile(join(oversized.resourceRoot, "legacy", "skills", "leader", "coordination.md"), "x".repeat(16 * 1024 + 1));
   await rejectsProfile(oversized, /size/u);
 
   const invalidUtf8 = await profileFixture(t);
-  await writeFile(join(invalidUtf8.resourceRoot, "skills", "leader", "coordination.md"), Buffer.from([0xff]));
+  await writeFile(join(invalidUtf8.resourceRoot, "legacy", "skills", "leader", "coordination.md"), Buffer.from([0xff]));
   await rejectsProfile(invalidUtf8, /digest|UTF-8/iu);
 
   const digestMismatch = await profileFixture(t);
-  const skillFile = join(digestMismatch.resourceRoot, "skills", "leader", "coordination.md");
+  const skillFile = join(digestMismatch.resourceRoot, "legacy", "skills", "leader", "coordination.md");
   await writeFile(skillFile, `${await readFile(skillFile, "utf8")}tampered\n`);
   await rejectsProfile(digestMismatch, /digest/u);
 });

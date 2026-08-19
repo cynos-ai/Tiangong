@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { canonicalJson, sha256 } from "../canonical-json.mjs";
 import { withFileLock } from "../persistence/file-lock.mjs";
 
-const STATE_VERSION = 2;
+const STATE_VERSION = 3;
 const ID = /^[A-Za-z0-9@!#$%&*+./:=?_-]{1,160}$/u;
 const DIGEST = /^[a-f0-9]{64}$/u;
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u;
@@ -131,15 +131,21 @@ export function createTeamRouteBinding(input) {
 export function isTeamRouteBinding(value) { return digestRecord(value, createTeamRouteBinding); }
 
 export function createMemberConfig(input) {
-  exact(input, new Set(["memberId", "teamId", "workerName", "matrixUserId", "role", "controlProfileId", "enabled", "createdAt", "runtime", "model", "allowedSkills"]), "MemberConfig");
-  const runtime = input.runtime ?? (input.role === "developer" || input.role === "implementor" ? "codex-app-server" : "openclaw-built-in");
+  exact(input, new Set(["memberId", "teamId", "workerName", "matrixUserId", "role", "controlProfileId", "enabled", "createdAt", "revision", "runtime", "model", "agentPackageId", "agentPackageVersion", "capabilityProfile", "allowedSkills"]), "MemberConfig");
+  const responsibility = input.role === "team_leader" ? "leader" : input.role === "implementor" ? "developer" : input.role;
+  const runtime = input.runtime ?? (responsibility === "developer" ? "codex-app-server" : "openclaw-built-in");
+  const capabilityDefaults = { leader: "coordination-control", architect: "project-read-only", challenger: "project-read-only", developer: "local-development", reviewer: "project-read-only", tester: "controlled-testing" };
   if (!["openclaw-built-in", "codex-app-server"].includes(runtime)) throw new Error("MemberConfig runtime is unsupported");
+  const agentPackageVersion = bounded(input.agentPackageVersion ?? "1.0.0", "agentPackageVersion", 32);
+  if (!/^\d+\.\d+\.\d+$/u.test(agentPackageVersion)) throw new Error("MemberConfig Agent package version is invalid");
   return freezeDigest({
-    kind: "tiangong.member-config", schemaVersion: 2,
-    memberId: identifier(input.memberId, "memberId"), teamId: identifier(input.teamId, "teamId"),
+    kind: "tiangong.member-config", schemaVersion: 3,
+    memberId: identifier(input.memberId, "memberId"), teamId: identifier(input.teamId, "teamId"), revision: positiveInteger(input.revision ?? 1, "revision"),
     workerName: identifier(input.workerName, "workerName"), matrixUserId: bounded(input.matrixUserId, "matrixUserId", 256),
     role: bounded(input.role, "role", 128), controlProfileId: identifier(input.controlProfileId, "controlProfileId"),
     enabled: input.enabled === true, runtime, model: identifier(input.model ?? (runtime === "codex-app-server" ? "deepseek-v4-flash" : "deepseek-chat"), "model"),
+    agentPackageId: identifier(input.agentPackageId ?? `tiangong-${responsibility}`, "agentPackageId"), agentPackageVersion,
+    capabilityProfile: identifier(input.capabilityProfile ?? capabilityDefaults[responsibility] ?? "legacy-read-only", "capabilityProfile"),
     allowedSkills: idList(input.allowedSkills ?? [], "allowedSkills", 64), createdAt: timestamp(input.createdAt, "createdAt"),
   });
 }
@@ -195,10 +201,11 @@ function bindingKey(roomId, eventId) { return `${roomId}\u0000${eventId}`; }
 function commandKey(scope, requestId) { return `${scope}\u0000${requestId}`; }
 function admissionKey(roomId, eventId) { return bindingKey(roomId, eventId); }
 function sessionFor(workId, teamId, routeId) { return `leader-${sha256({ workId, teamId, routeId }).slice(0, 48)}`; }
+function taskSessionFor(task, teamId) { return `member-${sha256({ teamId, workId: task.workId, taskId: task.taskId, assigneeMemberId: task.assigneeMemberId }).slice(0, 48)}`; }
 function workIdFor(teamId, routeId, eventId) { return `work-${sha256({ teamId, routeId, eventId }).slice(0, 48)}`; }
 function emptyState() { return { version: STATE_VERSION, works: {}, tasks: {}, results: {}, bindings: {}, admissions: {}, wakes: {}, commands: {} }; }
 function snapshotWork(entry) { return clone({ work: entry.work, epoch: entry.epoch, status: entry.status, currentWorkSpec: entry.currentWorkSpec, currentPlanRef: entry.currentPlanRef, timeline: entry.timeline }); }
-function snapshotTask(entry) { return clone({ spec: entry.spec, status: entry.result ? "reported" : entry.cancellation ? "cancelled" : "assigned", result: entry.result, cancellation: entry.cancellation }); }
+function snapshotTask(entry) { return clone({ spec: entry.spec, sessionRef: entry.sessionRef, status: entry.result ? "reported" : entry.cancellation ? "cancelled" : "assigned", result: entry.result, cancellation: entry.cancellation }); }
 function snapshotAdmission(entry) { return clone(entry); }
 function snapshotWake(entry) { return clone(entry); }
 function validatePath(filePath) { if (typeof filePath !== "string" || !isAbsolute(filePath)) throw new TypeError("CoordinationStore filePath must be absolute"); return filePath; }
@@ -464,7 +471,7 @@ export class CoordinationStore {
       const identity = replay(state, "task.create", requestId, { task, teamId: team.teamId, memberId: member.memberId, actorId, expectedEpoch, wake: wake ?? null });
       if (identity.replayed) return { changed: false, value: { replayed: true, task: snapshotTask(state.tasks[task.taskId]), wake: null } };
       if (entry.status !== "open" || !entry.currentWorkSpec || entry.epoch !== expectedEpoch || state.tasks[task.taskId] || Object.values(state.tasks).filter((item) => item.spec.workId === task.workId).length >= profile.maxTasksPerWork) throw new Error("TASK_WORK_CONFLICT");
-      entry.epoch += 1; state.tasks[task.taskId] = { spec: task, result: null, cancellation: null };
+      entry.epoch += 1; state.tasks[task.taskId] = { spec: task, sessionRef: taskSessionFor(task, team.teamId), result: null, cancellation: null };
       appendTimeline(entry, { type: "task-created", at: task.createdAt, actorId, requestId: identity.request, epoch: entry.epoch, payload: { task } }); recordCommand(state, identity);
       return { changed: true, value: { replayed: false, task: snapshotTask(state.tasks[task.taskId]), wake: null } };
     }).then(async (result) => {

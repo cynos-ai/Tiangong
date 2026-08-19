@@ -3,7 +3,7 @@
 Tiangong is an evidence-backed AI software engineering team built on [AgentTeams](https://github.com/agentscope-ai/AgentTeams).
 
 > [!NOTE]
-> v0.4.1 is the latest source release and records the completed OpenClaw runtime migration. Current development has implemented the M0 Work/WorkSpec/Plan/Task/Result foundation, Leader Room routing, Decision-free CloseGuard contract, generic `tg-worker` image contract, and MemberConfig runtime/model routing. The full Agents, Skills, chat-first Web, and real-project product vertical remain subsequent milestones. See the [v0.4.1 release notes](docs/releases/v0.4.1.md), [product MVP](docs/design/product-mvp.zh.md), and [changelog](CHANGELOG.md).
+> v0.4.1 is the latest source release and records the completed OpenClaw runtime migration. Current development has implemented the M0 coordination foundation plus M1/M2: six long-lived Agent packages, independent Work/Task logical-session projections, capability profiles, and six preinstalled portable product Skills with installed ∩ allowed enforcement and visible usage metadata. The chat-first Web and real-project product vertical remain subsequent milestones. See the [v0.4.1 release notes](docs/releases/v0.4.1.md), [product MVP](docs/design/product-mvp.zh.md), and [changelog](CHANGELOG.md).
 >
 > The implementation-independent target is defined by the [team-control design](docs/design/evidence-backed-team-control.md) ([中文](docs/design/evidence-backed-team-control.zh.md)). The first public product slice is specified separately in the [product MVP design（中文）](docs/design/product-mvp.zh.md); it does not claim those capabilities already exist.
 
@@ -69,7 +69,7 @@ Run `make help` for the complete command list. Uninstall removes the Tiangong-ow
 
 ### OpenClaw-native Worker image smoke test
 
-The local Worker image extends the public AgentTeams `v1.2.2` Worker image at an immutable digest and retains its pinned Node.js `22.23.2` runtime. Model turns run in OpenClaw's embedded runtime; coding turns use OpenClaw's official Codex app-server path. Tiangong contributes only its control plugin, role tools, gates, coordination, and evidence.
+The local Worker image extends the public AgentTeams `v1.2.2` Worker image at an immutable digest and retains its pinned Node.js `22.23.2` runtime. Model turns run in OpenClaw's embedded runtime; coding turns use OpenClaw's official Codex app-server path. Tiangong contributes only its control plugin, Agent/Skill tools, gates, coordination, and direct machine facts.
 
 With AgentTeams running, choose the fast channel smoke or the full approval smoke:
 
@@ -94,7 +94,10 @@ The current runtime is intentionally constrained:
 - provider credentials stay deployment-scoped and are injected by the selected OpenClaw runtime only in memory;
 - unapproved OpenClaw extensions, prompt templates, and automatic repository context are disabled;
 - one generic `tg-worker` image is configured by authenticated AgentTeams identity, MemberConfig, ControlProfile, and deployment-owned runtime bindings; image names, prompts, and Task text cannot grant a responsibility or capability;
-- runtime and model are fixed by the current MemberConfig projection, checked before OpenClaw configuration mutation, and have no automatic fallback;
+- runtime, model, Agent package, capability profile, and allowed Skill set are fixed by the current MemberConfig projection and checked before OpenClaw configuration mutation and on each new turn;
+- the six initial Agent packages are Leader, Architect, Challenger, Developer, Reviewer, and Tester; Leader uses one logical session per Work and every professional Task receives its own deterministic logical session reference;
+- each top-level tool call is checked against the current Agent package capability profile; unknown generic host tools fail closed, and the native Runner additionally requires the Developer package, Codex runtime, and `local-development` capability;
+- product Skill authority is exactly the digest-locked Agent-package installation intersected with `MemberConfig.allowedSkills`; the Agent selects an enabled Skill through `tiangong_use_skill`, and the bounded ToolResult records its ID/version/content digest without granting capabilities;
 - OpenClaw owns its conversation/session persistence; Tiangong coordination and control state uses independent protected storage, so conversation reset cannot erase product facts;
 - restartable writes persist a digest-bound operation envelope and a separate mode-`600` content payload under that state directory; raw write content never enters Evidence, but is visible to principals with Worker storage administration access and follows explicit operation retention;
 - only gated `read` and path-restricted, atomic `write` are active; `write` requires persisted approval from the same authenticated Matrix sender that requested it, ignores upstream owner assertions for authorization, supports restart recovery, and blocks duplicate execution;
@@ -154,14 +157,17 @@ Evidence rotates at 16 MiB into ordered segments whose ranges and terminal hashe
 
 Do not expose this profile beyond one machine. A multi-user deployment requires a different, deliberately designed identity, TLS, storage, network, secret-management, and container-isolation model.
 
-## Maintainer Skills
+## Agent and maintainer Skills
 
-Portable project Skills under [`.agents/skills/`](./.agents/skills/) guide Skill authoring and the design and execution of Tiangong smoke tests. They are maintainer workflows loaded only after project trust; they are not yet product Worker Skills.
+Six product Skills under [`worker/skills/`](./worker/skills/) ship in `tg-worker`: `work-coordination`, `work-planning`, `plan-challenge`, `test-driven-development`, `independent-code-review`, and `scenario-testing`. Their packages include trigger truth tables and deterministic success/blocked/cleanup cases. Agent packages under [`worker/agent-packages/`](./worker/agent-packages/) lock each installed Skill version and content digest; MemberConfig enables only a subset.
 
-Validate their structure, public-safety checks, and trigger cases with:
+Portable maintainer Skills under [`.agents/skills/`](./.agents/skills/) remain repository workflows loaded only after project trust and are not Worker product Skills.
+
+Validate both product and maintainer Skill structures, public-safety checks, trigger cases, Agent package locks, and behavior-case shape with:
 
 ```bash
 make check-skills
+make test-product-agent-skills
 ```
 
 ## Development

@@ -8,7 +8,7 @@
       :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #0b1020; color: #e8ecf4; }
       body { max-width: 960px; margin: 0 auto; padding: 48px 24px; }
       .card { border: 1px solid #2d3852; border-radius: 12px; padding: 20px; background: #121a2d; }
-      .work { margin-top: 16px; padding-top: 16px; border-top: 1px solid #2d3852; }
+      .work, .agent { margin-top: 16px; padding-top: 16px; border-top: 1px solid #2d3852; }
       .muted { color: #9da9bf; }
       code { color: #a9d4ff; }
     </style>
@@ -19,6 +19,7 @@
     <section class="card" aria-live="polite">
       <h2 id="status">Loading runtime facts…</h2>
       <p id="tool-summary" class="muted">ToolResult observations: unknown</p>
+      <div id="agents" class="muted">Agent projection: unknown</div>
       <div id="works" class="muted">Work projection: unknown</div>
       <pre id="facts">{}</pre>
     </section>
@@ -29,6 +30,23 @@
         document.querySelector('#tool-summary').textContent = facts.toolResultsSource === 'tool-result-capture-file'
           ? `Bounded ToolResult observations: ${toolResults.length}`
           : 'ToolResult observations: unknown';
+        const agents = Array.isArray(facts.agents) ? facts.agents : [];
+        const agentContainer = document.querySelector('#agents');
+        agentContainer.replaceChildren();
+        agentContainer.textContent = `Agent projection: ${agents.length} configured member(s)`;
+        for (const agent of agents) {
+          const card = document.createElement('article');
+          card.className = 'agent';
+          const heading = document.createElement('h3');
+          heading.textContent = `${agent.responsibility} · ${agent.status} · ${agent.model}`;
+          const summary = document.createElement('p');
+          summary.textContent = `${agent.agentPackageId}@${agent.agentPackageVersion}; active Tasks ${agent.activeTasks.length}; enabled Skills ${agent.allowedSkills.join(', ') || 'none'}`;
+          const used = document.createElement('p');
+          used.className = 'muted';
+          used.textContent = `Actually used Skills: ${agent.usedSkills.map((skill) => `${skill.skillId}@${skill.version}`).join(', ') || 'none observed'}`;
+          card.append(heading, summary, used);
+          agentContainer.append(card);
+        }
         const works = Array.isArray(facts.works) ? facts.works : [];
         const workContainer = document.querySelector('#works');
         workContainer.replaceChildren();

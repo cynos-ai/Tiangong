@@ -20,7 +20,7 @@ const taskSpec = createTaskSpec({
 function fakeFetch(calls) {
   return async (url, init = {}) => {
     calls.push({ url: String(url), init });
-    if (String(url).endsWith(`/tasks/${taskSpec.taskId}`)) return new Response(JSON.stringify({ task: { spec: taskSpec, status: "assigned" } }), { status: 200 });
+    if (String(url).endsWith(`/tasks/${taskSpec.taskId}`)) return new Response(JSON.stringify({ task: { spec: taskSpec, sessionRef: "member-logical-session-hooks", status: "assigned" } }), { status: 200 });
     if (String(url).endsWith(`/works/${taskSpec.workId}`)) return new Response(JSON.stringify({ work: { work: { workId: taskSpec.workId, teamId: "team-hooks" }, epoch: 1 } }), { status: 200 });
     if (String(url).endsWith("/results")) return new Response(JSON.stringify({ replayed: false, result: { taskId: taskSpec.taskId }, wake: { kind: "result-notification" } }), { status: 200 });
     return new Response(JSON.stringify({ error: "NOT_FOUND" }), { status: 404 });
@@ -45,8 +45,15 @@ test("member OpenClaw hooks fetch the immutable TaskSpec and submit one bounded 
   assert.equal(JSON.stringify(body).includes(TOKEN), false);
 });
 
+test("member OpenClaw hooks enforce one active OpenClaw session owner per Task", async () => {
+  const hooks = createMemberCoordinationHooks({ endpoint: ENDPOINT, token: TOKEN, memberId: MEMBER_ID, fetchImpl: fakeFetch([]) });
+  const prompt = { prompt: "Tiangong Task assigned: work=work-hooks task=task-hooks." };
+  await hooks.beforePromptBuild(prompt, { sessionKey: "member-session-owner" });
+  await assert.rejects(() => hooks.beforePromptBuild(prompt, { sessionKey: "member-session-racer" }), /TASK_SESSION_ALREADY_ACTIVE/u);
+});
+
 test("member OpenClaw hooks reject an assignment for another Worker", async () => {
-  const hooks = createMemberCoordinationHooks({ endpoint: ENDPOINT, token: TOKEN, memberId: MEMBER_ID, fetchImpl: async () => new Response(JSON.stringify({ task: { spec: { ...taskSpec, assigneeMemberId: "other-member" }, status: "assigned" } }), { status: 200 }) });
+  const hooks = createMemberCoordinationHooks({ endpoint: ENDPOINT, token: TOKEN, memberId: MEMBER_ID, fetchImpl: async () => new Response(JSON.stringify({ task: { spec: { ...taskSpec, assigneeMemberId: "other-member" }, sessionRef: "member-logical-session-wrong", status: "assigned" } }), { status: 200 }) });
   await assert.rejects(
     () => hooks.beforePromptBuild({ prompt: "Tiangong Task assigned: work=work-hooks task=task-hooks." }, { sessionKey: "member-session-wrong" }),
     /not bound to this Worker/u,

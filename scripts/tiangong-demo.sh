@@ -145,7 +145,8 @@ start_demo() {
 
 send_to_leader() {
   require_stack
-  local message="${*:-请介绍这支 Tiangong 团队的五个角色，并提出一个只读的 design Task。不要执行写操作。}"
+  [[ "${TIANGONG_DEMO_M1_RUNTIME_READY:-0}" == 1 ]] || die "M1 Agent package and Coordination bindings are not proven; inject all six MemberConfigs before sending and set TIANGONG_DEMO_M1_RUNTIME_READY=1."
+  local message="${*:-请介绍这支 Tiangong 团队的六个专业成员，并提出一个只读的规划 Task。不要执行写操作。}"
   local team_json leader_uid leader_room
   team_json="$(docker exec "${MANAGER_CONTAINER}" agt get workers "${LEADER_NAME}" -o json)"
   leader_uid="$(jq -er '.matrixUserID' <<<"${team_json}")"
@@ -209,8 +210,10 @@ Usage: scripts/tiangong-demo.sh <start|run|send|show|status|stop>
   status             show Team/Worker state and browser URLs
   stop               delete only the tiangong-demo-* resources
 
-The demo uses the existing local DeepSeek default route and prebuilt Worker images.
-It does not modify provider configuration or persist credentials.
+The demo uses the existing local DeepSeek route and prebuilt generic Worker image.
+start provisions only AgentTeams resources. run/send require deployment-proven M1
+MemberConfig and Coordination bindings plus TIANGONG_DEMO_M1_RUNTIME_READY=1.
+The script does not modify provider configuration or persist credentials.
 EOF
 }
 

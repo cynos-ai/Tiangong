@@ -1,0 +1,5 @@
+{
+  "success": [{"name":"disposable-scenarios","given":"owned fixture and exact Commit","expect":["normal and failure observations","bounded ToolResults","cleanup verified"]}],
+  "blocked": [{"name":"production-target","given":"target is shared or production","expect":["execution refused","no external call","bounded failure Result"]}],
+  "cleanup": [{"name":"owned-resources","expect":["created resource list recorded","all owned resources absent after run"]}]
+}

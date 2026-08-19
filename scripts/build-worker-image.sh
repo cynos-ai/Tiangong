@@ -74,6 +74,10 @@ run_image --rm --entrypoint node "${IMAGE}" --input-type=module -e '
   const plugin = await import("/opt/tiangong-worker/plugin/index.mjs");
   if (plugin.default?.id !== "tiangong-control") process.exit(1);
   const { assertMemberRuntimeRoute } = await import("/opt/tiangong-worker/agent/runtime-routing.mjs");
+  const { loadAgentPackages } = await import("/opt/tiangong-worker/agent/packages/loader.mjs");
+  const { loadInstalledSkills } = await import("/opt/tiangong-worker/agent/skills/catalog.mjs");
+  const [agents, skills] = await Promise.all([loadAgentPackages(), loadInstalledSkills()]);
+  if (agents.packages.length !== 6 || skills.skills.length !== 6 || await import("node:fs").then(({ existsSync }) => existsSync("/opt/tiangong-worker/legacy"))) process.exit(1);
   assertMemberRuntimeRoute({ responsibility: "leader", configuredRuntime: "openclaw-built-in", configuredModel: "deepseek-chat", selectedRuntime: "openclaw-built-in", selectedModel: "deepseek-chat" });
   assertMemberRuntimeRoute({ responsibility: "developer", configuredRuntime: "codex-app-server", configuredModel: "deepseek-v4-flash", selectedRuntime: "codex-app-server", selectedModel: "deepseek-v4-flash" });
 '

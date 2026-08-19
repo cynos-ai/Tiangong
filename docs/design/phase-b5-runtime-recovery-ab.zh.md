@@ -53,7 +53,7 @@ tiangong-work-run reconcile <run-id> --action resume|abandon \
 
 B5 A/B 必须固定同一 repo/commit、Task、模型、预算、环境和 capability，然后分别记录 runtime 路由、ToolResult/Result、测试和 local commit 事实。单次模型成功、模型自评或“看起来完成”不构成通过条件。真实 OpenClaw built-in 与受限 Codex 的质量/安全 A/B 必须在独立 canary Team 中执行，并保留 WebUI、Matrix、重启、取消和 cleanup 的直接机器事实。
 
-当前公开代码已提供可重复的 MemberConfig runtime/model 路由、owner/recovery 合同、B4 Codex/Runner/Coordination/WebUI/Matrix seam，以及 `scripts/inject-member-runtime-docker.sh` 部署注入器。注入器只接受显式责任、runtime 和 model，只重建受支持的单 auth-volume Worker 拓扑、保留安全边界，并在新容器内校验路由。2026-08-16 的 fresh Team 启动验证真实通过五个角色的路由门和 `readyWorkers=4/4`；2026-08-17 的 Gate B `ab23` 又完成了同一 Team 的 Task/ToolResult/Leader relay、重启恢复、Matrix/WebUI seam 和精确 cleanup。
+当前公开代码已提供可重复的 MemberConfig Agent package/capability/allowedSkills/runtime/model 路由、owner/recovery 合同、B4 Codex/Runner/Coordination/WebUI/Matrix seam，以及 `scripts/inject-member-runtime-docker.sh` 部署注入器。注入器只接受显式责任、Agent package/version、capability profile、allowedSkills、runtime 和 model，只重建受支持的单 auth-volume Worker 拓扑、保留安全边界，并在新容器内校验 Agent package、Skill digest lock 和模型路由。2026-08-16 的 fresh Team 启动验证真实通过五个角色的路由门和 `readyWorkers=4/4`；2026-08-17 的 Gate B `ab23` 又完成了同一 Team 的 Task/ToolResult/Leader relay、重启恢复、Matrix/WebUI seam 和精确 cleanup。
 
 ## 5. Gate B 与真实 coding A/B 结果（2026-08-17）
 

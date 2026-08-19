@@ -9,11 +9,14 @@ All notable changes to Tiangong are documented here. Tiangong follows Semantic V
 - Added durable Room-level Matrix message admission, Leader routing to an open or new Work, bounded backlog metrics, and authenticated association correction without copying Human message bodies.
 - Added Work display titles, nullable initial WorkSpec, immutable Plan ContentRefs, and Work/Task/Result projections for the product path.
 - Added Leader OpenClaw hooks and tools for routing, WorkSpec/Plan changes, dynamic Tasks, cancellation, and Work completion/stopping.
+- Added six versioned long-lived Agent packages for Leader, Architect, Challenger, Developer, Reviewer, and Tester, with fixed runtime/model, capability profile, and one-Work/one-Task logical-session policy.
+- Added six portable product Skills with trigger and behavior cases, digest locks, installed ∩ `MemberConfig.allowedSkills` resolution, autonomous `tiangong_use_skill` selection, and bounded ToolResult usage metadata.
+- Added read-only runtime projections for configured Agents, active Tasks, logical sessions, enabled Skills, and actually observed Skill use.
 
 ### Changed
 
 - Replaced per-Task acceptance decisions with Result/cancellation projection and machine-fact CloseGuard checks.
-- Replaced role-specific Worker image targets with one generic `tg-worker` contract and MemberConfig-bound responsibility/runtime/model routing. Developer uses Codex app-server with `deepseek-v4-flash`; the other initial responsibilities use OpenClaw built-in with no automatic fallback.
+- Replaced role-specific Worker image targets with one generic `tg-worker` contract and MemberConfig-bound responsibility/runtime/model/Agent-package routing. Developer uses Codex app-server with `deepseek-v4-flash`; the other initial responsibilities use OpenClaw built-in with no automatic fallback.
 - Made the documented Phase C contract entrypoint and nested shell calls repeatable in a Linux tracked checkout.
 
 ### Removed
@@ -23,7 +26,8 @@ All notable changes to Tiangong are documented here. Tiangong follows Semantic V
 
 ### Verification
 
-- The deterministic Phase C boundary, Worker tests, App tests, generic demo contract, and MemberConfig injection contract pass. PostgreSQL tests remain opt-in when a disposable database is available.
+- The deterministic Phase C boundary, Worker tests, product Agent/Skill package checks, generic demo contract, and six-responsibility MemberConfig injection contract pass.
+- The full App suite passes `21/21` against an owned disposable PostgreSQL 16 container, including Task SessionRef persistence, Room routing, correction, restart, and cleanup; without injected test variables the same four PostgreSQL cases remain explicit skips.
 
 ## [0.4.1] - 2026-08-19
 

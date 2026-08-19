@@ -35,8 +35,8 @@ function coordinationTaskSpec(task) {
 
 function assertImplementorAssignment({ task, member, projectBinding, taskBinding }) {
   const spec = coordinationTaskSpec(task);
-  if (!isMemberConfig(member) || member.role !== "implementor" || !member.enabled) {
-    throw new Error("Native Runner deployment requires an enabled Implementor MemberConfig");
+  if (!isMemberConfig(member) || !["developer", "implementor"].includes(member.role) || !member.enabled || member.capabilityProfile !== "local-development") {
+    throw new Error("Native Runner deployment requires an enabled Developer MemberConfig with local-development capability");
   }
   if (!isProjectBinding(projectBinding) || !isTaskBinding(taskBinding)) {
     throw new Error("Native Runner deployment requires immutable legacy Project/Task bindings");
@@ -143,7 +143,7 @@ export async function materializeNativeRunnerBinding({ filePath, binding } = {})
   return Object.freeze({ path: target, binding: validated, replayed: false });
 }
 
-/** Environment injected by the deployment layer into the Implementor Worker. */
+/** Environment injected by the deployment layer into the Developer Worker. */
 export function nativeRunnerWorkerEnvironment({ bindingPath, journalPath, memberId, workerName } = {}) {
   const bindingFile = requireAbsolutePath(bindingPath, "native Runner binding file");
   const journalFile = requireAbsolutePath(journalPath, "native Runner journal file");

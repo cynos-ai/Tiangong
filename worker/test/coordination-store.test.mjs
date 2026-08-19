@@ -47,7 +47,10 @@ test("M0 Task projects assigned/reported and complete-work needs no Coordination
   const value = await fixture(t); const routed = await newWork(value); let work = (await formSpec(value, routed.work)).work;
   const task = createTaskSpec({ taskId: "task-1", workId: work.work.workId, assigneeMemberId: value.developer.memberId, objective: "Implement", inputs: [], constraints: ["no push"], createdAt: NOW });
   const assigned = await value.store.createTask({ task, team: value.team, member: value.developer, profile: value.profile, actorId: value.leader.memberId, expectedEpoch: work.epoch, requestId: "task-1" });
-  assert.equal(assigned.task.status, "assigned"); work = await value.store.getWork(work.work.workId);
+  assert.equal(assigned.task.status, "assigned"); assert.match(assigned.task.sessionRef, /^member-[a-f0-9]{48}$/u);
+  const reopenedForSession = new CoordinationStore({ filePath: join(value.root, "state.json"), now: () => NOW });
+  assert.equal((await reopenedForSession.getTask(task.taskId)).sessionRef, assigned.task.sessionRef);
+  assert.notEqual(assigned.task.sessionRef, work.work.leaderSessionId); work = await value.store.getWork(work.work.workId);
   await assert.rejects(value.store.closeWork({ workId: work.work.workId, team: value.team, profile: value.profile, actorId: value.leader.memberId, action: "complete", reason: "too early", expectedEpoch: work.epoch, requestId: "close-early" }), /WORK_CLOSE_GUARD_FAILED/u);
   const result = createResult({ workId: work.work.workId, taskId: task.taskId, submittedBy: value.developer.memberId, summary: "Implemented and tested", deliverableRefs: [], toolResultRefs: [], createdAt: NOW });
   await value.store.submitResult({ result, team: value.team, member: value.developer, profile: value.profile, actorId: value.developer.memberId, expectedEpoch: work.epoch, requestId: "result-1" });

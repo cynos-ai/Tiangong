@@ -27,6 +27,28 @@ member_responsibility() {
   esac
 }
 
+member_capability() {
+  case "$1" in
+    leader) printf 'coordination-control\n' ;;
+    architect|challenger|reviewer) printf 'project-read-only\n' ;;
+    developer) printf 'local-development\n' ;;
+    tester) printf 'controlled-testing\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+member_skills() {
+  case "$1" in
+    leader) printf 'work-coordination,work-planning\n' ;;
+    architect) printf 'work-planning,plan-challenge\n' ;;
+    challenger) printf 'plan-challenge\n' ;;
+    developer) printf 'test-driven-development,independent-code-review,scenario-testing\n' ;;
+    reviewer) printf 'independent-code-review\n' ;;
+    tester) printf 'scenario-testing\n' ;;
+    *) return 1 ;;
+  esac
+}
+
 sidecar_container_name() {
   local worker_id="$1" prefix='tiangong-opencodex-' suffix digest
   suffix="$(printf '%s' "${worker_id}" | tr -cd 'A-Za-z0-9_.-' | cut -c1-96)"
@@ -437,6 +459,10 @@ for pair in \
   TIANGONG_MEMBER_RESPONSIBILITY="${responsibility}" \
     TIANGONG_MEMBER_RUNTIME="${runtime}" \
     TIANGONG_MEMBER_MODEL="${model}" \
+    TIANGONG_MEMBER_AGENT_PACKAGE_ID="tiangong-${responsibility}" \
+    TIANGONG_MEMBER_AGENT_PACKAGE_VERSION=1.0.0 \
+    TIANGONG_MEMBER_CAPABILITY_PROFILE="$(member_capability "${responsibility}")" \
+    TIANGONG_MEMBER_ALLOWED_SKILLS="$(member_skills "${responsibility}")" \
     TIANGONG_MEMBER_COORDINATION_CONTROL_ENDPOINT="http://${COORD_CONTAINER}:8780/v1/coordination/admit" \
     TIANGONG_MEMBER_COORDINATION_CONTROL_TOKEN="${CONTROL_TOKEN}" \
     TIANGONG_MEMBER_ALLOW_STOPPED=1 \
@@ -470,6 +496,10 @@ for pair in \
   TIANGONG_MEMBER_RESPONSIBILITY="${responsibility}" \
   TIANGONG_MEMBER_RUNTIME="${runtime}" \
   TIANGONG_MEMBER_MODEL="${model}" \
+  TIANGONG_MEMBER_AGENT_PACKAGE_ID="tiangong-${responsibility}" \
+  TIANGONG_MEMBER_AGENT_PACKAGE_VERSION=1.0.0 \
+  TIANGONG_MEMBER_CAPABILITY_PROFILE="$(member_capability "${responsibility}")" \
+  TIANGONG_MEMBER_ALLOWED_SKILLS="$(member_skills "${responsibility}")" \
   TIANGONG_MEMBER_COORDINATION_CONTROL_ENDPOINT="http://${COORD_CONTAINER}:8780/v1/coordination/admit" \
   TIANGONG_MEMBER_COORDINATION_CONTROL_TOKEN="${CONTROL_TOKEN}" \
   TIANGONG_MEMBER_ALLOW_STOPPED=1 \

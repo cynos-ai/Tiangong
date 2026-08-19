@@ -32,6 +32,7 @@ function json(value) { return value ?? null; }
 function iso(value) { return new Date(value).toISOString(); }
 function commandHash(scope, value) { return sha256({ scope, value }); }
 function sessionFor(workId, teamId, routeId) { return `leader-${sha256({ workId, teamId, routeId }).slice(0, 48)}`; }
+function taskSessionFor(task, teamId) { return `member-${sha256({ teamId, workId: task.workId, taskId: task.taskId, assigneeMemberId: task.assigneeMemberId }).slice(0, 48)}`; }
 function workIdFor(teamId, routeId, eventId) { return `work-${sha256({ teamId, routeId, eventId }).slice(0, 48)}`; }
 function dbError(error, fallback) { if (error?.code === "23505") return Object.assign(new Error(fallback), { code: fallback }); return error; }
 
@@ -64,7 +65,7 @@ function taskFrom(row) {
   if (!row) return undefined;
   const result = row.result_json ? clone(row.result_json) : null;
   const cancellation = row.cancellation_json ? clone(row.cancellation_json) : null;
-  return { spec: clone(row.spec_json), status: result ? "reported" : cancellation ? "cancelled" : "assigned", result, cancellation };
+  return { spec: clone(row.spec_json), sessionRef: row.session_ref, status: result ? "reported" : cancellation ? "cancelled" : "assigned", result, cancellation };
 }
 function wakeFrom(row) {
   return { wakeId: row.wake_id, ...(row.work_id ? { workId: row.work_id } : {}), ...(row.task_id ? { taskId: row.task_id } : {}), kind: row.kind, targetMemberId: row.target_member_id, status: row.status, ...(row.consumer_id ? { consumerId: row.consumer_id } : {}), ...(row.receipt_id ? { receiptId: row.receipt_id } : {}), createdAt: iso(row.created_at), ...(row.claimed_at ? { claimedAt: iso(row.claimed_at) } : {}), ...(row.acked_at ? { ackedAt: iso(row.acked_at) } : {}) };
@@ -192,7 +193,7 @@ export class PostgresCoordinationStore {
         await appendTimeline(client, { workId: target, type: "matrix-message-associated", at, epoch, requestId: request, actorId, payload: { roomId, eventId, humanActorId: admission.actor_id } });
         entry = await readWork(client, target);
       } else {
-        const id = workIdFor(team.teamId, route.routeId, eventId); const work = workRecord({ workId: id, teamId: team.teamId, routeId: route.routeId, roomId, title: bounded(title, "title", 160), actorId: admission.actor_id, sourceEventId: eventId, controlProfileId: profile.profileId, leaderSessionId: leaderSessionId ?? sessionFor(id, team.teamId, route.routeId), createdAt: admission.received_at });
+        const id = workIdFor(team.teamId, route.routeId, eventId); const work = workRecord({ workId: id, teamId: team.teamId, routeId: route.routeId, roomId, title: bounded(title, "title", 160), actorId: admission.actor_id, sourceEventId: eventId, controlProfileId: profile.profileId, leaderSessionId: leaderSessionId ?? sessionFor(id, team.teamId, route.routeId), createdAt: iso(admission.received_at) });
         await client.query(`INSERT INTO ${SCHEMA}.work(work_id,team_id,route_id,room_id,actor_id,source_event_id,control_profile_id,leader_session_id,title,work_json,team_json,route_json,profile_json,current_work_spec,current_plan_ref,status,epoch,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,NULL,NULL,'open',0,$14,$14)`, [id, team.teamId, route.routeId, roomId, work.actorId, eventId, profile.profileId, work.leaderSessionId, work.title, json(work), json(team), json(route), json(profile), work.createdAt]);
         await appendTimeline(client, { workId: id, type: "work-created", at: work.createdAt, epoch: 0, requestId: request, actorId, payload: { work, source: { roomId, eventId, actorId: admission.actor_id } } });
         entry = await readWork(client, id);
@@ -227,7 +228,7 @@ export class PostgresCoordinationStore {
         const sourceResult = await client.query(`SELECT * FROM ${SCHEMA}.work WHERE work_id=$1 FOR UPDATE`, [current.work_id]); source = sourceResult.rows[0];
         if (!source || source.status !== "open" || Number(source.epoch) !== expectedSourceEpoch) throw new Error("MESSAGE_CORRECTION_SOURCE_CONFLICT");
         targetId = workIdFor(team.teamId, route.routeId, correctionEventId);
-        const work = workRecord({ workId: targetId, teamId: team.teamId, routeId: route.routeId, roomId, title: bounded(title, "title", 160), actorId: correction.actor_id, sourceEventId: correctionEventId, controlProfileId: profile.profileId, leaderSessionId: sessionFor(targetId, team.teamId, route.routeId), createdAt: correction.received_at });
+        const work = workRecord({ workId: targetId, teamId: team.teamId, routeId: route.routeId, roomId, title: bounded(title, "title", 160), actorId: correction.actor_id, sourceEventId: correctionEventId, controlProfileId: profile.profileId, leaderSessionId: sessionFor(targetId, team.teamId, route.routeId), createdAt: iso(correction.received_at) });
         await client.query(`INSERT INTO ${SCHEMA}.work(work_id,team_id,route_id,room_id,actor_id,source_event_id,control_profile_id,leader_session_id,title,work_json,team_json,route_json,profile_json,current_work_spec,current_plan_ref,status,epoch,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,NULL,NULL,'open',0,$14,$14)`, [targetId, team.teamId, route.routeId, roomId, work.actorId, correctionEventId, profile.profileId, work.leaderSessionId, work.title, json(work), json(team), json(route), json(profile), work.createdAt]);
         await appendTimeline(client, { workId: targetId, type: "work-created", at: work.createdAt, epoch: 0, requestId: request, actorId, payload: { work, source: { roomId, eventId: correctionEventId, actorId: correction.actor_id } } });
         target = (await client.query(`SELECT * FROM ${SCHEMA}.work WHERE work_id=$1 FOR UPDATE`, [targetId])).rows[0];
@@ -309,7 +310,7 @@ export class PostgresCoordinationStore {
       if (!work || work.status !== "open" || !work.current_work_spec || Number(work.epoch) !== expectedEpoch || work.team_id !== team.teamId || work.control_profile_id !== profile.profileId) throw new Error("TASK_WORK_CONFLICT");
       const count = await client.query(`SELECT count(*)::int AS count FROM ${SCHEMA}.task WHERE work_id=$1`, [task.workId]); if (Number(count.rows[0].count) >= profile.maxTasksPerWork) throw new Error("TASK_WORK_CONFLICT");
       await ensureTimelineRoom(client, task.workId, profile); const epoch = Number(work.epoch) + 1; const at = timestamp(task.createdAt, "task.createdAt");
-      await client.query(`INSERT INTO ${SCHEMA}.task(task_id,work_id,assignee_member_id,spec_json,created_at,updated_at) VALUES($1,$2,$3,$4::jsonb,$5,$5)`, [task.taskId, task.workId, member.memberId, json(task), at]).catch((error) => { throw dbError(error, "TASK_ALREADY_EXISTS"); });
+      await client.query(`INSERT INTO ${SCHEMA}.task(task_id,work_id,assignee_member_id,session_ref,spec_json,created_at,updated_at) VALUES($1,$2,$3,$4,$5::jsonb,$6,$6)`, [task.taskId, task.workId, member.memberId, taskSessionFor(task, team.teamId), json(task), at]).catch((error) => { throw dbError(error, "TASK_ALREADY_EXISTS"); });
       await client.query(`UPDATE ${SCHEMA}.work SET epoch=$2,updated_at=$3 WHERE work_id=$1`, [task.workId, epoch, at]); await appendTimeline(client, { workId: task.workId, type: "task-created", at, epoch, requestId: request, actorId, payload: { task } }); await saveReplay(client, request, "task.create", hash, { created: true });
       return { replayed: false, task: { spec: clone(task), status: "assigned", result: null, cancellation: null }, wake: null };
     });

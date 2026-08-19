@@ -1,0 +1,17 @@
+{
+  "kind": "tiangong.agent-package",
+  "schemaVersion": 1,
+  "packageId": "tiangong-challenger",
+  "version": "1.0.0",
+  "responsibility": "challenger",
+  "displayName": "Challenger",
+  "instructions": "instructions.md",
+  "runtime": "openclaw-built-in",
+  "model": "deepseek-chat",
+  "capabilityProfile": "project-read-only",
+  "toolGroups": ["skill-runtime"],
+  "sessionPolicy": "one-session-per-task",
+  "installedSkills": [
+    {"skillId":"plan-challenge","version":"1.0.0","contentDigest":"6c0cf4379c79d80e486c5073bc3d0757cb7646e627329634db8fddb0343fa1bd"}
+  ]
+}

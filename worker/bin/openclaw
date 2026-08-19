@@ -10,6 +10,7 @@ readonly CODEX_GATEWAY_PREFLIGHT="/opt/tiangong-worker/agent/preflight/codex-gat
 readonly CODEX_CAPABILITY_DETECTOR="/opt/tiangong-worker/agent/preflight/codex-capability-detection.mjs"
 readonly CODEX_CAPABILITY_CACHE="/opt/tiangong-worker/agent/preflight/codex-capability-cache.mjs"
 readonly RUNTIME_ROUTE_PREFLIGHT="/opt/tiangong-worker/scripts/runtime-route-preflight.mjs"
+readonly AGENT_PACKAGE_LOADER="/opt/tiangong-worker/agent/packages/loader.mjs"
 codex_home=""
 
 assert_member_runtime_route() {
@@ -30,9 +31,11 @@ assert_member_runtime_route() {
   OPENCLAW_AGENT_HARNESS_FALLBACK="${OPENCLAW_AGENT_HARNESS_FALLBACK:-none}" \
   /usr/bin/node --input-type=module -e '
     const { runtimeRouteFromEnvironment } = await import(process.argv[1]);
+    const { resolveAgentRuntimeFromEnvironment } = await import(process.argv[2]);
     const route = runtimeRouteFromEnvironment(process.env);
-    console.error(`tiangong_runtime_route=pass responsibility=${route.responsibility} runtime=${route.runtime} model=${route.model} fallback=${route.fallback} digest=${route.routeDigest}`);
-  ' "${RUNTIME_ROUTE_PREFLIGHT%/*}/../agent/runtime-routing.mjs"
+    const agent = await resolveAgentRuntimeFromEnvironment(process.env);
+    console.error(`tiangong_runtime_route=pass responsibility=${route.responsibility} runtime=${route.runtime} model=${route.model} fallback=${route.fallback} digest=${route.routeDigest} agentPackage=${agent.agentPackage.packageId}@${agent.agentPackage.version} effectiveSkills=${agent.effectiveSkills.length}`);
+  ' "${RUNTIME_ROUTE_PREFLIGHT%/*}/../agent/runtime-routing.mjs" "${AGENT_PACKAGE_LOADER}"
 }
 
 # AgentTeams v1.2.2 projects the controller credential as a root-readable

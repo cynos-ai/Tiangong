@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveMemberAgent } from "../../worker/agent/packages/loader.mjs";
 import { readLeaderRuntimeBinding } from "../../worker/agent/team/leader-runtime-config.mjs";
 import { createRuntimeConsoleServer } from "../server.mjs";
 import { createPostgresCoordinationStore } from "./bootstrap.mjs";
@@ -33,6 +34,7 @@ export async function startCoordinationRuntime(options = {}) {
     store = created.store;
   }
   if (!pool || typeof pool.end !== "function") pool = { async end() {} };
+  await Promise.all(binding.members.map((memberConfig) => resolveMemberAgent({ memberConfig })));
   await store.migrate();
   const matrixUrl = options.matrixUrl ?? process.env.AGENTTEAMS_MATRIX_URL ?? process.env.TIANGONG_MATRIX_URL;
   const matrixToken = options.matrixToken ?? process.env.TIANGONG_COORDINATION_MATRIX_TOKEN;
@@ -50,6 +52,7 @@ export async function startCoordinationRuntime(options = {}) {
     factsFile: options.factsFile,
     captureFile: options.captureFile,
     coordinationStore: store,
+    memberConfigs: binding.members,
     coordinationControl: {
       store,
       bearerToken: controlToken,

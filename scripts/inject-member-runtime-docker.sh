@@ -10,6 +10,10 @@ readonly CONTAINER="${TIANGONG_MEMBER_WORKER_CONTAINER:-}"
 readonly RESPONSIBILITY="${TIANGONG_MEMBER_RESPONSIBILITY:-}"
 readonly MEMBER_RUNTIME="${TIANGONG_MEMBER_RUNTIME:-}"
 readonly MEMBER_MODEL="${TIANGONG_MEMBER_MODEL:-}"
+readonly AGENT_PACKAGE_ID="${TIANGONG_MEMBER_AGENT_PACKAGE_ID:-}"
+readonly AGENT_PACKAGE_VERSION="${TIANGONG_MEMBER_AGENT_PACKAGE_VERSION:-}"
+readonly CAPABILITY_PROFILE="${TIANGONG_MEMBER_CAPABILITY_PROFILE:-}"
+readonly ALLOWED_SKILLS="${TIANGONG_MEMBER_ALLOWED_SKILLS:-}"
 readonly DOCKER_COMMAND="${TIANGONG_DOCKER_COMMAND:-docker}"
 readonly NETWORK="${TIANGONG_AGENTTEAMS_NETWORK:-agentteams-net}"
 readonly OWNER="${TIANGONG_DEPLOYMENT_OWNER:-tiangong-deployment}"
@@ -58,6 +62,8 @@ valid_name() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]; }
 valid_responsibility() { [[ "$1" =~ ^(leader|architect|challenger|developer|reviewer|tester)$ ]]; }
 valid_runtime() { [[ "$1" =~ ^(openclaw-built-in|codex-app-server)$ ]]; }
 valid_model() { [[ "$1" =~ ^[A-Za-z0-9._:/-]{1,128}$ ]]; }
+valid_package_version() { [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; }
+valid_skill_list() { [[ -z "$1" || "$1" =~ ^[a-z0-9]+(-[a-z0-9]+)*(,[a-z0-9]+(-[a-z0-9]+)*)*$ ]]; }
 valid_volume_name() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]; }
 valid_endpoint() {
   [[ "$1" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?/v1/coordination/admit$ ]] || return 1
@@ -95,6 +101,25 @@ valid_name "${CONTAINER}" || fail WORKER_CONTAINER_INVALID
 valid_responsibility "${RESPONSIBILITY}" || fail RESPONSIBILITY_INVALID
 valid_runtime "${MEMBER_RUNTIME}" || fail MEMBER_RUNTIME_INVALID
 valid_model "${MEMBER_MODEL}" || fail MEMBER_MODEL_INVALID
+[[ "${AGENT_PACKAGE_ID}" == "tiangong-${RESPONSIBILITY}" ]] || fail AGENT_PACKAGE_ID_INVALID
+valid_package_version "${AGENT_PACKAGE_VERSION}" || fail AGENT_PACKAGE_VERSION_INVALID
+valid_skill_list "${ALLOWED_SKILLS}" || fail ALLOWED_SKILLS_INVALID
+case "${RESPONSIBILITY}:${CAPABILITY_PROFILE}" in
+  leader:coordination-control|architect:project-read-only|challenger:project-read-only|developer:local-development|reviewer:project-read-only|tester:controlled-testing) ;;
+  *) fail CAPABILITY_PROFILE_MISMATCH ;;
+esac
+if [[ -n "${ALLOWED_SKILLS}" ]]; then
+  IFS=',' read -r -a configured_skills <<<"${ALLOWED_SKILLS}"
+  declare -A seen_skills=()
+  for skill_id in "${configured_skills[@]}"; do
+    [[ -z "${seen_skills[$skill_id]:-}" ]] || fail ALLOWED_SKILLS_DUPLICATE
+    seen_skills[$skill_id]=1
+    case "${RESPONSIBILITY}:${skill_id}" in
+      leader:work-coordination|leader:work-planning|architect:work-planning|architect:plan-challenge|challenger:plan-challenge|developer:test-driven-development|developer:independent-code-review|developer:scenario-testing|reviewer:independent-code-review|tester:scenario-testing) ;;
+      *) fail SKILL_NOT_INSTALLED_FOR_AGENT ;;
+    esac
+  done
+fi
 if [[ "${RESPONSIBILITY}" == developer ]]; then
   [[ "${MEMBER_RUNTIME}" == codex-app-server ]] || fail RUNTIME_RESPONSIBILITY_MISMATCH
 else
@@ -214,6 +239,10 @@ jq -r '.[0].Config.Env[]?
        $key == "TIANGONG_MEMBER_RESPONSIBILITY" or
        $key == "TIANGONG_MEMBER_RUNTIME" or
        $key == "TIANGONG_MEMBER_MODEL" or
+       $key == "TIANGONG_MEMBER_AGENT_PACKAGE_ID" or
+       $key == "TIANGONG_MEMBER_AGENT_PACKAGE_VERSION" or
+       $key == "TIANGONG_MEMBER_CAPABILITY_PROFILE" or
+       $key == "TIANGONG_MEMBER_ALLOWED_SKILLS" or
        $key == "TIANGONG_SELECTED_MODEL" or
        $key == "TIANGONG_CODEX_RUNTIME" or
        $key == "TIANGONG_RUNTIME_LANE" or
@@ -230,8 +259,8 @@ jq -r '.[0].Config.Env[]?
        $key == "OPENCLAW_AGENT_HARNESS_FALLBACK" or
        ($key | startswith("TIANGONG_CODEX_"))) | not)' "${inspect_file}" >"${env_file}"
 {
-  printf 'TIANGONG_MEMBER_RESPONSIBILITY=%s\nTIANGONG_MEMBER_RUNTIME=%s\nTIANGONG_MEMBER_MODEL=%s\nTIANGONG_SELECTED_MODEL=%s\nTIANGONG_MEMBER_RUNTIME_ROUTING_REQUIRED=%s\nTIANGONG_CODEX_RUNTIME=%s\nOPENCLAW_AGENT_HARNESS_FALLBACK=none\nOPENCLAW_AGENT_RUNTIME=%s\nOPENCLAW_CODEX_DISCOVERY_LIVE=%s\nCODEX_HOME=/root/.codex\n' \
-    "${RESPONSIBILITY}" "${MEMBER_RUNTIME}" "${MEMBER_MODEL}" "${MEMBER_MODEL}" "${ROUTING_REQUIRED}" "${CODEX_RUNTIME}" "${OPENCLAW_RUNTIME}" "${CODEX_RUNTIME}"
+  printf 'TIANGONG_MEMBER_RESPONSIBILITY=%s\nTIANGONG_MEMBER_RUNTIME=%s\nTIANGONG_MEMBER_MODEL=%s\nTIANGONG_MEMBER_AGENT_PACKAGE_ID=%s\nTIANGONG_MEMBER_AGENT_PACKAGE_VERSION=%s\nTIANGONG_MEMBER_CAPABILITY_PROFILE=%s\nTIANGONG_MEMBER_ALLOWED_SKILLS=%s\nTIANGONG_SELECTED_MODEL=%s\nTIANGONG_MEMBER_RUNTIME_ROUTING_REQUIRED=%s\nTIANGONG_CODEX_RUNTIME=%s\nOPENCLAW_AGENT_HARNESS_FALLBACK=none\nOPENCLAW_AGENT_RUNTIME=%s\nOPENCLAW_CODEX_DISCOVERY_LIVE=%s\nCODEX_HOME=/root/.codex\n' \
+    "${RESPONSIBILITY}" "${MEMBER_RUNTIME}" "${MEMBER_MODEL}" "${AGENT_PACKAGE_ID}" "${AGENT_PACKAGE_VERSION}" "${CAPABILITY_PROFILE}" "${ALLOWED_SKILLS}" "${MEMBER_MODEL}" "${ROUTING_REQUIRED}" "${CODEX_RUNTIME}" "${OPENCLAW_RUNTIME}" "${CODEX_RUNTIME}"
   printf 'TIANGONG_MEMBER_ID=%s\nTIANGONG_COORDINATION_CONTROL_ENDPOINT=%s\nTIANGONG_COORDINATION_CONTROL_TOKEN=%s\n' \
     "${member_id}" "${COORDINATION_ENDPOINT}" "${COORDINATION_TOKEN}"
   printf 'AGENTTEAMS_AI_GATEWAY_URL=%s\nAGENTTEAMS_AI_GATEWAY_DOMAIN=%s\nTIANGONG_RUNTIME_LANE=%s\n' \
@@ -303,11 +332,13 @@ new_started=1
 # shellcheck disable=SC2016
 MSYS_NO_PATHCONV=1 "${DOCKER_COMMAND}" exec "${CONTAINER}" node --input-type=module -e '
   const { runtimeRouteFromEnvironment } = await import("/opt/tiangong-worker/agent/runtime-routing.mjs");
+  const { resolveAgentRuntimeFromEnvironment } = await import("/opt/tiangong-worker/agent/packages/loader.mjs");
   const route = runtimeRouteFromEnvironment(process.env);
-  console.log(`member_route=pass responsibility=${route.responsibility} runtime=${route.runtime} model=${route.model} fallback=${route.fallback} digest=${route.routeDigest}`);
+  const agent = await resolveAgentRuntimeFromEnvironment(process.env);
+  console.log(`member_route=pass responsibility=${route.responsibility} runtime=${route.runtime} model=${route.model} fallback=${route.fallback} digest=${route.routeDigest} agentPackage=${agent.agentPackage.packageId}@${agent.agentPackage.version} effectiveSkills=${agent.effectiveSkills.length}`);
 ' >/dev/null 2>&1 || fail ROUTE_VERIFY_FAILED
 
 "${DOCKER_COMMAND}" rm "${backup}" >/dev/null 2>&1 || fail OLD_WORKER_CLEANUP_FAILED
 backup=''
-printf 'member_runtime_injection=pass container=%s responsibility=%s runtime=%s model=%s\n' \
-  "${CONTAINER}" "${RESPONSIBILITY}" "${MEMBER_RUNTIME}" "${MEMBER_MODEL}"
+printf 'member_runtime_injection=pass container=%s responsibility=%s runtime=%s model=%s agent_package=%s@%s\n' \
+  "${CONTAINER}" "${RESPONSIBILITY}" "${MEMBER_RUNTIME}" "${MEMBER_MODEL}" "${AGENT_PACKAGE_ID}" "${AGENT_PACKAGE_VERSION}"

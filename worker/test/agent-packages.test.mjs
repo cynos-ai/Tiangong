@@ -1,0 +1,66 @@
+import assert from "node:assert/strict";
+import { appendFile, cp, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import test from "node:test";
+
+import { loadAgentPackages, resolveAgentRuntimeFromEnvironment, resolveMemberAgent } from "../agent/packages/loader.mjs";
+import { createMemberConfig } from "../agent/team/coordination-store.mjs";
+
+const NOW = "2026-08-19T00:00:00.000Z";
+const CONFIG = Object.freeze({
+  leader: { runtime: "openclaw-built-in", model: "deepseek-chat", capability: "coordination-control", skills: ["work-coordination", "work-planning"] },
+  architect: { runtime: "openclaw-built-in", model: "deepseek-chat", capability: "project-read-only", skills: ["work-planning", "plan-challenge"] },
+  challenger: { runtime: "openclaw-built-in", model: "deepseek-chat", capability: "project-read-only", skills: ["plan-challenge"] },
+  developer: { runtime: "codex-app-server", model: "deepseek-v4-flash", capability: "local-development", skills: ["test-driven-development", "independent-code-review", "scenario-testing"] },
+  reviewer: { runtime: "openclaw-built-in", model: "deepseek-chat", capability: "project-read-only", skills: ["independent-code-review"] },
+  tester: { runtime: "openclaw-built-in", model: "deepseek-chat", capability: "controlled-testing", skills: ["scenario-testing"] },
+});
+
+function member(role, override = {}) {
+  const config = CONFIG[role];
+  return createMemberConfig({ memberId: `${role}-1`, teamId: "team-1", workerName: `${role}-1`, matrixUserId: `@${role}:example.test`, role, controlProfileId: "profile-1", enabled: true, createdAt: NOW, revision: 1, runtime: config.runtime, model: config.model, agentPackageId: `tiangong-${role}`, agentPackageVersion: "1.0.0", capabilityProfile: config.capability, allowedSkills: config.skills, ...override });
+}
+
+test("M1 installs exactly six long-lived professional Agent packages", async () => {
+  const { packages } = await loadAgentPackages();
+  assert.deepEqual(packages.map((entry) => entry.responsibility).sort(), Object.keys(CONFIG).sort());
+  for (const entry of packages) {
+    assert.match(entry.packageDigest, /^[a-f0-9]{64}$/u);
+    assert.equal(entry.sessionPolicy, entry.responsibility === "leader" ? "one-session-per-work" : "one-session-per-task");
+    assert.match(entry.instructions, new RegExp(`# ${entry.displayName}`, "u"));
+  }
+});
+
+test("MemberConfig resolves identity, package, runtime, capability, and installed-intersect-allowed Skills", async () => {
+  for (const role of Object.keys(CONFIG)) {
+    const resolved = await resolveMemberAgent({ memberConfig: member(role) });
+    assert.equal(resolved.agentPackage.responsibility, role);
+    assert.equal(resolved.memberRevision, 1);
+    assert.deepEqual(resolved.effectiveSkills.map((skill) => skill.skillId), CONFIG[role].skills);
+  }
+  const subset = await resolveMemberAgent({ memberConfig: member("developer", { allowedSkills: ["test-driven-development"] }) });
+  assert.deepEqual(subset.effectiveSkills.map((skill) => skill.skillId), ["test-driven-development"]);
+});
+
+test("Agent package mismatch and uninstalled Skill fail closed", async () => {
+  await assert.rejects(() => resolveMemberAgent({ memberConfig: member("reviewer", { agentPackageId: "tiangong-architect" }) }), (error) => error.code === "MEMBER_AGENT_MISMATCH");
+  await assert.rejects(() => resolveMemberAgent({ memberConfig: member("challenger", { allowedSkills: ["work-planning"] }) }), (error) => error.code === "SKILL_NOT_INSTALLED_FOR_AGENT");
+  await assert.rejects(() => resolveMemberAgent({ memberConfig: member("tester", { enabled: false }) }), (error) => error.code === "MEMBER_AGENT_INVALID");
+});
+
+test("changed Skill content is rejected against the Agent package digest lock", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "tiangong-skill-lock-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const skillsRoot = join(root, "skills"); await cp(fileURLToPath(new URL("../skills/", import.meta.url)), skillsRoot, { recursive: true });
+  await appendFile(join(skillsRoot, "test-driven-development", "SKILL.md"), "\nchanged\n");
+  await assert.rejects(() => resolveMemberAgent({ memberConfig: member("developer"), skillsRoot }), (error) => error.code === "SKILL_LOCK_MISMATCH");
+});
+
+test("deployment environment validates all six Agent packages and effective Skills", async () => {
+  for (const [role, config] of Object.entries(CONFIG)) {
+    const resolved = await resolveAgentRuntimeFromEnvironment({ TIANGONG_MEMBER_ID: `${role}-1`, TIANGONG_MEMBER_RESPONSIBILITY: role, TIANGONG_MEMBER_RUNTIME: config.runtime, TIANGONG_MEMBER_MODEL: config.model, TIANGONG_MEMBER_AGENT_PACKAGE_ID: `tiangong-${role}`, TIANGONG_MEMBER_AGENT_PACKAGE_VERSION: "1.0.0", TIANGONG_MEMBER_CAPABILITY_PROFILE: config.capability, TIANGONG_MEMBER_ALLOWED_SKILLS: config.skills.join(",") });
+    assert.equal(resolved.agentPackage.responsibility, role);
+  }
+  await assert.rejects(() => resolveAgentRuntimeFromEnvironment({ TIANGONG_MEMBER_RESPONSIBILITY: "developer", TIANGONG_MEMBER_RUNTIME: "codex-app-server", TIANGONG_MEMBER_MODEL: "deepseek-v4-flash", TIANGONG_MEMBER_AGENT_PACKAGE_ID: "tiangong-developer", TIANGONG_MEMBER_AGENT_PACKAGE_VERSION: "1.0.0", TIANGONG_MEMBER_CAPABILITY_PROFILE: "local-development", TIANGONG_MEMBER_ALLOWED_SKILLS: "work-coordination" }), (error) => error.code === "SKILL_NOT_INSTALLED_FOR_AGENT");
+});

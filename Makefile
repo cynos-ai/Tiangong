@@ -27,6 +27,7 @@ RUNNER_BROKER := ./scripts/runner-broker.sh
 RUNNER_PREPARATION_SMOKE := ./smoke-testing/support/run-runner-preparation-smoke.sh
 DEPLOYMENT_SERVICE_SMOKE := node ./smoke-testing/support/run-deployment-service-smoke.mjs
 SKILL_CHECK := node ./scripts/check-skills.mjs
+PRODUCT_AGENT_SKILL_TEST := node --test ./worker/test/agent-packages.test.mjs ./worker/test/product-skills.test.mjs ./worker/test/skill-runtime.test.mjs ./app/test/server.test.mjs
 PAUSE_WORKER_BOUNDARY_TEST := ./scripts/test-pause-worker-boundary.sh
 PHASE4_RECOVERY_TEST := node ./worker/test/phase4-recovery.test.mjs
 B5_RUNTIME_ROUTE_TEST := node ./worker/test/runtime-routing.test.mjs
@@ -35,7 +36,7 @@ B5_RECOVERY_CLI_TEST := node ./worker/test/work-run-recovery-cli.test.mjs
 B5_VERTICAL_TEST := node ./worker/test/phase-b5-vertical.test.mjs
 COORDINATION_MIGRATION_CONTRACT_TEST := node ./app/test/migration-contract.test.mjs
 
-.PHONY: help init up start stop down status verify config provider-check logs login uninstall test-agentteams test-agentteams-worker-admission-contract check-skills check-demo-contract check-phase6-evidence-bundle verify-professional-state build-worker-image build-coordination-image coordination-runtime-start coordination-runtime-status coordination-runtime-stop test-coordination-runtime-deployment test-leader-runtime-injection test-leader-runtime-injection-docker test-member-runtime-injection-docker test-openclaw-migration-gate test-phase-c-contract phase-c-real test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-phase4-recovery test-b5-runtime-route test-b5-recovery test-b5-recovery-cli test-b5-vertical test-runner-isolation test-runner-executor test-runner-executor-linux test-runner-broker test-runner-broker-linux test-runner-preparation start-runner-broker status-runner-broker stop-runner-broker test-deployment-service test-peer-mention-smoke-contract test-peer-mention-smoke test-matrix-browser-smoke-contract matrix-browser-start matrix-browser-status matrix-browser-stop test-specialist-leader-handoff-contract test-specialist-leader-handoff test-p0-identity-pg-contract test-p0-2-mention-contract test-pause-worker-boundary test-openclaw-gate-a-contract test-openclaw-gate-a-fixture test-openclaw-admission-contract test-openclaw-admission-hooks test-openclaw-admission-replay test-openclaw-tool-result-capture-matrix test-openclaw-recovery test-openclaw-admission-context-file test-openclaw-gate-a-live-hooks test-runtime-console test-coordination-migration-contract openclaw-gate-a-start openclaw-gate-a-status openclaw-gate-a-restart openclaw-gate-a-stop openclaw-gate-a-run
+.PHONY: help init up start stop down status verify config provider-check logs login uninstall test-agentteams test-agentteams-worker-admission-contract check-skills test-product-agent-skills check-demo-contract check-phase6-evidence-bundle verify-professional-state build-worker-image build-coordination-image coordination-runtime-start coordination-runtime-status coordination-runtime-stop test-coordination-runtime-deployment test-leader-runtime-injection test-leader-runtime-injection-docker test-member-runtime-injection-docker test-openclaw-migration-gate test-phase-c-contract phase-c-real test-worker-image-basic test-worker-image test-leader-smoke-contract test-leader-image-basic test-phase4-recovery test-b5-runtime-route test-b5-recovery test-b5-recovery-cli test-b5-vertical test-runner-isolation test-runner-executor test-runner-executor-linux test-runner-broker test-runner-broker-linux test-runner-preparation start-runner-broker status-runner-broker stop-runner-broker test-deployment-service test-peer-mention-smoke-contract test-peer-mention-smoke test-matrix-browser-smoke-contract matrix-browser-start matrix-browser-status matrix-browser-stop test-specialist-leader-handoff-contract test-specialist-leader-handoff test-p0-identity-pg-contract test-p0-2-mention-contract test-pause-worker-boundary test-openclaw-gate-a-contract test-openclaw-gate-a-fixture test-openclaw-admission-contract test-openclaw-admission-hooks test-openclaw-admission-replay test-openclaw-tool-result-capture-matrix test-openclaw-recovery test-openclaw-admission-context-file test-openclaw-gate-a-live-hooks test-runtime-console test-coordination-migration-contract openclaw-gate-a-start openclaw-gate-a-status openclaw-gate-a-restart openclaw-gate-a-stop openclaw-gate-a-run
 
 .PHONY: start-coordination
 
@@ -81,10 +82,14 @@ logs: ## Follow logs; use SERVICE=controller for controller logs
 login: ## Show Element URL and local credential location
 	@$(AGENTTEAMS) login
 
-check-skills: ## Validate project Agent Skills and trigger cases
+check-skills: ## Validate maintainer/product Skills and Agent package locks
 	@$(SKILL_CHECK)
 
-check-demo-contract: ## Validate five-role, Skill, Playbook, and fixture demo contracts
+test-product-agent-skills: ## Prove M1/M2 package, session, Skill selection, and visible usage contracts
+	@$(PRODUCT_AGENT_SKILL_TEST)
+	@bash ./scripts/test-member-runtime-injection-docker.sh
+
+check-demo-contract: ## Validate six Agent packages, product Skills, and generic Worker fixtures
 	@node ./scripts/check-demo-contract.mjs
 
 check-phase6-evidence-bundle: ## Verify safe-convergence acceptance and sanitized Phase 6 artifact digests

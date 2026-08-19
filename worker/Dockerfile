@@ -36,9 +36,12 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund --registry="${TIANGO
     && test "$(stat -c '%F:%u' /usr/lib/git-core)" = "directory:0"
 
 COPY agent/ ./agent/
+COPY agent-packages/ ./agent-packages/
+COPY skills/ ./skills/
 COPY observability/ ./observability/
 COPY --chmod=755 plugin/ ./plugin/
 RUN npm run check-observability \
+    && node --input-type=module -e 'import("./agent/packages/loader.mjs").then(async ({loadAgentPackages}) => { const value = await loadAgentPackages(); if (value.packages.length !== 6) process.exit(1); })' \
     && node -e 'import("./plugin/index.mjs").then((module) => { if (module.default?.id !== "tiangong-control") process.exit(1); })'
 
 COPY --chmod=755 bin/codex bin/codex-app-server bin/openclaw bin/tiangong-reconcile bin/tiangong-retain bin/tiangong-work-run /opt/tiangong-worker/bin/

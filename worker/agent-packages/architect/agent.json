@@ -1,0 +1,18 @@
+{
+  "kind": "tiangong.agent-package",
+  "schemaVersion": 1,
+  "packageId": "tiangong-architect",
+  "version": "1.0.0",
+  "responsibility": "architect",
+  "displayName": "Architect",
+  "instructions": "instructions.md",
+  "runtime": "openclaw-built-in",
+  "model": "deepseek-chat",
+  "capabilityProfile": "project-read-only",
+  "toolGroups": ["skill-runtime"],
+  "sessionPolicy": "one-session-per-task",
+  "installedSkills": [
+    {"skillId":"work-planning","version":"1.0.0","contentDigest":"d7ffb9592c55d5eff8cb4648341d5f57f6945f3e64652dec35d5b788fa120c15"},
+    {"skillId":"plan-challenge","version":"1.0.0","contentDigest":"6c0cf4379c79d80e486c5073bc3d0757cb7646e627329634db8fddb0343fa1bd"}
+  ]
+}

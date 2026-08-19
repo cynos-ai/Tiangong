@@ -63,6 +63,7 @@ export function createMemberCoordinationHooks({ endpoint, token, memberId, fetch
   const actorId = required(memberId, "memberId");
   const store = createRemoteCoordinationStore({ endpoint, token, fetchImpl, memberId: actorId });
   const assignments = new Map();
+  const activeTaskSessions = new Map();
   const nativeResults = new Set();
   return Object.freeze({
     async beforePromptBuild(event = {}, ctx = {}) {
@@ -70,20 +71,24 @@ export function createMemberCoordinationHooks({ endpoint, token, memberId, fetch
       if (!assignment) return undefined;
       const key = hookKey(ctx);
       const task = await store.getTask(assignment.taskId);
-      if (!task?.spec || task.spec.taskId !== assignment.taskId || task.spec.workId !== assignment.workId || task.spec.assigneeMemberId !== actorId) {
+      if (!task?.spec || task.status !== "assigned" || typeof task.sessionRef !== "string" || task.spec.taskId !== assignment.taskId || task.spec.workId !== assignment.workId || task.spec.assigneeMemberId !== actorId) {
         throw new Error("OpenClaw member Task assignment is not bound to this Worker");
       }
-      assignments.set(key, Object.freeze({ task, workId: assignment.workId, taskId: assignment.taskId }));
+      const activeKey = activeTaskSessions.get(task.spec.taskId);
+      if (activeKey && activeKey !== key) throw new Error("TASK_SESSION_ALREADY_ACTIVE");
+      activeTaskSessions.set(task.spec.taskId, key);
+      assignments.set(key, Object.freeze({ task, workId: assignment.workId, taskId: assignment.taskId, sessionRef: task.sessionRef }));
       const objective = bounded(task.spec.objective, 4096);
       const constraints = Array.isArray(task.spec.constraints) ? bounded(task.spec.constraints.join("; "), 4096) : "";
-      return { prependContext: `Authoritative Tiangong TaskSpec (read-only): task=${task.spec.taskId} work=${task.spec.workId} objective=${objective}${constraints ? ` constraints=${constraints}` : ""}` };
+      return { prependContext: `Authoritative Tiangong TaskSpec (read-only): task=${task.spec.taskId} work=${task.spec.workId} logicalSession=${task.sessionRef} objective=${objective}${constraints ? ` constraints=${constraints}` : ""}` };
     },
     async agentEnd(event = {}, ctx = {}) {
       const key = hookKey(ctx);
       const assignment = assignments.get(key);
       if (!assignment) return undefined;
-      if (nativeResults.has(assignment.taskId)) return undefined;
       assignments.delete(key);
+      activeTaskSessions.delete(assignment.taskId);
+      if (nativeResults.has(assignment.taskId)) return undefined;
       const work = await store.getWork(assignment.workId);
       if (!work?.work || work.work.workId !== assignment.workId) {
         throw new Error("OpenClaw member Task Work binding is unavailable");

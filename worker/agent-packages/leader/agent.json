@@ -1,0 +1,18 @@
+{
+  "kind": "tiangong.agent-package",
+  "schemaVersion": 1,
+  "packageId": "tiangong-leader",
+  "version": "1.0.0",
+  "responsibility": "leader",
+  "displayName": "Leader",
+  "instructions": "instructions.md",
+  "runtime": "openclaw-built-in",
+  "model": "deepseek-chat",
+  "capabilityProfile": "coordination-control",
+  "toolGroups": ["coordination", "skill-runtime"],
+  "sessionPolicy": "one-session-per-work",
+  "installedSkills": [
+    {"skillId":"work-coordination","version":"1.0.0","contentDigest":"bc53292c4d65dc0627caa2de765d5b46d10ea4fc2a1de825b23dfd435f636857"},
+    {"skillId":"work-planning","version":"1.0.0","contentDigest":"d7ffb9592c55d5eff8cb4648341d5f57f6945f3e64652dec35d5b788fa120c15"}
+  ]
+}

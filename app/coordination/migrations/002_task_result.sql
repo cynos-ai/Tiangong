@@ -2,6 +2,7 @@ CREATE TABLE IF NOT EXISTS tiangong_coordination.task (
   task_id text PRIMARY KEY,
   work_id text NOT NULL REFERENCES tiangong_coordination.work(work_id) ON DELETE CASCADE,
   assignee_member_id text NOT NULL,
+  session_ref text NOT NULL,
   spec_json jsonb NOT NULL,
   cancellation_json jsonb,
   created_at timestamptz NOT NULL,

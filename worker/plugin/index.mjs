@@ -10,6 +10,7 @@ import { createFileAdmissionResolver } from "../agent/gates/admission-context-fi
 import { createCanaryAdmissionResolver } from "../agent/gates/canary-admission.mjs";
 import { createToolResultCaptureHook, defaultToolResultCapturePath } from "../agent/gates/tool-result-capture.mjs";
 import { assertPluginApi } from "../agent/preflight/openclaw-preflight.mjs";
+import { registerAgentPackageRuntime } from "../agent/skills/runtime.mjs";
 import { registerMemberCoordinationHooks } from "../agent/team/member-coordination-hooks.mjs";
 import { registerNativeRunnerTool } from "../agent/team/native-runner-tool.mjs";
 import { registerLeaderCoordinationHooks } from "../agent/team/leader-coordination-hooks.mjs";
@@ -18,7 +19,7 @@ import { isLeaderEnvironment, registerLeaderOpenClawTools } from "../agent/team/
 export default definePluginEntry({
   id: "tiangong-control",
   name: "Tiangong control plugin",
-  description: "Provides Tiangong admission, coordination, ToolResult, and role tools to OpenClaw.",
+  description: "Provides Tiangong admission, Agent package, Skill, coordination, and ToolResult controls to OpenClaw.",
   register(api) {
     assertPluginApi(api);
     const leaderEnvironment = isLeaderEnvironment(process.env);
@@ -43,10 +44,11 @@ export default definePluginEntry({
               throw new Error("Tiangong admission Control API is not configured");
             },
       });
-      api.on("tool_result_persist", createToolResultCaptureHook({
-        filePath: defaultToolResultCapturePath(),
-      }), { priority: 100 });
     }
+    registerAgentPackageRuntime(api, { env: process.env });
+    api.on("tool_result_persist", createToolResultCaptureHook({
+      filePath: defaultToolResultCapturePath(),
+    }), { priority: 100 });
     if (process.env.TIANGONG_MEMBER_COORDINATION_ENABLED === "1" && !leaderEnvironment) {
       registerMemberCoordinationHooks(api, {
         endpoint: process.env.TIANGONG_COORDINATION_CONTROL_ENDPOINT,

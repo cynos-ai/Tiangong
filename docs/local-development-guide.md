@@ -1,16 +1,16 @@
 # Tiangong 本地跑起来指南（新手版）
 
 > 根据本地栈验证整理。跟着本文走，可以避开常见的版本、网络、资源和 Matrix 消息格式问题。
-> 示例按 Linux + Docker 29.x + 16 核 16G 验证；低于 8G 内存不建议一次启动 5 个 Worker。
+> 示例按 Linux + Docker 29.x + 16 核 16G 验证；低于 8G 内存不建议一次启动 6 个 Worker。
 
 ## 0. 一图流
 
 ```text
 make init → 配 .env → make up → make verify → 验证 Dashboard → make login
     ↓
-make build-worker-image（构建 9 个本地镜像）
+make build-worker-image（构建 1 个通用 Worker 和 9 个辅助镜像）
     ↓
-agt apply 创建 5 Worker → 等 Team Active
+agt apply 创建 6 Worker → 等 Team Active
     ↓
 Element 或 Matrix 脚本发消息（⚠️ 不要用 Dashboard 聊天）→ 查看 Evidence
 ```
@@ -87,28 +87,17 @@ make login       # 打印 Element 地址和凭据文件位置，不打印密码
 make build-worker-image
 ```
 
-产出 9 个镜像：`tiangong-worker`、5 个角色镜像、`runner-broker`、`deployment-service` 和 `deployment-broker`。
+产出 10 个镜像：一个通用 `tg-worker:dev`、两个 canary 和七个部署侧辅助服务镜像。角色不再对应镜像；六个 Agent package 和六个产品 Skill 都预装在通用 Worker 中。
 
 ### 坑 4：`npm ci` 访问 npmjs.org 超时
 
-`worker/Dockerfile` 的 npm registry 是公开 npmjs 源。国内网络不通时，可以临时替换，构建结束后自动还原；不要用 `git checkout -- worker/Dockerfile` 覆盖自己原本的本地修改：
+`worker/Dockerfile` 默认使用公开 npmjs。国内网络不通时，通过构建脚本允许的公开 mirror 参数切换，不修改工作树：
 
 ```bash
-(
-  set -Eeuo pipefail
-  backup="$(mktemp)"
-  cp worker/Dockerfile "${backup}"
-  cleanup() {
-    cp "${backup}" worker/Dockerfile
-    rm -f "${backup}" worker/Dockerfile.bak
-  }
-  trap cleanup EXIT
-
-  sed -i.bak 's#https://registry.npmjs.org/#https://registry.npmmirror.com/#g' worker/Dockerfile
-  make build-worker-image
-)
-git diff -- worker/Dockerfile   # 应与构建前的状态相同
+TIANGONG_NPM_REGISTRY=https://registry.npmmirror.com make build-worker-image
 ```
+
+脚本只允许 npmjs 与 npmmirror，其他 registry 会 fail closed。
 
 ### 坑 5：`docker.io` digest 404
 
@@ -121,12 +110,10 @@ docker pull "docker.io/library/docker@${DOCKER_CLI_DIGEST}"
 
 build_target() {
   docker build \
-    --build-context "team_playbooks=${PWD}/team-playbooks" \
     --target "$1" --tag "$2" worker
 }
 
-build_target default tiangong-worker:dev
-docker build --target default -t tg-worker:dev worker
+build_target default tg-worker:dev
 build_target runner-broker tg-runner-broker:dev
 build_target deployment-service tg-deployment-service:dev
 build_target deployment-broker tg-deployment-broker:dev
@@ -134,7 +121,9 @@ build_target deployment-broker tg-deployment-broker:dev
 
 这里没有 `--pull`；否则仍可能再次触发加速器上的 digest 404。构建目标或 digest 以后发生变化时，以 `scripts/build-worker-image.sh` 和 `worker/Dockerfile` 的当前内容为准。
 
-## 4. 创建团队（推荐 `agt apply`，不推荐 Dashboard 表单）
+## 4. 创建团队（以下手工五角色步骤仅用于 v0.4.1 历史排障）
+
+> 当前产品路径使用 `demo/fixtures/` 中的六成员配置，以及部署侧 Agent package/MemberConfig 注入。下面旧的 Designer/Implementor/Assessor/Operator 命令不代表 M1/M2 active path；新验证优先运行 `make check-demo-contract`、`make check-skills` 和 `bash scripts/test-member-runtime-injection-docker.sh`。在 M3 部署 binding 完成前，不要用这些旧命令宣称产品纵切成功。
 
 Dashboard 适合看状态和做管理；`agt apply` 更容易复现。下面使用 `tiangong-demo-` 前缀，避免和其他本地资源重名。若这些资源已经存在，先换一个前缀。
 

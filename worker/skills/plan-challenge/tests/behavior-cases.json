@@ -1,0 +1,5 @@
+{
+  "success": [{"name":"material-challenge","given":"readable WorkSpec and candidate Plan","expect":["blocking and non-blocking findings separated","exact Plan reference","no Plan modification"]}],
+  "blocked": [{"name":"unreadable-plan","given":"candidate ContentRef cannot resolve","expect":["blocked Result","no guessed findings","Leader notified"]}],
+  "cleanup": [{"name":"read-only","expect":["no project files modified"]}]
+}

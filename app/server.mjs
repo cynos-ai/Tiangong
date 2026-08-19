@@ -154,6 +154,7 @@ function projectTask(value) {
     taskId: value.spec.taskId,
     workId: value.spec.workId,
     assigneeMemberId: value.spec.assigneeMemberId,
+    sessionRef: boundedId(value.sessionRef),
     status: value.status,
     objective: typeof value.spec.objective === "string" ? value.spec.objective.slice(0, 512) : null,
     constraints: Array.isArray(value.spec.constraints) ? value.spec.constraints.slice(0, 32).map((item) => String(item).slice(0, 256)) : [],
@@ -207,9 +208,25 @@ async function readCoordination(filePath, coordinationStore) {
   }
 }
 
-async function runtimeFacts({ factsFile = FACTS_FILE, captureFile = CAPTURE_FILE, coordinationFile = COORDINATION_FILE, coordinationStore } = {}) {
+function projectAgents(memberConfigs, tasks, toolResults) {
+  if (!Array.isArray(memberConfigs)) return [];
+  return memberConfigs.filter((member) => member?.enabled === true && boundedId(member.memberId)).map((member) => {
+    const assigned = tasks.filter((task) => task.assigneeMemberId === member.memberId && task.status === "assigned");
+    const usedSkills = toolResults.filter((record) => record.actorId === member.memberId && record.tool === "tiangong_use_skill" && boundedId(record.resultSummary?.skillId)).slice(-16).map((record) => ({ skillId: record.resultSummary.skillId, version: boundedId(record.resultSummary.skillVersion), contentDigest: DIGEST.test(record.resultSummary.skillContentDigest ?? "") ? record.resultSummary.skillContentDigest : null, taskId: record.taskId, completedAt: record.completedAt }));
+    return {
+      memberId: member.memberId,
+      responsibility: typeof member.role === "string" ? member.role.slice(0, 128) : null,
+      runtime: boundedId(member.runtime), model: boundedId(member.model), agentPackageId: boundedId(member.agentPackageId), agentPackageVersion: boundedId(member.agentPackageVersion), capabilityProfile: boundedId(member.capabilityProfile),
+      allowedSkills: Array.isArray(member.allowedSkills) ? member.allowedSkills.slice(0, 64).map(boundedId).filter(Boolean) : [], status: assigned.length ? "active" : "waiting",
+      activeTasks: assigned.slice(0, 16).map((task) => ({ taskId: task.taskId, workId: task.workId, sessionRef: task.sessionRef })), usedSkills,
+    };
+  });
+}
+
+async function runtimeFacts({ factsFile = FACTS_FILE, captureFile = CAPTURE_FILE, coordinationFile = COORDINATION_FILE, coordinationStore, memberConfigs = [] } = {}) {
   const capture = await readCapture(captureFile);
   const coordination = await readCoordination(coordinationFile, coordinationStore);
+  const agents = projectAgents(memberConfigs, coordination.tasks, capture.records);
   if (!factsFile) {
     return {
       status: "unknown",
@@ -219,14 +236,15 @@ async function runtimeFacts({ factsFile = FACTS_FILE, captureFile = CAPTURE_FILE
       toolResults: capture.records,
       toolResultsSource: capture.source,
       ...coordination,
+      agents,
     };
   }
   try {
     const value = JSON.parse(await readFile(resolve(factsFile), "utf8"));
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid facts");
-    return { status: "observed", source: "runtime-facts-file", ...value, toolResults: capture.records, toolResultsSource: capture.source, ...coordination };
+    return { status: "observed", source: "runtime-facts-file", ...value, toolResults: capture.records, toolResultsSource: capture.source, ...coordination, agents };
   } catch {
-    return { status: "unknown", source: "runtime-facts-unavailable", lane: null, worker: null, toolResults: capture.records, toolResultsSource: capture.source, ...coordination };
+    return { status: "unknown", source: "runtime-facts-unavailable", lane: null, worker: null, toolResults: capture.records, toolResultsSource: capture.source, ...coordination, agents };
   }
 }
 
@@ -240,6 +258,7 @@ export function createRuntimeConsoleServer(options = {}) {
   const captureFile = options.captureFile ?? CAPTURE_FILE;
   const coordinationFile = options.coordinationFile ?? COORDINATION_FILE;
   const coordinationStore = options.coordinationStore;
+  const memberConfigs = Array.isArray(options.memberConfigs) ? options.memberConfigs : [];
   const sseIntervalMs = Number.isSafeInteger(options.sseIntervalMs) && options.sseIntervalMs >= 100 && options.sseIntervalMs <= 60_000 ? options.sseIntervalMs : 1_000;
   const sseClients = new Map();
   const coordinationControl = options.coordinationControl ? createCoordinationAdmissionHandler(options.coordinationControl) : null;
@@ -278,7 +297,7 @@ export function createRuntimeConsoleServer(options = {}) {
       const send = async () => {
         if (closed) return;
         try {
-          const facts = await runtimeFacts({ factsFile, captureFile, coordinationFile, coordinationStore });
+          const facts = await runtimeFacts({ factsFile, captureFile, coordinationFile, coordinationStore, memberConfigs });
           response.write(`event: runtime\ndata: ${JSON.stringify(facts)}\n\n`);
         } catch {
           response.write("event: runtime\ndata: {\"status\":\"unknown\"}\n\n");
@@ -297,7 +316,7 @@ export function createRuntimeConsoleServer(options = {}) {
       await send();
       return;
     }
-    if (request.url === "/api/runtime") return json(response, 200, await runtimeFacts({ factsFile, captureFile, coordinationFile, coordinationStore }));
+    if (request.url === "/api/runtime") return json(response, 200, await runtimeFacts({ factsFile, captureFile, coordinationFile, coordinationStore, memberConfigs }));
     if (request.url === "/" || request.url === "/index.html") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
       return response.end(await readFile(resolve(ROOT, "public/index.html")));

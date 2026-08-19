@@ -18,6 +18,15 @@ function contentShape(content) {
   }));
 }
 
+function skillUseSummary(event) {
+  if (event?.toolName !== "tiangong_use_skill") return null;
+  const details = event?.result?.details ?? event?.result?.result?.details;
+  const value = details?.skillUse;
+  if (!value || typeof value !== "object" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.skillId ?? "") ||
+      !/^\d+\.\d+\.\d+$/u.test(value.version ?? "") || !/^[a-f0-9]{64}$/u.test(value.contentDigest ?? "")) return null;
+  return { skillId: value.skillId, skillVersion: value.version, skillContentDigest: value.contentDigest, skillTrigger: bounded(value.trigger, 256), agentPackageId: bounded(value.agentPackageId, 128), agentPackageVersion: bounded(value.agentPackageVersion, 32) };
+}
+
 export function summarizeToolResult(event = {}) {
   const message = event.message && typeof event.message === "object" ? event.message : {};
   return {
@@ -54,6 +63,7 @@ export function createToolResultCaptureHook({ filePath, now = () => new Date() }
   return async (event, ctx = {}) => {
     const timestamp = now().toISOString();
     const summary = summarizeToolResult(event);
+    const skillUse = skillUseSummary(event);
     if (!summary.toolCallId) throw new Error("TOOL_RESULT_CAPTURE_GAP");
     const actorId = bounded(ctx.actorId ?? ctx.senderId ?? ctx.agentId, 128);
     if (!actorId) throw new Error("TOOL_RESULT_CAPTURE_GAP");
@@ -90,6 +100,7 @@ export function createToolResultCaptureHook({ filePath, now = () => new Date() }
         textLength,
         hasData: summary.content.some((part) => part.hasData === true),
         isSynthetic: summary.isSynthetic,
+        ...(skillUse ?? {}),
       },
       outputRef: event.outputRef ?? null,
       startedAt,

@@ -17,6 +17,8 @@ RUN npm --prefix app ci --omit=dev --ignore-scripts --no-audit --no-fund \
 # container and avoids copying any Worker state or credentials.
 COPY app/ ./app/
 COPY worker/agent/ ./worker/agent/
+COPY worker/agent-packages/ ./worker/agent-packages/
+COPY worker/skills/ ./worker/skills/
 COPY app/coordination-entrypoint.sh /usr/local/bin/tiangong-coordination-entrypoint
 RUN chmod 755 /usr/local/bin/tiangong-coordination-entrypoint
 
