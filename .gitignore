@@ -22,3 +22,7 @@ smoke-testing/fixtures/p0-identity-pg/app/dist/
 /.tmp-*.err
 /.tmp-runner-broker/
 /smoke-testing/support/.run-leader-smoke-*.sh
+
+# Local private working materials (keep out of the public tree)
+/artifacts/
+/.cynos/
