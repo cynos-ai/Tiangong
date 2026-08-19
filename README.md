@@ -3,7 +3,7 @@
 Tiangong is an evidence-backed AI software engineering team built on [AgentTeams](https://github.com/agentscope-ai/AgentTeams).
 
 > [!NOTE]
-> v0.4.1 is the latest source release and records the completed OpenClaw runtime migration. Current development has implemented the M0 coordination foundation plus M1/M2: six long-lived Agent packages, independent Work/Task logical-session projections, capability profiles, and six preinstalled portable product Skills with installed ∩ allowed enforcement and visible usage metadata. The chat-first Web and real-project product vertical remain subsequent milestones. See the [v0.4.1 release notes](docs/releases/v0.4.1.md), [product MVP](docs/design/product-mvp.zh.md), and [changelog](CHANGELOG.md).
+> v0.4.1 is the latest source release and records the completed OpenClaw runtime migration. Current development has implemented M0–M3: the coordination foundation, six long-lived Agent packages, capability-bound portable Skills, and a chat-first Matrix workbench that places Room conversation beside Work/Plan/Agent/Task/Result/ToolResult projections. The real-project coding vertical remains the next milestone. See the [v0.4.1 release notes](docs/releases/v0.4.1.md), [product MVP](docs/design/product-mvp.zh.md), and [changelog](CHANGELOG.md).
 >
 > The implementation-independent target is defined by the [team-control design](docs/design/evidence-backed-team-control.md) ([中文](docs/design/evidence-backed-team-control.zh.md)). The first public product slice is specified separately in the [product MVP design（中文）](docs/design/product-mvp.zh.md); it does not claim those capabilities already exist.
 
@@ -87,6 +87,20 @@ Cleanup removes the temporary Worker and the exact MinIO prefix owned by the res
 The Worker resource retains AgentTeams' supported `openclaw` runtime, Node.js version, entrypoint, and gateway. A narrow `openclaw` command wrapper injects the Tiangong control plugin path into the generated configuration and then delegates to the upstream executable. OpenClaw continues to own Matrix, model turns, configuration retrieval, storage sync, re-login, readiness, channel policy, and reply delivery. Tiangong owns Work/WorkSpec/Plan/Task/Result coordination, bounded execution records, Operation policy, recovery, and its product experience.
 
 Optional, backend-neutral Worker tracing is documented in [`docs/observability.md`](./docs/observability.md). It is disabled by default, exports only allowlisted sanitized OpenTelemetry spans, and remains diagnostic telemetry rather than authorization or hash-chained Evidence. The bounded [`peer transport diagnostic`](./docs/peer-transport-diagnostic.md) keeps exact ping/pong markers in deterministic Worker code while deriving targets only from authenticated effective Matrix allowlists; it is transport-only and is not Team Work or Evidence.
+
+### Chat-first Matrix workbench
+
+The deployment-owned Coordination runtime now serves the M3 workbench at its root URL. A Human signs in with a current Matrix identity; Tiangong keeps the resulting access token only in a bounded in-memory session and returns an HttpOnly, SameSite cookie. Every chat, runtime-fact request, and SSE update rechecks Matrix identity and membership in the configured unencrypted Team Room. Session revocation closes the fact stream, and process restart forgets all Web sessions.
+
+The workbench uses Matrix history/sync/send for the center conversation and never stores message bodies in PostgreSQL. The left rail shows the configured Team/Room and Leader admission backlog. The right panel projects Room Work history, nullable WorkSpec, Plan refs/history, Challenger and other Results, Agent/model/actual Skill use, Tasks, ToolResults, deliverables, and timeline facts. Selecting a Work changes only that panel; the send contract rejects any Work routing field.
+
+Set `AGENTTEAMS_MATRIX_URL` in the Coordination runtime environment to enable Human Web login. `TIANGONG_COORDINATION_MATRIX_TOKEN` remains optional and enables only the deployment-owned outbox sender. HTTPS deployments keep secure cookies enabled; a loopback HTTP development deployment must explicitly set `TIANGONG_WEB_SECURE_COOKIES=0`. Encrypted Rooms fail closed in the first version.
+
+Run the focused deterministic contract with:
+
+```bash
+make test-chat-first-web
+```
 
 The current runtime is intentionally constrained:
 

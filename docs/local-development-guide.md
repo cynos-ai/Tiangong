@@ -123,7 +123,7 @@ build_target deployment-broker tg-deployment-broker:dev
 
 ## 4. 创建团队（以下手工五角色步骤仅用于 v0.4.1 历史排障）
 
-> 当前产品路径使用 `demo/fixtures/` 中的六成员配置，以及部署侧 Agent package/MemberConfig 注入。下面旧的 Designer/Implementor/Assessor/Operator 命令不代表 M1/M2 active path；新验证优先运行 `make check-demo-contract`、`make check-skills` 和 `bash scripts/test-member-runtime-injection-docker.sh`。在 M3 部署 binding 完成前，不要用这些旧命令宣称产品纵切成功。
+> 当前产品路径使用 `demo/fixtures/` 中的六成员配置，以及部署侧 Agent package/MemberConfig 注入。下面旧的 Designer/Implementor/Assessor/Operator 命令不代表 M1/M2 active path；新验证优先运行 `make check-demo-contract`、`make check-skills` 和 `bash scripts/test-member-runtime-injection-docker.sh`。M3 chat-first Web 已实现，但在实际部署注入 Matrix URL、binding、PostgreSQL 和当前 Human identity 前，不要用这些旧命令宣称真实产品纵切成功。
 
 Dashboard 适合看状态和做管理；`agt apply` 更容易复现。下面使用 `tiangong-demo-` 前缀，避免和其他本地资源重名。若这些资源已经存在，先换一个前缀。
 

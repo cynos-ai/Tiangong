@@ -12,12 +12,17 @@ All notable changes to Tiangong are documented here. Tiangong follows Semantic V
 - Added six versioned long-lived Agent packages for Leader, Architect, Challenger, Developer, Reviewer, and Tester, with fixed runtime/model, capability profile, and one-Work/one-Task logical-session policy.
 - Added six portable product Skills with trigger and behavior cases, digest locks, installed ∩ `MemberConfig.allowedSkills` resolution, autonomous `tiangong_use_skill` selection, and bounded ToolResult usage metadata.
 - Added read-only runtime projections for configured Agents, active Tasks, logical sessions, enabled Skills, and actually observed Skill use.
+- Added the M3 chat-first Web workbench with Matrix login, Room history pagination, live sync, local echo, ordinary Human message send, Team/Room navigation, Leader backlog metrics, and side-by-side Work facts.
+- Added bounded Work timeline payload projection plus Plan history, candidate deliverables, Challenger Results, Agent/model/actual Skill use, Task/Result/ToolResult, deliverable, waiting, cancellation, and recovery-state rendering.
+- Added an in-memory Matrix Web session gateway with HttpOnly/SameSite cookies, CSRF checks, current `whoami` and bound-Room membership validation, SSE revocation, unencrypted-Room enforcement, strict CSP, and no browser credential storage.
 
 ### Changed
 
 - Replaced per-Task acceptance decisions with Result/cancellation projection and machine-fact CloseGuard checks.
 - Replaced role-specific Worker image targets with one generic `tg-worker` contract and MemberConfig-bound responsibility/runtime/model/Agent-package routing. Developer uses Codex app-server with `deepseek-v4-flash`; the other initial responsibilities use OpenClaw built-in with no automatic fallback.
 - Made the documented Phase C contract entrypoint and nested shell calls repeatable in a Linux tracked checkout.
+- Replaced the root runtime-console page with the single M3 Team/Room + Matrix conversation + Work facts workbench; selecting a Work remains view-only and the send API rejects Work routing fields.
+- Matrix URL alone now enables Human Web chat; the deployment Matrix token remains optional and enables only the outbox consumer.
 
 ### Removed
 
@@ -26,8 +31,11 @@ All notable changes to Tiangong are documented here. Tiangong follows Semantic V
 
 ### Verification
 
-- The deterministic Phase C boundary, Worker tests, product Agent/Skill package checks, generic demo contract, and six-responsibility MemberConfig injection contract pass.
-- The full App suite passes `21/21` against an owned disposable PostgreSQL 16 container, including Task SessionRef persistence, Room routing, correction, restart, and cleanup; without injected test variables the same four PostgreSQL cases remain explicit skips.
+- The deterministic Phase C boundary, `384/384` Worker tests, product Agent/Skill package checks, generic demo contract, and six-responsibility MemberConfig injection contract pass.
+- The M3 focused App contract passes `18/18`, covering Matrix identity/session containment, CSRF, Room binding, pagination projection, Human sender preservation, response bounds, one active sync, revocation, E2EE denial, strict CSP, and Work fact rendering.
+- The full App suite passes `33/33` against an owned disposable PostgreSQL 16 container, including Task SessionRef persistence, Room routing, correction, restart, Web projection, and cleanup; without injected test variables the same four PostgreSQL cases remain explicit skips.
+- The deployment-owned Coordination image builds with the M3 assets and gateway; browser inspection confirms the three-column workbench, view-only Work selection, ordinary message send, independent right-panel scrolling, and zero new console errors.
+- A disposable unencrypted Synapse `v1.159.0` Basic run verified real Matrix login, joined-Room history/sync/send, preserved `@human:m3.local` sender, Matrix event echo, `workSpec: null` rendering, and exact container/volume/process/state cleanup. This is M3 Web protocol evidence, not the M4 AgentTeams/model/project vertical.
 
 ## [0.4.1] - 2026-08-19
 

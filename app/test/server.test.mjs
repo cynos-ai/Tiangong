@@ -14,6 +14,16 @@ test("runtime console exposes honest unknown state and message-admission fields"
   assert.equal((await get(server, "/readyz")).response.status, 503);
 });
 
+test("chat-first workbench ships self-contained assets and strict browser headers", async (t) => {
+  const server = createRuntimeConsoleServer().listen(0); t.after(() => server.close()); const base = `http://127.0.0.1:${server.address().port}`;
+  const response = await fetch(base); const html = await response.text();
+  assert.equal(response.status, 200); assert.match(response.headers.get("content-security-policy"), /script-src 'self'/u); assert.match(response.headers.get("content-security-policy"), /frame-ancestors 'none'/u);
+  assert.match(html, /Tiangong 工作台/u); assert.match(html, /MATRIX ROOM/u); assert.match(html, /WORK FACTS/u); assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)/u); assert.doesNotMatch(html, /<style/u);
+  const script = await fetch(`${base}/app.js`); const css = await fetch(`${base}/styles.css`);
+  assert.match(script.headers.get("content-type"), /text\/javascript/u); assert.match(css.headers.get("content-type"), /text\/css/u);
+  assert.doesNotMatch(await script.text(), /(?:localStorage|sessionStorage|innerHTML|\.style\.)/u);
+});
+
 test("runtime console streams bounded facts over SSE", async (t) => {
   const server = createRuntimeConsoleServer({ sseIntervalMs: 100 }).listen(0); t.after(() => server.close());
   const response = await fetch(`http://127.0.0.1:${server.address().port}/api/runtime/events`); const reader = response.body.getReader(); const first = await reader.read(); const text = new TextDecoder().decode(first.value); assert.match(text, /"pendingAdmissions":\[\]/u); await reader.cancel();
@@ -35,7 +45,7 @@ test("runtime console keeps workSpec null visible as requirement-pending and sho
   await store.createWork({ workId: "work-null", team, route, profile, spec: null, title: "Requirement", actorId: "@human:example.test", sourceEventId: "$routed", requestId: "create" });
   await store.enqueueMessageAdmission({ team, route, profile, actorId: "@human:example.test", eventId: "$pending", requestId: "pending" });
   const server = createRuntimeConsoleServer({ coordinationStore: store }).listen(0); t.after(() => server.close()); const { body } = await get(server);
-  assert.equal(body.works.length, 1); assert.equal(body.works[0].currentWorkSpec, null); assert.equal(body.works[0].requirementState, "requirement-pending"); assert.equal(body.admissionMetrics.pendingCount, 1); assert.equal(body.pendingAdmissions[0].eventId, "$pending");
+  assert.equal(body.works.length, 1); assert.equal(body.works[0].currentWorkSpec, null); assert.equal(body.works[0].requirementState, "requirement-pending"); assert.equal(body.works[0].timeline[0].payload.source.eventId, "$routed"); assert.equal(body.admissionMetrics.pendingCount, 1); assert.equal(body.pendingAdmissions[0].eventId, "$pending");
 });
 
 test("runtime console projects configured Agents, independent Task sessions, and actually used Skills", async (t) => {
@@ -48,12 +58,16 @@ test("runtime console projects configured Agents, independent Task sessions, and
   const store = new CoordinationStore({ filePath: join(root, "state.json"), now: () => now });
   const spec = createWorkSpec({ workId: "work-agents", revision: 1, goal: "Implement", doneWhen: ["Result exists"], createdAt: now });
   let work = (await store.createWork({ workId: spec.workId, team, route, profile, spec, title: "Agents", actorId: "@human:example.test", sourceEventId: "$agents", requestId: "create-agents" })).work;
+  work = (await store.changeWorkPlan({ workId: spec.workId, planRef: { adapter: "workspace", ref: "plans/agents-v1.md" }, reason: "Initial candidate", profile, actorId: leader.memberId, expectedEpoch: work.epoch, requestId: "plan-agents-1" })).work;
+  work = (await store.changeWorkPlan({ workId: spec.workId, planRef: { adapter: "workspace", ref: "plans/agents-v2.md" }, reason: "Address challenge", profile, actorId: leader.memberId, expectedEpoch: work.epoch, requestId: "plan-agents-2" })).work;
   const task = createTaskSpec({ taskId: "task-agents", workId: spec.workId, assigneeMemberId: developer.memberId, objective: "Implement", createdAt: now });
   await store.createTask({ task, team, member: developer, profile, actorId: leader.memberId, expectedEpoch: work.epoch, requestId: "task-agents" });
   const capture = join(root, "capture.json");
   await writeFile(capture, JSON.stringify({ version: 1, results: [{ toolResultId: "c".repeat(64), callKey: "d".repeat(64), workId: spec.workId, taskId: task.taskId, actorId: developer.memberId, runtimeProfile: "codex-app-server", tool: "tiangong_use_skill", requestSummary: { toolName: "tiangong_use_skill" }, resultSummary: { outcome: "success", skillId: "test-driven-development", skillVersion: "1.0.0", skillContentDigest: "e".repeat(64) }, outputRef: null, startedAt: now, completedAt: now }], retentionMarks: [] }), { mode: 0o600 });
   const server = createRuntimeConsoleServer({ coordinationStore: store, captureFile: capture, memberConfigs: [leader, developer] }).listen(0); t.after(() => server.close()); const { body } = await get(server);
   assert.equal(body.tasks[0].sessionRef.startsWith("member-"), true);
+  assert.deepEqual(body.works[0].currentPlanRef, { adapter: "workspace", ref: "plans/agents-v2.md" });
+  assert.deepEqual(body.works[0].timeline.filter((entry) => entry.type === "work-plan-changed").map((entry) => entry.payload.planRef.ref), ["plans/agents-v1.md", "plans/agents-v2.md"]);
   assert.equal(body.agents.length, 2); const projected = body.agents.find((agent) => agent.memberId === developer.memberId);
   assert.equal(projected.status, "active"); assert.equal(projected.activeTasks[0].sessionRef, body.tasks[0].sessionRef); assert.equal(projected.usedSkills[0].skillId, "test-driven-development");
 });

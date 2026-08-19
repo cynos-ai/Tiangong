@@ -8,7 +8,7 @@
 - PostgreSQL 是 Work、Timeline、Matrix 事件绑定、请求重放和 Outbox 的权威总账。
 - Matrix 只负责低延迟唤醒；MinIO/AgentTeams 共享空间只保存大对象、Result 和 Evidence 附件。
 - Leader Worker 只拿 credential-free binding、Control API endpoint 和 Worker 范围的短期 Control token；它不拿 PG URL 或部署 Matrix token。
-- Web UI 仍由同一 Coordination runtime 提供 /readyz、/healthz 和 /api/runtime。
+- 同一 Coordination runtime 提供 `/readyz`、`/healthz` 和 M3 chat-first Web；启用 Matrix Web 后，`/api/runtime` 与 SSE 只接受当前已验证的 Human Web session。
 
 ## 镜像
 
@@ -28,12 +28,19 @@
     TIANGONG_COORDINATION_DATABASE_URL=postgres://...
     TIANGONG_COORDINATION_CONTROL_TOKEN=<deployment-generated-token>
 
-启用 Matrix outbox 时再加入：
+启用 Human Matrix Web 时加入：
 
     AGENTTEAMS_MATRIX_URL=https://matrix.example.test
+
+HTTPS 默认使用 Secure cookie。只有 loopback HTTP 开发环境才显式加入：
+
+    TIANGONG_WEB_SECURE_COOKIES=0
+
+需要 deployment-owned Matrix outbox sender 时再加入：
+
     TIANGONG_COORDINATION_MATRIX_TOKEN=<leader-scoped-deployment-token>
 
-脚本拒绝 symlink、过大的文件、缺少数据库/Control token、只配置 Matrix URL 或 token 的半配置，以及把未允许的变量（包括 TIANGONG_LEADER_RUNTIME_BINDING_FILE、NODE_ENV）塞进 env 文件。
+Matrix URL 可以单独启用 Human Web；Matrix token 不能脱离 URL 存在。脚本拒绝 symlink、过大的文件、缺少数据库/Control token、非法 cookie 配置，以及把未允许的变量（包括 `TIANGONG_LEADER_RUNTIME_BINDING_FILE`、`NODE_ENV`）塞进 env 文件。
 
 ## 生命周期
 
@@ -48,6 +55,12 @@
 io.tiangong.component=coordination-runtime 标签的容器。它不会停止、替换或删除 AgentTeams 容器、PG、MinIO 或 Worker。容器使用 AgentTeams 内网、只读根文件系统、只在启动时为读取、整理并降权 credential-free binding 保留 CHOWN、DAC_OVERRIDE、SETUID 和 SETGID，随后以 node 用户运行，并启用 no-new-privileges 和临时 noexec /tmp。
 
 由于 binding 文件需要由 Tiangong loader 以严格权限读取，镜像入口先把 credential-free binding 复制到 tmpfs，并以 node 用户运行真正的 runtime；PG/Matrix secret 只存在进程环境和内存中。
+
+## M3 Web 身份和消息边界
+
+Human 用自己的 Matrix ID/password 向配置的 homeserver 建立 Web session。密码只存在于该请求内；Matrix access token 只保存在 Coordination runtime 的有界内存 Map，浏览器只得到 HttpOnly、SameSite cookie 和内存 CSRF token。进程重启会清空 session。每个 chat API、runtime facts API 和 SSE tick 都重新执行 `whoami`、bound Room joined-members 和 encryption state 检查；token 或 membership 撤销后拒绝读取，SSE 发出 `revoked` 后关闭。
+
+消息 history、sync 和 send 都由 Matrix Client-Server API 提供。Tiangong 只投影有界 text/attachment metadata，不接受 Matrix HTML；浏览器通过 DOM text node 和受限 HTTP(S) link 渲染。发送 API 只接受正文和 client transaction ID，额外的 `workId` 等字段会被拒绝，所以右侧 Work 选择没有路由权威。PostgreSQL 仍不保存聊天正文。首版不支持 E2EE；检测到加密 Room 时登录 fail closed。
 
 ## AgentTeams v1.2.2 的现实边界
 

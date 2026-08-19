@@ -44,6 +44,30 @@ function projectContentRef(value) {
   return null;
 }
 
+function projectTimelinePayload(entry) {
+  const payload = entry?.payload;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const result = {};
+  for (const field of ["workId", "taskId", "eventId", "roomId", "humanActorId", "sourceWorkId", "targetWorkId", "correctionEventId", "title", "reason"]) {
+    if (typeof payload[field] === "string") result[field] = payload[field].slice(0, field === "reason" ? 512 : 256);
+  }
+  const source = payload.source;
+  if (source && typeof source === "object" && !Array.isArray(source)) {
+    result.source = { roomId: boundedId(source.roomId), eventId: boundedId(source.eventId), actorId: boundedId(source.actorId) };
+  }
+  const planRef = projectContentRef(payload.planRef);
+  if (planRef) result.planRef = planRef;
+  const task = payload.task;
+  if (task && typeof task === "object" && !Array.isArray(task)) {
+    result.task = { taskId: boundedId(task.taskId), assigneeMemberId: boundedId(task.assigneeMemberId), objective: typeof task.objective === "string" ? task.objective.slice(0, 512) : null };
+  }
+  const submitted = payload.result;
+  if (submitted && typeof submitted === "object" && !Array.isArray(submitted)) {
+    result.result = { taskId: boundedId(submitted.taskId), submittedBy: boundedId(submitted.submittedBy), summary: typeof submitted.summary === "string" ? submitted.summary.slice(0, 512) : null };
+  }
+  return Object.keys(result).length ? result : null;
+}
+
 async function readCapture(filePath) {
   if (!filePath) return { records: [], source: "tool-result-capture-not-configured" };
   try {
@@ -111,8 +135,10 @@ function projectWork(value) {
       sequence: Number.isSafeInteger(entry?.sequence) ? entry.sequence : null,
       type: boundedId(entry?.type),
       at: typeof entry?.at === "string" ? entry.at.slice(0, 64) : null,
+      actorId: boundedId(entry?.actorId),
       epoch: Number.isSafeInteger(entry?.epoch) ? entry.epoch : null,
       requestId: boundedId(entry?.requestId),
+      payload: projectTimelinePayload(entry),
     })),
   };
 }
@@ -253,6 +279,15 @@ function json(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
+function applySecurityHeaders(response) {
+  response.setHeader("content-security-policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+  response.setHeader("x-content-type-options", "nosniff");
+  response.setHeader("referrer-policy", "no-referrer");
+  response.setHeader("permissions-policy", "camera=(), microphone=(), geolocation=()");
+  response.setHeader("cross-origin-opener-policy", "same-origin");
+  response.setHeader("cross-origin-resource-policy", "same-origin");
+}
+
 export function createRuntimeConsoleServer(options = {}) {
   const factsFile = options.factsFile ?? FACTS_FILE;
   const captureFile = options.captureFile ?? CAPTURE_FILE;
@@ -262,6 +297,8 @@ export function createRuntimeConsoleServer(options = {}) {
   const sseIntervalMs = Number.isSafeInteger(options.sseIntervalMs) && options.sseIntervalMs >= 100 && options.sseIntervalMs <= 60_000 ? options.sseIntervalMs : 1_000;
   const sseClients = new Map();
   const coordinationControl = options.coordinationControl ? createCoordinationAdmissionHandler(options.coordinationControl) : null;
+  const matrixWebGateway = options.matrixWebGateway ?? null;
+  if (matrixWebGateway && (typeof matrixWebGateway.handle !== "function" || typeof matrixWebGateway.authorizeRead !== "function")) throw new TypeError("matrixWebGateway is invalid");
   const readiness = typeof options.readiness === "function"
     ? options.readiness
     : async () => {
@@ -272,8 +309,12 @@ export function createRuntimeConsoleServer(options = {}) {
       };
     };
   const server = createServer(async (request, response) => {
+    applySecurityHeaders(response);
     if (coordinationControl && request.url?.startsWith("/v1/coordination/")) {
       if (await coordinationControl(request, response)) return;
+    }
+    if (matrixWebGateway && request.url?.startsWith("/api/chat/")) {
+      if (await matrixWebGateway.handle(request, response)) return;
     }
     if (request.method !== "GET") return json(response, 405, { error: "method_not_allowed" });
     if (request.url === "/healthz") return json(response, 200, { ok: true });
@@ -288,38 +329,64 @@ export function createRuntimeConsoleServer(options = {}) {
     }
     if (request.url === "/api/runtime/events") {
       if (sseClients.size >= MAX_SSE_CLIENTS) return json(response, 503, { error: "sse_capacity_exceeded" });
+      try { await matrixWebGateway?.authorizeRead(request); } catch { return json(response, 401, { error: "WEB_SESSION_REQUIRED" }); }
       response.writeHead(200, {
         "content-type": "text/event-stream; charset=utf-8",
         "cache-control": "no-cache, no-store",
         connection: "keep-alive",
       });
       let closed = false;
-      const send = async () => {
-        if (closed) return;
-        try {
-          const facts = await runtimeFacts({ factsFile, captureFile, coordinationFile, coordinationStore, memberConfigs });
-          response.write(`event: runtime\ndata: ${JSON.stringify(facts)}\n\n`);
-        } catch {
-          response.write("event: runtime\ndata: {\"status\":\"unknown\"}\n\n");
-        }
-      };
-      const timer = setInterval(send, sseIntervalMs);
+      let sending = false;
+      let timer;
       const cleanup = () => {
         if (closed) return;
         closed = true;
-        clearInterval(timer);
+        if (timer) clearInterval(timer);
         sseClients.delete(response);
       };
+      const send = async () => {
+        if (closed || sending) return;
+        sending = true;
+        try {
+          await matrixWebGateway?.authorizeRead(request);
+          const facts = await runtimeFacts({ factsFile, captureFile, coordinationFile, coordinationStore, memberConfigs });
+          response.write(`event: runtime\ndata: ${JSON.stringify(facts)}\n\n`);
+        } catch {
+          if (matrixWebGateway) {
+            response.write("event: revoked\ndata: {\"error\":\"web_session_revoked\"}\n\n");
+            cleanup();
+            response.end();
+          } else {
+            response.write("event: runtime\ndata: {\"status\":\"unknown\"}\n\n");
+          }
+        } finally { sending = false; }
+      };
+      timer = setInterval(() => void send(), sseIntervalMs);
       sseClients.set(response, cleanup);
       request.on("close", cleanup);
       response.on("close", cleanup);
       await send();
       return;
     }
-    if (request.url === "/api/runtime") return json(response, 200, await runtimeFacts({ factsFile, captureFile, coordinationFile, coordinationStore, memberConfigs }));
+    if (request.url === "/api/runtime") {
+      try { await matrixWebGateway?.authorizeRead(request); } catch { return json(response, 401, { error: "WEB_SESSION_REQUIRED" }); }
+      return json(response, 200, await runtimeFacts({ factsFile, captureFile, coordinationFile, coordinationStore, memberConfigs }));
+    }
     if (request.url === "/" || request.url === "/index.html") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
       return response.end(await readFile(resolve(ROOT, "public/index.html")));
+    }
+    if (request.url === "/styles.css") {
+      response.writeHead(200, { "content-type": "text/css; charset=utf-8", "cache-control": "no-store" });
+      return response.end(await readFile(resolve(ROOT, "public/styles.css")));
+    }
+    if (request.url === "/app.js") {
+      response.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" });
+      return response.end(await readFile(resolve(ROOT, "public/app.js")));
+    }
+    if (request.url === "/favicon.svg") {
+      response.writeHead(200, { "content-type": "image/svg+xml; charset=utf-8", "cache-control": "public, max-age=86400" });
+      return response.end(await readFile(resolve(ROOT, "public/favicon.svg")));
     }
     return json(response, 404, { error: "not_found" });
   });
@@ -329,6 +396,7 @@ export function createRuntimeConsoleServer(options = {}) {
       try { response.end(); } catch { /* connection already closed */ }
     }
     sseClients.clear();
+    void matrixWebGateway?.close?.();
   });
   return server;
 }

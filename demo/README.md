@@ -2,7 +2,7 @@
 
 这是一条不改变默认 provider 的通用演示入口：Leader、Architect、Challenger、Developer、Reviewer、Tester 使用同一个 `tg-worker:dev` 镜像，由 AgentTeams 身份和部署配置区分职责。它复用现有 AgentTeams、OpenClaw、Tiangong Coordination runtime 和 Matrix；没有为 Demo 引入另一套业务流程。
 
-当前公开 fixture 和确定性合同已证明 M1 Agent package 与 M2 product Skill 的配置、digest lock、allowedSkills 交集和通用镜像装载。它仍不把尚未完成的 M3 chat-first Web、部署侧完整 binding 或真实项目纵切冒充为已实现能力。
+当前公开 fixture 和确定性合同已证明 M1 Agent package、M2 product Skill 和 M3 chat-first Web 的配置、安全会话、Matrix chat 与 Work 投影边界。它仍不把部署侧完整 binding、真实 AgentTeams/Matrix 运行或 M4 真实项目纵切冒充为已实现能力。
 
 ## 启动
 

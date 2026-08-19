@@ -204,9 +204,12 @@ Agent 包固定 Skill 版本和内容摘要。实际解析的 Skill 名称、版
 - `worker/skills/` 预装六个可移植产品 Skill，每个包含触发正例、负例、歧义例以及 success/blocked/cleanup 行为案例；
 - 有效 Skill 由代码计算 installed ∩ allowed，未安装、digest 不匹配、越权选择和配置漂移 fail closed；
 - Agent 通过 `tiangong_use_skill` 自主选择已启用 Skill，ToolResult 只记录有界 Skill ID、版本、内容摘要和触发说明，不把 Skill 当作权限；
-- 只读 runtime console 已可投影 Agent、模型、当前 Task、逻辑 Session、允许 Skill 和实际使用 Skill。
+- M3 chat-first Web 已替代原始只读 console：Human 使用 Matrix 身份建立只驻留内存的 HttpOnly Web session，Room 历史、实时 sync、普通消息发送、分页、local echo 和失败状态都直接来自 Matrix；每次 API/SSE 更新重查 identity 和 bound-Room membership，撤销后 SSE 关闭；
+- Web 左侧显示 Team/Room 与 Leader 待归单指标，中间显示完整 Matrix 对话，右侧显示 Room Work 历史和当前 Work 的 WorkSpec、Plan 引用/历史、Challenger Result、Agent/model/实际 Skill、Task/Result/ToolResult、交付物和 timeline；
+- Work 选择只存在浏览器查看状态，发送 API 只接受普通正文和 Matrix transaction ID，显式拒绝 `workId` 等路由字段；Matrix token、密码和消息正文都不进入 PostgreSQL、URL 或浏览器持久存储；
+- 第一版加密 Room 明确 fail closed；HTTPS 默认使用 Secure cookie，loopback HTTP 开发必须显式关闭该属性。
 
-这不等于 M3 chat-first Web、真实项目闭环或模型质量评估已经完成。
+这不等于 M4 真实项目闭环、真实模型质量或生产部署已经完成。
 
 ## 6. 真实项目本地交付
 

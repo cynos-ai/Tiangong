@@ -1,92 +1,87 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Tiangong Runtime Console</title>
-    <style>
-      :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #0b1020; color: #e8ecf4; }
-      body { max-width: 960px; margin: 0 auto; padding: 48px 24px; }
-      .card { border: 1px solid #2d3852; border-radius: 12px; padding: 20px; background: #121a2d; }
-      .work, .agent { margin-top: 16px; padding-top: 16px; border-top: 1px solid #2d3852; }
-      .muted { color: #9da9bf; }
-      code { color: #a9d4ff; }
-    </style>
+    <meta name="color-scheme" content="dark">
+    <meta name="description" content="Tiangong chat-first professional Agent workbench">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <title>Tiangong 工作台</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
   </head>
   <body>
-    <h1>Tiangong Runtime Console</h1>
-    <p class="muted">A read-only witness over direct runtime facts. Unknown is a valid state.</p>
-    <section class="card" aria-live="polite">
-      <h2 id="status">Loading runtime facts…</h2>
-      <p id="tool-summary" class="muted">ToolResult observations: unknown</p>
-      <div id="agents" class="muted">Agent projection: unknown</div>
-      <div id="works" class="muted">Work projection: unknown</div>
-      <pre id="facts">{}</pre>
+    <section id="login-view" class="login-shell">
+      <div class="login-card">
+        <div class="brand-mark" aria-hidden="true">天</div>
+        <p class="eyebrow">TIANGONG</p>
+        <h1>回到团队正在工作的地方</h1>
+        <p class="login-copy">使用你的 Matrix 身份进入。对话仍保存在 Matrix；Tiangong 只呈现 Work、Plan、Task 和交付事实。</p>
+        <form id="login-form">
+          <label for="user-id">Matrix 用户 ID</label>
+          <input id="user-id" name="userId" autocomplete="username" placeholder="@you:example.com" required>
+          <label for="password">密码</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+          <button id="login-button" class="primary" type="submit">进入工作台</button>
+          <p id="login-error" class="form-error" role="alert"></p>
+        </form>
+        <p class="security-note">凭据只用于建立当前内存会话，不写入 Tiangong 数据库。</p>
+      </div>
     </section>
-    <script>
-      function render(facts) {
-        document.querySelector('#status').textContent = facts.status === 'observed' ? 'Runtime facts observed' : 'Runtime facts unavailable';
-        const toolResults = Array.isArray(facts.toolResults) ? facts.toolResults : [];
-        document.querySelector('#tool-summary').textContent = facts.toolResultsSource === 'tool-result-capture-file'
-          ? `Bounded ToolResult observations: ${toolResults.length}`
-          : 'ToolResult observations: unknown';
-        const agents = Array.isArray(facts.agents) ? facts.agents : [];
-        const agentContainer = document.querySelector('#agents');
-        agentContainer.replaceChildren();
-        agentContainer.textContent = `Agent projection: ${agents.length} configured member(s)`;
-        for (const agent of agents) {
-          const card = document.createElement('article');
-          card.className = 'agent';
-          const heading = document.createElement('h3');
-          heading.textContent = `${agent.responsibility} · ${agent.status} · ${agent.model}`;
-          const summary = document.createElement('p');
-          summary.textContent = `${agent.agentPackageId}@${agent.agentPackageVersion}; active Tasks ${agent.activeTasks.length}; enabled Skills ${agent.allowedSkills.join(', ') || 'none'}`;
-          const used = document.createElement('p');
-          used.className = 'muted';
-          used.textContent = `Actually used Skills: ${agent.usedSkills.map((skill) => `${skill.skillId}@${skill.version}`).join(', ') || 'none observed'}`;
-          card.append(heading, summary, used);
-          agentContainer.append(card);
-        }
-        const works = Array.isArray(facts.works) ? facts.works : [];
-        const workContainer = document.querySelector('#works');
-        workContainer.replaceChildren();
-        const pending = facts.admissionMetrics?.pendingCount ?? 0;
-        const oldest = facts.admissionMetrics?.oldestReceivedAt ?? 'none';
-        workContainer.textContent = facts.workSource === 'coordination-store'
-          ? `Work projection: ${works.length} Work(s), ${pending} message(s) awaiting Leader routing, oldest ${oldest}`
-          : 'Work projection: unknown';
-        for (const work of works) {
-          const card = document.createElement('article');
-          card.className = 'work';
-          const heading = document.createElement('h3');
-          heading.textContent = `${work.title ?? work.workId} · ${work.status} · epoch ${work.epoch}`;
-          const summary = document.createElement('p');
-          summary.textContent = work.currentWorkSpec?.goal ?? '需求待形成';
-          const timeline = document.createElement('p');
-          timeline.className = 'muted';
-          const deliveries = (Array.isArray(facts.deliveries) ? facts.deliveries : [])
-            .filter((delivery) => delivery.workId === work.workId)
-            .map((delivery) => `${delivery.kind}:${delivery.status}`)
-            .join(', ');
-          timeline.textContent = `Leader session ${work.leaderSessionId}; timeline ${Array.isArray(work.timeline) ? work.timeline.length : 0}; wakes ${deliveries || 'none'}; plan ${work.currentPlanRef ? 'published' : 'none'}.`;
-          card.append(heading, summary, timeline);
-          workContainer.append(card);
-        }
-        document.querySelector('#facts').textContent = JSON.stringify(facts, null, 2);
-      }
-      function fallback() {
-        fetch('/api/runtime', { cache: 'no-store' }).then((response) => response.json()).then(render)
-          .catch(() => { document.querySelector('#status').textContent = 'Runtime facts unavailable'; });
-      }
-      if (typeof EventSource === 'function') {
-        const stream = new EventSource('/api/runtime/events');
-        stream.addEventListener('runtime', (event) => {
-          try { render(JSON.parse(event.data)); } catch { fallback(); }
-        });
-        stream.onerror = () => { stream.close(); fallback(); };
-      } else {
-        fallback();
-      }
-    </script>
+
+    <div id="workspace" class="workspace hidden">
+      <header class="topbar">
+        <div class="brand"><span class="brand-mark small" aria-hidden="true">天</span><span>Tiangong</span><span class="product-label">Agent 工作台</span></div>
+        <div class="topbar-actions"><span id="connection-state" class="connection-state">正在连接</span><span id="actor-id" class="actor"></span><button id="logout-button" class="ghost" type="button">退出</button></div>
+      </header>
+
+      <div class="workbench">
+        <nav class="room-rail" aria-label="Team 和 Room">
+          <div class="rail-heading"><p class="eyebrow">TEAM / ROOM</p><h2 id="team-name">团队</h2></div>
+          <div id="room-list" class="room-list" aria-live="polite"></div>
+          <section class="backlog-card" aria-label="Leader 归单状态">
+            <div class="section-heading"><h3>Leader 归单</h3><span id="backlog-dot" class="status-dot"></span></div>
+            <dl>
+              <div><dt>待处理</dt><dd id="pending-count">—</dd></div>
+              <div><dt>最早等待</dt><dd id="oldest-pending">—</dd></div>
+              <div><dt>最近错误</dt><dd id="routing-error">无</dd></div>
+            </dl>
+          </section>
+        </nav>
+
+        <main class="conversation" aria-label="Matrix Room 对话">
+          <header class="conversation-header">
+            <div><p class="eyebrow">MATRIX ROOM</p><h1 id="room-title">选择 Room</h1><p id="room-meta" class="muted">Matrix 是完整消息历史的唯一来源</p></div>
+            <span class="source-pill">Matrix source</span>
+          </header>
+          <div class="history-toolbar"><button id="load-older" class="ghost hidden" type="button">加载更早消息</button><span id="history-state" class="muted"></span></div>
+          <ol id="message-list" class="message-list" aria-live="polite" aria-busy="false"></ol>
+          <div id="chat-error" class="inline-error hidden" role="alert"></div>
+          <form id="composer" class="composer">
+            <label class="sr-only" for="message-body">发送 Matrix 消息</label>
+            <textarea id="message-body" rows="1" maxlength="16384" placeholder="在 Room 中正常说话… 右侧 Work 选择不会改变消息归单" required></textarea>
+            <div class="composer-footer"><span><kbd>Enter</kbd> 发送 · <kbd>Shift</kbd> + <kbd>Enter</kbd> 换行</span><button id="send-button" class="primary compact" type="submit">发送</button></div>
+          </form>
+        </main>
+
+        <aside class="work-panel" aria-label="Work 事实">
+          <header class="panel-header"><div><p class="eyebrow">WORK FACTS</p><h2>工作上下文</h2></div><span class="read-only-pill">只读投影</span></header>
+          <section class="work-history-section">
+            <div class="section-heading"><h3>Room 中的 Work</h3><span id="work-count" class="count">0</span></div>
+            <div id="work-list" class="work-list"></div>
+          </section>
+          <div id="work-empty" class="empty-state"><div class="empty-icon" aria-hidden="true">⌁</div><h3>选择一个 Work</h3><p>查看需求、Plan、Agent、Task 和交付物。选择只影响这里的查看范围。</p></div>
+          <div id="work-detail" class="work-detail hidden">
+            <section class="detail-hero"><div class="detail-title-row"><span id="work-status" class="status-badge"></span><span id="work-epoch" class="muted"></span></div><h2 id="work-title"></h2><p id="work-activity" class="muted"></p></section>
+            <section class="detail-section"><div class="section-heading"><h3>WorkSpec</h3><span id="spec-revision" class="count"></span></div><div id="work-spec"></div></section>
+            <section class="detail-section"><div class="section-heading"><h3>Plan</h3><span id="plan-state" class="count"></span></div><div id="plan-content"></div></section>
+            <section class="detail-section"><div class="section-heading"><h3>Agents &amp; Skills</h3><span id="agent-count" class="count"></span></div><div id="agent-list"></div></section>
+            <section class="detail-section"><div class="section-heading"><h3>Tasks &amp; Results</h3><span id="task-count" class="count"></span></div><div id="task-list"></div></section>
+            <section class="detail-section"><div class="section-heading"><h3>Tool facts</h3><span id="tool-count" class="count"></span></div><div id="tool-list"></div></section>
+            <section class="detail-section"><div class="section-heading"><h3>Timeline</h3><span id="timeline-count" class="count"></span></div><ol id="timeline-list" class="timeline-list"></ol></section>
+          </div>
+        </aside>
+      </div>
+    </div>
   </body>
 </html>
