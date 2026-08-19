@@ -3,6 +3,9 @@
 > Status: target design.
 >
 > This document defines what Tiangong should be. It is implementation-independent.
+>
+> The first public product slice that applies this target is
+> [`product-mvp.zh.md`](product-mvp.zh.md).
 
 ## 1. Purpose
 
@@ -160,8 +163,8 @@ expanding the Kernel.
 
 The durable coordination model contains only:
 
-- a Work and its append-only timeline;
-- the Work's current WorkSpec projection;
+- a Work, its bounded display title, and its append-only timeline;
+- the Work's current WorkSpec and current Plan-reference projections;
 - Tasks with immutable TaskSpecs;
 - at most one immutable Result per Task;
 - immutable ContentRefs;
@@ -194,15 +197,38 @@ or workflow.
 ### 5.1 Message admission and Work creation
 
 An authenticated Human message enters through the channel integration. Its
-platform message identifier is the ingress idempotency key.
+platform message identifier is the ingress idempotency key. The Team's Leader
+receives the ordinary channel event together with bounded summaries of open
+Work and performs one idempotent admission action:
 
-- A message explicitly associated with an open Work is appended to that Work's
-  timeline.
-- A message with no clear association creates a new Work and its first timeline
-  entry atomically.
-- Ambiguous input defaults to a new Work so unrelated contexts are not silently
-  combined.
-- Attachments use ContentRefs. Ordinary text remains an ordinary message.
+- associate the platform-message reference with one open Work and append that
+  reference to its timeline; or
+- create a new Work, bind the reference, and append its first timeline entry
+  atomically.
+
+Before the Leader commits either action, the event may remain in a bounded,
+durable admission backlog keyed by its platform identifier. This is
+infrastructure state, not a Work or Task: it stores the channel reference,
+authenticated actor, receipt time, lease/retry data, and bounded error code, but
+not the message body. Admission wakes are idempotent and processed in stable
+room order. If the Leader model is unavailable, the message remains visible in
+the channel and pending for retry instead of being lost or creating a guessed
+Work. Operators and the Web can observe pending count, oldest age, and last
+bounded error without reading copied message content.
+
+This routing is a Leader semantic judgment, not a Human-selected UI scope. The
+Kernel still verifies that the actor is the current Leader and that any target
+Work is open and belongs to the same Team and channel route. A Web selection
+may change which Work facts are inspected, but it never changes where the next
+room message is admitted. Work routing does not modify the Human
+message body, add a Tiangong field to its channel content, or require a thread
+or reply convention. Tiangong stores only the platform-message reference and
+its Work binding; the channel remains the source of message text.
+
+When the association is ambiguous, the Leader defaults to a new Work so
+unrelated contexts are not silently combined, and may ask the Human to confirm
+before further action. Attachments use ContentRefs. Ordinary text remains an
+ordinary message.
 
 A Work projection may initially be:
 
@@ -211,33 +237,55 @@ A Work projection may initially be:
   "workId": "work-123",
   "teamId": "team-a",
   "epoch": 1,
+  "title": "Deliver the requested change",
   "workSpec": null,
+  "currentPlanRef": null,
   "createdBy": "human-42",
   "createdAt": "2026-08-09T10:00:00Z"
 }
 ```
 
-The original request is the first Work timeline entry. It is not duplicated in
-the projection above.
+The original request's platform-message reference is the first Work timeline
+entry. The message body remains in the channel and is not duplicated in the
+projection above or in a second chat store.
 
-### 5.2 Correcting an ambiguous association
+`title` is bounded, non-unique display metadata for Human navigation and
+search. It is never an identifier, authorization input, idempotency key,
+Session key, or telemetry correlation value. A provisional title may come from
+the first message; the Leader may refine it when forming the WorkSpec, and an
+authorized Human may rename it. A rename appends `work-title-changed`. Other
+members can read the title but cannot change it.
 
-When the Leader asks whether an ambiguous message belongs to an earlier Work
-and the Human confirms that it does:
+### 5.2 Correcting a mistaken association
 
-1. the original platform-message reference and confirmation are appended to the
-   earlier Work;
-2. the placeholder Work receives a `work-stopped` fact whose reason identifies
-   the earlier Work; and
-3. the placeholder leaves active views but is not physically deleted.
+A Human correction is another ordinary authenticated channel message. While
+the source Work is open, the Leader may issue one narrow
+`correct-message-association` command which:
 
-The preserved placeholder is needed for message replay and historical
-explanation. Tiangong does not add a general Work merge, reparenting, or
-inheritance protocol.
+1. verifies the original binding, correction message, current Leader, and same
+   Team and channel route;
+2. targets another open Work or atomically creates a new `workSpec: null` Work
+   from the correction message;
+3. appends `message-association-corrected` facts to the source and target Work
+   and updates the current message-association projection atomically; and
+4. preserves the original timeline entry so replay and the routing mistake
+   remain explainable.
 
-Normally the placeholder remains at `workSpec: null` and receives no Task. If
-work or external effects already occurred, the Leader handles those facts
-explicitly; the runtime does not merge them automatically.
+Reprocessing the original platform event reads the corrected current
+association and never moves it back to the source Work. The immutable initial
+receipt remains historical; it is not used as a stale routing response.
+
+If ambiguity originally created a placeholder Work and no Task or effect
+followed, the same transaction stops that placeholder with a reason identifying
+the target Work. If the source Work is already terminal, it is not rewritten;
+the correction message starts a new Work which cites the original message and
+terminal Work as context.
+
+Tasks, Results, ToolResults, and Operations never move between Work. If work or
+external effects already occurred under the mistaken association, the Leader
+must update the open source WorkSpec, cancel or finish its Tasks, and handle its
+Operations explicitly. This is a narrow message-association correction, not a
+general Work merge, Task migration, reparenting, or inheritance protocol.
 
 ### 5.3 Forming and changing the WorkSpec
 
@@ -270,12 +318,46 @@ is no separate WorkSpec history store.
 A non-null current WorkSpec is a machine precondition for creating a Task and
 for `complete-work`. A Work may be stopped while its WorkSpec is null.
 
-### 5.4 Existing Tasks do not silently change
+`workSpec: null` is a valid intermediate projection, not missing or corrupt
+data. APIs return it explicitly. The Web renders it as “requirement pending”
+and does not invent a blank Plan, Task, or completion state.
 
-A Task already dispatched does not automatically receive a later WorkSpec.
-Its TaskSpec remains the delegation authority.
+### 5.4 Shared Work Plan
 
-After a WorkSpec change, the Leader decides:
+A substantial software-delivery or other multi-agent Work may maintain one
+current Plan as a Markdown ContentRef. The Plan is shared working guidance for
+how the Team currently intends to satisfy the WorkSpec. It is not a Task list,
+workflow, authorization object, completion checklist, or separate aggregate.
+
+Published Plan content is immutable. Flexibility comes from creating a new
+Markdown ContentRef and having the Leader append `work-plan-changed` with the
+new reference and a bounded reason. `currentPlanRef` is a projection of those
+facts; candidate Plan ContentRefs remain ordinary Task deliverables until the
+Leader publishes one. There is no Plan table, status, approval, step schema,
+or version state machine.
+
+The Architect is normally the primary author. Any member may suggest a change
+through ordinary communication or a Result, and the Leader may make a small
+coordination edit or ask the Architect for a revision. Only the Leader changes
+`currentPlanRef`. The default software-delivery method sends an initial Plan
+and any material technical change to a Challenger before publication, but
+"material" remains a Leader judgment guided by Skills rather than a Kernel
+workflow stage. A change to the Human goal, scope, constraints, or `doneWhen`
+changes the WorkSpec first; it cannot be hidden in the Plan.
+
+Planning, research, and challenge Tasks may be created before a current Plan
+exists. When the Leader creates an execution Task, it may cite the then-current
+Plan ContentRef as an input while copying only the relevant background and Plan
+excerpt into the TaskSpec. Members of the same Work may read the full current
+Plan on demand as labelled background. Plan Markdown does not store execution
+progress; Task, Result, ToolResult, and Operation facts remain authoritative.
+
+### 5.5 Existing Tasks do not silently change
+
+A Task already dispatched does not automatically receive a later WorkSpec or
+Plan. Its immutable TaskSpec and cited inputs remain the delegation authority.
+
+After a WorkSpec or Plan change, the Leader decides:
 
 - an unrelated Task needs no update;
 - useful but non-authoritative context may be sent as an explicitly targeted
@@ -283,11 +365,12 @@ After a WorkSpec change, the Leader decides:
 - a material change requires safely cancelling the old Task and creating a new
   one.
 
-An agent may query the current Work summary, but the response is labelled as
-background and cannot rewrite the TaskSpec. Tiangong does not bind Tasks to
-WorkSpec versions or introduce a general Task-update protocol.
+An agent may query the current Work summary and current Plan, but the response
+is labelled as background and cannot rewrite the TaskSpec. Tiangong does not
+bind Tasks to mutable Work or Plan projections and does not introduce a general
+Task-update protocol.
 
-### 5.5 Waiting for Human input
+### 5.6 Waiting for Human input
 
 Clarification is ordinary Work communication, not an Approval object.
 
@@ -302,7 +385,7 @@ as “waiting for Human”. A later reply continues the same open Work.
 Reminder timers, delivery retries, and waiting labels are infrastructure or
 projections, not authoritative business objects.
 
-### 5.6 Work termination
+### 5.7 Work termination
 
 The Leader has two Work-terminal commands:
 
@@ -346,11 +429,16 @@ timeline fact, its bounded delegation reason, and Work epoch advancement.
 ```
 
 The TaskSpec is the complete semantic delegation. It is immutable and contains
-only the objective, inputs, and necessary ordinary-language constraints.
+only the objective, inputs, and necessary ordinary-language constraints. The
+Leader may organize selected Work background and a relevant Plan excerpt into
+that text while citing the complete Plan ContentRef as an input. The runtime
+does not inject the whole Plan by default or add Markdown section, line-range,
+or Plan-step selectors.
 
 A Task does not copy:
 
 - a WorkSpec version;
+- Plan progress or mutable Plan state;
 - a role or task-kind enum;
 - a workflow stage;
 - a dependency graph;
@@ -501,6 +589,13 @@ Free-form prose can still carry sensitive text, so routing discipline,
 sanitization, and monitoring remain necessary; Tiangong does not claim perfect
 semantic data-loss prevention.
 
+Professional identity and capability come from authenticated AgentTeams state,
+MemberConfig, ControlProfile, and the loaded Agent package—not from a
+role-specific container image. Deployments should prefer one versioned generic
+Worker runtime image and configure identity, model/runtime route, Skills, and
+capability bindings per member. Sharing an image never implies sharing
+permissions.
+
 ### 7.3 ControlProfile
 
 ControlProfile is the enterprise ceiling. It defines:
@@ -545,6 +640,14 @@ later.
 Skills are versioned methods, instructions, and reusable code. They may provide
 strong defaults, but they cannot grant capabilities, append privileged events,
 or change Task and Work facts directly.
+
+The deployed Agent package provides an installed Skill set; MemberConfig enables
+a subset. A member can use only the intersection. Skills are reusable across
+professional responsibilities and are not assigned dynamically by a Human,
+Leader, Task, or prompt. The agent selects among its enabled Skills from their
+trigger descriptions. Online installation and task-scoped Skill mutation are
+outside the initial product boundary. Resolved Skill identity and version are
+execution metadata, not Task authority.
 
 For a Task agent, context is layered by authority and purpose:
 
@@ -832,8 +935,9 @@ Tiangong uses:
   Skill invocation metadata, and diagnostics; and
 - **Git and Adapter-owned content stores** for durable content.
 
-Session state, prepared-environment mappings, writer locks, reminder timers,
-and request replay rows are infrastructure state, not new domain records.
+Session state, pending message-admission references, room cursors and admission
+leases, prepared-environment mappings, writer locks, reminder timers, and
+request replay rows are infrastructure state, not new domain records.
 
 Operation events are never sampled from CoordinationStore. There is no second
 machine-fact index, hash-chain ledger, or content manifest.
@@ -1041,11 +1145,16 @@ Within authenticated actor and command type, a `requestId` is atomically bound
 to a normalized request and bounded response. Repeating the same request
 returns the saved response; reusing the ID for different content conflicts.
 Replay rows are bounded infrastructure state and do not appear in the Work
-timeline.
+timeline. Message admission uses the platform message identifier as its replay
+identity; its saved receipt does not freeze a Work ID. Any returned current
+association is read from the message-association projection so a later
+correction cannot be undone by replay.
 
 The store provides atomic boundaries for at least:
 
 - message admission and Work creation;
+- message-association correction, both Work timeline facts, and current binding
+  projection update;
 - WorkSpec event, projection, and epoch update;
 - Task creation, timeline fact, and epoch update;
 - Result submission versus Task cancellation;
@@ -1070,6 +1179,11 @@ Before `complete-work` or `stop-work`, `CloseGuard` verifies machine facts:
 - no Approval is pending and no uncertain, recovery-needed, or unresolved
   incident path remains; and
 - every referenced deliverable still resolves.
+
+A Task with a Result projects as `reported`; there is no per-Task `accepted` or
+`blocked` disposition and no CoordinationDecision. `complete-work` itself is
+the Leader's semantic confirmation that the WorkSpec is satisfied. CloseGuard
+must not reintroduce that judgment as a second per-Task record.
 
 CloseGuard reads Task, Result, ContentRef, and Operation sources directly. It
 does not build an intermediate evidence index or trust a caller-selected basis
@@ -1137,8 +1251,11 @@ sanitization, and monitoring reduce this risk without eliminating it.
 ## 14. System invariants
 
 1. Every Work begins with an authenticated, deduplicated Human message.
-2. Ambiguous association never silently mixes unrelated Work; correction does
-   not delete history or introduce a general merge protocol.
+2. Each Human channel message is initially admitted exactly once by the Leader
+   using its platform identifier; UI selection and caller-supplied Work markers
+   do not grant an association. A narrow authenticated correction may update
+   the current association, but it never deletes history, moves Task or
+   Operation facts, or introduces a general merge protocol.
 3. WorkSpec history consists of complete `work-spec-changed` timeline
    snapshots; the current WorkSpec is only their projection.
 4. No Task is created while the current WorkSpec is null.
@@ -1176,8 +1293,9 @@ sanitization, and monitoring reduce this risk without eliminating it.
     invocation.
 22. Operation events are permanent append-only CoordinationStore facts. Result
     citations retain their ToolResults through the Work retention period.
-23. Work termination requires every Task and Operation to have a safe machine
-    disposition and no active execution owner.
+23. Work termination requires every Task to have a Result or cancellation fact,
+    every Operation to have a safe terminal event, and no active execution
+    owner.
 24. Only the Leader decides semantic Work completion; Kernel closure checks do
     not encode a professional process.
 25. New hard controls require a concrete threat, machine-verifiable property,
