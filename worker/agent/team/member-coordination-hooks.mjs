@@ -1,6 +1,5 @@
 import { createResult } from "./coordination-store.mjs";
 import { createRemoteCoordinationStore } from "./coordination-control-client.mjs";
-import { sha256 } from "../canonical-json.mjs";
 
 const ID = /^[A-Za-z0-9@!#$%&*+./:=?_-]{1,160}$/u;
 const MAX_REPORT_BYTES = 8 * 1024;
@@ -36,10 +35,6 @@ function reportFromMessages(event) {
     ? assistant.content.filter((part) => part?.type === "text" && typeof part.text === "string").map((part) => part.text).join("\n")
     : typeof assistant?.content === "string" ? assistant.content : "";
   return bounded(content.replace(/[\r\n]+/gu, " ").trim());
-}
-
-function resultId(taskId, sessionKey) {
-  return `result-${sha256({ taskId, sessionKey })}`;
 }
 
 function nativeRunnerDetails(event = {}) {
@@ -80,8 +75,8 @@ export function createMemberCoordinationHooks({ endpoint, token, memberId, fetch
       }
       assignments.set(key, Object.freeze({ task, workId: assignment.workId, taskId: assignment.taskId }));
       const objective = bounded(task.spec.objective, 4096);
-      const completionContract = bounded(task.spec.completionContract, 4096);
-      return { prependContext: `Authoritative Tiangong TaskSpec (read-only): task=${task.spec.taskId} work=${task.spec.workId} objective=${objective} completion=${completionContract}` };
+      const constraints = Array.isArray(task.spec.constraints) ? bounded(task.spec.constraints.join("; "), 4096) : "";
+      return { prependContext: `Authoritative Tiangong TaskSpec (read-only): task=${task.spec.taskId} work=${task.spec.workId} objective=${objective}${constraints ? ` constraints=${constraints}` : ""}` };
     },
     async agentEnd(event = {}, ctx = {}) {
       const key = hookKey(ctx);
@@ -95,15 +90,14 @@ export function createMemberCoordinationHooks({ endpoint, token, memberId, fetch
       }
       const report = reportFromMessages(event);
       const result = createResult({
-        resultId: resultId(assignment.taskId, key),
         workId: assignment.workId,
         taskId: assignment.taskId,
-        producerMemberId: actorId,
-        toolResultIds: [],
-        artifactRefs: [],
-        ...(event.success === false
-          ? { blocker: bounded(event.error || "Native OpenClaw member session failed", 4096) }
-          : { claim: bounded(report, 4096) || "Native OpenClaw member session completed without a bounded assistant report" }),
+        submittedBy: actorId,
+        toolResultRefs: [],
+        deliverableRefs: [],
+        summary: event.success === false
+          ? `Blocked: ${bounded(event.error || "Native OpenClaw member session failed", 4096)}`
+          : bounded(report, 4096) || "Native OpenClaw member session completed without a bounded assistant report",
         createdAt: now(),
       });
       return store.submitResult({
@@ -126,15 +120,14 @@ export function createMemberCoordinationHooks({ endpoint, token, memberId, fetch
       }
       const work = await store.getWork(details.workId);
       if (!work?.work || work.work.workId !== details.workId) throw new Error("Native Runner ToolResult Work binding is unavailable");
-      const artifactRefs = details.changeRevisionDigest ? [`change-revision:${details.changeRevisionDigest}`] : [];
+      const deliverableRefs = details.changeRevisionDigest ? [{ adapter: "runner-change-revision@1", ref: details.changeRevisionDigest }] : [];
       const result = createResult({
-        resultId: resultId(details.taskId, "native-runner"),
         workId: details.workId,
         taskId: details.taskId,
-        producerMemberId: actorId,
-        toolResultIds: [],
-        artifactRefs,
-        claim: bounded(`Native Runner completed the assigned Codex tool call${details.replayed ? " by journal replay" : ""}${details.changeRevisionDigest ? `; ChangeRevision ${details.changeRevisionDigest}` : ""}.`, 4096),
+        submittedBy: actorId,
+        toolResultRefs: [],
+        deliverableRefs,
+        summary: bounded(`Native Runner completed the assigned Codex tool call${details.replayed ? " by journal replay" : ""}${details.changeRevisionDigest ? `; ChangeRevision ${details.changeRevisionDigest}` : ""}.`, 4096),
         createdAt: now(),
       });
       const submitted = await store.submitResult({ result, expectedEpoch: work.epoch, requestId: `result-submit-${details.taskId}` });

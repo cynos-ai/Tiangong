@@ -12,7 +12,7 @@
 ### B1: Run a bounded fixture command in a disposable isolated container
 
 - Purpose: prove the declared RunnerPort isolation contract is feasible with the actual Tiangong Implementor image before enabling a production executor.
-- Setup: build `tiangong-worker-implementor:dev`; Docker must be available. The driver resolves the mutable development tag to an immutable local image ID before container creation.
+- Setup: build `tg-worker:dev`; Docker must be available. The driver resolves the mutable development tag to an immutable local image ID before container creation.
 - Prompt: none. Run `make test-runner-isolation`.
 - Expected observations:
   - the Docker daemon configuration has `network=none`, read-only root filesystem, all capabilities dropped, `no-new-privileges`, bounded memory/PIDs/CPU, and a non-root user;
@@ -29,7 +29,7 @@
 ### B2: Docker executor preserves the proven boundary
 
 - Purpose: execute the production Docker executor module, rather than a parallel shell implementation, against the same isolation fixture.
-- Setup: build `tiangong-worker-implementor:dev`; Docker must be available. Run `make test-runner-executor`. The smoke resolves the mutable development tag to an immutable daemon image ID before constructing the executor.
+- Setup: build `tg-worker:dev`; Docker must be available. Run `make test-runner-executor`. The smoke resolves the mutable development tag to an immutable daemon image ID before constructing the executor.
 - Prompt: none.
 - Expected observations:
   - the executor creates one uniquely named/labeled fixture volume plus seed and command containers; command scratch is a bounded 64 MiB tmpfs rather than an unbounded daemon volume;
@@ -51,7 +51,7 @@
 ### B3: Closed Runner broker keeps daemon authority outside the Worker
 
 - Purpose: prove the supported socket topology: only a controlled broker receives Docker authority, while an exact Worker-image client reaches it through a task-bound HTTP adapter.
-- Setup: build `tiangong-runner-broker:dev`, `tiangong-worker-implementor:dev`, and `tiangong-worker-assessor:dev`; run `make test-runner-broker` on a fresh, uniquely labeled network, broker state volume, broker container, and client identities.
+- Setup: build `tg-runner-broker:dev` and `tg-worker:dev`; run `make test-runner-broker` on a fresh, uniquely labeled network, broker state volume, broker container, and client identities.
 - Prompt: none.
 - Expected observations:
   - the broker authenticates the request source by exact Docker network IP, container name, running state, immutable Worker image ID, and `AGENTTEAMS_WORKER_NAME` runtime fact;

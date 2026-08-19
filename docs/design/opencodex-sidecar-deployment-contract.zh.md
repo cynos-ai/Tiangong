@@ -31,7 +31,7 @@ AgentTeams gateway -> Chat/Completions provider
 Tiangong 已提供一个部署层实现，落在 AgentTeams 同一受控 Docker 网络中：
 
 - `scripts/deploy-opencodex-sidecar.sh` 启动、检查和移除 deployment-owned manager；manager 才持有 Docker socket，Worker 不持有。
-- `tiangong-opencodex-sidecar:dev` 固定安装 OpenCodex `2.15.0`；每个 Worker 使用精确 owner labels 的独立 sidecar，无宿主机端口。
+- `tg-opencodex-sidecar:dev` 固定安装 OpenCodex `2.15.0`；每个 Worker 使用精确 owner labels 的独立 sidecar，无宿主机端口。
 - `worker/agent/deployment/opencodex-sidecar-cli.mjs` 驱动 `provision → ready → reconcile → rotate → drain → remove`，并把 controller snapshot 原子写入受控卷。
 - `opencodex-sidecar-receipt-service.mjs` 只通过内部 URL 返回 ready receipt；Worker 不需要挂载 manager 卷，缺失或非 ready 时 fail-closed。
 - scoped consumer token 通过 manager 到 sidecar 的 stdin/tmpfs 短暂投影；配置只保存环境变量引用，凭证值不进入 Docker metadata、argv、普通文件、receipt 或日志。

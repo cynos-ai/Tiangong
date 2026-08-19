@@ -29,7 +29,7 @@ async function fixture(t) {
     team,
     route,
     profile,
-    spec: createWorkSpec({ workId: "work-resume", revision: 1, objective: "resume", scope: "test", completionContract: "evidence", createdAt: NOW }),
+    spec: createWorkSpec({ workId: "work-resume", revision: 1, goal: "resume", scope: ["test"], doneWhen: ["evidence"], createdAt: NOW }),
     actorId: "@human-resume:example.test",
     sourceEventId: "$human-resume",
     requestId: "request-resume",

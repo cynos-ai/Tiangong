@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 readonly NETWORK="${TIANGONG_AGENTTEAMS_NETWORK:-agentteams-net}"
-readonly IMAGE="${TIANGONG_OPENCODEX_ADAPTER_IMAGE:-tiangong-opencodex-adapter:dev}"
+readonly IMAGE="${TIANGONG_OPENCODEX_ADAPTER_IMAGE:-tg-opencodex-adapter:dev}"
 readonly CONTAINER="${TIANGONG_OPENCODEX_ADAPTER_CONTAINER:-tiangong-opencodex-adapter}"
 readonly VOLUME="${TIANGONG_OPENCODEX_STATE_VOLUME:-tiangong-opencodex-state}"
 readonly STATE_DIR="/var/lib/tiangong-opencodex"

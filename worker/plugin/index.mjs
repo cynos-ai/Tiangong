@@ -12,8 +12,8 @@ import { createToolResultCaptureHook, defaultToolResultCapturePath } from "../ag
 import { assertPluginApi } from "../agent/preflight/openclaw-preflight.mjs";
 import { registerMemberCoordinationHooks } from "../agent/team/member-coordination-hooks.mjs";
 import { registerNativeRunnerTool } from "../agent/team/native-runner-tool.mjs";
+import { registerLeaderCoordinationHooks } from "../agent/team/leader-coordination-hooks.mjs";
 import { isLeaderEnvironment, registerLeaderOpenClawTools } from "../agent/team/leader-openclaw-tools.mjs";
-import { registerMemberOpenClawTools } from "../agent/team/member-openclaw-tools.mjs";
 
 export default definePluginEntry({
   id: "tiangong-control",
@@ -56,9 +56,8 @@ export default definePluginEntry({
       registerNativeRunnerTool(api, { env: process.env });
     }
     if (leaderEnvironment) {
+      registerLeaderCoordinationHooks(api, { env: process.env });
       registerLeaderOpenClawTools(api, { env: process.env });
-    } else if (process.env.TIANGONG_MEMBER_COORDINATION_ENABLED === "1") {
-      registerMemberOpenClawTools(api, { env: process.env });
     }
     createWorkerObservability({
       config: resolveObservabilityConfig(api.pluginConfig),

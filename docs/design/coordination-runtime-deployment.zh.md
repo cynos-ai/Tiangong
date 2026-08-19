@@ -80,7 +80,7 @@ Docker Desktop/WSL 的 Windows bind mount 会把文件权限呈现为过宽，Ti
 
 如需让操作者从宿主机直接查看 runtime 页面，可设置 `TIANGONG_COORDINATION_HOST_PORT=18780`；脚本只绑定 `127.0.0.1`，不会默认暴露到公网。AgentTeams Dashboard 仍由 AgentTeams 自己管理。
 
-成员 Worker 不应调用 Leader admission。OpenClaw harness 现在读取固定 RoleProfile：只有 Leader runtime 执行 admission，Designer/Implementor/Assessor/Operator 的 Matrix 任务直接进入自己的成员运行时；对应回归测试覆盖该边界。人类 admission smoke 必须发送单行 Matrix body（换行会被 `HUMAN_EVENT_CONTENT_INVALID` 拒绝），成员 Worker mention 则走任务分发链路而不是人类 Work admission。
+成员 Worker 不应调用 Leader admission。OpenClaw 根据 AgentTeams Leader 身份和当前 MemberConfig 投影注册工具：只有 Leader runtime 执行 Room 消息 admission，其他成员的 Matrix 任务直接进入自己的成员运行时；对应回归测试覆盖该边界。人类 admission smoke 必须发送单行 Matrix body（换行会被 `HUMAN_EVENT_CONTENT_INVALID` 拒绝），成员 Worker mention 则走任务分发链路而不是人类 Work admission。
 
 ## 2026-08-16 B2 Basic 闭环复核
 

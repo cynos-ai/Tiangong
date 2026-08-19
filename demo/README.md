@@ -1,8 +1,8 @@
 # Tiangong Demo
 
-这是一条不改变默认 provider 的可演示路径：5 个已有 Tiangong Worker 镜像组成一个 Team，使用当前默认 DeepSeek 路由，通过真实 Matrix 消息触发 Leader 房间。它复用现有 AgentTeams、OpenClaw、Tiangong runtime 和 WebUI；没有为 Demo 引入另一套业务流程。
+这是一条不改变默认 provider 的通用演示入口：Leader、Architect、Challenger、Developer、Reviewer、Tester 使用同一个 `tg-worker:dev` 镜像，由 AgentTeams 身份和部署配置区分职责。它复用现有 AgentTeams、OpenClaw、Tiangong Coordination runtime 和 Matrix；没有为 Demo 引入另一套业务流程。
 
-为了不把尚未部署的 Leader Coordination Control sidecar 硬塞进演示，这个 v0 Demo 的 AgentTeams `team_leader` 使用 `tiangong-worker-member:dev` 作为可响应的演示 runtime。它能真实收发 Matrix 消息，但不宣称已经完成 Tiangong Leader 的 Project/Task 协调。后续 control runtime 就绪后，只需把 `demo/fixtures/workers.yaml` 的 Leader 镜像换回 `tiangong-worker-leader:dev`，不需要改 Team、WebUI 或发送路径。
+当前公开 fixture 只证明通用镜像、Team 和 Matrix 连接合同，不把尚未完成的 M1–M3 产品纵切冒充为已实现能力。
 
 ## 启动
 
@@ -12,7 +12,7 @@
 ./scripts/tiangong-demo.sh run
 ```
 
-脚本会创建 `tiangong-demo-*` 资源，等待 5 个 Worker 和 Team 进入 Active，然后向 Leader 房间发送一个只读演示请求。脚本成功后打开：
+脚本会创建 `tiangong-demo-*` 资源，等待 6 个 Worker 和 Team 进入 Active，然后向 Leader 房间发送一个只读演示请求。脚本成功后打开：
 
 - Dashboard：<http://127.0.0.1:13000/>
 - Element Web：<http://127.0.0.1:18088/#/login>

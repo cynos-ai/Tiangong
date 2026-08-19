@@ -12,8 +12,8 @@ const taskSpec = createTaskSpec({
   workId: "work-hooks",
   assigneeMemberId: MEMBER_ID,
   objective: "Run the bounded native task",
-  completionContract: "Submit one Result",
-  inputRefs: [],
+  inputs: [],
+  constraints: ["Submit one Result"],
   createdAt: "2026-08-16T00:00:00.000Z",
 });
 
@@ -22,7 +22,7 @@ function fakeFetch(calls) {
     calls.push({ url: String(url), init });
     if (String(url).endsWith(`/tasks/${taskSpec.taskId}`)) return new Response(JSON.stringify({ task: { spec: taskSpec, status: "assigned" } }), { status: 200 });
     if (String(url).endsWith(`/works/${taskSpec.workId}`)) return new Response(JSON.stringify({ work: { work: { workId: taskSpec.workId, teamId: "team-hooks" }, epoch: 1 } }), { status: 200 });
-    if (String(url).endsWith("/results")) return new Response(JSON.stringify({ replayed: false, result: { resultId: "result-hooks" }, wake: { kind: "result-notification" } }), { status: 200 });
+    if (String(url).endsWith("/results")) return new Response(JSON.stringify({ replayed: false, result: { taskId: taskSpec.taskId }, wake: { kind: "result-notification" } }), { status: 200 });
     return new Response(JSON.stringify({ error: "NOT_FOUND" }), { status: 404 });
   };
 }
@@ -40,7 +40,8 @@ test("member OpenClaw hooks fetch the immutable TaskSpec and submit one bounded 
   assert.equal(body.actorId, MEMBER_ID);
   assert.equal(body.result.workId, taskSpec.workId);
   assert.equal(body.result.taskId, taskSpec.taskId);
-  assert.equal(body.result.claim, "bounded implementation report");
+  assert.equal(body.result.summary, "bounded implementation report");
+  assert.equal(body.result.submittedBy, MEMBER_ID);
   assert.equal(JSON.stringify(body).includes(TOKEN), false);
 });
 
@@ -69,8 +70,8 @@ test("member hook submits a bounded Result from the native Runner after-tool eve
   const resultRequest = calls.find((call) => call.url.endsWith("/results"));
   assert.ok(resultRequest);
   const body = JSON.parse(resultRequest.init.body);
-  assert.deepEqual(body.result.artifactRefs, [`change-revision:${"a".repeat(64)}`]);
-  assert.match(body.result.claim, /ChangeRevision/u);
+  assert.deepEqual(body.result.deliverableRefs, [{ adapter: "runner-change-revision@1", ref: "a".repeat(64) }]);
+  assert.match(body.result.summary, /ChangeRevision/u);
 });
 
 test("member hook registration uses OpenClaw's native lifecycle hooks", () => {

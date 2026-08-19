@@ -88,10 +88,9 @@ function taskAssignedBody({ taskId, workId, targetMatrixUserId }) {
   };
 }
 
-function resultSubmittedBody({ taskId, workId, resultDigest, targetMatrixUserId }) {
+function resultSubmittedBody({ taskId, workId, targetMatrixUserId }) {
   required(taskId, "taskId", ID);
   required(workId, "workId", ID);
-  required(resultDigest, "resultDigest", /^[a-f0-9]{64}$/u);
   required(targetMatrixUserId, "targetMatrixUserId", MATRIX_USER_ID);
   const mention = visibleMatrixMention(targetMatrixUserId);
   return {
@@ -100,7 +99,7 @@ function resultSubmittedBody({ taskId, workId, resultDigest, targetMatrixUserId 
     format: "org.matrix.custom.html",
     formatted_body: `${mention} Tiangong Result submitted: work=${escapeHtml(workId)} task=${escapeHtml(taskId)}. Review the durable Result.`,
     "m.mentions": { user_ids: [targetMatrixUserId] },
-    "com.tiangong.result": { version: 1, work_id: workId, task_id: taskId, result_digest: resultDigest },
+    "com.tiangong.result": { version: 2, work_id: workId, task_id: taskId },
   };
 }
 
@@ -178,7 +177,7 @@ export function createMatrixWakeConsumer({
       if (typeof store.getTask !== "function") throw Object.assign(new Error("Result notification requires task reads"), { code: "MATRIX_RESULT_GATEWAY_UNAVAILABLE" });
       const task = await store.getTask(wake.taskId);
       if (!task?.result || task.spec.workId !== wake.workId) throw Object.assign(new Error("Result notification wake has no matching Result"), { code: "MATRIX_WAKE_BINDING_MISMATCH" });
-      body = resultSubmittedBody({ taskId: wake.taskId, workId: wake.workId, resultDigest: task.result.contentDigest, targetMatrixUserId: leaderMatrixUserId });
+      body = resultSubmittedBody({ taskId: wake.taskId, workId: wake.workId, targetMatrixUserId: leaderMatrixUserId });
     } else {
       throw Object.assign(new Error("Unsupported Matrix wake kind"), { code: "MATRIX_WAKE_KIND_UNSUPPORTED" });
     }

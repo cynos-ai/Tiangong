@@ -63,10 +63,11 @@ stop_demo() {
   local name
   for name in \
     tiangong-demo-leader \
-    tiangong-demo-designer \
-    tiangong-demo-implementor \
-    tiangong-demo-assessor \
-    tiangong-demo-operator; do
+    tiangong-demo-architect \
+    tiangong-demo-challenger \
+    tiangong-demo-developer \
+    tiangong-demo-reviewer \
+    tiangong-demo-tester; do
     delete_worker_if_owned "${name}"
   done
   docker exec "${MANAGER_CONTAINER}" rm -f "${MANAGER_WORKERS_FILE}" "${MANAGER_TEAM_FILE}" >/dev/null 2>&1 || true
@@ -88,7 +89,7 @@ wait_team() {
   local json
   for _ in $(seq 1 "${WAIT_TEAM_ATTEMPTS}"); do
     json="$(docker exec "${MANAGER_CONTAINER}" agt get teams "${TEAM_NAME}" -o json 2>/dev/null || true)"
-    if jq -e '.phase == "Active" and .leaderReady == true and .readyWorkers == 4 and .totalWorkers == 4' <<<"${json}" >/dev/null 2>&1; then
+    if jq -e '.phase == "Active" and .leaderReady == true and .readyWorkers == 5 and .totalWorkers == 5' <<<"${json}" >/dev/null 2>&1; then
       return 0
     fi
     sleep 3
@@ -111,10 +112,11 @@ start_demo() {
   resource_exists teams "${TEAM_NAME}" && die "${TEAM_NAME} already exists; run '$0 stop' first."
   for name in \
     tiangong-demo-leader \
-    tiangong-demo-designer \
-    tiangong-demo-implementor \
-    tiangong-demo-assessor \
-    tiangong-demo-operator; do
+    tiangong-demo-architect \
+    tiangong-demo-challenger \
+    tiangong-demo-developer \
+    tiangong-demo-reviewer \
+    tiangong-demo-tester; do
     resource_exists workers "${name}" && die "${name} already exists; run '$0 stop' first."
   done
 
@@ -124,10 +126,11 @@ start_demo() {
   docker exec "${MANAGER_CONTAINER}" agt apply -f "${MANAGER_WORKERS_FILE}" >/dev/null
   for name in \
     tiangong-demo-leader \
-    tiangong-demo-designer \
-    tiangong-demo-implementor \
-    tiangong-demo-assessor \
-    tiangong-demo-operator; do
+    tiangong-demo-architect \
+    tiangong-demo-challenger \
+    tiangong-demo-developer \
+    tiangong-demo-reviewer \
+    tiangong-demo-tester; do
     log "waiting for ${name}"
     wait_worker "${name}" || die "${name} did not become Matrix-ready"
   done
@@ -199,7 +202,7 @@ usage() {
   cat <<'EOF'
 Usage: scripts/tiangong-demo.sh <start|run|send|show|status|stop>
 
-  start              create the five-role demo Team and leave it running
+  start              create the six-member generic-image demo Team and leave it running
   run [message]      start, then send a read-only prompt to the Leader
   send [message]     send a formatted Matrix mention to the Leader
   show               print the latest bounded messages in the Team room

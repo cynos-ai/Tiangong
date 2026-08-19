@@ -12,8 +12,8 @@ readonly CODEX_CAPABILITY_CACHE="/opt/tiangong-worker/agent/preflight/codex-capa
 readonly RUNTIME_ROUTE_PREFLIGHT="/opt/tiangong-worker/scripts/runtime-route-preflight.mjs"
 codex_home=""
 
-assert_role_runtime_route() {
-  [[ "${TIANGONG_RUNTIME_ROLE_ROUTING_REQUIRED:-0}" == "1" ]] || return 0
+assert_member_runtime_route() {
+  [[ "${TIANGONG_MEMBER_RUNTIME_ROUTING_REQUIRED:-0}" == "1" ]] || return 0
   local selected_runtime="openclaw-built-in"
   if [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]]; then
     selected_runtime="codex-app-server"
@@ -26,17 +26,12 @@ assert_role_runtime_route() {
     export OPENCLAW_AGENT_RUNTIME="pi"
   fi
   TIANGONG_CODEX_RUNTIME="${TIANGONG_CODEX_RUNTIME:-0}" \
+  TIANGONG_SELECTED_MODEL="${TIANGONG_SELECTED_MODEL:-${TIANGONG_CODEX_MODEL:-${AGENTTEAMS_MODEL:-}}}" \
   OPENCLAW_AGENT_HARNESS_FALLBACK="${OPENCLAW_AGENT_HARNESS_FALLBACK:-none}" \
-  TIANGONG_SELECTED_RUNTIME="${selected_runtime}" \
   /usr/bin/node --input-type=module -e '
-    const { assertRoleRuntimeRoute, roleIdFromEnvironment } = await import(process.argv[1]);
-    const roleId = roleIdFromEnvironment(process.env);
-    const route = assertRoleRuntimeRoute({
-      roleId,
-      runtime: process.env.TIANGONG_SELECTED_RUNTIME,
-      fallback: process.env.OPENCLAW_AGENT_HARNESS_FALLBACK,
-    });
-    console.error(`tiangong_runtime_route=pass role=${route.roleId} runtime=${route.runtime} fallback=${route.fallback} digest=${route.routeDigest}`);
+    const { runtimeRouteFromEnvironment } = await import(process.argv[1]);
+    const route = runtimeRouteFromEnvironment(process.env);
+    console.error(`tiangong_runtime_route=pass responsibility=${route.responsibility} runtime=${route.runtime} model=${route.model} fallback=${route.fallback} digest=${route.routeDigest}`);
   ' "${RUNTIME_ROUTE_PREFLIGHT%/*}/../agent/runtime-routing.mjs"
 }
 
@@ -336,8 +331,8 @@ configure_tiangong_plugin() {
 
 if [[ "${1:-}" == "gateway" && "${2:-}" == "run" ]]; then
   load_agentteams_controller_token
-  assert_role_runtime_route
-  # Route authorization must precede any config mutation. A mismatched role
+  assert_member_runtime_route
+  # Route authorization must precede any config mutation. A mismatched MemberConfig
   # must fail closed without enabling a plugin or rewriting the OpenClaw
   # configuration on disk.
   configure_tiangong_plugin

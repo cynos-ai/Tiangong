@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# AgentTeams v1.2.2 does not expose Worker environment/runtime bindings in its
-# public manifest. This narrow deployment-owned adapter adds only the B5 route
-# contract to one already-running Worker, recreating the exact supported
-# single-auth-volume topology. It is deliberately not part of the model/tool
-# surface and never prints the inherited environment.
+# AgentTeams v1.2.2 does not expose MemberConfig runtime/model fields in its
+# public manifest. This deployment-owned adapter projects one current
+# credential-free MemberConfig route into an existing generic tg-worker while
+# preserving the supported single-auth-volume topology.
 
-readonly CONTAINER="${TIANGONG_B5_WORKER_CONTAINER:-}"
-readonly ROLE="${TIANGONG_B5_ROLE_ID:-}"
+readonly CONTAINER="${TIANGONG_MEMBER_WORKER_CONTAINER:-}"
+readonly RESPONSIBILITY="${TIANGONG_MEMBER_RESPONSIBILITY:-}"
+readonly MEMBER_RUNTIME="${TIANGONG_MEMBER_RUNTIME:-}"
+readonly MEMBER_MODEL="${TIANGONG_MEMBER_MODEL:-}"
 readonly DOCKER_COMMAND="${TIANGONG_DOCKER_COMMAND:-docker}"
 readonly NETWORK="${TIANGONG_AGENTTEAMS_NETWORK:-agentteams-net}"
 readonly OWNER="${TIANGONG_DEPLOYMENT_OWNER:-tiangong-deployment}"
-readonly COMPONENT="${TIANGONG_B5_INJECTION_COMPONENT:-b5-role-runtime-injection}"
+readonly COMPONENT="${TIANGONG_MEMBER_INJECTION_COMPONENT:-member-runtime-injection}"
 readonly DOCKER_TEMP_DIR="${TIANGONG_DOCKER_TEMP_DIR:-}"
-readonly COORDINATION_ENDPOINT="${TIANGONG_B5_COORDINATION_CONTROL_ENDPOINT:-}"
-readonly COORDINATION_TOKEN="${TIANGONG_B5_COORDINATION_CONTROL_TOKEN:-}"
+readonly COORDINATION_ENDPOINT="${TIANGONG_MEMBER_COORDINATION_CONTROL_ENDPOINT:-}"
+readonly COORDINATION_TOKEN="${TIANGONG_MEMBER_COORDINATION_CONTROL_TOKEN:-}"
 readonly ROUTING_REQUIRED="1"
 readonly GATEWAY_URL="${TIANGONG_AGENTTEAMS_AI_GATEWAY_URL:-http://aigw-local.agentteams.io:8080}"
 readonly GATEWAY_HOSTS="${TIANGONG_CODEX_GATEWAY_HOSTS:-agentteams-controller,aigw-local.agentteams.io}"
@@ -29,7 +30,7 @@ new_started=0
 owns_tmp_dir=0
 
 fail() {
-  printf 'b5_role_runtime_injection=fail code=%s\n' "$1" >&2
+  printf 'member_runtime_injection=fail code=%s\n' "$1" >&2
   exit 1
 }
 
@@ -54,7 +55,9 @@ trap cleanup EXIT INT TERM
 
 require_command() { command -v "$1" >/dev/null 2>&1 || fail "${2:-COMMAND_NOT_FOUND}"; }
 valid_name() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]; }
-valid_role() { [[ "$1" =~ ^(leader|designer|implementor|assessor|operator)$ ]]; }
+valid_responsibility() { [[ "$1" =~ ^(leader|architect|challenger|developer|reviewer|tester)$ ]]; }
+valid_runtime() { [[ "$1" =~ ^(openclaw-built-in|codex-app-server)$ ]]; }
+valid_model() { [[ "$1" =~ ^[A-Za-z0-9._:/-]{1,128}$ ]]; }
 valid_volume_name() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]; }
 valid_endpoint() {
   [[ "$1" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?/v1/coordination/admit$ ]] || return 1
@@ -87,9 +90,16 @@ docker_host_path() {
 require_command "${DOCKER_COMMAND}"
 require_command jq
 [[ -n "${CONTAINER}" ]] || fail WORKER_CONTAINER_REQUIRED
-[[ -n "${ROLE}" ]] || fail ROLE_REQUIRED
+[[ -n "${RESPONSIBILITY}" ]] || fail RESPONSIBILITY_REQUIRED
 valid_name "${CONTAINER}" || fail WORKER_CONTAINER_INVALID
-valid_role "${ROLE}" || fail ROLE_INVALID
+valid_responsibility "${RESPONSIBILITY}" || fail RESPONSIBILITY_INVALID
+valid_runtime "${MEMBER_RUNTIME}" || fail MEMBER_RUNTIME_INVALID
+valid_model "${MEMBER_MODEL}" || fail MEMBER_MODEL_INVALID
+if [[ "${RESPONSIBILITY}" == developer ]]; then
+  [[ "${MEMBER_RUNTIME}" == codex-app-server ]] || fail RUNTIME_RESPONSIBILITY_MISMATCH
+else
+  [[ "${MEMBER_RUNTIME}" == openclaw-built-in ]] || fail RUNTIME_RESPONSIBILITY_MISMATCH
+fi
 valid_endpoint "${COORDINATION_ENDPOINT}" || fail COORDINATION_ENDPOINT_REQUIRED
 valid_token "${COORDINATION_TOKEN}" || fail COORDINATION_TOKEN_REQUIRED
 valid_gateway_url "${GATEWAY_URL}" || fail GATEWAY_URL_INVALID
@@ -97,18 +107,15 @@ valid_gateway_hosts "${GATEWAY_HOSTS}" || fail GATEWAY_HOSTS_INVALID
 gateway_domain="${GATEWAY_URL#*://}"
 gateway_domain="${gateway_domain%%:*}"
 
-if [[ "${ROLE}" == implementor ]]; then
+if [[ "${MEMBER_RUNTIME}" == codex-app-server ]]; then
   readonly CODEX_RUNTIME=1
   readonly RUNTIME_LANE=openclaw-canary
   readonly CANARY_REQUIRED=1
   readonly CANARY_ADMISSION=local
   readonly OPENCLAW_RUNTIME=codex
-  readonly CODEX_PROVIDER="${TIANGONG_B5_CODEX_PROVIDER:-agentteams-gateway}"
-  # Match the pinned local AgentTeams fixture. A deployment using a different
-  # model must pass TIANGONG_B5_CODEX_MODEL explicitly so OpenClaw metadata and
-  # the Codex preflight cannot silently diverge.
-  readonly CODEX_MODEL="${TIANGONG_B5_CODEX_MODEL:-deepseek-v4-pro}"
-  readonly CODEX_CACHE_URL="${TIANGONG_B5_CODEX_CAPABILITY_CACHE_URL:-http://tiangong-codex-capability-cache:8788}"
+  readonly CODEX_PROVIDER="${TIANGONG_MEMBER_CODEX_PROVIDER:-agentteams-gateway}"
+  readonly CODEX_MODEL="${MEMBER_MODEL}"
+  readonly CODEX_CACHE_URL="${TIANGONG_MEMBER_CODEX_CAPABILITY_CACHE_URL:-http://tg-codex-capability-cache:8788}"
   readonly CODEX_BASE_URL="${TIANGONG_CODEX_BASE_URL:-${GATEWAY_URL%/}/v1}"
 else
   readonly CODEX_RUNTIME=0
@@ -122,7 +129,7 @@ else
   readonly CODEX_BASE_URL=''
 fi
 
-if [[ "${ROLE}" == implementor ]]; then
+if [[ "${MEMBER_RUNTIME}" == codex-app-server ]]; then
   [[ "${CODEX_PROVIDER}" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || fail CODEX_PROVIDER_INVALID
   [[ "${CODEX_MODEL}" =~ ^[A-Za-z0-9._:/-]{1,128}$ ]] || fail CODEX_MODEL_INVALID
   [[ "${CODEX_CACHE_URL}" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~:/-]*)?$ ]] || fail CODEX_CACHE_URL_INVALID
@@ -133,22 +140,22 @@ if [[ -n "${DOCKER_TEMP_DIR}" ]]; then
   [[ -d "${DOCKER_TEMP_DIR}" && ! -L "${DOCKER_TEMP_DIR}" ]] || fail INVALID_DOCKER_TEMP_DIR
   tmp_dir="${DOCKER_TEMP_DIR}"
 else
-  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/tiangong-b5-role-injection.XXXXXX")"
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/tiangong-member-injection.XXXXXX")"
   owns_tmp_dir=1
 fi
 chmod 700 "${tmp_dir}"
-inspect_file="${tmp_dir}/.tiangong-b5-role-inspect.$$"
-env_file="${tmp_dir}/.tiangong-b5-role-env.$$"
-docker_error_file="${tmp_dir}/.tiangong-b5-role-docker-error.$$"
+inspect_file="${tmp_dir}/.tiangong-member-inspect.$$"
+env_file="${tmp_dir}/.tiangong-member-env.$$"
+docker_error_file="${tmp_dir}/.tiangong-member-docker-error.$$"
 "${DOCKER_COMMAND}" inspect "${CONTAINER}" 2>/dev/null | tr -d '\r' >"${inspect_file}" || fail WORKER_NOT_FOUND
 if [[ "${TIANGONG_INJECTION_DEBUG:-0}" == 1 ]]; then
-  printf 'b5_role_runtime_injection_debug=inspect_exists=%s inspect_bytes=%s\n' \
+  printf 'member_runtime_injection_debug=inspect_exists=%s inspect_bytes=%s\n' \
     "$([[ -f "${inspect_file}" ]] && printf 1 || printf 0)" "$(wc -c <"${inspect_file}" 2>/dev/null || printf 0)" >&2
 fi
 
 running="$(jq -r '.[0].State.Running // false' "${inspect_file}")"
 if [[ "${running}" != true ]]; then
-  [[ "${TIANGONG_B5_ALLOW_STOPPED:-0}" == 1 ]] || fail WORKER_NOT_RUNNING
+  [[ "${TIANGONG_MEMBER_ALLOW_STOPPED:-0}" == 1 ]] || fail WORKER_NOT_RUNNING
   [[ "$(jq -r '.[0].State.Paused // false' "${inspect_file}")" == false ]] || fail WORKER_PAUSED
 fi
 [[ "$(jq -r '.[0].Name // empty' "${inspect_file}")" == "/${CONTAINER}" ]] || fail WORKER_IDENTITY_MISMATCH
@@ -203,6 +210,11 @@ jq -r '.[0].Config.Env[]?
   | select((split("=")[0]) as $key |
       ($key == "TIANGONG_ROLE_ID" or
        $key == "TIANGONG_RUNTIME_ROLE_ROUTING_REQUIRED" or
+       $key == "TIANGONG_MEMBER_RUNTIME_ROUTING_REQUIRED" or
+       $key == "TIANGONG_MEMBER_RESPONSIBILITY" or
+       $key == "TIANGONG_MEMBER_RUNTIME" or
+       $key == "TIANGONG_MEMBER_MODEL" or
+       $key == "TIANGONG_SELECTED_MODEL" or
        $key == "TIANGONG_CODEX_RUNTIME" or
        $key == "TIANGONG_RUNTIME_LANE" or
        $key == "TIANGONG_CANARY_REQUIRED" or
@@ -218,28 +230,20 @@ jq -r '.[0].Config.Env[]?
        $key == "OPENCLAW_AGENT_HARNESS_FALLBACK" or
        ($key | startswith("TIANGONG_CODEX_"))) | not)' "${inspect_file}" >"${env_file}"
 {
-  printf 'TIANGONG_ROLE_ID=%s\nTIANGONG_RUNTIME_ROLE_ROUTING_REQUIRED=%s\nTIANGONG_CODEX_RUNTIME=%s\nOPENCLAW_AGENT_HARNESS_FALLBACK=none\nOPENCLAW_AGENT_RUNTIME=%s\nOPENCLAW_CODEX_DISCOVERY_LIVE=%s\nCODEX_HOME=/root/.codex\n' \
-    "${ROLE}" "${ROUTING_REQUIRED}" "${CODEX_RUNTIME}" "${OPENCLAW_RUNTIME}" "${CODEX_RUNTIME}"
+  printf 'TIANGONG_MEMBER_RESPONSIBILITY=%s\nTIANGONG_MEMBER_RUNTIME=%s\nTIANGONG_MEMBER_MODEL=%s\nTIANGONG_SELECTED_MODEL=%s\nTIANGONG_MEMBER_RUNTIME_ROUTING_REQUIRED=%s\nTIANGONG_CODEX_RUNTIME=%s\nOPENCLAW_AGENT_HARNESS_FALLBACK=none\nOPENCLAW_AGENT_RUNTIME=%s\nOPENCLAW_CODEX_DISCOVERY_LIVE=%s\nCODEX_HOME=/root/.codex\n' \
+    "${RESPONSIBILITY}" "${MEMBER_RUNTIME}" "${MEMBER_MODEL}" "${MEMBER_MODEL}" "${ROUTING_REQUIRED}" "${CODEX_RUNTIME}" "${OPENCLAW_RUNTIME}" "${CODEX_RUNTIME}"
   printf 'TIANGONG_MEMBER_ID=%s\nTIANGONG_COORDINATION_CONTROL_ENDPOINT=%s\nTIANGONG_COORDINATION_CONTROL_TOKEN=%s\n' \
     "${member_id}" "${COORDINATION_ENDPOINT}" "${COORDINATION_TOKEN}"
-  printf 'AGENTTEAMS_AI_GATEWAY_URL=%s\nAGENTTEAMS_AI_GATEWAY_DOMAIN=%s\n' \
-    "${GATEWAY_URL}" "${gateway_domain}"
-  if [[ "${TIANGONG_ADMISSION_DEBUG:-0}" == 1 ]]; then
-    printf 'TIANGONG_ADMISSION_DEBUG=1\n'
-  fi
-  if [[ "${ROLE}" == leader ]]; then
-    printf 'TIANGONG_MEMBER_COORDINATION_ENABLED=0\n'
-  else
-    printf 'TIANGONG_MEMBER_COORDINATION_ENABLED=1\n'
-  fi
-  if [[ -n "${RUNTIME_LANE}" ]]; then
-    printf 'TIANGONG_RUNTIME_LANE=%s\nTIANGONG_CANARY_REQUIRED=%s\nTIANGONG_CANARY_ADMISSION=%s\n' \
-      "${RUNTIME_LANE}" "${CANARY_REQUIRED}" "${CANARY_ADMISSION}"
+  printf 'AGENTTEAMS_AI_GATEWAY_URL=%s\nAGENTTEAMS_AI_GATEWAY_DOMAIN=%s\nTIANGONG_RUNTIME_LANE=%s\n' \
+    "${GATEWAY_URL}" "${gateway_domain}" "${RUNTIME_LANE}"
+  if [[ "${TIANGONG_ADMISSION_DEBUG:-0}" == 1 ]]; then printf 'TIANGONG_ADMISSION_DEBUG=1\n'; fi
+  if [[ "${RESPONSIBILITY}" == leader ]]; then printf 'TIANGONG_MEMBER_COORDINATION_ENABLED=0\n'; else printf 'TIANGONG_MEMBER_COORDINATION_ENABLED=1\n'; fi
+  if [[ "${CODEX_RUNTIME}" == 1 ]]; then
+    printf 'TIANGONG_CANARY_REQUIRED=%s\nTIANGONG_CANARY_ADMISSION=%s\n' "${CANARY_REQUIRED}" "${CANARY_ADMISSION}"
     printf 'TIANGONG_CODEX_PROVIDER=%s\nTIANGONG_CODEX_MODEL=%s\nTIANGONG_CODEX_CREDENTIAL_SOURCE=agentteams-consumer-token\nTIANGONG_CODEX_TRANSPORT=auto\nTIANGONG_CODEX_BRIDGE=auto\nTIANGONG_CODEX_CAPABILITY_CACHE_PATH=/var/lib/tiangong-capabilities/codex.json\nTIANGONG_CODEX_CAPABILITY_CACHE_URL=%s\nTIANGONG_CODEX_CAPABILITY_CACHE_SHARED=1\n' \
       "${CODEX_PROVIDER}" "${CODEX_MODEL}" "${CODEX_CACHE_URL}"
-    printf 'TIANGONG_CODEX_GATEWAY_HOSTS=%s\nTIANGONG_CODEX_BASE_URL=%s\n' \
-      "${GATEWAY_HOSTS}" "${CODEX_BASE_URL}"
-    printf 'TIANGONG_CANARY_ADMISSION_FILE=%s/tiangong-admission.json\n' "${working_dir}"
+    printf 'TIANGONG_CODEX_GATEWAY_HOSTS=%s\nTIANGONG_CODEX_BASE_URL=%s\nTIANGONG_CANARY_ADMISSION_FILE=%s/tiangong-admission.json\n' \
+      "${GATEWAY_HOSTS}" "${CODEX_BASE_URL}" "${working_dir}"
   fi
 } >>"${env_file}"
 chmod 600 "${env_file}"
@@ -277,15 +281,15 @@ shm_size="$(jq -r "${host_config}.ShmSize // 0" "${inspect_file}")"
 while IFS= read -r label; do label="${label//$'\r'/}"; [[ -n "${label}" ]] && run_args+=(--label "${label}"); done < <(jq -r '.[0].Config.Labels // {} | to_entries[] | "\(.key)=\(.value)"' "${inspect_file}")
 run_args+=(--label "io.tiangong.owner=${OWNER}" --label "io.tiangong.component=${COMPONENT}" --label 'io.tiangong.schema=1')
 
-backup="${CONTAINER}.tiangong-b5-injection.$(date +%s).$$"
+backup="${CONTAINER}.tiangong-member-injection.$(date +%s).$$"
 "${DOCKER_COMMAND}" rename "${CONTAINER}" "${backup}" >/dev/null 2>&1 || fail WORKER_RENAME_FAILED
 "${DOCKER_COMMAND}" stop --time 30 "${backup}" >/dev/null 2>&1 || fail WORKER_STOP_FAILED
 mapfile -t cmd_args < <(jq -r '.[0].Config.Cmd[]?' "${inspect_file}")
 if ! MSYS_NO_PATHCONV=1 "${DOCKER_COMMAND}" run "${run_args[@]}" --entrypoint "${entrypoint}" "${image}" "${cmd_args[@]}" >/dev/null 2>"${docker_error_file}"; then
   if [[ "${TIANGONG_INJECTION_DEBUG:-0}" == 1 ]]; then
-    printf 'b5_role_runtime_injection_debug=env_file_exists=%s host_env_file=%s\n' \
+    printf 'member_runtime_injection_debug=env_file_exists=%s host_env_file=%s\n' \
       "$([[ -f "${env_file}" ]] && printf 1 || printf 0)" "$(docker_host_path "${env_file}")" >&2
-    printf 'b5_role_runtime_injection_debug=run_args ' >&2
+    printf 'member_runtime_injection_debug=run_args ' >&2
     printf '%s ' "${run_args[@]}" | sed 's/TIANGONG_CODEX_[A-Z_]*=[^ ]*/TIANGONG_CODEX_REDACTED/g' >&2
     printf '\n' >&2
     tr '\r\n' '  ' <"${docker_error_file}" | cut -c 1-512 >&2
@@ -300,10 +304,10 @@ new_started=1
 MSYS_NO_PATHCONV=1 "${DOCKER_COMMAND}" exec "${CONTAINER}" node --input-type=module -e '
   const { runtimeRouteFromEnvironment } = await import("/opt/tiangong-worker/agent/runtime-routing.mjs");
   const route = runtimeRouteFromEnvironment(process.env);
-  console.log(`b5_route=pass role=${route.roleId} runtime=${route.runtime} fallback=${route.fallback} digest=${route.routeDigest}`);
+  console.log(`member_route=pass responsibility=${route.responsibility} runtime=${route.runtime} model=${route.model} fallback=${route.fallback} digest=${route.routeDigest}`);
 ' >/dev/null 2>&1 || fail ROUTE_VERIFY_FAILED
 
 "${DOCKER_COMMAND}" rm "${backup}" >/dev/null 2>&1 || fail OLD_WORKER_CLEANUP_FAILED
 backup=''
-printf 'b5_role_runtime_injection=pass container=%s role=%s runtime=%s\n' "${CONTAINER}" "${ROLE}" \
-  "$([[ "${ROLE}" == implementor ]] && printf codex-app-server || printf openclaw-built-in)"
+printf 'member_runtime_injection=pass container=%s responsibility=%s runtime=%s model=%s\n' \
+  "${CONTAINER}" "${RESPONSIBILITY}" "${MEMBER_RUNTIME}" "${MEMBER_MODEL}"

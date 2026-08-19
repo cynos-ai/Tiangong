@@ -4,6 +4,7 @@ FROM ${DOCKER_CLI_IMAGE} AS docker-cli
 FROM ${AGENTTEAMS_WORKER_IMAGE} AS worker-base
 
 ARG TIANGONG_OTEL_EXPORTER_ENDPOINT=""
+ARG TIANGONG_NPM_REGISTRY=https://registry.npmjs.org
 ARG TIANGONG_CODEX_GATEWAY_HOSTS=agentteams-controller
 ARG TIANGONG_CODEX_BASE_URL=
 
@@ -15,7 +16,7 @@ LABEL org.opencontainers.image.source="https://github.com/cynos-ai/Tiangong"
 WORKDIR /opt/tiangong-worker
 COPY package.json package-lock.json ./
 COPY scripts/ ./scripts/
-RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/ \
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund --registry="${TIANGONG_NPM_REGISTRY}" \
     && ln -s /opt/openclaw ./node_modules/openclaw \
     && npm cache clean --force \
     && test -x /usr/bin/git \
@@ -35,11 +36,8 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund --registry=https://r
     && test "$(stat -c '%F:%u' /usr/lib/git-core)" = "directory:0"
 
 COPY agent/ ./agent/
-COPY --from=team_playbooks . /opt/team-playbooks/
 COPY observability/ ./observability/
 COPY --chmod=755 plugin/ ./plugin/
-COPY roles/ ./roles/
-COPY skills/ ./skills/
 RUN npm run check-observability \
     && node -e 'import("./plugin/index.mjs").then((module) => { if (module.default?.id !== "tiangong-control") process.exit(1); })'
 
@@ -78,7 +76,7 @@ WORKDIR /opt/tiangong-worker
 ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/deployment/broker-server.mjs"]
 
 FROM worker-base AS opencodex-sidecar
-RUN npm install --global --no-audit --no-fund --registry=https://registry.npmjs.org/ \
+RUN npm install --global --no-audit --no-fund --registry="${TIANGONG_NPM_REGISTRY}" \
       @bitkyc08/opencodex@2.15.0 \
     && ocx --version
 WORKDIR /opt/tiangong-worker
@@ -93,38 +91,12 @@ COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 WORKDIR /opt/tiangong-worker
 ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/deployment/opencodex-sidecar-receipt-service.mjs"]
 
-FROM worker-base AS kernel
-COPY role-profiles/kernel.json /opt/tiangong-worker/profile.json
-RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role kernel
+# One generic runtime image. AgentTeams identity, MemberConfig, Agent package,
+# and ControlProfile select responsibility, model, Skills, and capability.
+FROM worker-base AS tg-worker
+FROM tg-worker AS default
 
-FROM worker-base AS leader
-COPY role-profiles/leader.json /opt/tiangong-worker/profile.json
-ENV TIANGONG_ROLE_ID=leader
-RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role leader
-
-FROM worker-base AS designer
-COPY role-profiles/designer.json /opt/tiangong-worker/profile.json
-ENV TIANGONG_ROLE_ID=designer
-RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role designer
-
-FROM worker-base AS implementor
-COPY role-profiles/implementor.json /opt/tiangong-worker/profile.json
-ENV TIANGONG_ROLE_ID=implementor
-RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role implementor
-
-FROM worker-base AS assessor
-COPY role-profiles/assessor.json /opt/tiangong-worker/profile.json
-ENV TIANGONG_ROLE_ID=assessor
-RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role assessor
-
-FROM worker-base AS operator
-COPY role-profiles/operator.json /opt/tiangong-worker/profile.json
-ENV TIANGONG_ROLE_ID=operator
-RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role operator
-
-FROM kernel AS default
-
-FROM worker-base AS canary
+FROM tg-worker AS canary
 ARG TIANGONG_CODEX_GATEWAY_HOSTS=agentteams-controller
 ARG TIANGONG_CODEX_PROVIDER=agentteams-gateway
 ARG TIANGONG_CODEX_MODEL=deepseek-v4-pro
@@ -189,11 +161,3 @@ ENV TIANGONG_RUNTIME_LANE=openclaw-canary \
     TIANGONG_CODEX_BRIDGE="${TIANGONG_CODEX_BRIDGE}" \
     OPENCLAW_AGENT_RUNTIME=codex \
     OPENCLAW_AGENT_HARNESS_FALLBACK=none
-
-# Chat-only coding canary with the fixed Implementor profile. The profile and
-# role id are image facts; deployment still supplies the Worker-scoped
-# Coordination endpoint/token and sidecar receipt.
-FROM canary-chat-bridge AS canary-chat-bridge-implementor
-COPY role-profiles/implementor.json /opt/tiangong-worker/profile.json
-ENV TIANGONG_ROLE_ID=implementor
-RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role implementor

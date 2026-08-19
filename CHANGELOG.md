@@ -4,7 +4,26 @@ All notable changes to Tiangong are documented here. Tiangong follows Semantic V
 
 ## [Unreleased]
 
-No unreleased changes.
+### Added
+
+- Added durable Room-level Matrix message admission, Leader routing to an open or new Work, bounded backlog metrics, and authenticated association correction without copying Human message bodies.
+- Added Work display titles, nullable initial WorkSpec, immutable Plan ContentRefs, and Work/Task/Result projections for the product path.
+- Added Leader OpenClaw hooks and tools for routing, WorkSpec/Plan changes, dynamic Tasks, cancellation, and Work completion/stopping.
+
+### Changed
+
+- Replaced per-Task acceptance decisions with Result/cancellation projection and machine-fact CloseGuard checks.
+- Replaced role-specific Worker image targets with one generic `tg-worker` contract and MemberConfig-bound responsibility/runtime/model routing. Developer uses Codex app-server with `deepseek-v4-flash`; the other initial responsibilities use OpenClaw built-in with no automatic fallback.
+- Made the documented Phase C contract entrypoint and nested shell calls repeatable in a Linux tracked checkout.
+
+### Removed
+
+- Removed CoordinationDecision endpoints, store methods, persistence columns, and `accepted`/`blocked` Task states from the active Work path.
+- Removed the old role-runtime Docker injection entrypoint and role-specific Docker build targets.
+
+### Verification
+
+- The deterministic Phase C boundary, Worker tests, App tests, generic demo contract, and MemberConfig injection contract pass. PostgreSQL tests remain opt-in when a disposable database is available.
 
 ## [0.4.1] - 2026-08-19
 

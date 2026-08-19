@@ -295,7 +295,7 @@ if ! TIANGONG_LEADER_WORKER_CONTAINER="${CONTAINER}" \
   TIANGONG_LEADER_RUNTIME_BINDING_TARGET="${BINDING_TARGET}" \
   TIANGONG_DOCKER_BINDING_VOLUME="${DOCKER_BINDING_VOLUME}" \
   TIANGONG_DOCKER_COMMAND="${DOCKER_COMMAND}" \
-  MSYS_NO_PATHCONV=1 "$(dirname "${BASH_SOURCE[0]}")/verify-leader-runtime-injection.sh" >/dev/null; then
+  MSYS_NO_PATHCONV=1 bash "$(dirname "${BASH_SOURCE[0]}")/verify-leader-runtime-injection.sh" >/dev/null; then
   fail INJECTION_VERIFY_FAILED
 fi
 

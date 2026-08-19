@@ -32,27 +32,25 @@
         const works = Array.isArray(facts.works) ? facts.works : [];
         const workContainer = document.querySelector('#works');
         workContainer.replaceChildren();
+        const pending = facts.admissionMetrics?.pendingCount ?? 0;
+        const oldest = facts.admissionMetrics?.oldestReceivedAt ?? 'none';
         workContainer.textContent = facts.workSource === 'coordination-store'
-          ? `Work projection: ${works.length} Work(s), ${Array.isArray(facts.deliveries) ? facts.deliveries.length : 0} durable wake(s), ${Array.isArray(facts.decisions) ? facts.decisions.length : 0} decision(s)`
+          ? `Work projection: ${works.length} Work(s), ${pending} message(s) awaiting Leader routing, oldest ${oldest}`
           : 'Work projection: unknown';
         for (const work of works) {
           const card = document.createElement('article');
           card.className = 'work';
           const heading = document.createElement('h3');
-          heading.textContent = `${work.workId} · ${work.status} · epoch ${work.epoch}`;
+          heading.textContent = `${work.title ?? work.workId} · ${work.status} · epoch ${work.epoch}`;
           const summary = document.createElement('p');
-          summary.textContent = work.currentWorkSpec?.objective ?? 'Objective unavailable';
+          summary.textContent = work.currentWorkSpec?.goal ?? '需求待形成';
           const timeline = document.createElement('p');
           timeline.className = 'muted';
           const deliveries = (Array.isArray(facts.deliveries) ? facts.deliveries : [])
             .filter((delivery) => delivery.workId === work.workId)
             .map((delivery) => `${delivery.kind}:${delivery.status}`)
             .join(', ');
-          const decisions = (Array.isArray(facts.decisions) ? facts.decisions : [])
-            .filter((decision) => decision.workId === work.workId)
-            .map((decision) => `${decision.decision}${decision.taskId ? `:${decision.taskId}` : ''}`)
-            .join(', ');
-          timeline.textContent = `Leader session ${work.leaderSessionId}; timeline ${Array.isArray(work.timeline) ? work.timeline.length : 0}; wakes ${deliveries || 'none'}; decisions ${decisions || 'none'}.`;
+          timeline.textContent = `Leader session ${work.leaderSessionId}; timeline ${Array.isArray(work.timeline) ? work.timeline.length : 0}; wakes ${deliveries || 'none'}; plan ${work.currentPlanRef ? 'published' : 'none'}.`;
           card.append(heading, summary, timeline);
           workContainer.append(card);
         }

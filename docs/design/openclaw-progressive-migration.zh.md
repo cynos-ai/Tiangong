@@ -14,7 +14,7 @@ Qwen/Coding Plan/Chat-only bridge 是后续可选能力，不是本次 clean-cut
 
 ## 部署与回滚
 
-`inject-b5-role-runtime-docker.sh` 只做角色、运行时路由、Coordination endpoint/token 和 Codex canary 参数的原子重建。失败会恢复旧容器；成功后旧容器才清理。运行时选择只有 `openclaw-built-in` 和 `codex-app-server`，两者均使用 `OPENCLAW_AGENT_HARNESS_FALLBACK=none`。
+`inject-member-runtime-docker.sh` 只做 MemberConfig 责任、runtime/model 路由、Coordination endpoint/token 和 Codex canary 参数的原子重建。失败会恢复旧容器；成功后旧容器才清理。运行时选择只有 `openclaw-built-in` 和 `codex-app-server`，两者均使用 `OPENCLAW_AGENT_HARNESS_FALLBACK=none`。
 
 生产回滚是恢复上一份 Worker 镜像/配置并重新创建 Worker，不是切回 Tiangong 私有 harness。任何缺失的原生插件 API、Codex plugin、模型兼容性、凭证、sidecar 或 Coordination readiness 都必须 fail-closed。
 

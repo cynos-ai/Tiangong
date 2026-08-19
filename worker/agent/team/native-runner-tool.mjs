@@ -139,26 +139,25 @@ export function createNativeRunnerTool({ bindingFile, journalFile, endpoint, mem
           throw new Error("native Runner Result is not bound to this Worker Task");
         }
         if (task.result) {
-          coordinationResult = { resultId: task.result.resultId, replayed: true };
+          coordinationResult = { taskId: task.result.taskId, replayed: true };
         } else {
           const work = await coordinationStore.getWork(binding.workId);
           if (!work?.work || work.work.workId !== binding.workId) throw new Error("native Runner Result Work binding is unavailable");
-          const artifactRefs = result.changeRevisionRef ? [`change-revision:${result.changeRevisionRef.contentDigest}`] : [];
+          const deliverableRefs = result.changeRevisionRef ? [{ adapter: "runner-change-revision@1", ref: result.changeRevisionRef.contentDigest }] : [];
           const submitted = await coordinationStore.submitResult({
             result: createResult({
-              resultId: `result-${sha256({ taskId, source: "native-runner" })}`,
               workId: binding.workId,
               taskId,
-              producerMemberId: actorId,
-              toolResultIds: [],
-              artifactRefs,
-              claim: boundedText(`Native Runner completed the assigned Codex tool call${result.replayed ? " by journal replay" : ""}${result.changeRevisionRef ? `; ChangeRevision ${result.changeRevisionRef.contentDigest}` : ""}.`),
+              submittedBy: actorId,
+              toolResultRefs: [],
+              deliverableRefs,
+              summary: boundedText(`Native Runner completed the assigned Codex tool call${result.replayed ? " by journal replay" : ""}${result.changeRevisionRef ? `; ChangeRevision ${result.changeRevisionRef.contentDigest}` : ""}.`),
               createdAt: now(),
             }),
             expectedEpoch: work.epoch,
             requestId: `result-submit-${taskId}`,
           });
-          coordinationResult = { resultId: submitted.result?.resultId ?? submitted.resultId, replayed: submitted.replayed === true };
+          coordinationResult = { taskId: submitted.result?.taskId ?? taskId, replayed: submitted.replayed === true };
         }
       }
       return {

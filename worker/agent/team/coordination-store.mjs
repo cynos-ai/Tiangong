@@ -1,102 +1,109 @@
-import { chmod, lstat, mkdir, open, readFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute } from "node:path";
+import { randomUUID } from "node:crypto";
 
 import { canonicalJson, sha256 } from "../canonical-json.mjs";
 import { withFileLock } from "../persistence/file-lock.mjs";
 
-// Phase B coordination slice.  This is deliberately a small, file-backed
-// CoordinationStore seam: the journal is durable and rebuildable, while the
-// current Work/Task projections are derived on every open.  AgentTeams owns
-// the shared storage transport; this module owns only Tiangong's typed facts.
-
-const JOURNAL_VERSION = 1;
-const GENESIS_HASH = "0".repeat(64);
-const DIGEST = /^[a-f0-9]{64}$/u;
+const STATE_VERSION = 2;
 const ID = /^[A-Za-z0-9@!#$%&*+./:=?_-]{1,160}$/u;
+const DIGEST = /^[a-f0-9]{64}$/u;
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u;
-const MAX_JOURNAL_BYTES = 8 * 1024 * 1024;
+const ERROR_CODE = /^[A-Z0-9_:-]{1,96}$/u;
+const MAX_STATE_BYTES = 8 * 1024 * 1024;
 const MAX_TIMELINE_ENTRIES = 4096;
 const MAX_OUTBOX_ENTRIES = 1024;
 const MAX_TASKS_PER_WORK = 256;
-const MAX_INPUT_REFS = 32;
-const MAX_TOOL_RESULTS = 64;
-const MAX_ARTIFACT_REFS = 64;
+const MAX_INPUTS = 32;
+const MAX_REFS = 64;
+const MAX_LIST_ITEMS = 64;
+const TERMINAL_WORK_STATUSES = new Set(["completed", "stopped"]);
 
-function bounded(value, name, limit = 4096) {
-  if (typeof value !== "string" || value.length === 0 || Buffer.byteLength(value) > limit || /[\u0000\r\n]/u.test(value)) {
+function clone(value) { return structuredClone(value); }
+function same(left, right) { return canonicalJson(left) === canonicalJson(right); }
+function object(value, name) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
+  return value;
+}
+function exact(value, allowed, name) {
+  object(value, name);
+  const unexpected = Object.keys(value).filter((key) => !allowed.has(key));
+  if (unexpected.length) throw new Error(`${name} contains unknown fields: ${unexpected.join(",")}`);
+}
+function bounded(value, name, limit = 4096, { singleLine = true } = {}) {
+  if (typeof value !== "string" || value.length === 0 || Buffer.byteLength(value) > limit || /\u0000/u.test(value) || (singleLine && /[\r\n]/u.test(value))) {
     throw new TypeError(`${name} is missing or exceeds the bounded limit`);
   }
   return value;
 }
-
+function optionalBounded(value, name, limit = 4096) {
+  return value === undefined ? undefined : bounded(value, name, limit);
+}
 function identifier(value, name) {
   const normalized = bounded(value, name, 160);
   if (!ID.test(normalized)) throw new TypeError(`${name} has an invalid identifier`);
   return normalized;
 }
-
 function digest(value, name) {
   if (typeof value !== "string" || !DIGEST.test(value)) throw new TypeError(`${name} must be a SHA-256 digest`);
   return value;
 }
-
 function timestamp(value, name) {
   const normalized = bounded(value, name, 64);
   if (!ISO.test(normalized) || !Number.isFinite(Date.parse(normalized))) throw new TypeError(`${name} must be an ISO timestamp`);
-  return normalized;
+  return new Date(normalized).toISOString();
 }
-
 function positiveInteger(value, name, maximum = Number.MAX_SAFE_INTEGER) {
   if (!Number.isSafeInteger(value) || value < 1 || value > maximum) throw new TypeError(`${name} must be a positive bounded integer`);
   return value;
 }
-
-function nonNegativeInteger(value, name, maximum = Number.MAX_SAFE_INTEGER) {
-  if (!Number.isSafeInteger(value) || value < 0 || value > maximum) throw new TypeError(`${name} must be a non-negative bounded integer`);
-  return value;
-}
-
-function uniqueStrings(input, name, maximum, validator = identifier) {
+function stringList(input, name, maximum = MAX_LIST_ITEMS) {
   if (!Array.isArray(input) || input.length > maximum) throw new TypeError(`${name} must be a bounded array`);
-  const values = input.map((value) => validator(value, `${name} entry`));
+  const values = input.map((value, index) => bounded(value, `${name}[${index}]`, 2048));
   if (new Set(values).size !== values.length) throw new Error(`${name} contains duplicates`);
   return Object.freeze(values);
 }
-
-function freezeWithDigest(record) {
-  const base = Object.freeze({ ...record });
-  return Object.freeze({ ...base, contentDigest: sha256(canonicalJson(base)) });
+function idList(input, name, maximum = MAX_LIST_ITEMS) {
+  if (!Array.isArray(input) || input.length > maximum) throw new TypeError(`${name} must be a bounded array`);
+  const values = input.map((value, index) => identifier(value, `${name}[${index}]`));
+  if (new Set(values).size !== values.length) throw new Error(`${name} contains duplicates`);
+  return Object.freeze(values);
+}
+function freezeDigest(record) {
+  const body = Object.freeze({ ...record });
+  return Object.freeze({ ...body, contentDigest: sha256(canonicalJson(body)) });
+}
+function recordInput(value) {
+  const { kind: _kind, schemaVersion: _schemaVersion, contentDigest: _contentDigest, ...input } = value;
+  return input;
+}
+function digestRecord(value, recreate) {
+  try { return !!value && typeof value === "object" && !Array.isArray(value) && same(recreate(recordInput(value)), value); } catch { return false; }
 }
 
-function same(left, right) {
-  return canonicalJson(left) === canonicalJson(right);
+export function createContentRef(input) {
+  exact(input, new Set(["repositoryId", "commitSha", "adapter", "ref"]), "ContentRef");
+  const git = input.repositoryId !== undefined || input.commitSha !== undefined;
+  const adapter = input.adapter !== undefined || input.ref !== undefined;
+  if (git === adapter) throw new Error("ContentRef must be exactly one Git or Adapter reference");
+  if (git) return Object.freeze({ repositoryId: identifier(input.repositoryId, "repositoryId"), commitSha: bounded(input.commitSha, "commitSha", 128) });
+  return Object.freeze({ adapter: identifier(input.adapter, "adapter"), ref: bounded(input.ref, "ref", 512) });
 }
-
-function assertObject(value, name) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${name} must be an object`);
-  return value;
+export function isContentRef(value) {
+  try { return same(createContentRef(value), value); } catch { return false; }
 }
-
-function assertExactKeys(value, allowed, name) {
-  const unexpected = Object.keys(value).filter((key) => !allowed.has(key));
-  if (unexpected.length > 0) throw new Error(`${name} contains unknown fields: ${unexpected.join(",")}`);
-}
-
-function assertDigestRecord(value, recreate, name) {
-  try {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-    return same(recreate(value), value);
-  } catch {
-    return false;
-  }
+function contentRefList(input, name, maximum = MAX_REFS) {
+  if (!Array.isArray(input) || input.length > maximum) throw new TypeError(`${name} must be a bounded array`);
+  const values = input.map(createContentRef);
+  const keys = values.map(canonicalJson);
+  if (new Set(keys).size !== keys.length) throw new Error(`${name} contains duplicates`);
+  return Object.freeze(values);
 }
 
 export function createControlProfile(input) {
-  assertObject(input, "control profile input");
-  assertExactKeys(input, new Set(["profileId", "revision", "maxTimelineEntries", "maxOutboxEntries", "maxTasksPerWork", "toolResultRetentionMs"]), "ControlProfile");
-  return freezeWithDigest({
-    kind: "tiangong.control-profile",
-    schemaVersion: 1,
+  exact(input, new Set(["profileId", "revision", "maxTimelineEntries", "maxOutboxEntries", "maxTasksPerWork", "toolResultRetentionMs"]), "ControlProfile");
+  return freezeDigest({
+    kind: "tiangong.control-profile", schemaVersion: 1,
     profileId: identifier(input.profileId, "profileId"),
     revision: positiveInteger(input.revision, "revision"),
     maxTimelineEntries: positiveInteger(input.maxTimelineEntries, "maxTimelineEntries", MAX_TIMELINE_ENTRIES),
@@ -105,892 +112,472 @@ export function createControlProfile(input) {
     toolResultRetentionMs: positiveInteger(input.toolResultRetentionMs, "toolResultRetentionMs", 365 * 24 * 60 * 60 * 1000),
   });
 }
-
-export function isControlProfile(value) {
-  return assertDigestRecord(value, (entry) => createControlProfile({
-    profileId: entry.profileId,
-    revision: entry.revision,
-    maxTimelineEntries: entry.maxTimelineEntries,
-    maxOutboxEntries: entry.maxOutboxEntries,
-    maxTasksPerWork: entry.maxTasksPerWork,
-    toolResultRetentionMs: entry.toolResultRetentionMs,
-  }), "ControlProfile");
-}
+export function isControlProfile(value) { return digestRecord(value, createControlProfile); }
 
 export function createTeamConfig(input) {
-  assertObject(input, "TeamConfig input");
-  assertExactKeys(input, new Set(["teamId", "revision", "leaderMemberId", "memberIds", "controlProfileId", "createdAt"]), "TeamConfig");
-  const memberIds = uniqueStrings(input.memberIds, "memberIds", 64);
-  const leaderMemberId = identifier(input.leaderMemberId, "leaderMemberId");
-  if (!memberIds.includes(leaderMemberId)) throw new Error("leaderMemberId must be present in memberIds");
-  return freezeWithDigest({
-    kind: "tiangong.team-config",
-    schemaVersion: 1,
-    teamId: identifier(input.teamId, "teamId"),
-    revision: positiveInteger(input.revision, "revision"),
-    leaderMemberId,
-    memberIds,
-    controlProfileId: identifier(input.controlProfileId, "controlProfileId"),
-    createdAt: timestamp(input.createdAt, "createdAt"),
-  });
+  exact(input, new Set(["teamId", "revision", "leaderMemberId", "memberIds", "controlProfileId", "createdAt"]), "TeamConfig");
+  const members = idList(input.memberIds, "memberIds");
+  const leader = identifier(input.leaderMemberId, "leaderMemberId");
+  if (!members.includes(leader)) throw new Error("leaderMemberId must be present in memberIds");
+  return freezeDigest({ kind: "tiangong.team-config", schemaVersion: 1, teamId: identifier(input.teamId, "teamId"), revision: positiveInteger(input.revision, "revision"), leaderMemberId: leader, memberIds: members, controlProfileId: identifier(input.controlProfileId, "controlProfileId"), createdAt: timestamp(input.createdAt, "createdAt") });
 }
-
-export function isTeamConfig(value) {
-  return assertDigestRecord(value, (entry) => createTeamConfig({
-    teamId: entry.teamId,
-    revision: entry.revision,
-    leaderMemberId: entry.leaderMemberId,
-    memberIds: entry.memberIds,
-    controlProfileId: entry.controlProfileId,
-    createdAt: entry.createdAt,
-  }), "TeamConfig");
-}
+export function isTeamConfig(value) { return digestRecord(value, createTeamConfig); }
 
 export function createTeamRouteBinding(input) {
-  assertObject(input, "TeamRouteBinding input");
-  assertExactKeys(input, new Set(["routeId", "teamId", "revision", "channel", "roomId", "createdAt"]), "TeamRouteBinding");
+  exact(input, new Set(["routeId", "teamId", "revision", "channel", "roomId", "createdAt"]), "TeamRouteBinding");
   if (input.channel !== "matrix") throw new Error("TeamRouteBinding channel must be matrix");
-  return freezeWithDigest({
-    kind: "tiangong.team-route-binding",
-    schemaVersion: 1,
-    routeId: identifier(input.routeId, "routeId"),
-    teamId: identifier(input.teamId, "teamId"),
-    revision: positiveInteger(input.revision, "revision"),
-    channel: "matrix",
-    roomId: bounded(input.roomId, "roomId", 256),
-    createdAt: timestamp(input.createdAt, "createdAt"),
-  });
+  return freezeDigest({ kind: "tiangong.team-route-binding", schemaVersion: 1, routeId: identifier(input.routeId, "routeId"), teamId: identifier(input.teamId, "teamId"), revision: positiveInteger(input.revision, "revision"), channel: "matrix", roomId: bounded(input.roomId, "roomId", 256), createdAt: timestamp(input.createdAt, "createdAt") });
 }
-
-export function isTeamRouteBinding(value) {
-  return assertDigestRecord(value, (entry) => createTeamRouteBinding({
-    routeId: entry.routeId,
-    teamId: entry.teamId,
-    revision: entry.revision,
-    channel: entry.channel,
-    roomId: entry.roomId,
-    createdAt: entry.createdAt,
-  }), "TeamRouteBinding");
-}
+export function isTeamRouteBinding(value) { return digestRecord(value, createTeamRouteBinding); }
 
 export function createMemberConfig(input) {
-  assertObject(input, "MemberConfig input");
-  assertExactKeys(input, new Set(["memberId", "teamId", "workerName", "matrixUserId", "role", "controlProfileId", "enabled", "createdAt"]), "MemberConfig");
-  return freezeWithDigest({
-    kind: "tiangong.member-config",
-    schemaVersion: 1,
-    memberId: identifier(input.memberId, "memberId"),
-    teamId: identifier(input.teamId, "teamId"),
-    workerName: identifier(input.workerName, "workerName"),
-    matrixUserId: bounded(input.matrixUserId, "matrixUserId", 256),
-    role: bounded(input.role, "role", 128),
-    controlProfileId: identifier(input.controlProfileId, "controlProfileId"),
-    enabled: input.enabled === true,
-    createdAt: timestamp(input.createdAt, "createdAt"),
+  exact(input, new Set(["memberId", "teamId", "workerName", "matrixUserId", "role", "controlProfileId", "enabled", "createdAt", "runtime", "model", "allowedSkills"]), "MemberConfig");
+  const runtime = input.runtime ?? (input.role === "developer" || input.role === "implementor" ? "codex-app-server" : "openclaw-built-in");
+  if (!["openclaw-built-in", "codex-app-server"].includes(runtime)) throw new Error("MemberConfig runtime is unsupported");
+  return freezeDigest({
+    kind: "tiangong.member-config", schemaVersion: 2,
+    memberId: identifier(input.memberId, "memberId"), teamId: identifier(input.teamId, "teamId"),
+    workerName: identifier(input.workerName, "workerName"), matrixUserId: bounded(input.matrixUserId, "matrixUserId", 256),
+    role: bounded(input.role, "role", 128), controlProfileId: identifier(input.controlProfileId, "controlProfileId"),
+    enabled: input.enabled === true, runtime, model: identifier(input.model ?? (runtime === "codex-app-server" ? "deepseek-v4-flash" : "deepseek-chat"), "model"),
+    allowedSkills: idList(input.allowedSkills ?? [], "allowedSkills", 64), createdAt: timestamp(input.createdAt, "createdAt"),
   });
 }
-
-export function isMemberConfig(value) {
-  return assertDigestRecord(value, (entry) => createMemberConfig({
-    memberId: entry.memberId,
-    teamId: entry.teamId,
-    workerName: entry.workerName,
-    matrixUserId: entry.matrixUserId,
-    role: entry.role,
-    controlProfileId: entry.controlProfileId,
-    enabled: entry.enabled,
-    createdAt: entry.createdAt,
-  }), "MemberConfig");
-}
+export function isMemberConfig(value) { return digestRecord(value, createMemberConfig); }
 
 export function createWorkSpec(input) {
-  assertObject(input, "WorkSpec input");
-  assertExactKeys(input, new Set(["workId", "revision", "objective", "scope", "completionContract", "createdAt"]), "WorkSpec");
-  return freezeWithDigest({
-    kind: "tiangong.work-spec",
-    schemaVersion: 1,
-    workId: identifier(input.workId, "workId"),
-    revision: positiveInteger(input.revision, "revision"),
-    objective: bounded(input.objective, "objective", 4096),
-    scope: bounded(input.scope, "scope", 4096),
-    completionContract: bounded(input.completionContract, "completionContract", 4096),
-    createdAt: timestamp(input.createdAt, "createdAt"),
+  exact(input, new Set(["workId", "revision", "goal", "scope", "constraints", "doneWhen", "unresolvedAssumptions", "createdAt"]), "WorkSpec");
+  const doneWhen = stringList(input.doneWhen, "doneWhen", 32);
+  if (doneWhen.length === 0) throw new Error("doneWhen must not be empty");
+  return Object.freeze({
+    kind: "tiangong.work-spec", schemaVersion: 2, workId: identifier(input.workId, "workId"), revision: positiveInteger(input.revision, "revision"),
+    goal: bounded(input.goal, "goal", 4096, { singleLine: false }), scope: stringList(input.scope ?? [], "scope", 32),
+    constraints: stringList(input.constraints ?? [], "constraints", 32), doneWhen,
+    unresolvedAssumptions: stringList(input.unresolvedAssumptions ?? [], "unresolvedAssumptions", 32), createdAt: timestamp(input.createdAt, "createdAt"),
   });
 }
-
-export function isWorkSpec(value) {
-  return assertDigestRecord(value, (entry) => createWorkSpec({
-    workId: entry.workId,
-    revision: entry.revision,
-    objective: entry.objective,
-    scope: entry.scope,
-    completionContract: entry.completionContract,
-    createdAt: entry.createdAt,
-  }), "WorkSpec");
-}
+export function isWorkSpec(value) { try { return same(createWorkSpec(recordInput(value)), value); } catch { return false; } }
 
 export function createTaskSpec(input) {
-  assertObject(input, "TaskSpec input");
-  assertExactKeys(input, new Set(["taskId", "workId", "assigneeMemberId", "objective", "completionContract", "inputRefs", "createdAt"]), "TaskSpec");
-  return freezeWithDigest({
-    kind: "tiangong.task-spec",
-    schemaVersion: 1,
-    taskId: identifier(input.taskId, "taskId"),
-    workId: identifier(input.workId, "workId"),
-    assigneeMemberId: identifier(input.assigneeMemberId, "assigneeMemberId"),
-    objective: bounded(input.objective, "objective", 4096),
-    completionContract: bounded(input.completionContract, "completionContract", 4096),
-    inputRefs: uniqueStrings(input.inputRefs ?? [], "inputRefs", MAX_INPUT_REFS, (value, name) => digest(value, name)),
-    createdAt: timestamp(input.createdAt, "createdAt"),
+  exact(input, new Set(["taskId", "workId", "assigneeMemberId", "objective", "inputs", "constraints", "createdAt"]), "TaskSpec");
+  return Object.freeze({
+    kind: "tiangong.task-spec", schemaVersion: 2, taskId: identifier(input.taskId, "taskId"), workId: identifier(input.workId, "workId"),
+    assigneeMemberId: identifier(input.assigneeMemberId, "assigneeMemberId"), objective: bounded(input.objective, "objective", 4096, { singleLine: false }),
+    inputs: contentRefList(input.inputs ?? [], "inputs", MAX_INPUTS), constraints: stringList(input.constraints ?? [], "constraints", 32), createdAt: timestamp(input.createdAt, "createdAt"),
   });
 }
-
-export function isTaskSpec(value) {
-  return assertDigestRecord(value, (entry) => createTaskSpec({
-    taskId: entry.taskId,
-    workId: entry.workId,
-    assigneeMemberId: entry.assigneeMemberId,
-    objective: entry.objective,
-    completionContract: entry.completionContract,
-    inputRefs: entry.inputRefs,
-    createdAt: entry.createdAt,
-  }), "TaskSpec");
-}
+export function isTaskSpec(value) { try { return same(createTaskSpec(recordInput(value)), value); } catch { return false; } }
 
 export function createResult(input) {
-  assertObject(input, "Result input");
-  assertExactKeys(input, new Set(["resultId", "workId", "taskId", "producerMemberId", "toolResultIds", "artifactRefs", "claim", "blocker", "createdAt"]), "Result");
-  const hasClaim = typeof input.claim === "string" && input.claim.length > 0;
-  const hasBlocker = typeof input.blocker === "string" && input.blocker.length > 0;
-  if (hasClaim === hasBlocker) throw new Error("Result must contain exactly one claim or blocker");
-  const record = {
-    kind: "tiangong.result",
-    schemaVersion: 1,
-    resultId: identifier(input.resultId, "resultId"),
-    workId: identifier(input.workId, "workId"),
-    taskId: identifier(input.taskId, "taskId"),
-    producerMemberId: identifier(input.producerMemberId, "producerMemberId"),
-    toolResultIds: uniqueStrings(input.toolResultIds ?? [], "toolResultIds", MAX_TOOL_RESULTS, (value, name) => digest(value, name)),
-    artifactRefs: uniqueStrings(input.artifactRefs ?? [], "artifactRefs", MAX_ARTIFACT_REFS),
+  exact(input, new Set(["workId", "taskId", "submittedBy", "summary", "deliverableRefs", "toolResultRefs", "createdAt"]), "Result");
+  const toolResultRefs = (input.toolResultRefs ?? []).map((value, index) => digest(value, `toolResultRefs[${index}]`));
+  if (toolResultRefs.length > MAX_REFS || new Set(toolResultRefs).size !== toolResultRefs.length) throw new Error("toolResultRefs must be bounded and unique");
+  return Object.freeze({
+    kind: "tiangong.result", schemaVersion: 2, workId: identifier(input.workId, "workId"), taskId: identifier(input.taskId, "taskId"),
+    submittedBy: identifier(input.submittedBy, "submittedBy"), summary: bounded(input.summary, "summary", 8192, { singleLine: false }),
+    deliverableRefs: contentRefList(input.deliverableRefs ?? [], "deliverableRefs"),
+    toolResultRefs: Object.freeze(toolResultRefs),
     createdAt: timestamp(input.createdAt, "createdAt"),
-  };
-  if (hasClaim) record.claim = bounded(input.claim, "claim", 8192);
-  if (hasBlocker) record.blocker = bounded(input.blocker, "blocker", 4096);
-  return freezeWithDigest(record);
+  });
 }
-
-export function isResult(value) {
-  return assertDigestRecord(value, (entry) => createResult({
-    resultId: entry.resultId,
-    workId: entry.workId,
-    taskId: entry.taskId,
-    producerMemberId: entry.producerMemberId,
-    toolResultIds: entry.toolResultIds,
-    artifactRefs: entry.artifactRefs,
-    claim: entry.claim,
-    blocker: entry.blocker,
-    createdAt: entry.createdAt,
-  }), "Result");
-}
-
-// A CoordinationDecision is a typed source fact, not a second editable
-// workflow state machine. Task decisions are attached to the Task and Work
-// closure decisions are attached to the Work timeline/projection.
-export function createCoordinationDecision(input) {
-  assertObject(input, "CoordinationDecision input");
-  assertExactKeys(input, new Set(["decisionId", "workId", "taskId", "decision", "resultDigest", "reason", "createdAt"]), "CoordinationDecision");
-  const decision = bounded(input.decision, "decision", 32);
-  if (!["accept", "blocked", "complete", "stop"].includes(decision)) throw new Error("CoordinationDecision has an unsupported decision");
-  const taskDecision = decision === "accept" || decision === "blocked";
-  if (taskDecision !== (input.taskId !== undefined)) throw new Error("CoordinationDecision task binding is invalid");
-  const hasResultDigest = input.resultDigest !== undefined;
-  if (decision === "accept" ? !hasResultDigest : hasResultDigest) throw new Error("CoordinationDecision result binding is invalid");
-  const record = {
-    kind: "tiangong.coordination-decision",
-    schemaVersion: 1,
-    decisionId: identifier(input.decisionId, "decisionId"),
-    workId: identifier(input.workId, "workId"),
-    decision,
-    reason: bounded(input.reason, "reason", 4096),
-    createdAt: timestamp(input.createdAt, "createdAt"),
-  };
-  if (input.taskId !== undefined) record.taskId = identifier(input.taskId, "taskId");
-  if (input.resultDigest !== undefined) record.resultDigest = digest(input.resultDigest, "resultDigest");
-  return freezeWithDigest(record);
-}
-
-export function isCoordinationDecision(value) {
-  return assertDigestRecord(value, (entry) => createCoordinationDecision({
-    decisionId: entry.decisionId,
-    workId: entry.workId,
-    ...(entry.taskId !== undefined ? { taskId: entry.taskId } : {}),
-    decision: entry.decision,
-    ...(entry.resultDigest !== undefined ? { resultDigest: entry.resultDigest } : {}),
-    reason: entry.reason,
-    createdAt: entry.createdAt,
-  }), "CoordinationDecision");
-}
+export function isResult(value) { try { return same(createResult(recordInput(value)), value); } catch { return false; } }
 
 function workRecord(input) {
-  return freezeWithDigest({
-    kind: "tiangong.work",
-    schemaVersion: 1,
-    workId: identifier(input.workId, "workId"),
-    teamId: identifier(input.teamId, "teamId"),
-    routeId: identifier(input.routeId, "routeId"),
-    actorId: bounded(input.actorId, "actorId", 256),
-    sourceEventId: bounded(input.sourceEventId, "sourceEventId", 256),
-    controlProfileId: identifier(input.controlProfileId, "controlProfileId"),
-    leaderSessionId: identifier(input.leaderSessionId, "leaderSessionId"),
+  return Object.freeze({
+    kind: "tiangong.work", schemaVersion: 2, workId: identifier(input.workId, "workId"), teamId: identifier(input.teamId, "teamId"),
+    routeId: identifier(input.routeId, "routeId"), roomId: bounded(input.roomId, "roomId", 256), title: bounded(input.title, "title", 160),
+    actorId: bounded(input.actorId, "actorId", 256), sourceEventId: bounded(input.sourceEventId, "sourceEventId", 256),
+    controlProfileId: identifier(input.controlProfileId, "controlProfileId"), leaderSessionId: identifier(input.leaderSessionId, "leaderSessionId"),
     createdAt: timestamp(input.createdAt, "createdAt"),
   });
 }
+function bindingKey(roomId, eventId) { return `${roomId}\u0000${eventId}`; }
+function commandKey(scope, requestId) { return `${scope}\u0000${requestId}`; }
+function admissionKey(roomId, eventId) { return bindingKey(roomId, eventId); }
+function sessionFor(workId, teamId, routeId) { return `leader-${sha256({ workId, teamId, routeId }).slice(0, 48)}`; }
+function workIdFor(teamId, routeId, eventId) { return `work-${sha256({ teamId, routeId, eventId }).slice(0, 48)}`; }
+function emptyState() { return { version: STATE_VERSION, works: {}, tasks: {}, results: {}, bindings: {}, admissions: {}, wakes: {}, commands: {} }; }
+function snapshotWork(entry) { return clone({ work: entry.work, epoch: entry.epoch, status: entry.status, currentWorkSpec: entry.currentWorkSpec, currentPlanRef: entry.currentPlanRef, timeline: entry.timeline }); }
+function snapshotTask(entry) { return clone({ spec: entry.spec, status: entry.result ? "reported" : entry.cancellation ? "cancelled" : "assigned", result: entry.result, cancellation: entry.cancellation }); }
+function snapshotAdmission(entry) { return clone(entry); }
+function snapshotWake(entry) { return clone(entry); }
+function validatePath(filePath) { if (typeof filePath !== "string" || !isAbsolute(filePath)) throw new TypeError("CoordinationStore filePath must be absolute"); return filePath; }
 
-function isWorkRecord(value) {
+function assertStoredState(state) {
+  if (!state || state.version !== STATE_VERSION || !state.works || !state.tasks || !state.results || !state.bindings || !state.admissions || !state.wakes || !state.commands) throw new Error("Coordination state is invalid or obsolete");
+  return state;
+}
+async function loadState(filePath, maxBytes) {
   try {
-    return same(workRecord({
-      workId: value.workId,
-      teamId: value.teamId,
-      routeId: value.routeId,
-      actorId: value.actorId,
-      sourceEventId: value.sourceEventId,
-      controlProfileId: value.controlProfileId,
-      leaderSessionId: value.leaderSessionId,
-      createdAt: value.createdAt,
-    }), value);
-  } catch {
-    return false;
+    const metadata = await lstat(filePath);
+    if (metadata.isSymbolicLink() || !metadata.isFile() || metadata.size > maxBytes) throw new Error("Coordination state file is invalid");
+    if (process.platform !== "win32" && (metadata.mode & 0o077) !== 0) {
+      await chmod(filePath, 0o600);
+      if (((await lstat(filePath)).mode & 0o077) !== 0) throw new Error("Coordination state permissions cannot be restricted");
+    }
+    return assertStoredState(JSON.parse(await readFile(filePath, "utf8")));
+  } catch (error) {
+    if (error?.code === "ENOENT") return emptyState();
+    throw error;
   }
 }
-
-function emptyState() {
-  return { sequence: 0, previousHash: GENESIS_HASH, works: {}, tasks: {}, results: {}, decisions: {}, wakes: {}, commands: {} };
-}
-
-function commandKey(scope, requestId) {
-  return `${scope}\u0000${requestId}`;
-}
-
-function assertRequest(requestId, name = "requestId") {
-  return identifier(requestId, name);
-}
-
-function command(scope, requestId, value) {
-  return { scope, requestId: assertRequest(requestId), commandDigest: sha256({ scope, value }) };
-}
-
-function checkCommand(state, request, expected) {
-  const existing = state.commands[commandKey(request.scope, request.requestId)];
-  if (!existing) return false;
-  if (existing !== request.commandDigest) throw new Error("COMMAND_REQUEST_CONFLICT");
-  if (!expected()) throw new Error("COMMAND_REPLAY_STATE_MISSING");
-  return true;
-}
-
-function profileFor(input) {
-  if (!isControlProfile(input)) throw new Error("A schema-valid current ControlProfile is required");
-  return input;
-}
-
-function verifyProfile(work, profile) {
-  if (work.controlProfileId !== profile.profileId) throw new Error("CONTROL_PROFILE_MISMATCH");
-}
-
-function clone(value) {
-  return structuredClone(value);
-}
-
-function snapshotWork(entry) {
-  return clone({
-    work: entry.work,
-    epoch: entry.epoch,
-    status: entry.status,
-    currentWorkSpec: entry.currentWorkSpec,
-    closeDecision: entry.closeDecision ?? null,
-    timeline: entry.timeline,
-  });
-}
-
-function snapshotTask(entry) {
-  return clone(entry);
-}
-
-function snapshotWake(entry) {
-  return clone(entry);
-}
-
-function validatePath(filePath) {
-  if (typeof filePath !== "string" || !isAbsolute(filePath)) throw new TypeError("CoordinationStore filePath must be absolute");
-  return filePath;
-}
-
-async function appendRecords(filePath, records) {
-  if (records.length === 0) return;
+async function saveState(filePath, state) {
   await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
-  const handle = await open(filePath, "a", 0o600);
-  try {
-    await handle.writeFile(records.map((record) => `${canonicalJson(record)}\n`).join(""));
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
+  const temporary = `${filePath}.tmp-${randomUUID()}`;
+  await writeFile(temporary, `${canonicalJson(state)}\n`, { mode: 0o600, flag: "wx" });
+  await rename(temporary, filePath);
 }
-
-function eventRecord(state, event, sequence, previousHash) {
-  const unsigned = {
-    version: JOURNAL_VERSION,
-    sequence,
-    previousHash,
-    type: event.type,
-    at: timestamp(event.at, "event.at"),
-    ...(event.command ? { command: event.command } : {}),
-    payload: event.payload,
-  };
-  return { ...unsigned, hash: sha256(unsigned) };
+function replay(state, scope, requestId, payload) {
+  const request = identifier(requestId, "requestId");
+  const key = commandKey(scope, request);
+  const hash = sha256({ scope, payload });
+  if (state.commands[key]) {
+    if (state.commands[key] !== hash) throw new Error("COMMAND_REQUEST_CONFLICT");
+    return { request, key, hash, replayed: true };
+  }
+  return { request, key, hash, replayed: false };
 }
-
-function appendTimeline(entry, record, payload, epoch) {
-  const actorId = payload.actorId ?? entry.work.actorId;
-  entry.timeline.push({
-    sequence: record.sequence,
-    eventHash: record.hash,
-    type: record.type,
-    at: record.at,
-    actorId,
-    requestId: record.command?.requestId ?? null,
-    epoch,
-    payload: clone(payload),
-  });
-  if (entry.timeline.length > entry.profile.maxTimelineEntries) throw new Error("WORK_TIMELINE_LIMIT_EXCEEDED");
+function recordCommand(state, identity) { state.commands[identity.key] = identity.hash; }
+function assertProfile(entry, profile) { if (!isControlProfile(profile) || entry.work.controlProfileId !== profile.profileId) throw new Error("CONTROL_PROFILE_MISMATCH"); }
+function assertTimeline(entry) { if (entry.timeline.length >= Math.min(entry.profile.maxTimelineEntries, MAX_TIMELINE_ENTRIES)) throw new Error("WORK_TIMELINE_LIMIT_EXCEEDED"); }
+function appendTimeline(entry, { type, at, actorId, requestId, payload, epoch = entry.epoch }) {
+  assertTimeline(entry);
+  entry.timeline.push({ sequence: entry.timeline.length + 1, type, at: timestamp(at, "timeline.at"), actorId: bounded(actorId, "actorId", 256), requestId: requestId ?? null, epoch, payload: clone(payload) });
 }
-
-function applyRecord(state, record) {
-  const { hash, ...unsigned } = record ?? {};
-  if (record?.version !== JOURNAL_VERSION || record.sequence !== state.sequence + 1 ||
-      record.previousHash !== state.previousHash || hash !== sha256(unsigned)) {
-    throw new Error(`Invalid coordination journal at sequence ${state.sequence + 1}`);
+function earlierPending(state, admission) {
+  return Object.values(state.admissions).some((entry) => entry.roomId === admission.roomId && entry.status === "pending" && (entry.receivedAt < admission.receivedAt || (entry.receivedAt === admission.receivedAt && entry.eventId < admission.eventId)));
+}
+function normalizeGuard(result) {
+  const value = result ?? {};
+  for (const field of ["activeExecutions", "unresolvedOperations", "pendingApprovals", "unreadableContentRefs"]) {
+    if (!Array.isArray(value[field] ?? []) || (value[field] ?? []).some((entry) => typeof entry !== "string" || entry.length > 512)) throw new Error("CLOSE_GUARD_RESPONSE_INVALID");
   }
-  if (!record.payload || typeof record.payload !== "object" || Array.isArray(record.payload)) throw new Error("Invalid coordination event payload");
-  if (record.command) {
-    const c = record.command;
-    if (typeof c.scope !== "string" || typeof c.requestId !== "string" || !DIGEST.test(c.commandDigest)) throw new Error("Invalid coordination command identity");
-    const key = commandKey(c.scope, c.requestId);
-    const previous = state.commands[key];
-    if (previous && previous !== c.commandDigest) throw new Error("Conflicting coordination command identity");
-    state.commands[key] = c.commandDigest;
-  }
-  const payload = record.payload;
-  if (record.type === "work-created") {
-    if (state.works[payload.work?.workId]) throw new Error("WORK_ALREADY_EXISTS");
-    if (!isWorkRecord(payload.work) || !isControlProfile(payload.profile) || !isTeamConfig(payload.team) || !isTeamRouteBinding(payload.route) || !isWorkSpec(payload.spec)) {
-      throw new Error("Invalid work-created binding");
-    }
-    if (payload.route.teamId !== payload.team.teamId || payload.work.teamId !== payload.team.teamId ||
-        payload.work.routeId !== payload.route.routeId || payload.work.controlProfileId !== payload.profile.profileId ||
-        payload.spec.workId !== payload.work.workId) throw new Error("Work binding mismatch");
-    const entry = {
-      work: payload.work,
-      team: payload.team,
-      route: payload.route,
-      profile: payload.profile,
-      currentWorkSpec: payload.spec,
-      epoch: 0,
-      status: "open",
-      closeDecision: null,
-      timeline: [],
-    };
-    state.works[payload.work.workId] = entry;
-    appendTimeline(entry, record, payload, 0);
-  } else if (record.type === "work-spec-changed") {
-    const entry = state.works[payload.workId];
-    if (!entry || entry.status !== "open" || !isWorkSpec(payload.spec)) throw new Error("Invalid work-spec-changed event");
-    if (payload.spec.workId !== payload.workId || payload.expectedEpoch !== entry.epoch || payload.spec.revision !== entry.currentWorkSpec.revision + 1) {
-      throw new Error("WORK_EPOCH_OR_SPEC_CONFLICT");
-    }
-    entry.epoch += 1;
-    entry.currentWorkSpec = payload.spec;
-    appendTimeline(entry, record, payload, entry.epoch);
-  } else if (record.type === "task-created") {
-    const entry = state.works[payload.task?.workId];
-    if (!entry || entry.status !== "open" || !isTaskSpec(payload.task)) throw new Error("Invalid task-created event");
-    if (state.tasks[payload.task.taskId]) throw new Error("TASK_ALREADY_EXISTS");
-    if (payload.task.workId !== entry.work.workId || payload.expectedEpoch !== entry.epoch || entry.timeline.length >= entry.profile.maxTimelineEntries ||
-        Object.values(state.tasks).filter((task) => task.spec.workId === entry.work.workId).length >= entry.profile.maxTasksPerWork) {
-      throw new Error("TASK_WORK_CONFLICT");
-    }
-    entry.epoch += 1;
-    state.tasks[payload.task.taskId] = { spec: payload.task, status: "assigned", result: null, cancellation: null };
-    appendTimeline(entry, record, payload, entry.epoch);
-  } else if (record.type === "task-cancelled") {
-    const entry = state.works[payload.workId];
-    const task = state.tasks[payload.taskId];
-    if (!entry || !task || task.spec.workId !== payload.workId || entry.status !== "open" || payload.expectedEpoch !== entry.epoch || task.result || task.status === "cancelled") {
-      throw new Error("TASK_CANCEL_CONFLICT");
-    }
-    entry.epoch += 1;
-    task.status = "cancelled";
-    task.cancellation = { actorId: payload.actorId, reason: payload.reason, at: record.at };
-    appendTimeline(entry, record, payload, entry.epoch);
-  } else if (record.type === "result-submitted") {
-    const entry = state.works[payload.result?.workId];
-    const task = state.tasks[payload.result?.taskId];
-    if (!entry || !task || !isResult(payload.result) || task.spec.workId !== payload.result.workId ||
-        entry.status !== "open" || payload.expectedEpoch !== entry.epoch || task.result || task.status === "cancelled") {
-      throw new Error("RESULT_TASK_CONFLICT");
-    }
-    entry.epoch += 1;
-    task.status = "reported";
-    task.result = payload.result;
-    state.results[payload.result.resultId] = payload.result;
-    appendTimeline(entry, record, payload, entry.epoch);
-  } else if (record.type === "task-decided") {
-    const entry = state.works[payload.workId];
-    const task = state.tasks[payload.taskId];
-    const decision = payload.decision;
-    if (!entry || !task || entry.status !== "open" || task.spec.workId !== payload.workId ||
-        payload.expectedEpoch !== entry.epoch || task.decision || !isCoordinationDecision(decision) ||
-        decision.workId !== payload.workId || decision.taskId !== payload.taskId ||
-        !["accept", "blocked"].includes(decision.decision)) throw new Error("TASK_DECISION_CONFLICT");
-    if (decision.decision === "accept" && (!task.result || task.status !== "reported" || decision.resultDigest !== task.result.contentDigest)) {
-      throw new Error("TASK_DECISION_RESULT_CONFLICT");
-    }
-    if (decision.decision === "blocked" && !["assigned", "reported"].includes(task.status)) throw new Error("TASK_DECISION_CONFLICT");
-    entry.epoch += 1;
-    task.status = decision.decision === "accept" ? "accepted" : "blocked";
-    task.decision = decision;
-    state.decisions[decision.decisionId] = decision;
-    appendTimeline(entry, record, payload, entry.epoch);
-  } else if (record.type === "work-closed") {
-    const entry = state.works[payload.workId];
-    const decision = payload.decision;
-    if (!entry || entry.status !== "open" || payload.expectedEpoch !== entry.epoch || entry.closeDecision ||
-        !isCoordinationDecision(decision) || decision.workId !== payload.workId || decision.taskId !== undefined ||
-        !["complete", "stop"].includes(decision.decision)) throw new Error("WORK_CLOSE_CONFLICT");
-    entry.epoch += 1;
-    entry.status = "closed";
-    entry.closeDecision = decision;
-    state.decisions[decision.decisionId] = decision;
-    appendTimeline(entry, record, payload, entry.epoch);
-  } else if (record.type === "wake-enqueued") {
-    const wake = payload.wake;
-    if (!wake || typeof wake !== "object" || state.wakes[wake.wakeId] || !ID.test(wake.wakeId) || !ID.test(wake.targetMemberId) ||
-        !["task-assignment", "leader-resume", "result-notification", "human-reply"].includes(wake.kind) || wake.status !== "pending") {
-      throw new Error("Invalid wake-enqueued event");
-    }
-    if (Object.keys(state.wakes).length >= MAX_OUTBOX_ENTRIES) throw new Error("OUTBOX_LIMIT_EXCEEDED");
-    state.wakes[wake.wakeId] = wake;
-  } else if (record.type === "wake-claimed") {
-    const wake = state.wakes[payload.wakeId];
-    if (!wake || !ID.test(payload.consumerId) || (wake.status !== "pending" && !(wake.status === "claimed" && wake.consumerId === payload.consumerId))) {
-      throw new Error("WAKE_CLAIM_CONFLICT");
-    }
-    if (wake.status === "pending") {
-      wake.status = "claimed";
-      wake.consumerId = payload.consumerId;
-      wake.claimedAt = record.at;
-    }
-  } else if (record.type === "wake-acked") {
-    const wake = state.wakes[payload.wakeId];
-    if (!wake || wake.status !== "claimed" || wake.consumerId !== payload.consumerId || !bounded(payload.receiptId, "receiptId", 256)) {
-      throw new Error("WAKE_ACK_CONFLICT");
-    }
-    wake.status = "acked";
-    wake.receiptId = payload.receiptId;
-    wake.ackedAt = record.at;
-  } else {
-    throw new Error(`Unknown coordination event type: ${record.type}`);
-  }
-  state.sequence = record.sequence;
-  state.previousHash = record.hash;
+  return { activeExecutions: value.activeExecutions ?? [], unresolvedOperations: value.unresolvedOperations ?? [], pendingApprovals: value.pendingApprovals ?? [], unreadableContentRefs: value.unreadableContentRefs ?? [] };
 }
 
 export class CoordinationStore {
-  #filePath;
-  #maxJournalBytes;
-  #now;
-  #state = emptyState();
-  #queue = Promise.resolve();
-  #initialized = false;
-
-  constructor({ filePath, now = () => new Date().toISOString(), maxJournalBytes = MAX_JOURNAL_BYTES } = {}) {
+  #filePath; #maxStateBytes; #now; #queue = Promise.resolve(); #closeGuard; #cancellationGuard; #contentRefResolver;
+  constructor({ filePath, now = () => new Date().toISOString(), maxStateBytes = MAX_STATE_BYTES, closeGuard, cancellationGuard, contentRefResolver } = {}) {
     this.#filePath = validatePath(filePath);
     if (typeof now !== "function") throw new TypeError("CoordinationStore now must be a function");
-    if (!Number.isSafeInteger(maxJournalBytes) || maxJournalBytes < 1024 || maxJournalBytes > MAX_JOURNAL_BYTES) throw new TypeError("maxJournalBytes is outside the bounded range");
-    this.#maxJournalBytes = maxJournalBytes;
-    this.#now = now;
+    if (!Number.isSafeInteger(maxStateBytes) || maxStateBytes < 1024 || maxStateBytes > MAX_STATE_BYTES) throw new TypeError("maxStateBytes is outside the bounded range");
+    this.#now = now; this.#maxStateBytes = maxStateBytes;
+    this.#closeGuard = closeGuard ?? { async inspect() { return {}; } };
+    this.#cancellationGuard = cancellationGuard ?? { async stopAndInspect() { return { stopped: true, writerReleased: true, unresolvedOperations: [] }; } };
+    this.#contentRefResolver = contentRefResolver;
   }
-
-  async #reload() {
-    let metadata;
-    try {
-      metadata = await lstat(this.#filePath);
-    } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
-      this.#state = emptyState();
-      this.#initialized = true;
-      return;
-    }
-    if (metadata.isSymbolicLink() || !metadata.isFile() || metadata.size > this.#maxJournalBytes) throw new Error("Coordination journal file is invalid");
-    if (process.platform !== "win32" && (metadata.mode & 0o077) !== 0) {
-      await chmod(this.#filePath, 0o600);
-      metadata = await lstat(this.#filePath);
-      if ((metadata.mode & 0o077) !== 0) throw new Error("Coordination journal permissions cannot be restricted");
-    }
-    const state = emptyState();
-    const text = await readFile(this.#filePath, "utf8");
-    if (text !== "" && !text.endsWith("\n")) throw new Error("Coordination journal has a partial record");
-    for (const line of text.split("\n")) {
-      if (line === "") continue;
-      let record;
-      try { record = JSON.parse(line); } catch { throw new Error("Coordination journal contains invalid JSON"); }
-      applyRecord(state, record);
-    }
-    this.#state = state;
-    this.#initialized = true;
-  }
-
-  async #mutate(builder) {
+  async #mutate(callback) {
     const operation = this.#queue.then(() => withFileLock(this.#filePath, async () => {
-      await this.#reload();
-      const transaction = await builder(this.#state);
-      if (!transaction || !Array.isArray(transaction.events) || transaction.events.length === 0) return transaction?.result;
-      const preview = clone(this.#state);
-      const records = [];
-      let sequence = preview.sequence;
-      let previousHash = preview.previousHash;
-      for (const event of transaction.events) {
-        const record = eventRecord(preview, event, sequence + 1, previousHash);
-        applyRecord(preview, record);
-        records.push(record);
-        sequence = record.sequence;
-        previousHash = record.hash;
-      }
-      await appendRecords(this.#filePath, records);
-      this.#state = preview;
-      return transaction.result;
+      const state = await loadState(this.#filePath, this.#maxStateBytes);
+      const result = await callback(state);
+      if (result?.changed) await saveState(this.#filePath, state);
+      return result?.value;
     }));
-    this.#queue = operation.catch(() => {});
-    return operation;
+    this.#queue = operation.catch(() => {}); return operation;
   }
+  async #read(callback) { await this.#queue; return withFileLock(this.#filePath, async () => callback(await loadState(this.#filePath, this.#maxStateBytes))); }
 
-  async #read(callback) {
-    await this.#queue;
-    return withFileLock(this.#filePath, async () => {
-      await this.#reload();
-      return callback(this.#state);
+  async enqueueMessageAdmission({ team, route, profile, actorId, eventId, receivedAt = this.#now(), requestId } = {}) {
+    if (!isTeamConfig(team) || !isTeamRouteBinding(route) || !isControlProfile(profile)) throw new Error("Message admission requires current Team, route, and ControlProfile");
+    if (route.teamId !== team.teamId || team.controlProfileId !== profile.profileId) throw new Error("MESSAGE_ADMISSION_BINDING_MISMATCH");
+    const admission = { roomId: bounded(route.roomId, "roomId", 256), eventId: bounded(eventId, "eventId", 256), teamId: team.teamId, routeId: route.routeId, actorId: bounded(actorId, "actorId", 256), status: "pending", receivedAt: timestamp(receivedAt, "receivedAt"), attempts: 0, lastErrorCode: null, leaseOwner: null, leaseUntil: null };
+    const identityPayload = { ...admission, profileId: profile.profileId };
+    return this.#mutate((state) => {
+      const identity = replay(state, "message.admit", requestId, identityPayload);
+      const key = admissionKey(admission.roomId, admission.eventId);
+      if (identity.replayed) {
+        const current = state.admissions[key];
+        if (!current) throw new Error("COMMAND_REPLAY_STATE_MISSING");
+        return { changed: false, value: { replayed: true, admission: snapshotAdmission(current), binding: state.bindings[key] ? clone(state.bindings[key]) : null } };
+      }
+      if (state.admissions[key]) throw new Error("MATRIX_MESSAGE_ALREADY_ADMITTED");
+      state.admissions[key] = admission; recordCommand(state, identity);
+      return { changed: true, value: { replayed: false, admission: snapshotAdmission(admission), binding: null } };
     });
   }
 
-  async createWork({ workId, team, route, profile, spec, actorId, sourceEventId, requestId, leaderSessionId, wakes = [] } = {}) {
-    const currentProfile = profileFor(profile);
-    if (!isTeamConfig(team) || !isTeamRouteBinding(route) || !isWorkSpec(spec)) throw new Error("Work admission requires valid TeamConfig, route binding, and WorkSpec");
-    if (team.controlProfileId !== currentProfile.profileId || route.teamId !== team.teamId || spec.workId !== workId) throw new Error("WORK_ADMISSION_BINDING_MISMATCH");
-    const sessionId = leaderSessionId ?? `leader-${sha256({ workId, teamId: team.teamId, routeId: route.routeId }).slice(0, 48)}`;
-    const work = workRecord({ workId, teamId: team.teamId, routeId: route.routeId, actorId, sourceEventId, controlProfileId: currentProfile.profileId, leaderSessionId: sessionId, createdAt: spec.createdAt });
+  async leaseMessageAdmission({ roomId, eventId, consumerId, leaseMs = 120_000 } = {}) {
+    const consumer = identifier(consumerId, "consumerId");
+    if (!Number.isSafeInteger(leaseMs) || leaseMs < 1_000 || leaseMs > 10 * 60_000) throw new Error("MESSAGE_ADMISSION_LEASE_INVALID");
+    return this.#mutate((state) => {
+      const admission = state.admissions[admissionKey(roomId, eventId)];
+      if (!admission || admission.status !== "pending") throw new Error("MESSAGE_ADMISSION_NOT_PENDING");
+      const now = timestamp(this.#now(), "now");
+      if (admission.leaseOwner && Date.parse(admission.leaseUntil) > Date.parse(now)) {
+        if (admission.leaseOwner !== consumer) throw new Error("MESSAGE_ADMISSION_LEASE_CONFLICT");
+        return { changed: false, value: { replayed: true, admission: snapshotAdmission(admission) } };
+      }
+      admission.leaseOwner = consumer; admission.leaseUntil = new Date(Date.parse(now) + leaseMs).toISOString(); admission.attempts += 1;
+      return { changed: true, value: { replayed: false, admission: snapshotAdmission(admission) } };
+    });
+  }
+
+  async recordAdmissionFailure({ roomId, eventId, errorCode, requestId } = {}) {
+    const code = bounded(errorCode, "errorCode", 96); if (!ERROR_CODE.test(code)) throw new Error("ADMISSION_ERROR_CODE_INVALID");
+    return this.#mutate((state) => {
+      const key = admissionKey(roomId, eventId); const admission = state.admissions[key]; if (!admission || admission.status !== "pending") throw new Error("MESSAGE_ADMISSION_NOT_PENDING");
+      const identity = replay(state, "message.admit.failure", requestId, { roomId, eventId, errorCode: code });
+      if (identity.replayed) return { changed: false, value: { replayed: true, admission: snapshotAdmission(admission) } };
+      admission.lastErrorCode = code; admission.leaseOwner = null; admission.leaseUntil = null; recordCommand(state, identity);
+      return { changed: true, value: { replayed: false, admission: snapshotAdmission(admission) } };
+    });
+  }
+
+  async routeMessage({ roomId, eventId, team, route, profile, actorId, expectedEpoch, requestId, targetWorkId, title, leaderSessionId } = {}) {
+    if (!isTeamConfig(team) || !isTeamRouteBinding(route) || !isControlProfile(profile) || actorId !== team.leaderMemberId) throw new Error("MESSAGE_ROUTE_ACTOR_NOT_LEADER");
+    if (route.roomId !== roomId || route.teamId !== team.teamId || team.controlProfileId !== profile.profileId) throw new Error("MESSAGE_ROUTE_BINDING_MISMATCH");
+    return this.#mutate((state) => {
+      const key = admissionKey(roomId, eventId); const admission = state.admissions[key];
+      if (!admission || admission.teamId !== team.teamId || admission.routeId !== route.routeId) throw new Error("MESSAGE_ADMISSION_NOT_FOUND");
+      if (admission.leaseOwner && admission.leaseOwner !== actorId) throw new Error("MESSAGE_ADMISSION_LEASE_CONFLICT");
+      const requestedTarget = targetWorkId ? identifier(targetWorkId, "targetWorkId") : null;
+      const payload = { roomId, eventId, targetWorkId: requestedTarget, title: title ?? null, actorId, expectedEpoch: expectedEpoch ?? null, profileId: profile.profileId };
+      const identity = replay(state, "message.route", requestId, payload);
+      if (identity.replayed || admission.status === "routed") {
+        const binding = state.bindings[key]; if (!binding) throw new Error("COMMAND_REPLAY_STATE_MISSING");
+        return { changed: false, value: { replayed: true, admission: snapshotAdmission(admission), binding: clone(binding), work: snapshotWork(state.works[binding.workId]) } };
+      }
+      if (earlierPending(state, admission)) throw new Error("MESSAGE_ROUTE_ORDER_CONFLICT");
+      let entry;
+      if (requestedTarget) {
+        entry = state.works[requestedTarget];
+        if (!entry || entry.status !== "open" || entry.work.teamId !== team.teamId || entry.work.routeId !== route.routeId || expectedEpoch !== entry.epoch) throw new Error("MESSAGE_ROUTE_TARGET_CONFLICT");
+        assertProfile(entry, profile); entry.epoch += 1;
+        appendTimeline(entry, { type: "matrix-message-associated", at: this.#now(), actorId, requestId: identity.request, epoch: entry.epoch, payload: { roomId, eventId, humanActorId: admission.actorId } });
+      } else {
+        const workId = workIdFor(team.teamId, route.routeId, eventId); if (state.works[workId]) throw new Error("WORK_ALREADY_EXISTS");
+        const createdAt = admission.receivedAt; const sessionId = leaderSessionId ?? sessionFor(workId, team.teamId, route.routeId);
+        const work = workRecord({ workId, teamId: team.teamId, routeId: route.routeId, roomId, title: bounded(title, "title", 160), actorId: admission.actorId, sourceEventId: eventId, controlProfileId: profile.profileId, leaderSessionId: sessionId, createdAt });
+        entry = { work, team, route, profile, epoch: 0, status: "open", currentWorkSpec: null, currentPlanRef: null, timeline: [] };
+        appendTimeline(entry, { type: "work-created", at: createdAt, actorId, requestId: identity.request, epoch: 0, payload: { work, source: { roomId, eventId, actorId: admission.actorId } } });
+        state.works[workId] = entry;
+      }
+      const binding = { roomId, eventId, workId: entry.work.workId, actorId: admission.actorId, associatedBy: actorId, associatedAt: this.#now(), correctedAt: null };
+      state.bindings[key] = binding; admission.status = "routed"; admission.workId = entry.work.workId; admission.routedAt = binding.associatedAt; admission.leaseOwner = null; admission.leaseUntil = null; recordCommand(state, identity);
+      return { changed: true, value: { replayed: false, admission: snapshotAdmission(admission), binding: clone(binding), work: snapshotWork(entry) } };
+    });
+  }
+
+  async correctMessageAssociation({ roomId, eventId, correctionEventId, team, route, profile, actorId, expectedSourceEpoch, expectedTargetEpoch, requestId, targetWorkId, title, stopSourceIfEmpty = false } = {}) {
+    if (!isTeamConfig(team) || !isTeamRouteBinding(route) || !isControlProfile(profile) || actorId !== team.leaderMemberId) throw new Error("MESSAGE_CORRECTION_ACTOR_NOT_LEADER");
+    if (route.roomId !== roomId || route.teamId !== team.teamId || team.controlProfileId !== profile.profileId) throw new Error("MESSAGE_CORRECTION_BINDING_MISMATCH");
+    return this.#mutate(async (state) => {
+      const originalKey = bindingKey(roomId, eventId); const correctionKey = admissionKey(roomId, correctionEventId);
+      const current = state.bindings[originalKey]; const correction = state.admissions[correctionKey];
+      if (!current || !correction || correction.status !== "pending" || correction.actorId === actorId) throw new Error("MESSAGE_CORRECTION_INPUT_INVALID");
+      if (correction.leaseOwner && correction.leaseOwner !== actorId) throw new Error("MESSAGE_ADMISSION_LEASE_CONFLICT");
+      const source = state.works[current.workId]; if (!source || source.status !== "open" || source.epoch !== expectedSourceEpoch) throw new Error("MESSAGE_CORRECTION_SOURCE_CONFLICT");
+      const requestedTarget = targetWorkId ? identifier(targetWorkId, "targetWorkId") : null;
+      const identity = replay(state, "message.correct", requestId, { roomId, eventId, correctionEventId, sourceWorkId: source.work.workId, targetWorkId: requestedTarget, title: title ?? null, actorId, expectedSourceEpoch, expectedTargetEpoch: expectedTargetEpoch ?? null, stopSourceIfEmpty });
+      if (identity.replayed) {
+        const binding = state.bindings[originalKey]; return { changed: false, value: { replayed: true, binding: clone(binding), sourceWork: snapshotWork(source), targetWork: snapshotWork(state.works[binding.workId]) } };
+      }
+      let target;
+      if (requestedTarget) {
+        target = state.works[requestedTarget];
+        if (!target || target.status !== "open" || target.work.teamId !== team.teamId || target.work.routeId !== route.routeId || target.epoch !== expectedTargetEpoch || target.work.workId === source.work.workId) throw new Error("MESSAGE_CORRECTION_TARGET_CONFLICT");
+      } else {
+        const newId = workIdFor(team.teamId, route.routeId, correctionEventId); if (state.works[newId]) throw new Error("WORK_ALREADY_EXISTS");
+        const work = workRecord({ workId: newId, teamId: team.teamId, routeId: route.routeId, roomId, title: bounded(title, "title", 160), actorId: correction.actorId, sourceEventId: correctionEventId, controlProfileId: profile.profileId, leaderSessionId: sessionFor(newId, team.teamId, route.routeId), createdAt: correction.receivedAt });
+        target = { work, team, route, profile, epoch: 0, status: "open", currentWorkSpec: null, currentPlanRef: null, timeline: [] };
+        appendTimeline(target, { type: "work-created", at: correction.receivedAt, actorId, requestId: identity.request, epoch: 0, payload: { work, source: { roomId, eventId: correctionEventId, actorId: correction.actorId } } });
+        state.works[newId] = target;
+      }
+      const sourceTasks = Object.values(state.tasks).filter((task) => task.spec.workId === source.work.workId);
+      if (stopSourceIfEmpty) {
+        if (sourceTasks.length > 0) throw new Error("MESSAGE_CORRECTION_SOURCE_NOT_EMPTY");
+        const guard = normalizeGuard(await this.#closeGuard.inspect({ work: snapshotWork(source), tasks: [], resultRefs: [], action: "stop" }));
+        if (guard.activeExecutions.length || guard.unresolvedOperations.length || guard.pendingApprovals.length || guard.unreadableContentRefs.length) throw new Error("MESSAGE_CORRECTION_SOURCE_NOT_EMPTY");
+      }
+      source.epoch += 1; target.epoch += 1;
+      const at = this.#now(); const correctionPayload = { roomId, eventId, correctionEventId, sourceWorkId: source.work.workId, targetWorkId: target.work.workId, humanActorId: correction.actorId };
+      appendTimeline(source, { type: "message-association-corrected", at, actorId, requestId: identity.request, epoch: source.epoch, payload: correctionPayload });
+      appendTimeline(target, { type: "message-association-corrected", at, actorId, requestId: identity.request, epoch: target.epoch, payload: correctionPayload });
+      if (stopSourceIfEmpty) { source.status = "stopped"; appendTimeline(source, { type: "work-stopped", at, actorId, requestId: identity.request, epoch: source.epoch, payload: { reason: `Message association corrected to ${target.work.workId}` } }); }
+      const corrected = { ...current, workId: target.work.workId, associatedBy: actorId, associatedAt: at, correctedAt: at };
+      state.bindings[originalKey] = corrected;
+      state.bindings[correctionKey] = { roomId, eventId: correctionEventId, workId: target.work.workId, actorId: correction.actorId, associatedBy: actorId, associatedAt: at, correctedAt: null };
+      correction.status = "routed"; correction.workId = target.work.workId; correction.routedAt = at; correction.leaseOwner = null; correction.leaseUntil = null; recordCommand(state, identity);
+      return { changed: true, value: { replayed: false, binding: clone(corrected), sourceWork: snapshotWork(source), targetWork: snapshotWork(target) } };
+    });
+  }
+
+  async createWork({ workId, team, route, profile, spec = null, title = "Requirement pending", actorId, sourceEventId, requestId, leaderSessionId, wakes = [] } = {}) {
+    if (!isTeamConfig(team) || !isTeamRouteBinding(route) || !isControlProfile(profile) || (spec !== null && !isWorkSpec(spec))) throw new Error("Work admission requires valid bindings and optional WorkSpec");
+    const id = identifier(workId, "workId");
+    if (route.teamId !== team.teamId || team.controlProfileId !== profile.profileId || (spec && spec.workId !== id)) throw new Error("WORK_ADMISSION_BINDING_MISMATCH");
     if (!Array.isArray(wakes) || wakes.length > 2) throw new TypeError("Work wakes must contain at most two entries");
-    const wakeRecords = wakes.map((wake) => {
-      const kind = wake?.kind;
-      if (!["leader-resume", "human-reply"].includes(kind)) throw new Error("Unsupported Work wake kind");
-      return {
-        wakeId: sha256({ kind, workId, targetMemberId: wake.targetMemberId, requestId }),
-        kind,
-        workId: identifier(workId, "workId"),
-        targetMemberId: identifier(wake.targetMemberId, "wake.targetMemberId"),
-        status: "pending",
-        createdAt: spec.createdAt,
-      };
+    const createdAt = spec?.createdAt ?? this.#now();
+    const work = workRecord({ workId: id, teamId: team.teamId, routeId: route.routeId, roomId: route.roomId, title, actorId, sourceEventId, controlProfileId: profile.profileId, leaderSessionId: leaderSessionId ?? sessionFor(id, team.teamId, route.routeId), createdAt });
+    const created = await this.#mutate((state) => {
+      const identity = replay(state, "work.create", requestId, { work, team, route, profile, spec });
+      if (identity.replayed) {
+        const existing = state.works[id]; if (!existing) throw new Error("COMMAND_REPLAY_STATE_MISSING");
+        return { changed: false, value: { replayed: true, work: snapshotWork(existing) } };
+      }
+      const key = bindingKey(route.roomId, sourceEventId);
+      if (state.works[id]) throw new Error("WORK_ALREADY_EXISTS");
+      if (state.bindings[key]) throw new Error("MATRIX_MESSAGE_ALREADY_BOUND");
+      const entry = { work, team, route, profile, epoch: 0, status: "open", currentWorkSpec: spec, currentPlanRef: null, timeline: [] };
+      appendTimeline(entry, { type: "work-created", at: createdAt, actorId, requestId: identity.request, epoch: 0, payload: { work, source: { roomId: route.roomId, eventId: sourceEventId, actorId }, ...(spec ? { spec } : {}) } });
+      state.works[id] = entry;
+      state.bindings[key] = { roomId: route.roomId, eventId: sourceEventId, workId: id, actorId, associatedBy: team.leaderMemberId, associatedAt: createdAt, correctedAt: null };
+      state.admissions[key] = { roomId: route.roomId, eventId: sourceEventId, teamId: team.teamId, routeId: route.routeId, actorId, status: "routed", receivedAt: createdAt, attempts: 0, lastErrorCode: null, leaseOwner: null, leaseUntil: null, workId: id, routedAt: createdAt };
+      recordCommand(state, identity);
+      return { changed: true, value: { replayed: false, work: snapshotWork(entry) } };
     });
-    const request = command("work.create", requestId, { work, team, route, profile: currentProfile, spec, wakes: wakeRecords });
-    return this.#mutate((state) => {
-      const replay = checkCommand(state, request, () => state.works[work.workId] && same(state.works[work.workId].work, work) && wakeRecords.every((wake) => state.wakes[wake.wakeId] && same(state.wakes[wake.wakeId], wake)));
-      if (replay) return { events: [], result: { replayed: true, work: snapshotWork(state.works[work.workId]), wakes: wakeRecords.map((wake) => snapshotWake(state.wakes[wake.wakeId])) } };
-      if (state.works[work.workId]) throw new Error("WORK_ALREADY_EXISTS");
-      if (wakeRecords.some((wake) => state.wakes[wake.wakeId])) throw new Error("WAKE_ALREADY_EXISTS");
-      const events = [{ type: "work-created", at: spec.createdAt, command: request, payload: { work, team, route, profile: currentProfile, spec, actorId } }];
-      for (const wake of wakeRecords) events.push({ type: "wake-enqueued", at: spec.createdAt, payload: { wake } });
-      return {
-        events,
-        result: { replayed: false, work: null, wakes: [] },
-      };
-    }).then(async (result) => result?.work ? result : { ...result, work: await this.getWork(work.workId), wakes: await Promise.all(wakeRecords.map((wake) => this.getWake(wake.wakeId))) });
+    const wakeRecords = [];
+    if (!created.replayed) for (const wake of wakes) wakeRecords.push((await this.enqueueWake({ workId: id, targetMemberId: wake.targetMemberId, kind: wake.kind, requestId: `${requestId}-${wake.kind}`, at: createdAt })).wake);
+    else wakeRecords.push(...(await this.listOutbox()).filter((wake) => wake.workId === id));
+    return { ...created, wakes: wakeRecords };
   }
 
+  async changeWorkTitle({ workId, title, profile, actorId, expectedEpoch, requestId } = {}) {
+    const normalized = bounded(title, "title", 160); return this.#workChange("work.title.change", { workId, profile, actorId, expectedEpoch, requestId, payload: { title: normalized }, type: "work-title-changed", apply: (entry) => { entry.work = Object.freeze({ ...entry.work, title: normalized }); } });
+  }
   async changeWorkSpec({ workId, spec, profile, actorId, expectedEpoch, requestId } = {}) {
-    const currentProfile = profileFor(profile);
-    if (!isWorkSpec(spec)) throw new Error("WorkSpec is invalid");
-    const request = command("work.spec.change", requestId, { workId, spec, actorId, expectedEpoch, profileId: currentProfile.profileId });
+    if (!isWorkSpec(spec) || spec.workId !== workId) throw new Error("WorkSpec is invalid");
+    return this.#workChange("work.spec.change", { workId, profile, actorId, expectedEpoch, requestId, payload: { spec }, type: "work-spec-changed", validate: (entry) => spec.revision === (entry.currentWorkSpec?.revision ?? 0) + 1, apply: (entry) => { entry.currentWorkSpec = spec; }, at: spec.createdAt });
+  }
+  async changeWorkPlan({ workId, planRef, reason, profile, actorId, expectedEpoch, requestId } = {}) {
+    const ref = createContentRef(planRef); const normalizedReason = bounded(reason, "reason", 2048);
+    return this.#workChange("work.plan.change", { workId, profile, actorId, expectedEpoch, requestId, payload: { planRef: ref, reason: normalizedReason }, type: "work-plan-changed", apply: (entry) => { entry.currentPlanRef = ref; } });
+  }
+  async #workChange(scope, { workId, profile, actorId, expectedEpoch, requestId, payload, type, validate = () => true, apply, at = this.#now() }) {
     return this.#mutate((state) => {
-      const entry = state.works[workId];
-      if (!entry) throw new Error("WORK_NOT_FOUND");
-      verifyProfile(entry.work, currentProfile);
-      const replay = checkCommand(state, request, () => entry.currentWorkSpec && same(entry.currentWorkSpec, spec));
-      if (replay) return { events: [], result: { replayed: true, work: snapshotWork(entry) } };
-      if (entry.status !== "open" || spec.workId !== workId || spec.revision !== entry.currentWorkSpec.revision + 1 || expectedEpoch !== entry.epoch) throw new Error("WORK_EPOCH_OR_SPEC_CONFLICT");
-      return {
-        events: [{ type: "work-spec-changed", at: spec.createdAt, command: request, payload: { workId, spec, actorId, expectedEpoch } }],
-        result: { replayed: false, work: null },
-      };
-    }).then(async (result) => result?.work ? result : { ...result, work: await this.getWork(workId) });
+      const id = identifier(workId, "workId"); const entry = state.works[id]; if (!entry) throw new Error("WORK_NOT_FOUND"); assertProfile(entry, profile);
+      const identity = replay(state, scope, requestId, { workId: id, actorId, expectedEpoch, profileId: profile.profileId, ...payload });
+      if (identity.replayed) return { changed: false, value: { replayed: true, work: snapshotWork(entry) } };
+      if (actorId !== entry.team.leaderMemberId) throw new Error("WORK_ACTOR_NOT_LEADER");
+      if (entry.status !== "open" || entry.epoch !== expectedEpoch || !validate(entry)) throw new Error("WORK_EPOCH_OR_CHANGE_CONFLICT");
+      entry.epoch += 1; apply(entry); appendTimeline(entry, { type, at, actorId, requestId: identity.request, epoch: entry.epoch, payload: { workId: id, ...payload } }); recordCommand(state, identity);
+      return { changed: true, value: { replayed: false, work: snapshotWork(entry) } };
+    });
   }
 
   async createTask({ task, team, member, profile, actorId, expectedEpoch, requestId, wake } = {}) {
-    const currentProfile = profileFor(profile);
-    if (!isTaskSpec(task) || !isTeamConfig(team) || !isMemberConfig(member)) throw new Error("Task admission requires valid TaskSpec, TeamConfig, and MemberConfig");
-    if (task.assigneeMemberId !== member.memberId || member.teamId !== team.teamId || member.controlProfileId !== currentProfile.profileId || !member.enabled) throw new Error("TASK_ASSIGNEE_BINDING_MISMATCH");
-    const request = command("task.create", requestId, { task, teamId: team.teamId, member, actorId, expectedEpoch, profileId: currentProfile.profileId, wake: wake ?? null });
-    const wakeRecord = wake ? {
-      wakeId: sha256({ kind: wake.kind ?? "task-assignment", taskId: task.taskId, requestId }),
-      kind: wake.kind ?? "task-assignment",
-      workId: task.workId,
-      taskId: task.taskId,
-      targetMemberId: identifier(wake.targetMemberId ?? member.memberId, "wake.targetMemberId"),
-      status: "pending",
-      createdAt: task.createdAt,
-    } : null;
+    if (!isTaskSpec(task) || !isTeamConfig(team) || !isMemberConfig(member) || !isControlProfile(profile)) throw new Error("Task admission requires valid bindings");
+    if (actorId !== team.leaderMemberId) throw new Error("TASK_ACTOR_NOT_LEADER");
+    if (task.assigneeMemberId !== member.memberId || member.teamId !== team.teamId || member.controlProfileId !== profile.profileId || !member.enabled) throw new Error("TASK_ASSIGNEE_BINDING_MISMATCH");
     return this.#mutate((state) => {
-      const entry = state.works[task.workId];
-      if (!entry) throw new Error("WORK_NOT_FOUND");
-      verifyProfile(entry.work, currentProfile);
-      const replay = checkCommand(state, request, () => state.tasks[task.taskId]?.spec && same(state.tasks[task.taskId].spec, task));
-      if (replay) return { events: [], result: { replayed: true, task: snapshotTask(state.tasks[task.taskId]), wake: wakeRecord ? snapshotWake(state.wakes[wakeRecord.wakeId]) : null } };
-      if (entry.status !== "open" || expectedEpoch !== entry.epoch || state.tasks[task.taskId]) throw new Error("TASK_WORK_CONFLICT");
-      const events = [{ type: "task-created", at: task.createdAt, command: request, payload: { task, actorId, expectedEpoch } }];
-      if (wakeRecord) events.push({ type: "wake-enqueued", at: task.createdAt, payload: { wake: wakeRecord } });
-      return { events, result: { replayed: false, task: null, wake: null } };
-    }).then(async (result) => result?.task ? result : { ...result, task: await this.getTask(task.taskId), wake: wakeRecord ? await this.getWake(wakeRecord.wakeId) : null });
-  }
-
-  async cancelTask({ workId, taskId, profile, actorId, reason, expectedEpoch, requestId } = {}) {
-    const currentProfile = profileFor(profile);
-    const normalizedReason = bounded(reason, "reason", 2048);
-    const request = command("task.cancel", requestId, { workId, taskId, actorId, reason: normalizedReason, expectedEpoch, profileId: currentProfile.profileId });
-    return this.#mutate((state) => {
-      const entry = state.works[workId];
-      const task = state.tasks[taskId];
-      if (!entry || !task) throw new Error("TASK_NOT_FOUND");
-      verifyProfile(entry.work, currentProfile);
-      const replay = checkCommand(state, request, () => task.status === "cancelled");
-      if (replay) return { events: [], result: { replayed: true, task: snapshotTask(task) } };
-      if (entry.status !== "open" || task.spec.workId !== workId || task.result || task.status === "cancelled" || expectedEpoch !== entry.epoch) throw new Error("TASK_CANCEL_CONFLICT");
-      return { events: [{ type: "task-cancelled", at: this.#now(), command: request, payload: { workId, taskId, actorId, reason: normalizedReason, expectedEpoch } }], result: { replayed: false, task: null } };
-    }).then(async (result) => result?.task ? result : { ...result, task: await this.getTask(taskId) });
-  }
-
-  async submitResult({ result, team, member, profile, actorId, expectedEpoch, requestId, toolResultStore } = {}) {
-    const currentProfile = profileFor(profile);
-    if (!isResult(result) || !isTeamConfig(team) || !isMemberConfig(member)) throw new Error("Result submission requires valid Result, TeamConfig, and MemberConfig");
-    if (result.producerMemberId !== member.memberId || member.teamId !== team.teamId || member.controlProfileId !== currentProfile.profileId || !member.enabled) throw new Error("RESULT_PRODUCER_BINDING_MISMATCH");
-    if (!toolResultStore || typeof toolResultStore.get !== "function" || typeof toolResultStore.markRetention !== "function") {
-      if (result.toolResultIds.length > 0) throw new TypeError("ToolResult store is required for cited ToolResults");
-    }
-    const retentionUntil = new Date(Date.parse(result.createdAt) + currentProfile.toolResultRetentionMs).toISOString();
-    for (const toolResultId of result.toolResultIds) {
-      const observed = await toolResultStore.get(toolResultId);
-      if (!observed) throw new Error("TOOL_RESULT_NOT_FOUND");
-      if (observed.workId !== result.workId || observed.taskId !== result.taskId) throw new Error("TOOL_RESULT_OWNER_MISMATCH");
-      await toolResultStore.markRetention(toolResultId, { workId: result.workId, until: retentionUntil });
-    }
-    const request = command("task.result.submit", requestId, { result, teamId: team.teamId, member, actorId, expectedEpoch, profileId: currentProfile.profileId });
-    return this.#mutate((state) => {
-      const entry = state.works[result.workId];
-      const task = state.tasks[result.taskId];
-      if (!entry || !task) throw new Error("TASK_NOT_FOUND");
-      verifyProfile(entry.work, currentProfile);
-      const replay = checkCommand(state, request, () => task.result && same(task.result, result));
-      if (replay) return { events: [], result: { replayed: true, result: clone(task.result) } };
-      if (entry.status !== "open" || task.spec.workId !== result.workId || task.spec.assigneeMemberId !== member.memberId || task.result || task.status === "cancelled" || expectedEpoch !== entry.epoch) throw new Error("RESULT_TASK_CONFLICT");
-      return { events: [{ type: "result-submitted", at: result.createdAt, command: request, payload: { result, actorId, expectedEpoch } }], result: { replayed: false, result: null } };
-    }).then(async (value) => value?.result ? value : { ...value, result: await this.getResult(result.resultId) });
-  }
-
-  async decideTask({ taskId, team, profile, actorId, decision, resultDigest, reason, expectedEpoch, requestId } = {}) {
-    const currentProfile = profileFor(profile);
-    if (!isTeamConfig(team)) throw new Error("Task decision requires a valid TeamConfig");
-    if (actorId !== team.leaderMemberId) throw new Error("TASK_DECISION_ACTOR_NOT_LEADER");
-    const normalizedTaskId = identifier(taskId, "taskId");
-    const normalizedDecision = bounded(decision, "decision", 32);
-    if (!["accept", "blocked"].includes(normalizedDecision)) throw new Error("TASK_DECISION_INVALID");
-    const normalizedReason = bounded(reason, "reason", 4096);
-    const normalizedResultDigest = resultDigest === undefined ? undefined : digest(resultDigest, "resultDigest");
-    const request = command("task.decide", requestId, {
-      taskId: normalizedTaskId, teamId: team.teamId, actorId, decision: normalizedDecision,
-      resultDigest: normalizedResultDigest ?? null, reason: normalizedReason,
-      expectedEpoch, profileId: currentProfile.profileId,
-    });
-    return this.#mutate((state) => {
-      const task = state.tasks[normalizedTaskId];
-      const entry = task ? state.works[task.spec.workId] : null;
-      if (!entry || !task) throw new Error("TASK_NOT_FOUND");
-      verifyProfile(entry.work, currentProfile);
-      if (entry.work.teamId !== team.teamId) throw new Error("TASK_TEAM_BINDING_MISMATCH");
-      const existing = checkCommand(state, request, () => task.decision && same(task.decision, task.decision));
-      if (existing) return { events: [], result: { replayed: true, decision: clone(task.decision), task: snapshotTask(task), work: snapshotWork(entry) } };
-      if (entry.status !== "open" || task.decision || expectedEpoch !== entry.epoch) throw new Error("TASK_DECISION_CONFLICT");
-      if (normalizedDecision === "accept" && (!task.result || task.status !== "reported" || normalizedResultDigest !== task.result.contentDigest)) {
-        throw new Error("TASK_DECISION_RESULT_CONFLICT");
-      }
-      if (normalizedDecision === "blocked" && !["assigned", "reported"].includes(task.status)) throw new Error("TASK_DECISION_CONFLICT");
-      const createdAt = this.#now();
-      const decisionRecord = createCoordinationDecision({
-        decisionId: sha256({ scope: "task", taskId: normalizedTaskId, requestId, decision: normalizedDecision, resultDigest: normalizedResultDigest ?? null }),
-        workId: task.spec.workId,
-        taskId: normalizedTaskId,
-        decision: normalizedDecision,
-        ...(normalizedResultDigest !== undefined ? { resultDigest: normalizedResultDigest } : {}),
-        reason: normalizedReason,
-        createdAt,
-      });
-      return {
-        events: [{ type: "task-decided", at: decisionRecord.createdAt, command: request, payload: {
-          workId: task.spec.workId, taskId: normalizedTaskId, actorId, expectedEpoch, decision: decisionRecord,
-        } }],
-        result: { replayed: false, decision: null, task: null, work: null },
-      };
+      const entry = state.works[task.workId]; if (!entry) throw new Error("WORK_NOT_FOUND"); assertProfile(entry, profile);
+      const identity = replay(state, "task.create", requestId, { task, teamId: team.teamId, memberId: member.memberId, actorId, expectedEpoch, wake: wake ?? null });
+      if (identity.replayed) return { changed: false, value: { replayed: true, task: snapshotTask(state.tasks[task.taskId]), wake: null } };
+      if (entry.status !== "open" || !entry.currentWorkSpec || entry.epoch !== expectedEpoch || state.tasks[task.taskId] || Object.values(state.tasks).filter((item) => item.spec.workId === task.workId).length >= profile.maxTasksPerWork) throw new Error("TASK_WORK_CONFLICT");
+      entry.epoch += 1; state.tasks[task.taskId] = { spec: task, result: null, cancellation: null };
+      appendTimeline(entry, { type: "task-created", at: task.createdAt, actorId, requestId: identity.request, epoch: entry.epoch, payload: { task } }); recordCommand(state, identity);
+      return { changed: true, value: { replayed: false, task: snapshotTask(state.tasks[task.taskId]), wake: null } };
     }).then(async (result) => {
-      if (result?.decision) return result;
-      const task = await this.getTask(normalizedTaskId);
-      return { ...result, decision: task.decision, task, work: await this.getWork(task.spec.workId) };
+      if (!wake || result.replayed) return result;
+      const enqueued = await this.enqueueWake({ workId: task.workId, taskId: task.taskId, targetMemberId: member.memberId, kind: wake.kind ?? "task-assignment", requestId: `${requestId}-wake`, at: task.createdAt });
+      return { ...result, wake: enqueued.wake };
     });
   }
 
-  async closeWork({ workId, team, profile, actorId, decision, reason, expectedEpoch, requestId } = {}) {
-    const currentProfile = profileFor(profile);
-    if (!isTeamConfig(team)) throw new Error("Work closure requires a valid TeamConfig");
-    if (actorId !== team.leaderMemberId) throw new Error("WORK_CLOSE_ACTOR_NOT_LEADER");
-    const normalizedWorkId = identifier(workId, "workId");
-    const normalizedDecision = bounded(decision, "decision", 32);
-    if (!["complete", "stop"].includes(normalizedDecision)) throw new Error("WORK_CLOSE_INVALID");
-    const normalizedReason = bounded(reason, "reason", 4096);
-    const request = command("work.close", requestId, { workId: normalizedWorkId, teamId: team.teamId, actorId, decision: normalizedDecision, reason: normalizedReason, expectedEpoch, profileId: currentProfile.profileId });
+  async cancelTask({ workId, taskId, team, profile, actorId, reason, expectedEpoch, requestId } = {}) {
+    if (!isTeamConfig(team) || actorId !== team.leaderMemberId) throw new Error("TASK_CANCEL_ACTOR_NOT_LEADER");
+    const normalizedReason = bounded(reason, "reason", 2048);
+    return this.#mutate(async (state) => {
+      const entry = state.works[workId]; const task = state.tasks[taskId]; if (!entry || !task || task.spec.workId !== workId) throw new Error("TASK_NOT_FOUND"); assertProfile(entry, profile);
+      const identity = replay(state, "task.cancel", requestId, { workId, taskId, actorId, reason: normalizedReason, expectedEpoch, profileId: profile.profileId });
+      if (identity.replayed) return { changed: false, value: { replayed: true, task: snapshotTask(task) } };
+      if (entry.status !== "open" || entry.epoch !== expectedEpoch || task.result || task.cancellation) throw new Error("TASK_CANCEL_CONFLICT");
+      const guard = await this.#cancellationGuard.stopAndInspect({ workId, taskId });
+      if (guard?.stopped !== true || guard?.writerReleased !== true || !Array.isArray(guard?.unresolvedOperations) || guard.unresolvedOperations.length) throw new Error("TASK_CANCEL_GUARD_FAILED");
+      const at = this.#now(); entry.epoch += 1; task.cancellation = { actorId, reason: normalizedReason, at };
+      appendTimeline(entry, { type: "task-cancelled", at, actorId, requestId: identity.request, epoch: entry.epoch, payload: { workId, taskId, reason: normalizedReason } }); recordCommand(state, identity);
+      return { changed: true, value: { replayed: false, task: snapshotTask(task) } };
+    });
+  }
+
+  async submitResult({ result, team, member, profile, actorId, expectedEpoch, requestId, toolResultStore, contentRefResolver = this.#contentRefResolver } = {}) {
+    if (!isResult(result) || !isTeamConfig(team) || !isMemberConfig(member) || !isControlProfile(profile)) throw new Error("Result submission requires valid bindings");
+    if (result.submittedBy !== member.memberId || actorId !== member.memberId || member.teamId !== team.teamId || member.controlProfileId !== profile.profileId || !member.enabled) throw new Error("RESULT_PRODUCER_BINDING_MISMATCH");
+    if (result.deliverableRefs.length && (!contentRefResolver || typeof contentRefResolver.canRead !== "function")) throw new Error("CONTENT_REF_RESOLVER_UNAVAILABLE");
+    for (const ref of result.deliverableRefs) if (!await contentRefResolver.canRead(ref)) throw new Error("CONTENT_REF_UNREADABLE");
+    if (result.toolResultRefs.length && (!toolResultStore || typeof toolResultStore.get !== "function" || typeof toolResultStore.markRetention !== "function")) throw new Error("TOOL_RESULT_STORE_UNAVAILABLE");
+    const retentionUntil = new Date(Date.parse(result.createdAt) + profile.toolResultRetentionMs).toISOString();
+    for (const id of result.toolResultRefs) {
+      const observed = await toolResultStore.get(id); if (!observed) throw new Error("TOOL_RESULT_NOT_FOUND");
+      if (observed.workId !== result.workId || observed.taskId !== result.taskId || observed.actorId !== actorId) throw new Error("TOOL_RESULT_OWNER_MISMATCH");
+      await toolResultStore.markRetention(id, { workId: result.workId, until: retentionUntil });
+    }
     return this.#mutate((state) => {
-      const entry = state.works[normalizedWorkId];
-      if (!entry) throw new Error("WORK_NOT_FOUND");
-      verifyProfile(entry.work, currentProfile);
-      if (entry.work.teamId !== team.teamId) throw new Error("WORK_TEAM_BINDING_MISMATCH");
-      const replay = checkCommand(state, request, () => entry.closeDecision && entry.closeDecision.decision === normalizedDecision);
-      if (replay) return { events: [], result: { replayed: true, decision: clone(entry.closeDecision), work: snapshotWork(entry) } };
-      if (entry.status !== "open" || entry.closeDecision || expectedEpoch !== entry.epoch) throw new Error("WORK_CLOSE_CONFLICT");
-      const tasks = Object.values(state.tasks).filter((task) => task.spec.workId === normalizedWorkId);
-      const terminal = tasks.every((task) => ["accepted", "blocked", "cancelled"].includes(task.status));
-      if (!terminal || (normalizedDecision === "complete" && tasks.some((task) => task.status !== "accepted" && task.status !== "cancelled"))) {
-        throw new Error("WORK_CLOSE_GUARD_FAILED");
+      const entry = state.works[result.workId]; const task = state.tasks[result.taskId]; if (!entry || !task || task.spec.workId !== result.workId) throw new Error("TASK_NOT_FOUND"); assertProfile(entry, profile);
+      const identity = replay(state, "task.result.submit", requestId, { result, teamId: team.teamId, memberId: member.memberId, actorId, expectedEpoch });
+      if (identity.replayed) return { changed: false, value: { replayed: true, result: clone(task.result) } };
+      if (entry.status !== "open" || entry.epoch !== expectedEpoch || task.spec.assigneeMemberId !== member.memberId || task.result || task.cancellation) throw new Error("RESULT_TASK_CONFLICT");
+      entry.epoch += 1; task.result = result; state.results[result.taskId] = result;
+      appendTimeline(entry, { type: "result-submitted", at: result.createdAt, actorId, requestId: identity.request, epoch: entry.epoch, payload: { result } }); recordCommand(state, identity);
+      return { changed: true, value: { replayed: false, result: clone(result) } };
+    });
+  }
+
+  async closeWork({ workId, team, profile, actorId, action, reason, expectedEpoch, requestId } = {}) {
+    if (!isTeamConfig(team) || !isControlProfile(profile) || actorId !== team.leaderMemberId) throw new Error("WORK_CLOSE_ACTOR_NOT_LEADER");
+    if (!["complete", "stop"].includes(action)) throw new Error("WORK_CLOSE_INVALID");
+    const normalizedReason = bounded(reason, "reason", 4096);
+    return this.#mutate(async (state) => {
+      const entry = state.works[workId]; if (!entry) throw new Error("WORK_NOT_FOUND"); assertProfile(entry, profile);
+      const identity = replay(state, "work.close", requestId, { workId, teamId: team.teamId, actorId, action, reason: normalizedReason, expectedEpoch, profileId: profile.profileId });
+      if (identity.replayed) return { changed: false, value: { replayed: true, action, work: snapshotWork(entry) } };
+      if (entry.status !== "open" || entry.epoch !== expectedEpoch || entry.work.teamId !== team.teamId || (action === "complete" && !entry.currentWorkSpec)) throw new Error("WORK_CLOSE_CONFLICT");
+      const tasks = Object.values(state.tasks).filter((task) => task.spec.workId === workId);
+      if (tasks.some((task) => !task.result && !task.cancellation)) throw new Error("WORK_CLOSE_GUARD_FAILED");
+      const resultRefs = tasks.flatMap((task) => task.result?.deliverableRefs ?? []);
+      const guard = normalizeGuard(await this.#closeGuard.inspect({ work: snapshotWork(entry), tasks: tasks.map(snapshotTask), resultRefs: clone(resultRefs), action }));
+      if (guard.activeExecutions.length || guard.unresolvedOperations.length || guard.pendingApprovals.length || guard.unreadableContentRefs.length) throw new Error("WORK_CLOSE_GUARD_FAILED");
+      if (resultRefs.length) {
+        if (!this.#contentRefResolver || typeof this.#contentRefResolver.canRead !== "function") throw new Error("WORK_CLOSE_GUARD_FAILED");
+        for (const ref of resultRefs) if (!await this.#contentRefResolver.canRead(ref)) throw new Error("WORK_CLOSE_GUARD_FAILED");
       }
-      const decisionRecord = createCoordinationDecision({
-        decisionId: sha256({ scope: "work", workId: normalizedWorkId, requestId, decision: normalizedDecision }),
-        workId: normalizedWorkId,
-        decision: normalizedDecision,
-        reason: normalizedReason,
-        createdAt: this.#now(),
-      });
-      return {
-        events: [{ type: "work-closed", at: decisionRecord.createdAt, command: request, payload: {
-          workId: normalizedWorkId, actorId, expectedEpoch, decision: decisionRecord,
-        } }],
-        result: { replayed: false, decision: null, work: null },
-      };
-    }).then(async (result) => result?.decision ? result : { ...result, decision: (await this.getWork(normalizedWorkId)).closeDecision, work: await this.getWork(normalizedWorkId) });
+      const at = this.#now(); entry.epoch += 1; entry.status = action === "complete" ? "completed" : "stopped";
+      appendTimeline(entry, { type: action === "complete" ? "work-completed" : "work-stopped", at, actorId, requestId: identity.request, epoch: entry.epoch, payload: { reason: normalizedReason } }); recordCommand(state, identity);
+      return { changed: true, value: { replayed: false, action, work: snapshotWork(entry) } };
+    });
   }
 
   async enqueueWake({ workId, taskId, targetMemberId, kind = "leader-resume", requestId, at = this.#now() } = {}) {
     if (!["task-assignment", "leader-resume", "result-notification", "human-reply"].includes(kind)) throw new Error("Unsupported wake kind");
-    const wake = { wakeId: sha256({ kind, workId, taskId: taskId ?? null, requestId }), kind, ...(workId ? { workId: identifier(workId, "workId") } : {}), ...(taskId ? { taskId: identifier(taskId, "taskId") } : {}), targetMemberId: identifier(targetMemberId, "targetMemberId"), status: "pending", createdAt: timestamp(at, "at") };
-    const request = command("wake.enqueue", requestId, wake);
+    const wake = { wakeId: sha256({ kind, workId: workId ?? null, taskId: taskId ?? null, requestId }), ...(workId ? { workId: identifier(workId, "workId") } : {}), ...(taskId ? { taskId: identifier(taskId, "taskId") } : {}), kind, targetMemberId: identifier(targetMemberId, "targetMemberId"), status: "pending", createdAt: timestamp(at, "at") };
     return this.#mutate((state) => {
-      const replay = checkCommand(state, request, () => state.wakes[wake.wakeId] && same(state.wakes[wake.wakeId], wake));
-      if (replay) return { events: [], result: { replayed: true, wake: snapshotWake(state.wakes[wake.wakeId]) } };
-      if (state.wakes[wake.wakeId]) throw new Error("WAKE_ALREADY_EXISTS");
-      return { events: [{ type: "wake-enqueued", at: wake.createdAt, command: request, payload: { wake } }], result: { replayed: false, wake } };
+      const identity = replay(state, "wake.enqueue", requestId, wake);
+      if (identity.replayed) return { changed: false, value: { replayed: true, wake: snapshotWake(state.wakes[wake.wakeId]) } };
+      if (Object.values(state.wakes).filter((entry) => entry.status !== "acked").length >= MAX_OUTBOX_ENTRIES || state.wakes[wake.wakeId]) throw new Error("OUTBOX_LIMIT_EXCEEDED");
+      state.wakes[wake.wakeId] = wake; recordCommand(state, identity); return { changed: true, value: { replayed: false, wake: snapshotWake(wake) } };
+    });
+  }
+  async claimWake({ wakeId, consumerId, requestId, at = this.#now() } = {}) {
+    return this.#mutate((state) => {
+      const id = digest(wakeId, "wakeId"); const consumer = identifier(consumerId, "consumerId"); const wake = state.wakes[id]; if (!wake) throw new Error("WAKE_NOT_FOUND");
+      const identity = replay(state, "wake.claim", requestId, { wakeId: id, consumerId: consumer });
+      if (identity.replayed) return { changed: false, value: { replayed: true, wake: snapshotWake(wake) } };
+      if (wake.status !== "pending") throw new Error("WAKE_CLAIM_CONFLICT");
+      wake.status = "claimed"; wake.consumerId = consumer; wake.claimedAt = timestamp(at, "at"); recordCommand(state, identity); return { changed: true, value: { replayed: false, wake: snapshotWake(wake) } };
+    });
+  }
+  async ackWake({ wakeId, consumerId, receiptId, requestId, at = this.#now() } = {}) {
+    return this.#mutate((state) => {
+      const id = digest(wakeId, "wakeId"); const consumer = identifier(consumerId, "consumerId"); const receipt = bounded(receiptId, "receiptId", 256); const wake = state.wakes[id]; if (!wake) throw new Error("WAKE_NOT_FOUND");
+      const identity = replay(state, "wake.ack", requestId, { wakeId: id, consumerId: consumer, receiptId: receipt });
+      if (identity.replayed) return { changed: false, value: { replayed: true, wake: snapshotWake(wake) } };
+      if (wake.status !== "claimed" || wake.consumerId !== consumer) throw new Error("WAKE_ACK_CONFLICT");
+      wake.status = "acked"; wake.receiptId = receipt; wake.ackedAt = timestamp(at, "at"); recordCommand(state, identity); return { changed: true, value: { replayed: false, wake: snapshotWake(wake) } };
     });
   }
 
-  async claimWake({ wakeId, consumerId, requestId, at = this.#now() } = {}) {
-    const normalizedWakeId = digest(wakeId, "wakeId");
-    const normalizedConsumer = identifier(consumerId, "consumerId");
-    const request = command("wake.claim", requestId, { wakeId: normalizedWakeId, consumerId: normalizedConsumer });
-    return this.#mutate((state) => {
-      const wake = state.wakes[normalizedWakeId];
-      if (!wake) throw new Error("WAKE_NOT_FOUND");
-      const replay = checkCommand(state, request, () => wake.status === "claimed" && wake.consumerId === normalizedConsumer);
-      if (replay) return { events: [], result: { replayed: true, wake: snapshotWake(wake) } };
-      if (wake.status !== "pending") throw new Error("WAKE_CLAIM_CONFLICT");
-      return { events: [{ type: "wake-claimed", at: timestamp(at, "at"), command: request, payload: { wakeId: normalizedWakeId, consumerId: normalizedConsumer } }], result: { replayed: false, wake: null } };
-    }).then(async (result) => result?.wake ? result : { ...result, wake: await this.getWake(normalizedWakeId) });
-  }
-
-  async ackWake({ wakeId, consumerId, receiptId, requestId, at = this.#now() } = {}) {
-    const normalizedWakeId = digest(wakeId, "wakeId");
-    const normalizedConsumer = identifier(consumerId, "consumerId");
-    const normalizedReceipt = bounded(receiptId, "receiptId", 256);
-    const request = command("wake.ack", requestId, { wakeId: normalizedWakeId, consumerId: normalizedConsumer, receiptId: normalizedReceipt });
-    return this.#mutate((state) => {
-      const wake = state.wakes[normalizedWakeId];
-      if (!wake) throw new Error("WAKE_NOT_FOUND");
-      const replay = checkCommand(state, request, () => wake.status === "acked" && wake.consumerId === normalizedConsumer && wake.receiptId === normalizedReceipt);
-      if (replay) return { events: [], result: { replayed: true, wake: snapshotWake(wake) } };
-      if (wake.status !== "claimed" || wake.consumerId !== normalizedConsumer) throw new Error("WAKE_ACK_CONFLICT");
-      return { events: [{ type: "wake-acked", at: timestamp(at, "at"), command: request, payload: { wakeId: normalizedWakeId, consumerId: normalizedConsumer, receiptId: normalizedReceipt } }], result: { replayed: false, wake: null } };
-    }).then(async (result) => result?.wake ? result : { ...result, wake: await this.getWake(normalizedWakeId) });
-  }
-
-  async getWork(workId) {
-    const id = identifier(workId, "workId");
-    return this.#read((state) => state.works[id] ? snapshotWork(state.works[id]) : undefined);
-  }
-
-  async listWorks() {
-    return this.#read((state) => Object.values(state.works).map(snapshotWork));
-  }
-
-  async getTask(taskId) {
-    const id = identifier(taskId, "taskId");
-    return this.#read((state) => state.tasks[id] ? snapshotTask(state.tasks[id]) : undefined);
-  }
-
-  async listTasks({ workId } = {}) {
-    if (workId !== undefined) identifier(workId, "workId");
-    return this.#read((state) => Object.values(state.tasks)
-      .filter((task) => workId === undefined || task.spec.workId === workId)
-      .map(snapshotTask));
-  }
-
-  async getResult(resultId) {
-    const id = identifier(resultId, "resultId");
-    return this.#read((state) => state.results[id] ? clone(state.results[id]) : undefined);
-  }
-
-  async listResults({ workId } = {}) {
-    if (workId !== undefined) identifier(workId, "workId");
-    return this.#read((state) => Object.values(state.results)
-      .filter((result) => workId === undefined || result.workId === workId)
-      .map(clone));
-  }
-
-  async getDecision(decisionId) {
-    const id = identifier(decisionId, "decisionId");
-    return this.#read((state) => state.decisions[id] ? clone(state.decisions[id]) : undefined);
-  }
-
-  async listDecisions({ workId, taskId } = {}) {
-    if (workId !== undefined) identifier(workId, "workId");
-    if (taskId !== undefined) identifier(taskId, "taskId");
-    return this.#read((state) => Object.values(state.decisions)
-      .filter((decision) => (workId === undefined || decision.workId === workId) && (taskId === undefined || decision.taskId === taskId))
-      .map(clone));
-  }
-
-  async getWake(wakeId) {
-    const id = digest(wakeId, "wakeId");
-    return this.#read((state) => state.wakes[id] ? snapshotWake(state.wakes[id]) : undefined);
-  }
-
-  async listOutbox({ status } = {}) {
-    if (status !== undefined && !["pending", "claimed", "acked"].includes(status)) throw new Error("Unsupported outbox status");
-    return this.#read((state) => Object.values(state.wakes).filter((wake) => status === undefined || wake.status === status).map(snapshotWake));
-  }
-
-  async health() {
-    return this.#read((state) => ({ sequence: state.sequence, journalHash: state.previousHash, workCount: Object.keys(state.works).length, taskCount: Object.keys(state.tasks).length, outboxCount: Object.keys(state.wakes).length }));
-  }
+  async getWork(workId) { const id = identifier(workId, "workId"); return this.#read((state) => state.works[id] ? snapshotWork(state.works[id]) : undefined); }
+  async listWorks({ teamId, roomId, status } = {}) { return this.#read((state) => Object.values(state.works).filter((entry) => (teamId === undefined || entry.work.teamId === teamId) && (roomId === undefined || entry.work.roomId === roomId) && (status === undefined || entry.status === status)).map(snapshotWork)); }
+  async getTask(taskId) { const id = identifier(taskId, "taskId"); return this.#read((state) => state.tasks[id] ? snapshotTask(state.tasks[id]) : undefined); }
+  async listTasks({ workId } = {}) { return this.#read((state) => Object.values(state.tasks).filter((task) => workId === undefined || task.spec.workId === workId).map(snapshotTask)); }
+  async getResult(taskId) { const id = identifier(taskId, "taskId"); return this.#read((state) => state.results[id] ? clone(state.results[id]) : undefined); }
+  async listResults({ workId } = {}) { return this.#read((state) => Object.values(state.results).filter((result) => workId === undefined || result.workId === workId).map(clone)); }
+  async getMessageBinding(roomId, eventId) { return this.#read((state) => state.bindings[bindingKey(roomId, eventId)] ? clone(state.bindings[bindingKey(roomId, eventId)]) : undefined); }
+  async listMessageAdmissions({ roomId, status } = {}) { if (status !== undefined && !["pending", "routed"].includes(status)) throw new Error("MESSAGE_ADMISSION_STATUS_INVALID"); return this.#read((state) => Object.values(state.admissions).filter((entry) => (roomId === undefined || entry.roomId === roomId) && (status === undefined || entry.status === status)).sort((a, b) => a.receivedAt.localeCompare(b.receivedAt) || a.eventId.localeCompare(b.eventId)).map(snapshotAdmission)); }
+  async admissionMetrics({ roomId } = {}) { const pending = await this.listMessageAdmissions({ roomId, status: "pending" }); return { pendingCount: pending.length, oldestReceivedAt: pending[0]?.receivedAt ?? null, lastErrorCode: [...pending].reverse().find((entry) => entry.lastErrorCode)?.lastErrorCode ?? null }; }
+  async getWake(wakeId) { const id = digest(wakeId, "wakeId"); return this.#read((state) => state.wakes[id] ? snapshotWake(state.wakes[id]) : undefined); }
+  async listOutbox({ status } = {}) { if (status !== undefined && !["pending", "claimed", "acked"].includes(status)) throw new Error("Unsupported outbox status"); return this.#read((state) => Object.values(state.wakes).filter((wake) => status === undefined || wake.status === status).map(snapshotWake)); }
+  async health() { return this.#read((state) => ({ backend: "file", workCount: Object.keys(state.works).length, taskCount: Object.keys(state.tasks).length, pendingAdmissionCount: Object.values(state.admissions).filter((entry) => entry.status === "pending").length, outboxCount: Object.keys(state.wakes).length })); }
 }
 
-export { GENESIS_HASH };
+export const GENESIS_HASH = undefined;

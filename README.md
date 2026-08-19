@@ -3,7 +3,7 @@
 Tiangong is an evidence-backed AI software engineering team built on [AgentTeams](https://github.com/agentscope-ai/AgentTeams).
 
 > [!NOTE]
-> v0.1.0, v0.2.0, v0.3.0, v0.3.1, and v0.4.0 are historical source releases. v0.4.1 is the current OpenClaw-native, evidence-backed five-role delivery team: Team Leader, Designer, Implementor, Assessor, and Operator. Historical Reviewer experiments and the Tiangong-owned Pi runtime are not active paths. The target Web product and runtime described by the design documents are planned work, not implemented capabilities. See the [v0.4.1 release notes](docs/releases/v0.4.1.md) and [changelog](CHANGELOG.md).
+> v0.4.1 is the latest source release and records the completed OpenClaw runtime migration. Current development has implemented the M0 Work/WorkSpec/Plan/Task/Result foundation, Leader Room routing, Decision-free CloseGuard contract, generic `tg-worker` image contract, and MemberConfig runtime/model routing. The full Agents, Skills, chat-first Web, and real-project product vertical remain subsequent milestones. See the [v0.4.1 release notes](docs/releases/v0.4.1.md), [product MVP](docs/design/product-mvp.zh.md), and [changelog](CHANGELOG.md).
 >
 > The implementation-independent target is defined by the [team-control design](docs/design/evidence-backed-team-control.md) ([中文](docs/design/evidence-backed-team-control.zh.md)). The first public product slice is specified separately in the [product MVP design（中文）](docs/design/product-mvp.zh.md); it does not claim those capabilities already exist.
 
@@ -78,25 +78,24 @@ make test-worker-image-basic  # Gateway, Matrix, persistent session, credential 
 make test-worker-image        # Also Gate, restart recovery, approval, replay, and Evidence
 ```
 
-Both levels build `tiangong-worker:dev`, create a disposable Worker through the AgentTeams declarative API, and use the real Worker-scoped Gateway and Matrix room. The Basic smoke validates a gated `read` through Matrix, an exact nonce response, matching Evidence, and the credential boundary.
+Both levels build `tg-worker:dev`, create a disposable Worker through the AgentTeams declarative API, and use the real Worker-scoped Gateway and Matrix room. The Basic smoke validates a gated `read` through Matrix, an exact nonce response, matching Evidence, and the credential boundary.
 
 The Full smoke additionally exercises a constrained workspace write, approval, Worker restart, replay, and Evidence. Cross-Worker-restart recovery uses a versioned Tiangong pending-operation envelope and does not depend on a Tiangong-owned model transcript.
 
 Cleanup removes the temporary Worker and the exact MinIO prefix owned by the reserved smoke identity. It never operates on another Worker prefix. Provider credentials are not copied into the image, repository, model configuration, session, or Evidence.
 
-The Worker resource retains AgentTeams' supported `openclaw` runtime, Node.js version, entrypoint, and gateway. A narrow `openclaw` command wrapper injects the Tiangong control plugin path into the generated configuration and then delegates to the upstream executable. OpenClaw continues to own Matrix, model turns, configuration retrieval, storage sync, re-login, readiness, channel policy, and reply delivery. Tiangong owns the five closed RoleProfiles, validated SOUL/Skill context, WorkRun state, Evidence, approval, and Gate behavior.
+The Worker resource retains AgentTeams' supported `openclaw` runtime, Node.js version, entrypoint, and gateway. A narrow `openclaw` command wrapper injects the Tiangong control plugin path into the generated configuration and then delegates to the upstream executable. OpenClaw continues to own Matrix, model turns, configuration retrieval, storage sync, re-login, readiness, channel policy, and reply delivery. Tiangong owns Work/WorkSpec/Plan/Task/Result coordination, bounded execution records, Operation policy, recovery, and its product experience.
 
 Optional, backend-neutral Worker tracing is documented in [`docs/observability.md`](./docs/observability.md). It is disabled by default, exports only allowlisted sanitized OpenTelemetry spans, and remains diagnostic telemetry rather than authorization or hash-chained Evidence. The bounded [`peer transport diagnostic`](./docs/peer-transport-diagnostic.md) keeps exact ping/pong markers in deterministic Worker code while deriving targets only from authenticated effective Matrix allowlists; it is transport-only and is not Team Work or Evidence.
-
-The evidence-first five-role walkthrough is documented in [`docs/demo-script.md`](./docs/demo-script.md). `make check-demo-contract` independently checks the fixed profiles, Skill binding/evaluation boundary, Playbook lock, and Runner fixture before a real smoke run.
 
 The current runtime is intentionally constrained:
 
 - it claims only the Worker-scoped `agentteams-gateway` provider and disables OpenClaw's fallback to another agent harness;
 - provider credentials stay deployment-scoped and are injected by the selected OpenClaw runtime only in memory;
 - unapproved OpenClaw extensions, prompt templates, and automatic repository context are disabled;
-- every image loads a strict, digest-bound RoleProfile plus code-owned SOUL and Skill resources from `/opt/tiangong-worker`; environment variables, Worker names, prompts, and tool arguments cannot select or elevate its role;
-- OpenClaw owns its conversation/session persistence; Tiangong WorkRun, Evidence, idempotency, pending payload, and rollback state use independent roots beneath the synchronized state directory, so conversation reset cannot erase business state;
+- one generic `tg-worker` image is configured by authenticated AgentTeams identity, MemberConfig, ControlProfile, and deployment-owned runtime bindings; image names, prompts, and Task text cannot grant a responsibility or capability;
+- runtime and model are fixed by the current MemberConfig projection, checked before OpenClaw configuration mutation, and have no automatic fallback;
+- OpenClaw owns its conversation/session persistence; Tiangong coordination and control state uses independent protected storage, so conversation reset cannot erase product facts;
 - restartable writes persist a digest-bound operation envelope and a separate mode-`600` content payload under that state directory; raw write content never enters Evidence, but is visible to principals with Worker storage administration access and follows explicit operation retention;
 - only gated `read` and path-restricted, atomic `write` are active; `write` requires persisted approval from the same authenticated Matrix sender that requested it, ignores upstream owner assertions for authorization, supports restart recovery, and blocks duplicate execution;
 - runtime state, credential-bearing paths, symlink traversal, workspace escape, image input, and unbounded shell access are unavailable to the gated tool surface.
@@ -105,10 +104,10 @@ To build and inspect the image without creating a Worker:
 
 ```bash
 make build-worker-image
-docker run --rm --entrypoint openclaw tiangong-worker:dev --version
+docker run --rm --entrypoint openclaw tg-worker:dev --version
 ```
 
-The build also produces dedicated `tiangong-worker-leader:dev`, `tiangong-worker-designer:dev`, `tiangong-worker-implementor:dev`, `tiangong-worker-assessor:dev`, and `tiangong-worker-operator:dev` images. Each image contains the same controlled runtime but a fixed RoleProfile and closed tool surface. The professional images bind their Task, role, Skill, WorkRun, ResultEnvelope, and Evidence through code; Implementor and Assessor commands use the isolated Runner boundary, while Operator uses only the structured deployment boundary. No historical Reviewer image or Practice compatibility path is built.
+The build produces one generic `tg-worker:dev` runtime plus deployment-owned auxiliary service images. It does not build role-specific Worker images. The initial MemberConfig contract routes Leader, Architect, Challenger, Reviewer, and Tester through OpenClaw built-in and Developer through Codex app-server with `deepseek-v4-flash`; the configured model cannot be changed by a Task or prompt.
 
 ### Interrupted write reconciliation
 

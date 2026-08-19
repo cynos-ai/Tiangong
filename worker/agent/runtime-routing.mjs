@@ -1,78 +1,43 @@
-// B5 role/runtime contract.
-//
-// OpenClaw remains the runtime owner. Tiangong only binds a professional role
-// to the one upstream runtime that the deployment has approved for that role;
-// it never implements another model loop or a runtime fallback.
-
 import { canonicalJson, sha256 } from "./canonical-json.mjs";
 
-const ROLE_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/u;
-const RUNTIME_SET = new Set(["openclaw-built-in", "codex-app-server"]);
+const RESPONSIBILITY = /^[a-z][a-z0-9_-]{0,63}$/u;
+const RUNTIMES = new Set(["openclaw-built-in", "codex-app-server"]);
 
-export const ROLE_RUNTIME_MATRIX = Object.freeze({
-  leader: Object.freeze({ roleId: "leader", runtime: "openclaw-built-in", coding: false }),
-  designer: Object.freeze({ roleId: "designer", runtime: "openclaw-built-in", coding: false }),
-  implementor: Object.freeze({ roleId: "implementor", runtime: "codex-app-server", coding: true }),
-  assessor: Object.freeze({ roleId: "assessor", runtime: "openclaw-built-in", coding: false }),
-  operator: Object.freeze({ roleId: "operator", runtime: "openclaw-built-in", coding: false }),
+export const RESPONSIBILITY_RUNTIME_MATRIX = Object.freeze({
+  leader: Object.freeze({ responsibility: "leader", runtime: "openclaw-built-in", coding: false }),
+  architect: Object.freeze({ responsibility: "architect", runtime: "openclaw-built-in", coding: false }),
+  challenger: Object.freeze({ responsibility: "challenger", runtime: "openclaw-built-in", coding: false }),
+  developer: Object.freeze({ responsibility: "developer", runtime: "codex-app-server", coding: true }),
+  reviewer: Object.freeze({ responsibility: "reviewer", runtime: "openclaw-built-in", coding: false }),
+  tester: Object.freeze({ responsibility: "tester", runtime: "openclaw-built-in", coding: false }),
 });
 
-function fail(reasonCode, message) {
-  const error = new Error(message);
-  error.code = "TIANGONG_RUNTIME_ROUTE_INVALID";
-  error.reasonCode = reasonCode;
-  throw error;
-}
-
-function roleId(value) {
+function fail(reasonCode, message) { throw Object.assign(new Error(message), { code: "TIANGONG_RUNTIME_ROUTE_INVALID", reasonCode }); }
+function responsibility(value) {
   const normalized = value === "team_leader" ? "leader" : value;
-  if (typeof normalized !== "string" || !ROLE_PATTERN.test(normalized)) {
-    fail("ROLE_INVALID", "Runtime routing requires a bounded role id");
-  }
-  if (!Object.hasOwn(ROLE_RUNTIME_MATRIX, normalized)) {
-    fail("ROLE_UNSUPPORTED", `No B5 runtime route exists for role ${normalized}`);
-  }
+  if (typeof normalized !== "string" || !RESPONSIBILITY.test(normalized)) fail("RESPONSIBILITY_INVALID", "Runtime routing requires a bounded professional responsibility");
+  if (!Object.hasOwn(RESPONSIBILITY_RUNTIME_MATRIX, normalized)) fail("RESPONSIBILITY_UNSUPPORTED", `No initial runtime route exists for ${normalized}`);
   return normalized;
 }
 
-/** Resolve the role from deployment-owned identity metadata, never from model text. */
-export function roleIdFromEnvironment(env = process.env) {
-  const configured = typeof env?.TIANGONG_ROLE_ID === "string" && env.TIANGONG_ROLE_ID !== ""
-    ? env.TIANGONG_ROLE_ID
-    : env?.AGENTTEAMS_WORKER_ROLE === "team_leader" ? "leader" : undefined;
-  if (!configured) fail("ROLE_MISSING", "B5 runtime routing requires TIANGONG_ROLE_ID for a non-Leader Worker");
-  return roleId(configured);
-}
-
-/**
- * Validate one deployment-selected route. `fallback` is deliberately part of
- * the contract so a route cannot silently drop into a second Agent Kernel.
- */
-export function assertRoleRuntimeRoute({ roleId: configuredRole, runtime, fallback = "none" } = {}) {
-  const resolvedRole = roleId(configuredRole);
-  const expected = ROLE_RUNTIME_MATRIX[resolvedRole];
-  if (fallback !== "none") fail("FALLBACK_FORBIDDEN", "B5 role routes require fallback=none");
-  if (runtime !== expected.runtime) {
-    fail("RUNTIME_ROLE_MISMATCH", `${resolvedRole} must use ${expected.runtime}, not ${String(runtime)}`);
-  }
-  if (!RUNTIME_SET.has(runtime)) fail("RUNTIME_UNSUPPORTED", `Unsupported runtime ${String(runtime)}`);
-  const route = {
-    schemaVersion: 1,
-    roleId: resolvedRole,
-    runtime,
-    coding: expected.coding,
-    fallback: "none",
-  };
+export function assertMemberRuntimeRoute({ responsibility: inputResponsibility, configuredRuntime, configuredModel, selectedRuntime, selectedModel, fallback = "none" } = {}) {
+  const resolved = responsibility(inputResponsibility); const expected = RESPONSIBILITY_RUNTIME_MATRIX[resolved];
+  if (fallback !== "none") fail("FALLBACK_FORBIDDEN", "Initial MemberConfig routes require fallback=none");
+  if (!RUNTIMES.has(configuredRuntime) || configuredRuntime !== expected.runtime) fail("RUNTIME_RESPONSIBILITY_MISMATCH", `${resolved} must configure ${expected.runtime}`);
+  if (selectedRuntime !== configuredRuntime) fail("RUNTIME_CONFIG_MISMATCH", "Selected runtime differs from current MemberConfig");
+  if (typeof configuredModel !== "string" || configuredModel.length === 0 || selectedModel !== configuredModel) fail("MODEL_CONFIG_MISMATCH", "Selected model differs from current MemberConfig");
+  const route = { schemaVersion: 2, responsibility: resolved, runtime: configuredRuntime, model: configuredModel, coding: expected.coding, fallback: "none" };
   return Object.freeze({ ...route, routeDigest: sha256(canonicalJson(route)) });
 }
 
-/** Build the route selected by the current environment and fail closed. */
+/** Validate the deployment projection of the current MemberConfig. */
 export function runtimeRouteFromEnvironment(env = process.env) {
-  const role = roleIdFromEnvironment(env);
-  const runtime = env?.TIANGONG_CODEX_RUNTIME === "1" ? "codex-app-server" : "openclaw-built-in";
-  return assertRoleRuntimeRoute({
-    roleId: role,
-    runtime,
-    fallback: env?.OPENCLAW_AGENT_HARNESS_FALLBACK ?? "none",
-  });
+  const inputResponsibility = env.TIANGONG_MEMBER_RESPONSIBILITY ?? (env.AGENTTEAMS_WORKER_ROLE === "team_leader" ? "leader" : undefined);
+  if (!inputResponsibility) fail("RESPONSIBILITY_MISSING", "TIANGONG_MEMBER_RESPONSIBILITY is required for non-Leader members");
+  const configuredRuntime = env.TIANGONG_MEMBER_RUNTIME;
+  const configuredModel = env.TIANGONG_MEMBER_MODEL;
+  if (!configuredRuntime || !configuredModel) fail("MEMBER_CONFIG_MISSING", "Current MemberConfig runtime and model projection are required");
+  const selectedRuntime = env.TIANGONG_CODEX_RUNTIME === "1" ? "codex-app-server" : "openclaw-built-in";
+  const selectedModel = env.TIANGONG_SELECTED_MODEL ?? env.TIANGONG_CODEX_MODEL ?? env.AGENTTEAMS_MODEL;
+  return assertMemberRuntimeRoute({ responsibility: inputResponsibility, configuredRuntime, configuredModel, selectedRuntime, selectedModel, fallback: env.OPENCLAW_AGENT_HARNESS_FALLBACK ?? "none" });
 }

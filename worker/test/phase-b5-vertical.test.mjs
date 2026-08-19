@@ -99,11 +99,17 @@ test("B5 vertical contract keeps one authority while routing Leader builtin and 
   });
   const leaderRoute = runtimeRouteFromEnvironment({
     AGENTTEAMS_WORKER_ROLE: "team_leader",
+    TIANGONG_MEMBER_RUNTIME: "openclaw-built-in",
+    TIANGONG_MEMBER_MODEL: "deepseek-chat",
+    TIANGONG_SELECTED_MODEL: "deepseek-chat",
     TIANGONG_CODEX_RUNTIME: "0",
     OPENCLAW_AGENT_HARNESS_FALLBACK: "none",
   });
   const implementorRoute = runtimeRouteFromEnvironment({
-    TIANGONG_ROLE_ID: "implementor",
+    TIANGONG_MEMBER_RESPONSIBILITY: "developer",
+    TIANGONG_MEMBER_RUNTIME: "codex-app-server",
+    TIANGONG_MEMBER_MODEL: "deepseek-v4-flash",
+    TIANGONG_CODEX_MODEL: "deepseek-v4-flash",
     TIANGONG_CODEX_RUNTIME: "1",
     OPENCLAW_AGENT_HARNESS_FALLBACK: "none",
   });

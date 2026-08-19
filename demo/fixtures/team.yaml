@@ -3,15 +3,17 @@ kind: Team
 metadata:
   name: tiangong-demo-team
 spec:
-  description: Tiangong evidence-backed software change delivery demo.
+  description: Tiangong Work/Plan/Task local-delivery demo.
   workerMembers:
     - name: tiangong-demo-leader
       role: team_leader
-    - name: tiangong-demo-designer
+    - name: tiangong-demo-architect
       role: worker
-    - name: tiangong-demo-implementor
+    - name: tiangong-demo-challenger
       role: worker
-    - name: tiangong-demo-assessor
+    - name: tiangong-demo-developer
       role: worker
-    - name: tiangong-demo-operator
+    - name: tiangong-demo-reviewer
+      role: worker
+    - name: tiangong-demo-tester
       role: worker

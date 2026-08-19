@@ -314,7 +314,7 @@ for container in "${MANAGER_CONTAINER}" "${CONTROLLER_CONTAINER}"; do
   [[ "$(docker inspect "${container}" --format '{{.State.Running}}')" == true ]] || die "Required AgentTeams container is not running: ${container}"
 done
 docker network inspect agentteams-net >/dev/null 2>&1 || die "AgentTeams network is absent."
-docker image inspect tiangong-worker-designer:dev >/dev/null 2>&1 || die "Required public Tiangong Worker image is absent."
+docker image inspect tg-worker:dev >/dev/null 2>&1 || die "Required public Tiangong Worker image is absent."
 if worker_resource >/dev/null 2>&1 || container_exists "${WORKER_CONTAINER}"; then
   die "Reserved P0.4 Worker already exists; refusing to adopt it."
 fi

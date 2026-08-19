@@ -80,25 +80,33 @@ async function readCapture(filePath) {
 }
 
 function projectWork(value) {
-  if (!value || typeof value !== "object" || !value.work || !value.currentWorkSpec || !Array.isArray(value.timeline) ||
+  if (!value || typeof value !== "object" || !value.work || !Array.isArray(value.timeline) ||
       !boundedId(value.work.workId) || !boundedId(value.work.teamId) || !boundedId(value.work.routeId) ||
       !boundedId(value.work.actorId) || !boundedId(value.work.leaderSessionId) ||
-      !["open", "closed"].includes(value.status) || !Number.isSafeInteger(value.epoch)) return null;
+      !["open", "completed", "stopped"].includes(value.status) || !Number.isSafeInteger(value.epoch)) return null;
+  const spec = value.currentWorkSpec;
+  if (spec !== null && (!spec || typeof spec !== "object" || !Number.isSafeInteger(spec.revision))) return null;
   return {
     workId: value.work.workId,
     teamId: value.work.teamId,
     routeId: value.work.routeId,
+    roomId: boundedId(value.work.roomId),
+    title: typeof value.work.title === "string" ? value.work.title.slice(0, 160) : null,
     actorId: value.work.actorId,
     sourceEventId: boundedId(value.work.sourceEventId),
     leaderSessionId: value.work.leaderSessionId,
     status: value.status,
     epoch: value.epoch,
-    currentWorkSpec: {
-      revision: Number.isSafeInteger(value.currentWorkSpec.revision) ? value.currentWorkSpec.revision : null,
-      objective: typeof value.currentWorkSpec.objective === "string" ? value.currentWorkSpec.objective.slice(0, 512) : null,
-      scope: typeof value.currentWorkSpec.scope === "string" ? value.currentWorkSpec.scope.slice(0, 512) : null,
-      completionContract: typeof value.currentWorkSpec.completionContract === "string" ? value.currentWorkSpec.completionContract.slice(0, 512) : null,
+    currentWorkSpec: spec === null ? null : {
+      revision: spec.revision,
+      goal: typeof spec.goal === "string" ? spec.goal.slice(0, 512) : null,
+      scope: Array.isArray(spec.scope) ? spec.scope.slice(0, 32).map((item) => String(item).slice(0, 256)) : [],
+      constraints: Array.isArray(spec.constraints) ? spec.constraints.slice(0, 32).map((item) => String(item).slice(0, 256)) : [],
+      doneWhen: Array.isArray(spec.doneWhen) ? spec.doneWhen.slice(0, 32).map((item) => String(item).slice(0, 256)) : [],
+      unresolvedAssumptions: Array.isArray(spec.unresolvedAssumptions) ? spec.unresolvedAssumptions.slice(0, 32).map((item) => String(item).slice(0, 256)) : [],
     },
+    currentPlanRef: projectContentRef(value.currentPlanRef),
+    requirementState: spec === null ? "requirement-pending" : "formed",
     timeline: value.timeline.slice(-64).map((entry) => ({
       sequence: Number.isSafeInteger(entry?.sequence) ? entry.sequence : null,
       type: boundedId(entry?.type),
@@ -127,50 +135,31 @@ function projectWake(value) {
 }
 
 function projectResult(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value) || !boundedId(value.resultId) || !boundedId(value.workId) || !boundedId(value.taskId) || !boundedId(value.producerMemberId)) return null;
-  const projected = {
-    resultId: value.resultId,
+  if (!value || typeof value !== "object" || Array.isArray(value) || !boundedId(value.workId) || !boundedId(value.taskId) || !boundedId(value.submittedBy)) return null;
+  return {
     workId: value.workId,
     taskId: value.taskId,
-    producerMemberId: value.producerMemberId,
-    toolResultCount: Array.isArray(value.toolResultIds) ? value.toolResultIds.length : 0,
-    artifactRefCount: Array.isArray(value.artifactRefs) ? value.artifactRefs.length : 0,
+    submittedBy: value.submittedBy,
+    summary: typeof value.summary === "string" ? value.summary.slice(0, 512) : null,
+    toolResultCount: Array.isArray(value.toolResultRefs) ? value.toolResultRefs.length : 0,
+    deliverableRefs: Array.isArray(value.deliverableRefs) ? value.deliverableRefs.slice(0, 64).map(projectContentRef).filter(Boolean) : [],
     createdAt: typeof value.createdAt === "string" ? value.createdAt.slice(0, 64) : null,
   };
-  if (typeof value.claim === "string") projected.claim = value.claim.slice(0, 512);
-  if (typeof value.blocker === "string") projected.blocker = value.blocker.slice(0, 512);
-  return projected;
-}
-
-function projectDecision(value) {
-  if (!value || typeof value !== "object" || !boundedId(value.decisionId) || !boundedId(value.workId) ||
-      !["accept", "blocked", "complete", "stop"].includes(value.decision)) return null;
-  const projected = {
-    decisionId: value.decisionId,
-    workId: value.workId,
-    decision: value.decision,
-    reason: typeof value.reason === "string" ? value.reason.slice(0, 512) : null,
-    createdAt: typeof value.createdAt === "string" ? value.createdAt.slice(0, 64) : null,
-  };
-  if (boundedId(value.taskId)) projected.taskId = value.taskId;
-  if (DIGEST.test(value.resultDigest ?? "")) projected.resultDigest = value.resultDigest;
-  return projected;
 }
 
 function projectTask(value) {
   if (!value || typeof value !== "object" || !value.spec || !boundedId(value.spec.taskId) || !boundedId(value.spec.workId) ||
-      !boundedId(value.spec.assigneeMemberId) || !["assigned", "reported", "accepted", "blocked", "cancelled"].includes(value.status)) return null;
+      !boundedId(value.spec.assigneeMemberId) || !["assigned", "reported", "cancelled"].includes(value.status)) return null;
   return {
     taskId: value.spec.taskId,
     workId: value.spec.workId,
     assigneeMemberId: value.spec.assigneeMemberId,
     status: value.status,
     objective: typeof value.spec.objective === "string" ? value.spec.objective.slice(0, 512) : null,
-    completionContract: typeof value.spec.completionContract === "string" ? value.spec.completionContract.slice(0, 512) : null,
-    inputRefCount: Array.isArray(value.spec.inputRefs) ? value.spec.inputRefs.length : 0,
+    constraints: Array.isArray(value.spec.constraints) ? value.spec.constraints.slice(0, 32).map((item) => String(item).slice(0, 256)) : [],
+    inputs: Array.isArray(value.spec.inputs) ? value.spec.inputs.slice(0, 32).map(projectContentRef).filter(Boolean) : [],
     createdAt: typeof value.spec.createdAt === "string" ? value.spec.createdAt.slice(0, 64) : null,
     result: projectResult(value.result),
-    decision: projectDecision(value.decision),
     cancellation: value.cancellation && typeof value.cancellation === "object" ? {
       reason: typeof value.cancellation.reason === "string" ? value.cancellation.reason.slice(0, 512) : null,
       at: typeof value.cancellation.at === "string" ? value.cancellation.at.slice(0, 64) : null,
@@ -181,12 +170,13 @@ function projectTask(value) {
 async function readCoordination(filePath, coordinationStore) {
   if (coordinationStore && typeof coordinationStore.listWorks === "function" && typeof coordinationStore.listOutbox === "function") {
     try {
-      const [works, deliveries, tasks, results, decisions] = await Promise.all([
+      const [works, deliveries, tasks, results, admissions, admissionMetrics] = await Promise.all([
         coordinationStore.listWorks(),
         coordinationStore.listOutbox(),
         typeof coordinationStore.listTasks === "function" ? coordinationStore.listTasks() : [],
         typeof coordinationStore.listResults === "function" ? coordinationStore.listResults() : [],
-        typeof coordinationStore.listDecisions === "function" ? coordinationStore.listDecisions() : [],
+        typeof coordinationStore.listMessageAdmissions === "function" ? coordinationStore.listMessageAdmissions({ status: "pending" }) : [],
+        typeof coordinationStore.admissionMetrics === "function" ? coordinationStore.admissionMetrics() : { pendingCount: 0, oldestReceivedAt: null, lastErrorCode: null },
       ]);
       return {
         works: works.map(projectWork).filter(Boolean),
@@ -197,41 +187,23 @@ async function readCoordination(filePath, coordinationStore) {
         taskSource: "coordination-store",
         results: results.map(projectResult).filter(Boolean),
         resultSource: "coordination-store",
-        decisions: decisions.map(projectDecision).filter(Boolean),
-        decisionSource: typeof coordinationStore.listDecisions === "function" ? "coordination-store" : "coordination-store-unavailable",
+        pendingAdmissions: admissions.map((entry) => ({ eventId: boundedId(entry.eventId), roomId: boundedId(entry.roomId), receivedAt: typeof entry.receivedAt === "string" ? entry.receivedAt.slice(0, 64) : null, attempts: Number.isSafeInteger(entry.attempts) ? entry.attempts : 0, lastErrorCode: boundedId(entry.lastErrorCode) })),
+        admissionMetrics,
       };
     } catch {
-      return { works: [], workSource: "coordination-store-unavailable", deliveries: [], deliverySource: "coordination-store-unavailable", tasks: [], taskSource: "coordination-store-unavailable", results: [], resultSource: "coordination-store-unavailable", decisions: [], decisionSource: "coordination-store-unavailable" };
+      return { works: [], workSource: "coordination-store-unavailable", deliveries: [], deliverySource: "coordination-store-unavailable", tasks: [], taskSource: "coordination-store-unavailable", results: [], resultSource: "coordination-store-unavailable", pendingAdmissions: [], admissionMetrics: { pendingCount: 0, oldestReceivedAt: null, lastErrorCode: null } };
     }
   }
-  if (!filePath) return { works: [], workSource: "coordination-store-not-configured", deliveries: [], deliverySource: "coordination-store-not-configured", tasks: [], taskSource: "coordination-store-not-configured", results: [], resultSource: "coordination-store-not-configured", decisions: [], decisionSource: "coordination-store-not-configured" };
+  const empty = (source) => ({ works: [], workSource: source, deliveries: [], deliverySource: source, tasks: [], taskSource: source, results: [], resultSource: source, pendingAdmissions: [], admissionMetrics: { pendingCount: 0, oldestReceivedAt: null, lastErrorCode: null } });
+  if (!filePath) return empty("coordination-store-not-configured");
   try {
     const resolvedFile = resolve(filePath);
     const metadata = await lstat(resolvedFile);
-    if (metadata.isSymbolicLink() || !metadata.isFile()) throw new Error("invalid coordination journal");
-    const store = new CoordinationStore({ filePath: resolvedFile });
-    const [works, deliveries, tasks, results, decisions] = await Promise.all([
-      store.listWorks(),
-      store.listOutbox(),
-      typeof store.listTasks === "function" ? store.listTasks() : [],
-      typeof store.listResults === "function" ? store.listResults() : [],
-      typeof store.listDecisions === "function" ? store.listDecisions() : [],
-    ]);
-    return {
-      works: works.map(projectWork).filter(Boolean),
-      workSource: "coordination-store",
-      deliveries: deliveries.map(projectWake).filter(Boolean),
-      deliverySource: "coordination-store",
-      tasks: tasks.map(projectTask).filter(Boolean),
-      taskSource: "coordination-store",
-      results: results.map(projectResult).filter(Boolean),
-      resultSource: "coordination-store",
-      decisions: decisions.map(projectDecision).filter(Boolean),
-      decisionSource: typeof store.listDecisions === "function" ? "coordination-store" : "coordination-store-unavailable",
-    };
+    if (metadata.isSymbolicLink() || !metadata.isFile()) throw new Error("invalid coordination state");
+    return readCoordination(undefined, new CoordinationStore({ filePath: resolvedFile }));
   } catch (error) {
-    if (error?.code === "ENOENT") return { works: [], workSource: "coordination-store-empty", deliveries: [], deliverySource: "coordination-store-empty", tasks: [], taskSource: "coordination-store-empty", results: [], resultSource: "coordination-store-empty", decisions: [], decisionSource: "coordination-store-empty" };
-    return { works: [], workSource: "coordination-store-unavailable", deliveries: [], deliverySource: "coordination-store-unavailable", tasks: [], taskSource: "coordination-store-unavailable", results: [], resultSource: "coordination-store-unavailable", decisions: [], decisionSource: "coordination-store-unavailable" };
+    if (error?.code === "ENOENT") return empty("coordination-store-empty");
+    return empty("coordination-store-unavailable");
   }
 }
 
@@ -281,7 +253,9 @@ export function createRuntimeConsoleServer(options = {}) {
       };
     };
   const server = createServer(async (request, response) => {
-    if (coordinationControl && request.url?.startsWith("/v1/coordination/")) return coordinationControl(request, response);
+    if (coordinationControl && request.url?.startsWith("/v1/coordination/")) {
+      if (await coordinationControl(request, response)) return;
+    }
     if (request.method !== "GET") return json(response, 405, { error: "method_not_allowed" });
     if (request.url === "/healthz") return json(response, 200, { ok: true });
     if (request.url === "/readyz") {

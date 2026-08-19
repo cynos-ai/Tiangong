@@ -3,172 +3,25 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-
-import {
-  CoordinationStore,
-  createControlProfile,
-  createMemberConfig,
-  createTeamConfig,
-  createTeamRouteBinding,
-} from "../agent/team/coordination-store.mjs";
-import {
-  admitLeaderMatrixIngress,
-  createOpenClawLeaderAdmissionHook,
-} from "../agent/team/leader-ingress.mjs";
+import { CoordinationStore, createControlProfile, createMemberConfig, createTeamConfig, createTeamRouteBinding } from "../agent/team/coordination-store.mjs";
+import { admitLeaderMatrixIngress, createOpenClawLeaderAdmissionHook } from "../agent/team/leader-ingress.mjs";
 
 const NOW = "2026-08-15T01:00:00.000Z";
-
-function bindings() {
-  const profile = createControlProfile({
-    profileId: "profile-default",
-    revision: 1,
-    maxTimelineEntries: 64,
-    maxOutboxEntries: 32,
-    maxTasksPerWork: 8,
-    toolResultRetentionMs: 24 * 60 * 60 * 1000,
-  });
-  const team = createTeamConfig({
-    teamId: "team-alpha",
-    revision: 1,
-    leaderMemberId: "leader-1",
-    memberIds: ["leader-1"],
-    controlProfileId: profile.profileId,
-    createdAt: NOW,
-  });
-  const route = createTeamRouteBinding({
-    routeId: "route-alpha",
-    teamId: team.teamId,
-    revision: 1,
-    channel: "matrix",
-    roomId: "!team:example.test",
-    createdAt: NOW,
-  });
-  const leaderMember = createMemberConfig({
-    memberId: "leader-1",
-    teamId: team.teamId,
-    workerName: "worker-leader-1",
-    matrixUserId: "@leader:example.test",
-    role: "leader",
-    controlProfileId: profile.profileId,
-    enabled: true,
-    createdAt: NOW,
-  });
-  return { profile, team, route, leaderMember, members: [leaderMember] };
-}
-
-function source() {
-  return {
-    channel: "matrix",
-    authenticated: true,
-    actorId: "@alice:example.test",
-    messageId: "$human-event-1",
-    route: "team-room",
-  };
-}
-
-function event() {
-  return {
-    eventId: "$human-event-1",
-    roomId: "!team:example.test",
-    sender: "@alice:example.test",
-    type: "m.room.message",
-    content: { msgtype: "m.text", body: "Start the bounded Work" },
-  };
-}
-
 async function fixture(t) {
-  const root = await mkdtemp(join(tmpdir(), "tiangong-leader-ingress-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  return {
-    root,
-    store: new CoordinationStore({ filePath: join(root, "coordination.jsonl"), now: () => NOW }),
-    ...bindings(),
-  };
+  const root = await mkdtemp(join(tmpdir(), "tg-ingress-")); t.after(() => rm(root, { recursive: true, force: true }));
+  const profile = createControlProfile({ profileId: "profile", revision: 1, maxTimelineEntries: 64, maxOutboxEntries: 32, maxTasksPerWork: 8, toolResultRetentionMs: 60_000 });
+  const team = createTeamConfig({ teamId: "team", revision: 1, leaderMemberId: "leader", memberIds: ["leader"], controlProfileId: profile.profileId, createdAt: NOW });
+  const route = createTeamRouteBinding({ routeId: "route", teamId: team.teamId, revision: 1, channel: "matrix", roomId: "!room:example.test", createdAt: NOW });
+  const leaderMember = createMemberConfig({ memberId: "leader", teamId: team.teamId, workerName: "leader", matrixUserId: "@leader:example.test", role: "leader", controlProfileId: profile.profileId, enabled: true, runtime: "openclaw-built-in", model: "deepseek-chat", allowedSkills: [], createdAt: NOW });
+  return { store: new CoordinationStore({ filePath: join(root, "state.json"), now: () => NOW }), profile, team, route, leaderMember, members: [leaderMember] };
 }
+const source = { channel: "matrix", authenticated: true, actorId: "@human:example.test", messageId: "$event", route: "team-room" };
+const event = { eventId: "$event", roomId: "!room:example.test", sender: "@human:example.test", type: "m.room.message", content: { msgtype: "m.text", body: "Route me" } };
 
-test("B2 ingress reads, admits, and visibly replies without creating duplicate Work", async (t) => {
-  const value = await fixture(t);
-  const calls = [];
-  const channel = {
-    async readHumanEvent(roomId, eventId) {
-      calls.push(["read", roomId, eventId]);
-      return event();
-    },
-    async notifyWorkAdmitted(recipient, input) {
-      calls.push(["reply", recipient, input]);
-      return { delivered: true, eventIdDigest: "b".repeat(64) };
-    },
-  };
-  const result = await admitLeaderMatrixIngress({
-    channel,
-    store: value.store,
-    source: source(),
-    roomId: "!team:example.test",
-    eventId: "$human-event-1",
-    ...value,
-    now: () => NOW,
-  });
-  const replay = await admitLeaderMatrixIngress({
-    channel,
-    store: value.store,
-    source: source(),
-    roomId: "!team:example.test",
-    eventId: "$human-event-1",
-    ...value,
-    now: () => NOW,
-  });
-  assert.equal(result.reply.delivered, true);
-  assert.equal(replay.admission.replayed, true);
-  assert.equal((await value.store.health()).workCount, 1);
-  assert.equal((await value.store.listOutbox()).length, 2);
-  assert.equal(calls.filter(([kind]) => kind === "reply").length, 2);
-  assert.equal(calls[1][2].workId, result.admission.work.work.workId);
-  assert.equal(calls[1][2].bindingDigest.length, 64);
-});
-
-test("B2 ingress keeps the durable Work when visible reply delivery is temporarily unavailable", async (t) => {
-  const value = await fixture(t);
-  const channel = {
-    async readHumanEvent() { return event(); },
-    async notifyWorkAdmitted() { throw new Error("temporary Matrix outage"); },
-  };
-  const result = await admitLeaderMatrixIngress({
-    channel,
-    store: value.store,
-    source: source(),
-    roomId: "!team:example.test",
-    eventId: "$human-event-1",
-    ...value,
-    now: () => NOW,
-  });
-  assert.deepEqual(result.reply, { delivered: false, pending: true, errorCode: "MATRIX_REPLY_FAILED" });
-  assert.equal((await value.store.health()).workCount, 1);
-  assert.equal((await value.store.listOutbox({ status: "pending" })).filter((wake) => wake.kind === "human-reply").length, 1);
-});
-
-test("B2 OpenClaw hook binds startup dependencies and accepts only per-event ingress facts", async (t) => {
-  const value = await fixture(t);
-  const hook = createOpenClawLeaderAdmissionHook({
-    channel: {
-      async readHumanEvent() { return event(); },
-      async notifyWorkAdmitted() { return { delivered: true, eventIdDigest: "c".repeat(64) }; },
-    },
-    store: value.store,
-    team: value.team,
-    route: value.route,
-    profile: value.profile,
-    leaderMember: value.leaderMember,
-    members: value.members,
-    now: () => NOW,
-  });
-  const result = await hook({
-    source: source(),
-    roomId: "!team:example.test",
-    eventId: "$human-event-1",
-  });
-  assert.equal(result.reply.delivered, true);
-  assert.throws(
-    () => createOpenClawLeaderAdmissionHook({ channel: {}, store: value.store, team: value.team }),
-    /current Team bindings and channel/u,
-  );
+test("OpenClaw ingress re-reads one event and leaves semantic routing to Leader", async (t) => {
+  const value = await fixture(t); const calls = [];
+  const channel = { async readHumanEvent(roomId, eventId) { calls.push([roomId, eventId]); return event; } };
+  const admitted = await admitLeaderMatrixIngress({ channel, source, roomId: event.roomId, eventId: event.eventId, ...value, now: () => NOW });
+  assert.equal(admitted.admission.status, "pending"); assert.equal((await value.store.listWorks()).length, 0); assert.deepEqual(calls, [[event.roomId, event.eventId]]);
+  const hook = createOpenClawLeaderAdmissionHook({ channel, ...value, now: () => NOW }); const replay = await hook({ source, roomId: event.roomId, eventId: event.eventId }); assert.equal(replay.replayed, true);
 });

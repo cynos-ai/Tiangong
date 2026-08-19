@@ -126,14 +126,10 @@ build_target() {
 }
 
 build_target default tiangong-worker:dev
-build_target leader tiangong-worker-leader:dev
-build_target designer tiangong-worker-designer:dev
-build_target implementor tiangong-worker-implementor:dev
-build_target assessor tiangong-worker-assessor:dev
-build_target operator tiangong-worker-operator:dev
-build_target runner-broker tiangong-runner-broker:dev
-build_target deployment-service tiangong-deployment-service:dev
-build_target deployment-broker tiangong-deployment-broker:dev
+docker build --target default -t tg-worker:dev worker
+build_target runner-broker tg-runner-broker:dev
+build_target deployment-service tg-deployment-service:dev
+build_target deployment-broker tg-deployment-broker:dev
 ```
 
 这里没有 `--pull`；否则仍可能再次触发加速器上的 digest 404。构建目标或 digest 以后发生变化时，以 `scripts/build-worker-image.sh` 和 `worker/Dockerfile` 的当前内容为准。
@@ -153,7 +149,7 @@ metadata:
 spec:
   model: qwen3.5-plus
   runtime: openclaw
-  image: tiangong-worker-leader:dev
+  image: tg-worker:dev
   state: Running
   identity: |
     Name: Tiangong Demo Team Leader
@@ -166,7 +162,7 @@ metadata:
 spec:
   model: qwen3.5-plus
   runtime: openclaw
-  image: tiangong-worker-designer:dev
+  image: tg-worker:dev
   state: Running
   identity: |
     Name: Tiangong Demo Designer
@@ -179,7 +175,7 @@ metadata:
 spec:
   model: qwen3.5-plus
   runtime: openclaw
-  image: tiangong-worker-implementor:dev
+  image: tg-worker:dev
   state: Running
   identity: |
     Name: Tiangong Demo Implementor
@@ -192,7 +188,7 @@ metadata:
 spec:
   model: qwen3.5-plus
   runtime: openclaw
-  image: tiangong-worker-assessor:dev
+  image: tg-worker:dev
   state: Running
   identity: |
     Name: Tiangong Demo Assessor
@@ -205,7 +201,7 @@ metadata:
 spec:
   model: qwen3.5-plus
   runtime: openclaw
-  image: tiangong-worker-operator:dev
+  image: tg-worker:dev
   state: Running
   identity: |
     Name: Tiangong Demo Operator

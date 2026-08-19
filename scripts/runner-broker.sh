@@ -13,7 +13,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly REPO_ROOT
 readonly NETWORK="agentteams-net"
 readonly BROKER="tiangong-runner-broker"
-readonly BROKER_IMAGE="tiangong-runner-broker:dev"
+readonly BROKER_IMAGE="tg-runner-broker:dev"
 readonly OWNER="tiangong"
 readonly COMPONENT="runner-broker"
 readonly CONFIG_VOLUME="tiangong-runner-broker-config"
@@ -105,11 +105,10 @@ stop() {
 }
 
 preparation_matches_current_images() {
-  local config leader implementor assessor
-  leader="$(docker image inspect --format '{{.Id}}' tiangong-worker-leader:dev 2>/dev/null || true)"
-  implementor="$(docker image inspect --format '{{.Id}}' tiangong-worker-implementor:dev 2>/dev/null || true)"
-  assessor="$(docker image inspect --format '{{.Id}}' tiangong-worker-assessor:dev 2>/dev/null || true)"
-  [[ -n "$leader" && -n "$implementor" && -n "$assessor" ]] || return 1
+  local config leader implementor assessor generic
+  generic="$(docker image inspect --format '{{.Id}}' tg-worker:dev 2>/dev/null || true)"
+  [[ -n "$generic" ]] || return 1
+  leader="$generic"; implementor="$generic"; assessor="$generic"
   config="$(docker run --rm --entrypoint cat \
     --mount "type=volume,src=${CONFIG_VOLUME},dst=/config,readonly" \
     "$BROKER_IMAGE" /config/config.json 2>/dev/null || true)"
@@ -204,14 +203,13 @@ start() {
   resource_absent volume "$FIXTURE_VOLUME"
   resource_absent volume "$STATE_VOLUME"
   docker image inspect "$BROKER_IMAGE" >/dev/null 2>&1 || fail BROKER_IMAGE_UNAVAILABLE
-  for image in tiangong-worker-leader:dev tiangong-worker-implementor:dev tiangong-worker-assessor:dev; do
-    docker image inspect "$image" >/dev/null 2>&1 || fail "IMAGE_UNAVAILABLE_${image%%:*}"
-  done
+  docker image inspect tg-worker:dev >/dev/null 2>&1 || fail IMAGE_UNAVAILABLE_TG_WORKER
 
-  local leader_image implementor_image assessor_image config_file temp_root
-  leader_image="$(docker image inspect --format '{{.Id}}' tiangong-worker-leader:dev)"
-  implementor_image="$(docker image inspect --format '{{.Id}}' tiangong-worker-implementor:dev)"
-  assessor_image="$(docker image inspect --format '{{.Id}}' tiangong-worker-assessor:dev)"
+  local leader_image implementor_image assessor_image generic_image config_file temp_root
+  generic_image="$(docker image inspect --format '{{.Id}}' tg-worker:dev)"
+  leader_image="${generic_image}"
+  implementor_image="${generic_image}"
+  assessor_image="${generic_image}"
   # Docker Desktop cannot resolve a WSL /tmp path when the CLI projects a
   # host file into a container. Keep this disposable file under the shared
   # repository mount so both native Windows and WSL Docker clients can read it.

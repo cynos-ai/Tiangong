@@ -1,8 +1,8 @@
-# Five-role delivery demo script
+# Historical five-role delivery demo script
 
-This is a 5–10 minute, evidence-first walkthrough of the current Tiangong
-runtime. It is deliberately separate from a claim that a real deployment is
-safe for production.
+> Status: archived v0.4.1 walkthrough. The role-specific image and TeamPlaybook path has been removed from the current active product path; this file preserves release history and is not a current runnable entrypoint.
+
+This was a 5–10 minute, evidence-first walkthrough of the v0.4.1 Tiangong runtime. It is deliberately separate from a claim that a real deployment is safe for production.
 
 ## Preparation
 
@@ -43,8 +43,8 @@ machine state, not by model prose.
 
 ## Run S: accepted delivery
 
-Use a fresh five-role Team and the real Matrix/AgentTeams path. The requester
-starts one Project; the Leader dispatches Designer, Implementor, Assessor, and
+The historical run used a fresh five-role Team and the real Matrix/AgentTeams path. The requester
+started one Project; the Leader dispatched Designer, Implementor, Assessor, and
 Operator. The explicit configured subject approves exactly one deployment
 operation. Replaying the same approval must return the saved result without a
 second activation.
