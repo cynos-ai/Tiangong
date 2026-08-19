@@ -3,7 +3,7 @@
 Tiangong is an evidence-backed AI software engineering team built on [AgentTeams](https://github.com/agentscope-ai/AgentTeams).
 
 > [!NOTE]
-> v0.1.0, v0.2.0, v0.3.0, and v0.3.1 are historical source releases. v0.4.0 is the current OpenClaw-native, evidence-backed five-role delivery team: Team Leader, Designer, Implementor, Assessor, and Operator. Historical Reviewer experiments and the Tiangong-owned Pi runtime are not active paths. The target Web product and runtime described by the design documents are planned work, not implemented capabilities. See the [v0.4.0 release notes](docs/releases/v0.4.0.md) and [changelog](CHANGELOG.md).
+> v0.1.0, v0.2.0, v0.3.0, v0.3.1, and v0.4.0 are historical source releases. v0.4.1 is the current OpenClaw-native, evidence-backed five-role delivery team: Team Leader, Designer, Implementor, Assessor, and Operator. Historical Reviewer experiments and the Tiangong-owned Pi runtime are not active paths. The target Web product and runtime described by the design documents are planned work, not implemented capabilities. See the [v0.4.1 release notes](docs/releases/v0.4.1.md) and [changelog](CHANGELOG.md).
 
 ## Vision
 
