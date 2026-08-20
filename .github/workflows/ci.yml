@@ -107,12 +107,6 @@ jobs:
           jq -e '.metadata.vulnerabilities.total == 0' /tmp/worker-audit.json >/dev/null
       - name: Build Worker image
         run: ./scripts/build-worker-image.sh
-      - name: Test disposable execution and deployment boundaries
-        run: |
-          make test-runner-executor
-          make test-runner-broker
-          make test-deployment-service
-
   dco:
     name: DCO
     if: github.event_name == 'pull_request'

@@ -343,6 +343,7 @@ MSYS_NO_PATHCONV=1 "${DOCKER_COMMAND}" exec "${CONTAINER}" node --input-type=mod
 # tool not named in the versioned workspace lock.
 workspace_boundary_ready=0
 for _ in $(seq 1 90); do
+  # shellcheck disable=SC2016
   if MSYS_NO_PATHCONV=1 "${DOCKER_COMMAND}" exec "${CONTAINER}" node --input-type=module -e '
     const { readFileSync } = await import("node:fs");
     const { resolveAgentRuntimeFromEnvironment } = await import("/opt/tiangong-worker/agent/packages/loader.mjs");

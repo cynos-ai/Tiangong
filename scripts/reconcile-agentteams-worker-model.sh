@@ -54,6 +54,7 @@ done
 # Remove only this explicitly named Worker container so the official controller
 # recreates it from the updated Worker resource. No volume or Team is deleted.
 marker="tiangong-old-session-${old_container_id:0:16}"
+# shellcheck disable=SC2016
 ${DOCKER} exec "${CONTAINER}" sh -c 'umask 077; : >"/tmp/$1"' sh "${marker}" >/dev/null || fail OLD_SESSION_MARKER_FAILED
 ${DOCKER} rm --force "${CONTAINER}" >/dev/null || fail STALE_WORKER_REMOVE_FAILED
 ${DOCKER} exec "${MANAGER}" agt update worker --name "${WORKER_NAME}" --state Stopped >/dev/null || fail CONTROL_PLANE_STOP_FAILED
@@ -76,6 +77,7 @@ if ${DOCKER} exec "${CONTAINER}" test -e "/tmp/${marker}"; then fail OLD_SESSION
 
 actual_model=''
 for _ in $(seq 1 120); do
+  # shellcheck disable=SC2016
   actual_model="$(${DOCKER} exec "${CONTAINER}" sh -lc 'jq -r ".agents.defaults.model.primary // empty" "$HOME/openclaw.json" 2>/dev/null' 2>/dev/null || true)"
   [[ "${actual_model}" == "agentteams-gateway/${TARGET_MODEL}" ]] && break
   sleep 1
