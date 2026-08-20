@@ -61,7 +61,7 @@ run_case tester openclaw-built-in deepseek-chat controlled-testing scenario-test
 run_case developer codex-app-server deepseek-v4-flash local-development test-driven-development,independent-code-review,scenario-testing
 grep -Fq 'TIANGONG_CODEX_RUNTIME=1' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_CODEX_MODEL=deepseek-v4-flash' "${TEST_ROOT}/env"
-grep -Fq 'TIANGONG_CODEX_CAPABILITY_CACHE_URL=http://tg-codex-capability-cache:8788' "${TEST_ROOT}/env"
+grep -Fq 'TIANGONG_CODEX_CAPABILITY_CACHE_URL=http://tiangong-codex-capability-cache:8788' "${TEST_ROOT}/env"
 grep -Fq 'TIANGONG_MEMBER_COORDINATION_ENABLED=1' "${TEST_ROOT}/env"
 grep -Fq -- '--volume worker-test-auth:/var/run/secrets/agentteams' "${TEST_ROOT}/run.args"
 grep -Fq -- '--cap-drop ALL' "${TEST_ROOT}/run.args"

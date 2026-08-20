@@ -140,7 +140,7 @@ if [[ "${MEMBER_RUNTIME}" == codex-app-server ]]; then
   readonly OPENCLAW_RUNTIME=codex
   readonly CODEX_PROVIDER="${TIANGONG_MEMBER_CODEX_PROVIDER:-agentteams-gateway}"
   readonly CODEX_MODEL="${MEMBER_MODEL}"
-  readonly CODEX_CACHE_URL="${TIANGONG_MEMBER_CODEX_CAPABILITY_CACHE_URL:-http://tg-codex-capability-cache:8788}"
+  readonly CODEX_CACHE_URL="${TIANGONG_MEMBER_CODEX_CAPABILITY_CACHE_URL:-http://tiangong-codex-capability-cache:8788}"
   readonly CODEX_BASE_URL="${TIANGONG_CODEX_BASE_URL:-${GATEWAY_URL%/}/v1}"
 else
   readonly CODEX_RUNTIME=0

@@ -24,6 +24,11 @@ All notable changes to Tiangong are documented here. Tiangong follows Semantic V
 - Replaced the root runtime-console page with the single M3 Team/Room + Matrix conversation + Work facts workbench; selecting a Work remains view-only and the send API rejects Work routing fields.
 - Matrix URL alone now enables Human Web chat; the deployment Matrix token remains optional and enables only the outbox consumer.
 
+### Fixed
+
+- Made OpenClaw `tool_result_persist` capture synchronous so a denied tool cannot leave an unhandled persistence rejection; the ToolResult store now provides synchronized atomic append while rejecting linked or abnormal state.
+- Corrected the Developer injection default capability-cache hostname to the deployment-owned `tiangong-codex-capability-cache` service name.
+
 ### Removed
 
 - Removed CoordinationDecision endpoints, store methods, persistence columns, and `accepted`/`blocked` Task states from the active Work path.
@@ -31,7 +36,7 @@ All notable changes to Tiangong are documented here. Tiangong follows Semantic V
 
 ### Verification
 
-- The deterministic Phase C boundary, `384/384` Worker tests, product Agent/Skill package checks, generic demo contract, and six-responsibility MemberConfig injection contract pass.
+- The deterministic Phase C boundary, `387/387` Worker tests, product Agent/Skill package checks, generic demo contract, and six-responsibility MemberConfig injection contract pass.
 - The M3 focused App contract passes `18/18`, covering Matrix identity/session containment, CSRF, Room binding, pagination projection, Human sender preservation, response bounds, one active sync, revocation, E2EE denial, strict CSP, and Work fact rendering.
 - The full App suite passes `33/33` against an owned disposable PostgreSQL 16 container, including Task SessionRef persistence, Room routing, correction, restart, Web projection, and cleanup; without injected test variables the same four PostgreSQL cases remain explicit skips.
 - The deployment-owned Coordination image builds with the M3 assets and gateway; browser inspection confirms the three-column workbench, view-only Work selection, ordinary message send, independent right-panel scrolling, and zero new console errors.

@@ -60,7 +60,7 @@ export function createToolResultCaptureHook({ filePath, now = () => new Date() }
   }
   if (typeof now !== "function") throw new TypeError("ToolResult capture clock is required");
   const store = new ToolResultStore({ filePath });
-  return async (event, ctx = {}) => {
+  return (event, ctx = {}) => {
     const timestamp = now().toISOString();
     const summary = summarizeToolResult(event);
     const skillUse = skillUseSummary(event);
@@ -106,7 +106,7 @@ export function createToolResultCaptureHook({ filePath, now = () => new Date() }
       startedAt,
       completedAt: timestamp,
     };
-    await store.append(record);
+    store.appendSync(record);
     return undefined;
   };
 }
