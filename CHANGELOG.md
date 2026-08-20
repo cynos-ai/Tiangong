@@ -38,6 +38,7 @@ All notable changes to Tiangong are documented here. Tiangong follows Semantic V
 
 ### Verification
 
+- Completed a disposable local M6 real-project delivery run through WorkSpec, candidate Plan and independent Challenge, a signed-off Developer Commit, independent Reviewer and Tester Results, CloseGuard, and a clean rerun; Push, deployment, and production writes remained closed.
 - The deterministic Phase C boundary, `387/387` Worker tests, product Agent/Skill package checks, generic demo contract, and six-responsibility MemberConfig injection contract pass.
 - The M3 focused App contract passes `18/18`, covering Matrix identity/session containment, CSRF, Room binding, pagination projection, Human sender preservation, response bounds, one active sync, revocation, E2EE denial, strict CSP, and Work fact rendering.
 - The full App suite passes `33/33` against an owned disposable PostgreSQL 16 container, including Task SessionRef persistence, Room routing, correction, restart, Web projection, and cleanup; without injected test variables the same four PostgreSQL cases remain explicit skips.

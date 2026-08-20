@@ -3,7 +3,7 @@
 Tiangong is an evidence-backed AI software engineering team built on [AgentTeams](https://github.com/agentscope-ai/AgentTeams).
 
 > [!NOTE]
-> v0.4.1 is the latest source release and records the completed OpenClaw runtime migration. Current development has implemented M0–M3: the coordination foundation, six long-lived Agent packages, capability-bound portable Skills, and a chat-first Matrix workbench that places Room conversation beside Work/Plan/Agent/Task/Result/ToolResult projections. The real-project coding vertical remains the next milestone. See the [v0.4.1 release notes](docs/releases/v0.4.1.md), [product MVP](docs/design/product-mvp.zh.md), and [changelog](CHANGELOG.md).
+> v0.4.1 is the latest source release and records the completed OpenClaw runtime migration. Current development has implemented M0–M3 and M5: the coordination foundation, six long-lived Agent packages, capability-bound portable Skills, a chat-first Matrix workbench, and the OpenClaw built-in execution foundation. A disposable local M6 real-project coding vertical has also completed the WorkSpec → Plan/Challenge → Developer Commit → independent Review/Tester → CloseGuard → clean-rerun path; this does not claim production deployment. See the [v0.4.1 release notes](docs/releases/v0.4.1.md), [product MVP](docs/design/product-mvp.zh.md), and [changelog](CHANGELOG.md).
 >
 > The implementation-independent target is defined by the [team-control design](docs/design/evidence-backed-team-control.md) ([中文](docs/design/evidence-backed-team-control.zh.md)). The first public product slice is specified separately in the [product MVP design（中文）](docs/design/product-mvp.zh.md); it does not claim those capabilities already exist.
 
