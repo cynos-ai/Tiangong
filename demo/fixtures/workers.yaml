@@ -3,7 +3,7 @@ kind: Worker
 metadata:
   name: tiangong-demo-leader
 spec:
-  model: deepseek-chat
+  model: glm-5
   runtime: openclaw
   image: tg-worker:dev
   state: Running
@@ -16,7 +16,7 @@ kind: Worker
 metadata:
   name: tiangong-demo-architect
 spec:
-  model: deepseek-chat
+  model: glm-5
   runtime: openclaw
   image: tg-worker:dev
   state: Running
@@ -29,7 +29,7 @@ kind: Worker
 metadata:
   name: tiangong-demo-challenger
 spec:
-  model: deepseek-chat
+  model: glm-5
   runtime: openclaw
   image: tg-worker:dev
   state: Running
@@ -42,7 +42,7 @@ kind: Worker
 metadata:
   name: tiangong-demo-developer
 spec:
-  model: deepseek-v4-flash
+  model: glm-5
   runtime: openclaw
   image: tg-worker:dev
   state: Running
@@ -55,7 +55,7 @@ kind: Worker
 metadata:
   name: tiangong-demo-reviewer
 spec:
-  model: deepseek-chat
+  model: glm-5
   runtime: openclaw
   image: tg-worker:dev
   state: Running
@@ -68,7 +68,7 @@ kind: Worker
 metadata:
   name: tiangong-demo-tester
 spec:
-  model: deepseek-chat
+  model: glm-5
   runtime: openclaw
   image: tg-worker:dev
   state: Running

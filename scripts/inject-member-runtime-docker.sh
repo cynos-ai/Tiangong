@@ -10,9 +10,9 @@ readonly CONTAINER="${TIANGONG_MEMBER_WORKER_CONTAINER:-}"
 readonly RESPONSIBILITY="${TIANGONG_MEMBER_RESPONSIBILITY:-}"
 readonly MEMBER_RUNTIME="${TIANGONG_MEMBER_RUNTIME:-}"
 readonly MEMBER_MODEL="${TIANGONG_MEMBER_MODEL:-}"
+readonly MEMBER_REVISION="${TIANGONG_MEMBER_REVISION:-}"
 readonly AGENT_PACKAGE_ID="${TIANGONG_MEMBER_AGENT_PACKAGE_ID:-}"
 readonly AGENT_PACKAGE_VERSION="${TIANGONG_MEMBER_AGENT_PACKAGE_VERSION:-}"
-readonly CAPABILITY_PROFILE="${TIANGONG_MEMBER_CAPABILITY_PROFILE:-}"
 readonly ALLOWED_SKILLS="${TIANGONG_MEMBER_ALLOWED_SKILLS:-}"
 readonly DOCKER_COMMAND="${TIANGONG_DOCKER_COMMAND:-docker}"
 readonly NETWORK="${TIANGONG_AGENTTEAMS_NETWORK:-agentteams-net}"
@@ -60,8 +60,9 @@ trap cleanup EXIT INT TERM
 require_command() { command -v "$1" >/dev/null 2>&1 || fail "${2:-COMMAND_NOT_FOUND}"; }
 valid_name() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]; }
 valid_responsibility() { [[ "$1" =~ ^(leader|architect|challenger|developer|reviewer|tester)$ ]]; }
-valid_runtime() { [[ "$1" =~ ^(openclaw-built-in|codex-app-server)$ ]]; }
+valid_runtime() { [[ "$1" == openclaw-built-in ]]; }
 valid_model() { [[ "$1" =~ ^[A-Za-z0-9._:/-]{1,128}$ ]]; }
+valid_revision() { [[ "$1" =~ ^[1-9][0-9]{0,8}$ ]]; }
 valid_package_version() { [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; }
 valid_skill_list() { [[ -z "$1" || "$1" =~ ^[a-z0-9]+(-[a-z0-9]+)*(,[a-z0-9]+(-[a-z0-9]+)*)*$ ]]; }
 valid_volume_name() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]]; }
@@ -101,13 +102,10 @@ valid_name "${CONTAINER}" || fail WORKER_CONTAINER_INVALID
 valid_responsibility "${RESPONSIBILITY}" || fail RESPONSIBILITY_INVALID
 valid_runtime "${MEMBER_RUNTIME}" || fail MEMBER_RUNTIME_INVALID
 valid_model "${MEMBER_MODEL}" || fail MEMBER_MODEL_INVALID
+valid_revision "${MEMBER_REVISION}" || fail MEMBER_REVISION_INVALID
 [[ "${AGENT_PACKAGE_ID}" == "tiangong-${RESPONSIBILITY}" ]] || fail AGENT_PACKAGE_ID_INVALID
 valid_package_version "${AGENT_PACKAGE_VERSION}" || fail AGENT_PACKAGE_VERSION_INVALID
 valid_skill_list "${ALLOWED_SKILLS}" || fail ALLOWED_SKILLS_INVALID
-case "${RESPONSIBILITY}:${CAPABILITY_PROFILE}" in
-  leader:coordination-control|architect:project-read-only|challenger:project-read-only|developer:local-development|reviewer:project-read-only|tester:controlled-testing) ;;
-  *) fail CAPABILITY_PROFILE_MISMATCH ;;
-esac
 if [[ -n "${ALLOWED_SKILLS}" ]]; then
   IFS=',' read -r -a configured_skills <<<"${ALLOWED_SKILLS}"
   declare -A seen_skills=()
@@ -120,11 +118,7 @@ if [[ -n "${ALLOWED_SKILLS}" ]]; then
     esac
   done
 fi
-if [[ "${RESPONSIBILITY}" == developer ]]; then
-  [[ "${MEMBER_RUNTIME}" == codex-app-server ]] || fail RUNTIME_RESPONSIBILITY_MISMATCH
-else
-  [[ "${MEMBER_RUNTIME}" == openclaw-built-in ]] || fail RUNTIME_RESPONSIBILITY_MISMATCH
-fi
+[[ "${MEMBER_RUNTIME}" == openclaw-built-in ]] || fail RUNTIME_RESPONSIBILITY_MISMATCH
 valid_endpoint "${COORDINATION_ENDPOINT}" || fail COORDINATION_ENDPOINT_REQUIRED
 valid_token "${COORDINATION_TOKEN}" || fail COORDINATION_TOKEN_REQUIRED
 valid_gateway_url "${GATEWAY_URL}" || fail GATEWAY_URL_INVALID
@@ -186,6 +180,18 @@ fi
 [[ "$(jq -r '.[0].Name // empty' "${inspect_file}")" == "/${CONTAINER}" ]] || fail WORKER_IDENTITY_MISMATCH
 member_id="$(jq -r '.[0].Config.Env[]? | select(startswith("AGENTTEAMS_WORKER_NAME=")) | split("=")[1]' "${inspect_file}" | head -n 1)"
 valid_name "${member_id}" || fail WORKER_MEMBER_ID_MISSING
+worker_env_model="$(jq -r '.[0].Config.Env[]? | select(startswith("AGENTTEAMS_MODEL=")) | split("=")[1]' "${inspect_file}" | head -n 1)"
+working_dir="$(jq -r '.[0].Config.WorkingDir // empty' "${inspect_file}")"
+official_model="${worker_env_model}"
+if [[ -z "${official_model}" ]]; then
+  [[ "${working_dir}" == "/root/agentteams-fs/agents/${member_id}" ]] || fail AGENTTEAMS_MODEL_SOURCE_INVALID
+  for config_path in "${working_dir}/openclaw.json" "${working_dir}/.openclaw/openclaw.json"; do
+    primary="$(${DOCKER_COMMAND} cp "${CONTAINER}:${config_path}" - 2>/dev/null | tar -xO 2>/dev/null | jq -r '.agents.defaults.model.primary // empty' 2>/dev/null || true)"
+    if [[ "${primary}" =~ ^agentteams-gateway/(.+)$ ]]; then official_model="${BASH_REMATCH[1]}"; break; fi
+  done
+fi
+valid_model "${official_model}" || fail AGENTTEAMS_MODEL_MISSING
+[[ "${MEMBER_MODEL}" == "${official_model}" ]] || fail AGENTTEAMS_MODEL_MISMATCH
 image="$(jq -r '.[0].Config.Image // empty' "${inspect_file}")"
 entrypoint_count="$(jq -r '.[0].Config.Entrypoint | if type == "array" then length else 0 end' "${inspect_file}")"
 [[ -n "${image}" && "${entrypoint_count}" == 1 ]] || fail UNSUPPORTED_WORKER_ENTRYPOINT
@@ -236,13 +242,7 @@ jq -r '.[0].Config.Env[]?
       ($key == "TIANGONG_ROLE_ID" or
        $key == "TIANGONG_RUNTIME_ROLE_ROUTING_REQUIRED" or
        $key == "TIANGONG_MEMBER_RUNTIME_ROUTING_REQUIRED" or
-       $key == "TIANGONG_MEMBER_RESPONSIBILITY" or
-       $key == "TIANGONG_MEMBER_RUNTIME" or
-       $key == "TIANGONG_MEMBER_MODEL" or
-       $key == "TIANGONG_MEMBER_AGENT_PACKAGE_ID" or
-       $key == "TIANGONG_MEMBER_AGENT_PACKAGE_VERSION" or
-       $key == "TIANGONG_MEMBER_CAPABILITY_PROFILE" or
-       $key == "TIANGONG_MEMBER_ALLOWED_SKILLS" or
+       ($key | startswith("TIANGONG_MEMBER_")) or
        $key == "TIANGONG_SELECTED_MODEL" or
        $key == "TIANGONG_CODEX_RUNTIME" or
        $key == "TIANGONG_RUNTIME_LANE" or
@@ -259,8 +259,8 @@ jq -r '.[0].Config.Env[]?
        $key == "OPENCLAW_AGENT_HARNESS_FALLBACK" or
        ($key | startswith("TIANGONG_CODEX_"))) | not)' "${inspect_file}" >"${env_file}"
 {
-  printf 'TIANGONG_MEMBER_RESPONSIBILITY=%s\nTIANGONG_MEMBER_RUNTIME=%s\nTIANGONG_MEMBER_MODEL=%s\nTIANGONG_MEMBER_AGENT_PACKAGE_ID=%s\nTIANGONG_MEMBER_AGENT_PACKAGE_VERSION=%s\nTIANGONG_MEMBER_CAPABILITY_PROFILE=%s\nTIANGONG_MEMBER_ALLOWED_SKILLS=%s\nTIANGONG_SELECTED_MODEL=%s\nTIANGONG_MEMBER_RUNTIME_ROUTING_REQUIRED=%s\nTIANGONG_CODEX_RUNTIME=%s\nOPENCLAW_AGENT_HARNESS_FALLBACK=none\nOPENCLAW_AGENT_RUNTIME=%s\nOPENCLAW_CODEX_DISCOVERY_LIVE=%s\nCODEX_HOME=/root/.codex\n' \
-    "${RESPONSIBILITY}" "${MEMBER_RUNTIME}" "${MEMBER_MODEL}" "${AGENT_PACKAGE_ID}" "${AGENT_PACKAGE_VERSION}" "${CAPABILITY_PROFILE}" "${ALLOWED_SKILLS}" "${MEMBER_MODEL}" "${ROUTING_REQUIRED}" "${CODEX_RUNTIME}" "${OPENCLAW_RUNTIME}" "${CODEX_RUNTIME}"
+  printf 'TIANGONG_MEMBER_RESPONSIBILITY=%s\nTIANGONG_MEMBER_RUNTIME=%s\nTIANGONG_MEMBER_MODEL=%s\nTIANGONG_MEMBER_REVISION=%s\nTIANGONG_MEMBER_AGENT_PACKAGE_ID=%s\nTIANGONG_MEMBER_AGENT_PACKAGE_VERSION=%s\nTIANGONG_MEMBER_ALLOWED_SKILLS=%s\nTIANGONG_SELECTED_MODEL=%s\nTIANGONG_MEMBER_RUNTIME_ROUTING_REQUIRED=%s\nTIANGONG_CODEX_RUNTIME=%s\nOPENCLAW_AGENT_HARNESS_FALLBACK=none\nOPENCLAW_AGENT_RUNTIME=%s\nOPENCLAW_CODEX_DISCOVERY_LIVE=%s\nCODEX_HOME=/root/.codex\n' \
+    "${RESPONSIBILITY}" "${MEMBER_RUNTIME}" "${MEMBER_MODEL}" "${MEMBER_REVISION}" "${AGENT_PACKAGE_ID}" "${AGENT_PACKAGE_VERSION}" "${ALLOWED_SKILLS}" "${MEMBER_MODEL}" "${ROUTING_REQUIRED}" "${CODEX_RUNTIME}" "${OPENCLAW_RUNTIME}" "${CODEX_RUNTIME}"
   printf 'TIANGONG_MEMBER_ID=%s\nTIANGONG_COORDINATION_CONTROL_ENDPOINT=%s\nTIANGONG_COORDINATION_CONTROL_TOKEN=%s\n' \
     "${member_id}" "${COORDINATION_ENDPOINT}" "${COORDINATION_TOKEN}"
   printf 'AGENTTEAMS_AI_GATEWAY_URL=%s\nAGENTTEAMS_AI_GATEWAY_DOMAIN=%s\nTIANGONG_RUNTIME_LANE=%s\n' \
@@ -338,7 +338,26 @@ MSYS_NO_PATHCONV=1 "${DOCKER_COMMAND}" exec "${CONTAINER}" node --input-type=mod
   console.log(`member_route=pass responsibility=${route.responsibility} runtime=${route.runtime} model=${route.model} fallback=${route.fallback} digest=${route.routeDigest} agentPackage=${agent.agentPackage.packageId}@${agent.agentPackage.version} effectiveSkills=${agent.effectiveSkills.length}`);
 ' >/dev/null 2>&1 || fail ROUTE_VERIFY_FAILED
 
+# The wrapper must set OpenClaw's own file tools to workspace-only before the
+# recreated Worker is accepted. The before-tool hook separately denies every
+# tool not named in the versioned workspace lock.
+workspace_boundary_ready=0
+for _ in $(seq 1 90); do
+  if MSYS_NO_PATHCONV=1 "${DOCKER_COMMAND}" exec "${CONTAINER}" node --input-type=module -e '
+    const { readFileSync } = await import("node:fs");
+    const { resolveAgentRuntimeFromEnvironment } = await import("/opt/tiangong-worker/agent/packages/loader.mjs");
+    const { topLevelToolsForGroups } = await import("/opt/tiangong-worker/agent/packages/tool-groups.mjs");
+    const path = process.env.OPENCLAW_CONFIG_PATH ?? `${process.env.HOME}/openclaw.json`;
+    const config = JSON.parse(readFileSync(path, "utf8"));
+    const runtime = await resolveAgentRuntimeFromEnvironment(process.env);
+    const expected = topLevelToolsForGroups(runtime.agentPackage.toolGroups);
+    if (config?.tools?.fs?.workspaceOnly !== true || JSON.stringify(config?.tools?.allow) !== JSON.stringify(expected)) process.exit(1);
+  ' >/dev/null 2>&1; then workspace_boundary_ready=1; break; fi
+  sleep 1
+done
+((workspace_boundary_ready == 1)) || fail WORKSPACE_BOUNDARY_VERIFY_FAILED
+
 "${DOCKER_COMMAND}" rm "${backup}" >/dev/null 2>&1 || fail OLD_WORKER_CLEANUP_FAILED
 backup=''
-printf 'member_runtime_injection=pass container=%s responsibility=%s runtime=%s model=%s agent_package=%s@%s\n' \
-  "${CONTAINER}" "${RESPONSIBILITY}" "${MEMBER_RUNTIME}" "${MEMBER_MODEL}" "${AGENT_PACKAGE_ID}" "${AGENT_PACKAGE_VERSION}"
+printf 'member_runtime_injection=pass container=%s responsibility=%s runtime=%s model=%s revision=%s agent_package=%s@%s\n' \
+  "${CONTAINER}" "${RESPONSIBILITY}" "${MEMBER_RUNTIME}" "${MEMBER_MODEL}" "${MEMBER_REVISION}" "${AGENT_PACKAGE_ID}" "${AGENT_PACKAGE_VERSION}"

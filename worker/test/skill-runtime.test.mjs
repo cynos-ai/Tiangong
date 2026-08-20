@@ -8,7 +8,7 @@ import { createToolResultCaptureHook } from "../agent/gates/tool-result-capture.
 import { createAgentPackageRuntime, registerAgentPackageRuntime } from "../agent/skills/runtime.mjs";
 
 function env(overrides = {}) {
-  return { TIANGONG_MEMBER_ID: "developer-1", TIANGONG_MEMBER_RESPONSIBILITY: "developer", TIANGONG_MEMBER_RUNTIME: "codex-app-server", TIANGONG_MEMBER_MODEL: "deepseek-v4-flash", TIANGONG_MEMBER_AGENT_PACKAGE_ID: "tiangong-developer", TIANGONG_MEMBER_AGENT_PACKAGE_VERSION: "1.0.0", TIANGONG_MEMBER_CAPABILITY_PROFILE: "local-development", TIANGONG_MEMBER_ALLOWED_SKILLS: "test-driven-development", ...overrides };
+  return { TIANGONG_MEMBER_ID: "developer-1", TIANGONG_MEMBER_RESPONSIBILITY: "developer", TIANGONG_MEMBER_RUNTIME: "openclaw-built-in", TIANGONG_MEMBER_MODEL: "glm-5", TIANGONG_MEMBER_REVISION: "1", TIANGONG_SELECTED_MODEL: "glm-5", OPENCLAW_AGENT_HARNESS_FALLBACK: "none", TIANGONG_MEMBER_AGENT_PACKAGE_ID: "tiangong-developer", TIANGONG_MEMBER_AGENT_PACKAGE_VERSION: "1.0.0", TIANGONG_MEMBER_ALLOWED_SKILLS: "test-driven-development", ...overrides };
 }
 
 test("M2 prompt exposes only effective Skill descriptions and Agent selects an allowed Skill", async () => {
@@ -23,10 +23,22 @@ test("M2 prompt exposes only effective Skill descriptions and Agent selects an a
   assert.match(used.content[0].text, /Reproduce the failure/u);
   await assert.rejects(() => runtime.skillTool.execute("call-2", { skillId: "scenario-testing", trigger: "test" }), (error) => error.code === "SKILL_NOT_ALLOWED");
   assert.equal(await runtime.beforeToolCall({ toolName: "tiangong_use_skill" }), undefined);
-  assert.equal(await runtime.beforeToolCall({ toolName: "tiangong_run_command" }), undefined);
-  assert.match((await runtime.beforeToolCall({ toolName: "bash" })).blockReason, /TIANGONG_AGENT_CAPABILITY_DENIED/u);
-  const reviewer = createAgentPackageRuntime({ env: env({ TIANGONG_MEMBER_ID: "reviewer-1", TIANGONG_MEMBER_RESPONSIBILITY: "reviewer", TIANGONG_MEMBER_RUNTIME: "openclaw-built-in", TIANGONG_MEMBER_MODEL: "deepseek-chat", TIANGONG_MEMBER_AGENT_PACKAGE_ID: "tiangong-reviewer", TIANGONG_MEMBER_CAPABILITY_PROFILE: "project-read-only", TIANGONG_MEMBER_ALLOWED_SKILLS: "independent-code-review" }) });
-  assert.match((await reviewer.beforeToolCall({ toolName: "tiangong_run_command" })).blockReason, /project-read-only/u);
+  for (const toolName of ["read", "write", "edit", "exec", "process"]) assert.equal(await runtime.beforeToolCall({ toolName }), undefined);
+  for (const toolName of ["bash", "tiangong_run_command", "web_search"]) assert.match((await runtime.beforeToolCall({ toolName })).blockReason, /TOOL_DENIED/u);
+  for (const role of ["architect", "challenger", "reviewer", "tester"]) {
+    const professional = createAgentPackageRuntime({ env: env({ TIANGONG_MEMBER_ID: `${role}-1`, TIANGONG_MEMBER_RESPONSIBILITY: role, TIANGONG_MEMBER_AGENT_PACKAGE_ID: `tiangong-${role}`, TIANGONG_MEMBER_ALLOWED_SKILLS: role === "architect" ? "work-planning" : role === "challenger" ? "plan-challenge" : role === "reviewer" ? "independent-code-review" : "scenario-testing" }) });
+    for (const toolName of ["read", "write", "edit", "exec", "process"]) assert.equal(await professional.beforeToolCall({ toolName }), undefined);
+    assert.match((await professional.beforeToolCall({ toolName: "web_fetch" })).blockReason, /TOOL_DENIED/u);
+  }
+  const leader = createAgentPackageRuntime({ env: env({ TIANGONG_MEMBER_ID: "leader-1", TIANGONG_MEMBER_RESPONSIBILITY: "leader", TIANGONG_MEMBER_AGENT_PACKAGE_ID: "tiangong-leader", TIANGONG_MEMBER_ALLOWED_SKILLS: "work-coordination" }) });
+  assert.match((await leader.beforeToolCall({ toolName: "read" })).blockReason, /TOOL_DENIED/u);
+  assert.equal(await leader.beforeToolCall({ toolName: "tiangong_read_work" }), undefined);
+});
+
+test("every prompt and tool call fails closed when the current Worker model drifts", async () => {
+  const runtime = createAgentPackageRuntime({ env: env({ TIANGONG_SELECTED_MODEL: "other-model" }) });
+  await assert.rejects(() => runtime.beforePromptBuild({}, { sessionKey: "session-model-drift" }), (error) => error.reasonCode === "MODEL_CONFIG_MISMATCH");
+  await assert.rejects(() => runtime.beforeToolCall({ toolName: "read" }), (error) => error.reasonCode === "MODEL_CONFIG_MISMATCH");
 });
 
 test("Skill selection is captured as bounded ToolResult execution metadata", async (t) => {

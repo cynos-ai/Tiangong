@@ -38,7 +38,7 @@ Edit the generated `.env` and set at least:
 AGENTTEAMS_LLM_API_KEY=your-api-key
 ```
 
-The defaults use Alibaba Cloud Coding Plan with `qwen3.5-plus`. To use another OpenAI-compatible provider, change `AGENTTEAMS_OPENAI_BASE_URL` and `AGENTTEAMS_DEFAULT_MODEL` as well.
+The defaults use Alibaba Cloud Coding Plan with `glm-5`. Provider credentials and routing are configured through AgentTeams. To use another official AgentTeams provider or model, update `AGENTTEAMS_OPENAI_BASE_URL` and `AGENTTEAMS_DEFAULT_MODEL`, then revise the affected Worker through AgentTeams so Tiangong can bind the new model as a fresh MemberConfig revision.
 
 The configuration parser accepts one `KEY=VALUE` assignment per line; it does not execute shell syntax. Never commit `.env`.
 
@@ -69,7 +69,7 @@ Run `make help` for the complete command list. Uninstall removes the Tiangong-ow
 
 ### OpenClaw-native Worker image smoke test
 
-The local Worker image extends the public AgentTeams `v1.2.2` Worker image at an immutable digest and retains its pinned Node.js `22.23.2` runtime. Model turns run in OpenClaw's embedded runtime; coding turns use OpenClaw's official Codex app-server path. Tiangong contributes only its control plugin, Agent/Skill tools, gates, coordination, and direct machine facts.
+The local Worker image extends the public AgentTeams `v1.2.2` Worker image at an immutable digest and retains its pinned Node.js `22.23.2` runtime. All initial professional turns, including Developer coding turns, run through OpenClaw's built-in runtime. Tiangong contributes only its control plugin, Agent/Skill tools, gates, coordination, and direct machine facts.
 
 With AgentTeams running, choose the fast channel smoke or the full approval smoke:
 
@@ -108,9 +108,9 @@ The current runtime is intentionally constrained:
 - provider credentials stay deployment-scoped and are injected by the selected OpenClaw runtime only in memory;
 - unapproved OpenClaw extensions, prompt templates, and automatic repository context are disabled;
 - one generic `tg-worker` image is configured by authenticated AgentTeams identity, MemberConfig, ControlProfile, and deployment-owned runtime bindings; image names, prompts, and Task text cannot grant a responsibility or capability;
-- runtime, model, Agent package, capability profile, and allowed Skill set are fixed by the current MemberConfig projection and checked before OpenClaw configuration mutation and on each new turn;
+- runtime, current AgentTeams Worker model, Agent package, capability profile, and allowed Skill set are fixed by the current MemberConfig revision and checked before OpenClaw configuration mutation and on each new turn; Provider/model changes use AgentTeams administration rather than Task or prompt input;
 - the six initial Agent packages are Leader, Architect, Challenger, Developer, Reviewer, and Tester; Leader uses one logical session per Work and every professional Task receives its own deterministic logical session reference;
-- each top-level tool call is checked against the current Agent package capability profile; unknown generic host tools fail closed, and the native Runner additionally requires the Developer package, Codex runtime, and `local-development` capability;
+- top-level tools are fail-closed from Agent package `toolGroups`: Leader gets coordination plus Skill runtime, while the five professional members get Skill runtime plus the machine-locked OpenClaw workspace tools; deployments remain responsible for each isolated workspace, credential, and network boundary;
 - product Skill authority is exactly the digest-locked Agent-package installation intersected with `MemberConfig.allowedSkills`; the Agent selects an enabled Skill through `tiangong_use_skill`, and the bounded ToolResult records its ID/version/content digest without granting capabilities;
 - OpenClaw owns its conversation/session persistence; Tiangong coordination and control state uses independent protected storage, so conversation reset cannot erase product facts;
 - restartable writes persist a digest-bound operation envelope and a separate mode-`600` content payload under that state directory; raw write content never enters Evidence, but is visible to principals with Worker storage administration access and follows explicit operation retention;
@@ -124,7 +124,7 @@ make build-worker-image
 docker run --rm --entrypoint openclaw tg-worker:dev --version
 ```
 
-The build produces one generic `tg-worker:dev` runtime plus deployment-owned auxiliary service images. It does not build role-specific Worker images. The initial MemberConfig contract routes Leader, Architect, Challenger, Reviewer, and Tester through OpenClaw built-in and Developer through Codex app-server with `deepseek-v4-flash`; the configured model cannot be changed by a Task or prompt.
+The active build produces one generic `tg-worker:dev` runtime plus the deployment-owned runner/deployment service images; Codex/OpenCodex auxiliary targets are not built by the product path. It does not build role-specific Worker images. The initial MemberConfig contract routes all six professional Agents through OpenClaw built-in and defaults them to `glm-5`. An administrator may change a specific Worker's Provider/model through AgentTeams; Tiangong accepts the model only when it matches the authenticated Worker projection and records the change as a new MemberConfig revision. A Task, prompt, or Skill cannot change it.
 
 ### Interrupted write reconciliation
 

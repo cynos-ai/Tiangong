@@ -1,14 +1,13 @@
 {
   "kind": "tiangong.agent-package",
-  "schemaVersion": 1,
+  "schemaVersion": 3,
   "packageId": "tiangong-leader",
   "version": "1.0.0",
   "responsibility": "leader",
   "displayName": "Leader",
   "instructions": "instructions.md",
   "runtime": "openclaw-built-in",
-  "model": "deepseek-chat",
-  "capabilityProfile": "coordination-control",
+  "defaultModel": "glm-5",
   "toolGroups": ["coordination", "skill-runtime"],
   "sessionPolicy": "one-session-per-work",
   "installedSkills": [

@@ -177,8 +177,7 @@ test("native Runner registration is opt-in and exposes one bounded tool", () => 
       TIANGONG_MEMBER_ID: MEMBER_ID,
       TIANGONG_MEMBER_RESPONSIBILITY: "developer",
       TIANGONG_MEMBER_AGENT_PACKAGE_ID: "tiangong-developer",
-      TIANGONG_MEMBER_RUNTIME: "codex-app-server",
-      TIANGONG_MEMBER_CAPABILITY_PROFILE: "local-development",
+      TIANGONG_MEMBER_RUNTIME: "openclaw-built-in",
     },
   }), /binding file, journal file/u);
   const hooks = [];
@@ -192,8 +191,7 @@ test("native Runner registration is opt-in and exposes one bounded tool", () => 
       TIANGONG_MEMBER_ID: MEMBER_ID,
       TIANGONG_MEMBER_RESPONSIBILITY: "developer",
       TIANGONG_MEMBER_AGENT_PACKAGE_ID: "tiangong-developer",
-      TIANGONG_MEMBER_RUNTIME: "codex-app-server",
-      TIANGONG_MEMBER_CAPABILITY_PROFILE: "local-development",
+      TIANGONG_MEMBER_RUNTIME: "openclaw-built-in",
     },
   });
   assert.deepEqual(enabled, { enabled: true, tool: "tiangong_run_command", hooks: ["before_tool_call"] });

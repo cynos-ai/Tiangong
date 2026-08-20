@@ -40,7 +40,7 @@ The run must fail for:
 - direct selection of a Skill outside the effective set;
 - disabled MemberConfig;
 - invalid or duplicate Skill package metadata;
-- a Developer Runner tool without the `local-development` capability projection.
+- any tool that is absent from the Agent package tool groups and the pinned OpenClaw workspace tool lock.
 
 ## Cleanup
 

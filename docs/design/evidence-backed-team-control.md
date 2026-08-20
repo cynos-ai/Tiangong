@@ -591,10 +591,33 @@ semantic data-loss prevention.
 
 Professional identity and capability come from authenticated AgentTeams state,
 MemberConfig, ControlProfile, and the loaded Agent package—not from a
-role-specific container image. Deployments should prefer one versioned generic
-Worker runtime image and configure identity, model/runtime route, Skills, and
-capability bindings per member. Sharing an image never implies sharing
-permissions.
+role-specific container image. Provider configuration, provider credentials,
+and the Worker's current model are authoritative in the official AgentTeams
+control plane. An Agent package supplies only an initial `defaultModel`; it does
+not override authenticated Worker configuration. Tiangong binds the current model into a MemberConfig revision and requires the
+deployment projection to match the actual OpenClaw model configuration that
+AgentTeams generated for that Worker; Tiangong does not assume that AgentTeams
+exports an `AGENTTEAMS_MODEL` environment variable. An administrator changing
+one Worker through AgentTeams produces a new revision only after a Worker
+lifecycle rebuild makes the runtime configuration effective, and the old
+Sessions and bindings then become stale. Tasks, prompts, Skills, and the model
+itself cannot change Provider or model.
+
+The first product version does not duplicate an abstract `capabilityProfile`
+field across Agent packages, MemberConfig, and environment projections. Explicit
+Agent-package `toolGroups` select top-level tools, the MemberConfig Skill
+allowlist can only narrow installed Skills, and deployment bindings plus the
+ControlProfile govern workspaces, writable paths, network, and credentials. The Leader receives coordination tools; the other five professionals receive a
+shared workspace-tool contract verified against a pinned OpenClaw version. A
+machine-readable tool lock in the repository is the single allowlist source,
+and the image contract checks it against tools actually registered by pinned
+OpenClaw; newly added upstream tools remain denied by default. Professional
+responsibility constrains deliverables and position in the delivery chain, not
+filesystem safety, and the tool layer does not promise that Reviewers are
+read-only. Only a Developer Commit can enter the delivery chain. Deployments
+should prefer one versioned generic Worker runtime image. Sharing an image or
+tool group never implies sharing workspaces, credentials, or delivery
+authority.
 
 ### 7.3 ControlProfile
 
@@ -1123,9 +1146,13 @@ transcripts are potentially sensitive and follow Execution Record retention.
 
 ### 12.2 Models and budgets
 
-ControlProfile and MemberConfig define allowed models, token/cost/time limits,
-and concurrency. Model fallback is explicit; Tiangong does not silently change
-provider or model when one fails.
+The official AgentTeams control plane defines Provider configuration,
+credentials, and each Worker's current model. ControlProfile defines model and
+token/cost/time/concurrency ceilings, while the MemberConfig revision records
+the Worker model Tiangong currently accepts. All three must agree; an
+AgentTeams administrator change invalidates the old revision and Session, and
+ordinary chat cannot modify them. Model fallback is explicit; Tiangong does not
+silently change provider or model when one fails.
 
 Budget or resource exhaustion stops new model calls and local execution
 processes, records the fact, and notifies the Leader. It does not fabricate a

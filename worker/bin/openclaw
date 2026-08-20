@@ -11,6 +11,7 @@ readonly CODEX_CAPABILITY_DETECTOR="/opt/tiangong-worker/agent/preflight/codex-c
 readonly CODEX_CAPABILITY_CACHE="/opt/tiangong-worker/agent/preflight/codex-capability-cache.mjs"
 readonly RUNTIME_ROUTE_PREFLIGHT="/opt/tiangong-worker/scripts/runtime-route-preflight.mjs"
 readonly AGENT_PACKAGE_LOADER="/opt/tiangong-worker/agent/packages/loader.mjs"
+readonly TOOL_ALLOWLIST_RESOLVER="/opt/tiangong-worker/scripts/resolve-openclaw-tool-allowlist.mjs"
 codex_home=""
 
 assert_member_runtime_route() {
@@ -296,6 +297,30 @@ configure_codex_runtime() {
   trap - RETURN
 }
 
+configure_workspace_boundary() {
+  local config_file temporary_file tool_allowlist
+  config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
+  [[ -f "${config_file}" ]] || {
+    printf '[tiangong-worker] ERROR: OpenClaw config not found: %s\n' "${config_file}" >&2
+    return 1
+  }
+  if [[ "${TIANGONG_MEMBER_RUNTIME_ROUTING_REQUIRED:-0}" == 1 ]]; then
+    tool_allowlist="$(/usr/bin/node "${TOOL_ALLOWLIST_RESOLVER}")"
+  else
+    tool_allowlist='[]'
+  fi
+  temporary_file="$(mktemp "${config_file}.tiangong-workspace.XXXXXX")"
+  trap 'rm -f "${temporary_file:-}"' RETURN
+  jq --argjson tool_allowlist "${tool_allowlist}" '
+    .tools = (.tools // {})
+    | .tools.fs = ((.tools.fs // {}) + {workspaceOnly: true})
+    | .tools.allow = $tool_allowlist
+  ' "${config_file}" >"${temporary_file}"
+  chmod 600 "${temporary_file}"
+  mv "${temporary_file}" "${config_file}"
+  trap - RETURN
+}
+
 configure_tiangong_plugin() {
   local config_file temporary_file
   config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
@@ -339,6 +364,7 @@ if [[ "${1:-}" == "gateway" && "${2:-}" == "run" ]]; then
   # must fail closed without enabling a plugin or rewriting the OpenClaw
   # configuration on disk.
   configure_tiangong_plugin
+  configure_workspace_boundary
   configure_builtin_gateway
   configure_codex_runtime
   configure_codex_gateway

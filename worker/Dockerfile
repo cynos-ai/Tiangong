@@ -9,7 +9,7 @@ ARG TIANGONG_CODEX_GATEWAY_HOSTS=agentteams-controller
 ARG TIANGONG_CODEX_BASE_URL=
 
 LABEL org.opencontainers.image.title="Tiangong Worker"
-LABEL org.opencontainers.image.description="AgentTeams Worker image with OpenClaw native runtime and Codex app-server"
+LABEL org.opencontainers.image.description="AgentTeams Worker image with the pinned OpenClaw built-in runtime"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 LABEL org.opencontainers.image.source="https://github.com/cynos-ai/Tiangong"
 
@@ -36,12 +36,14 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund --registry="${TIANGO
     && test "$(stat -c '%F:%u' /usr/lib/git-core)" = "directory:0"
 
 COPY agent/ ./agent/
+COPY openclaw-workspace-tools.json ./openclaw-workspace-tools.json
 COPY agent-packages/ ./agent-packages/
 COPY skills/ ./skills/
 COPY observability/ ./observability/
 COPY --chmod=755 plugin/ ./plugin/
 RUN npm run check-observability \
     && node --input-type=module -e 'import("./agent/packages/loader.mjs").then(async ({loadAgentPackages}) => { const value = await loadAgentPackages(); if (value.packages.length !== 6) process.exit(1); })' \
+    && node ./scripts/verify-openclaw-workspace-tools.mjs \
     && node -e 'import("./plugin/index.mjs").then((module) => { if (module.default?.id !== "tiangong-control") process.exit(1); })'
 
 COPY --chmod=755 bin/codex bin/codex-app-server bin/openclaw bin/tiangong-reconcile bin/tiangong-retain bin/tiangong-work-run /opt/tiangong-worker/bin/
@@ -95,7 +97,7 @@ WORKDIR /opt/tiangong-worker
 ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/deployment/opencodex-sidecar-receipt-service.mjs"]
 
 # One generic runtime image. AgentTeams identity, MemberConfig, Agent package,
-# and ControlProfile select responsibility, model, Skills, and capability.
+# and ControlProfile select responsibility, current model, Skills, and workspace binding.
 FROM worker-base AS tg-worker
 FROM tg-worker AS default
 

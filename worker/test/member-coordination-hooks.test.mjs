@@ -60,30 +60,9 @@ test("member OpenClaw hooks reject an assignment for another Worker", async () =
   );
 });
 
-test("member hook submits a bounded Result from the native Runner after-tool event", async () => {
-  const calls = [];
-  const hooks = createMemberCoordinationHooks({ endpoint: ENDPOINT, token: TOKEN, memberId: MEMBER_ID, fetchImpl: fakeFetch(calls), now: () => "2026-08-16T00:02:00.000Z" });
-  await hooks.afterToolCall({
-    toolName: "tiangong_run_command",
-    result: {
-      details: {
-        taskId: taskSpec.taskId,
-        workId: taskSpec.workId,
-        replayed: false,
-        changeRevisionRef: { contentDigest: "a".repeat(64) },
-      },
-    },
-  }, { sessionKey: "member-session-native-runner" });
-  const resultRequest = calls.find((call) => call.url.endsWith("/results"));
-  assert.ok(resultRequest);
-  const body = JSON.parse(resultRequest.init.body);
-  assert.deepEqual(body.result.deliverableRefs, [{ adapter: "runner-change-revision@1", ref: "a".repeat(64) }]);
-  assert.match(body.result.summary, /ChangeRevision/u);
-});
-
 test("member hook registration uses OpenClaw's native lifecycle hooks", () => {
   const registrations = [];
   const result = registerMemberCoordinationHooks({ on: (...args) => registrations.push(args) }, { endpoint: ENDPOINT, token: TOKEN, memberId: MEMBER_ID, fetchImpl: fakeFetch([]) });
-  assert.deepEqual(result, { enabled: true, hooks: ["before_prompt_build", "after_tool_call", "agent_end"] });
-  assert.deepEqual(registrations.map(([name]) => name), ["before_prompt_build", "after_tool_call", "agent_end"]);
+  assert.deepEqual(result, { enabled: true, hooks: ["before_prompt_build", "agent_end"] });
+  assert.deepEqual(registrations.map(([name]) => name), ["before_prompt_build", "agent_end"]);
 });

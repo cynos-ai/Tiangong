@@ -10,7 +10,7 @@
 
 第一版证明的是：
 
-- AgentTeams、OpenClaw 和 Codex app-server 可以承载真实专业协作；
+- AgentTeams 官方 Provider/Worker 配置与 OpenClaw built-in 可以承载真实专业协作；
 - Tiangong 可以把对话、共享计划、委托、Agent 报告和机器观察分开呈现；
 - 真实代码修改可以在没有 Push、部署或生产凭据的情况下完成和验证；
 - 失败、等待和能力不足会被如实显示，不会被包装成成功。
@@ -111,10 +111,9 @@ Leader 通过 `complete-work` 判断当前 WorkSpec 的 `doneWhen` 已满足，�
 - `complete-work` 有非空 WorkSpec；
 - 每个 Task 都有 Result 或取消事实；
 - 没有活跃 turn、进程树或写锁；
-- 没有待处理或结果不确定的 Operation/Approval；
 - 所有引用的交付物仍可读取。
 
-第一版本地交付没有外部写 Operation 时，对应检查自然为空，但不能继续依赖当前代码中的 `accepted/blocked/cancelled` 和 CoordinationDecision 关单条件。
+第一版本地交付没有外部写 Operation/Approval，因此当前 CloseGuard 不维护或检查不存在的对象。后续开放 Adapter 和外部写时，Operation、精确 Approval、未知状态与恢复检查必须和真实数据模型及执行器同批引入。当前关单不能继续依赖 `accepted/blocked/cancelled` 和 CoordinationDecision。
 
 ## 4. Agent 模型
 
@@ -123,11 +122,11 @@ Leader 通过 `complete-work` 判断当前 WorkSpec 的 `doneWhen` 已满足，�
 第一版使用长期存在的专业 Worker，而不是为每个 Task 临时创建 Agent：
 
 - Leader：理解目标、形成 WorkSpec、发布 Plan、动态委托、综合结果和完成 Work；
-- Architect：理解项目并生成、修订 Plan；
-- Challenger：独立挑战 Plan 的假设、遗漏和风险；
-- Developer：在受限工作区通过 Codex app-server 修改代码和测试；
-- Reviewer：独立检查需求覆盖、代码质量和兼容风险；
-- Tester：在独立或受控环境中执行场景验证。
+- Architect：在独立工作区理解项目、执行分析命令并生成或修订 Plan；
+- Challenger：在独立工作区检查代码与测试事实，挑战 Plan 的假设、遗漏和风险；
+- Developer：通过 OpenClaw built-in 在独立工作区修改代码、执行测试并创建本地 Commit；
+- Reviewer：在独立工作区检查需求覆盖、代码质量和兼容风险，并执行必要命令；
+- Tester：在独立工作区编写测试资料、执行命令并完成场景验证。
 
 Researcher 和 Operator 是后续可配置成员。Researcher 只在需要外部研究时加入；Operator 在测试环境和生产外部操作开放后加入。
 
@@ -141,14 +140,20 @@ Worker 长期保留身份和专业能力。Room 级 Leader 入口只负责把普
 tg-worker
 ├─ OpenClaw
 ├─ tiangong-control plugin
-├─ 通用本地工具
+├─ 显式 coordination/workspace 工具组
 ├─ 公开第一方 Skills
-└─ Codex app-server 接入能力
+└─ AgentTeams 官方 Provider/Model 接入
 ```
 
 不同 Agent 由 AgentTeams 身份、Agent 包、MemberConfig 和 ControlProfile 配置。身份、职责、模型路线、Skill 和权限不能由镜像名称决定。
 
-第一版把 runtime/model 固定在 MemberConfig：Developer 使用 Codex app-server，其他首批成员使用 OpenClaw built-in；Leader 不为单个 Task 临时切换模型。旧的角色专用镜像、固定五角色 registry 和固定流程在通用路径验证后删除，不保留兼容层。
+第一版六个专业成员都使用 OpenClaw built-in，初始默认模型为 `glm-5`。Provider、Provider credential 和 Worker model 由 AgentTeams 官方控制面管理；Agent 包只声明 `defaultModel`，不把它当成永久锁。Tiangong 将已认证 Worker 的当前 model 投影为新的 MemberConfig revision，并在部署、turn 和工具边界校验。管理员可以通过 AgentTeams 修改单个 Worker；Task、Prompt 或 Skill 不能切换 Provider/Model。只更新控制面期望值、但运行中 Worker 的 OpenClaw 配置尚未变化时，不得声称切模成功；完成 Worker 生命周期重建后必须产生新 revision，并使旧 Session/绑定失效。
+
+能力不再通过 `capabilityProfile` 这种重复标签表达。Agent package 的显式 `toolGroups` 决定可见顶层工具，MemberConfig 的 `allowedSkills` 只缩小已安装 Skill 集合，部署配置负责工作区、可写路径、凭据、网络和外部副作用。Leader 使用 coordination + skill-runtime；Architect、Challenger、Developer、Reviewer、Tester 使用 skill-runtime + 固定 OpenClaw 版本验证过的 workspace 工具组。仓库中的机器可读工具锁是 allowlist 的单一来源，镜像合同必须从 pinned OpenClaw 的实际注册表或官方接口证明锁中工具仍存在；上游新增工具默认拒绝，不能静默扩大能力。不存在 Developer 专属 allow-all 或 Tester 的死声明。
+
+五个专业成员的职责限制交付物和交付链位置，不被当成文件系统安全边界；工具层不承诺 Reviewer 等角色只读。路径、工作区归属、凭据、网络和外部副作用由部署代码强制。只有 Developer 本地 Commit 能进入交付链，其他成员的临时修改不得覆盖交付分支。
+
+旧的角色专用镜像、固定五角色 registry、Codex/OpenCodex active build 和 native-runner 在通用路径验证后删除，不保留兼容层。
 
 ## 5. Skills
 
@@ -196,10 +201,10 @@ Agent 包固定 Skill 版本和内容摘要。实际解析的 Skill 名称、版
 
 ### 5.4 当前实现状态
 
-当前开发分支已实现 M1/M2 底座：
+当前开发分支已实现 M1/M2 底座，并正在 clean-cut 到上述执行合同：
 
-- `worker/agent-packages/` 提供六个版本化 Agent 包，固定责任、runtime/model、能力画像、会话策略和 Skill digest lock；
-- MemberConfig v3 投影 revision、Agent package、capability profile 和 `allowedSkills`，部署入口在修改 OpenClaw 配置前以及每个新 turn/顶层工具调用重新校验；未知 generic host tool fail closed；
+- `worker/agent-packages/` 提供六个版本化 Agent 包，固定责任、runtime、初始 `defaultModel`、toolGroups、会话策略和 Skill digest lock；六个包均为 all-built-in，初始模型为 `glm-5`，五个专业成员共同使用 pinned OpenClaw workspace 工具锁；
+- MemberConfig 当前已投影 revision、AgentTeams Worker 当前 model、Agent package 和 `allowedSkills`；部署入口正在改为读取 AgentTeams 生成的实际 OpenClaw model 配置并与 MemberConfig model 比较，不能假设 AgentTeams 一定投影 `AGENTTEAMS_MODEL` 环境变量；模型生命周期重建和旧 Session 失效仍需真实验证；
 - Leader 每个 Work、其他成员每个 Task 使用独立逻辑 SessionRef；Session 仍不承担授权或产品事实；
 - `worker/skills/` 预装六个可移植产品 Skill，每个包含触发正例、负例、歧义例以及 success/blocked/cleanup 行为案例；
 - 有效 Skill 由代码计算 installed ∩ allowed，未安装、digest 不匹配、越权选择和配置漂移 fail closed；
@@ -209,7 +214,7 @@ Agent 包固定 Skill 版本和内容摘要。实际解析的 Skill 名称、版
 - Work 选择只存在浏览器查看状态，发送 API 只接受普通正文和 Matrix transaction ID，显式拒绝 `workId` 等路由字段；Matrix token、密码和消息正文都不进入 PostgreSQL、URL 或浏览器持久存储；
 - 第一版加密 Room 明确 fail closed；HTTPS 默认使用 Secure cookie，loopback HTTP 开发必须显式关闭该属性。
 
-这不等于 M4 真实项目闭环、真实模型质量或生产部署已经完成。
+这不等于共同 workspace 工具合同、GLM 多步 canary、真实项目闭环或生产部署已经完成。
 
 ## 6. 真实项目本地交付
 
@@ -223,8 +228,8 @@ Human 请求
 → Architect 产出候选 Plan
 → Challenger 挑战
 → Leader 发布当前 Plan 并动态创建 Tasks
-→ Developer/Codex 在独立工作区修改并测试
-→ Reviewer 与 Tester 独立验证
+→ Developer/OpenClaw built-in 在独立工作区修改、测试并创建本地 Commit
+→ Developer Commit 可读后，Reviewer 与 Tester 在各自独立工作区执行命令并验证
 → Leader 根据 WorkSpec.doneWhen、Results、ToolResults 和交付物完成 Work
 ```
 
@@ -234,7 +239,8 @@ Human 请求
 - 只产生本地分支、Commit、Diff、测试和报告；
 - 不持有 Push、CI dispatch、部署或生产凭据；
 - 私有源码、fixture 和运行材料不进入公开仓库；
-- 失败时保留有界事实并安全停止。
+- 失败时保留有界事实并安全停止；
+- 首轮成功后从固定基线完成至少一次 clean rerun。
 
 ## 7. 第一版 Web 可见内容
 
@@ -264,7 +270,7 @@ workId / taskId / memberId / sessionRef / turnId / skillId / toolResultId
 
 后续直接使用 AgentLoop 作为可替换的观测与评估后端，优先复用 OpenClaw 官方 OpenTelemetry 能力。Tiangong Web 第一阶段只提供“查看运行轨迹”入口并跳转 AgentLoop，不复制其控制台。
 
-AgentLoop 可以展示可见输入、可见回复、模型、Skill、工具、Token、耗时和错误。模型未公开的隐藏 Chain of Thought 不得被声称为可见。Codex app-server 先验收 Turn 级 Trace；OpenClaw 无法观察的 Codex 内部工具细节由 Tiangong ToolResult 补充。
+AgentLoop 可以展示可见输入、可见回复、AgentTeams 当前 Provider/Model 标识、Skill、工具、Token、耗时和错误。模型未公开的隐藏 Chain of Thought 不得被声称为可见。OpenClaw built-in 的实际 turn/tool 可见性先通过固定版本验证，Tiangong ToolResult 只补自己的有界机器事实。
 
 Trace 可以采样、延迟或丢失，AgentLoop 不可用也不能影响 Work、Task、Result、ToolResult 或完成判断。内容采集默认关闭；测试环境显式开启前必须完成脱敏、留存和凭据边界确认。
 
@@ -286,13 +292,15 @@ Trace 可以采样、延迟或丢失，AgentLoop 不可用也不能影响 Work�
 8. Leader 能形成 WorkSpec 和可读标题；
 9. Architect 能产出 Markdown Plan，Challenger 能挑战，Leader 能发布和修订 `currentPlanRef`；
 10. Leader 能根据 Plan 创建普通 Task，而 Kernel 没有固定角色阶段或 DAG；
-11. Developer 使用真实 Codex app-server 在受限工作区修改真实项目并产生本地 Commit；
-12. Reviewer 和 Tester 使用独立 Task/Session 返回 Result；
-13. Leader 不创建逐 Task CoordinationDecision，也能在 CloseGuard 检查通过后完成或停止 Work；
-14. ToolResult 能显示修复前后测试、工具和提交事实；
-15. Web 刷新和服务重启后仍能恢复 Matrix event 引用、Work 绑定和 Tiangong 产品事实；
-16. 没有 Push、部署、生产写入或私有项目材料进入公开仓库；
-17. AgentLoop 不存在时，全部产品能力仍可使用。
+11. Architect、Challenger、Developer、Reviewer 和 Tester 都能在各自隔离工作区使用合同允许的 OpenClaw built-in 文件与命令工具；
+12. Developer 修改真实项目、执行修复前后测试并产生本地 Commit；只有 Commit 机器可读后才创建 Reviewer 和 Tester Task；
+13. Reviewer 和 Tester 使用独立 Task、Session 和工作区执行检查并返回 Result；
+14. Leader 不创建逐 Task CoordinationDecision，也能在 CloseGuard 检查通过后完成或停止 Work；
+15. ToolResult 能显示修复前后测试、工具和提交事实；
+16. Web 刷新和服务重启后仍能恢复 Matrix event 引用、Work 绑定和 Tiangong 产品事实；
+17. 同一固定基线至少完成一次 clean rerun；
+18. 没有 Push、部署、生产写入或私有项目材料进入公开仓库；
+19. AgentLoop 不存在时，全部产品能力仍可使用。
 
 ## 11. 后续阶段
 

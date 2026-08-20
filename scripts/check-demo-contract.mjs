@@ -13,7 +13,7 @@ for (const responsibility of responsibilities) {
 const images = [...workers.matchAll(/^\s*image:\s*(\S+)\s*$/gmu)].map((match) => match[1]);
 if (images.length !== responsibilities.length || images.some((image) => image !== "tg-worker:dev")) throw new Error("demo must use only generic tg-worker");
 if (/tiangong-worker-(?:leader|designer|implementor|assessor|operator)/u.test(workers)) throw new Error("role-specific image remains in demo");
-if (!workers.includes("model: deepseek-v4-flash") || !workers.includes("model: deepseek-chat")) throw new Error("demo runtime/model baseline is incomplete");
+if ((workers.match(/model: glm-5/gu) ?? []).length !== 6) throw new Error("demo AgentTeams model baseline must use GLM-5 for all six Workers");
 const [{ packages }, { skills }] = await Promise.all([loadAgentPackages(), loadInstalledSkills()]);
 if (packages.length !== responsibilities.length || packages.some((agent) => !responsibilities.includes(agent.responsibility))) throw new Error("demo Agent packages are incomplete");
 if (skills.length !== 6) throw new Error("demo product Skills are incomplete");

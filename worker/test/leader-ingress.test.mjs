@@ -12,7 +12,7 @@ async function fixture(t) {
   const profile = createControlProfile({ profileId: "profile", revision: 1, maxTimelineEntries: 64, maxOutboxEntries: 32, maxTasksPerWork: 8, toolResultRetentionMs: 60_000 });
   const team = createTeamConfig({ teamId: "team", revision: 1, leaderMemberId: "leader", memberIds: ["leader"], controlProfileId: profile.profileId, createdAt: NOW });
   const route = createTeamRouteBinding({ routeId: "route", teamId: team.teamId, revision: 1, channel: "matrix", roomId: "!room:example.test", createdAt: NOW });
-  const leaderMember = createMemberConfig({ memberId: "leader", teamId: team.teamId, workerName: "leader", matrixUserId: "@leader:example.test", role: "leader", controlProfileId: profile.profileId, enabled: true, runtime: "openclaw-built-in", model: "deepseek-chat", allowedSkills: [], createdAt: NOW });
+  const leaderMember = createMemberConfig({ memberId: "leader", teamId: team.teamId, workerName: "leader", matrixUserId: "@leader:example.test", role: "leader", controlProfileId: profile.profileId, enabled: true, runtime: "openclaw-built-in", model: "glm-5", allowedSkills: [], createdAt: NOW });
   return { store: new CoordinationStore({ filePath: join(root, "state.json"), now: () => NOW }), profile, team, route, leaderMember, members: [leaderMember] };
 }
 const source = { channel: "matrix", authenticated: true, actorId: "@human:example.test", messageId: "$event", route: "team-room" };

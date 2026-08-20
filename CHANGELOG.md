@@ -19,13 +19,15 @@ All notable changes to Tiangong are documented here. Tiangong follows Semantic V
 ### Changed
 
 - Replaced per-Task acceptance decisions with Result/cancellation projection and machine-fact CloseGuard checks.
-- Replaced role-specific Worker image targets with one generic `tg-worker` contract and MemberConfig-bound responsibility/runtime/model/Agent-package routing. Developer uses Codex app-server with `deepseek-v4-flash`; the other initial responsibilities use OpenClaw built-in with no automatic fallback.
+- Replaced role-specific Worker image targets with one generic `tg-worker` contract and MemberConfig-bound responsibility/runtime/model/Agent-package routing. All six initial responsibilities now use OpenClaw built-in and default to `glm-5`; AgentTeams remains authoritative for Provider credentials and per-Worker model changes.
 - Made the documented Phase C contract entrypoint and nested shell calls repeatable in a Linux tracked checkout.
 - Replaced the root runtime-console page with the single M3 Team/Room + Matrix conversation + Work facts workbench; selecting a Work remains view-only and the send API rejects Work routing fields.
 - Matrix URL alone now enables Human Web chat; the deployment Matrix token remains optional and enables only the outbox consumer.
 
 ### Fixed
 
+- Stopped the active Worker build from building or probing Codex/OpenCodex canary, cache, sidecar, receipt, and adapter images; the initial product runtime is OpenClaw built-in.
+- Made Agent package `defaultModel` an initial value rather than a permanent model lock: an AgentTeams-administered per-Worker model change is accepted only through a new MemberConfig revision whose model matches the authenticated `AGENTTEAMS_MODEL`; Task and prompt input remain non-authoritative.
 - Made OpenClaw `tool_result_persist` capture synchronous so a denied tool cannot leave an unhandled persistence rejection; the ToolResult store now provides synchronized atomic append while rejecting linked or abnormal state.
 - Corrected the Developer injection default capability-cache hostname to the deployment-owned `tiangong-codex-capability-cache` service name.
 

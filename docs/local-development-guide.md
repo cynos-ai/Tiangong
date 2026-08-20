@@ -8,7 +8,7 @@
 ```text
 make init → 配 .env → make up → make verify → 验证 Dashboard → make login
     ↓
-make build-worker-image（构建 1 个通用 Worker 和 9 个辅助镜像）
+make build-worker-image（构建 1 个通用 Worker 和 3 个 runner/deployment 辅助镜像）
     ↓
 agt apply 创建 6 Worker → 等 Team Active
     ↓
@@ -19,7 +19,7 @@ Element 或 Matrix 脚本发消息（⚠️ 不要用 Dashboard 聊天）→ 查
 
 - Linux/macOS、Bash、`make`、`curl`、`jq`
 - Docker daemon 运行中（`docker info` 可用）
-- 一个 OpenAI 兼容的 LLM API Key（默认走阿里云百炼 Coding Plan，模型 `qwen3.5-plus`）
+- 一个 OpenAI 兼容的 LLM API Key（默认走阿里云百炼 Coding Plan，模型 `glm-5`）
 
 以下命令均假定在 Tiangong 仓库根目录执行：
 
@@ -87,7 +87,7 @@ make login       # 打印 Element 地址和凭据文件位置，不打印密码
 make build-worker-image
 ```
 
-产出 10 个镜像：一个通用 `tg-worker:dev`、两个 canary 和七个部署侧辅助服务镜像。角色不再对应镜像；六个 Agent package 和六个产品 Skill 都预装在通用 Worker 中。
+active build 产出 4 个镜像：一个通用 `tg-worker:dev` 和三个 runner/deployment 辅助服务镜像。Codex/OpenCodex 辅助 target 不再由产品构建入口构建。角色不再对应镜像；六个 Agent package 和六个产品 Skill 都预装在通用 Worker 中。
 
 ### 坑 4：`npm ci` 访问 npmjs.org 超时
 
@@ -136,7 +136,7 @@ kind: Worker
 metadata:
   name: tiangong-demo-leader
 spec:
-  model: qwen3.5-plus
+  model: glm-5
   runtime: openclaw
   image: tg-worker:dev
   state: Running
@@ -149,7 +149,7 @@ kind: Worker
 metadata:
   name: tiangong-demo-designer
 spec:
-  model: qwen3.5-plus
+  model: glm-5
   runtime: openclaw
   image: tg-worker:dev
   state: Running
@@ -162,7 +162,7 @@ kind: Worker
 metadata:
   name: tiangong-demo-implementor
 spec:
-  model: qwen3.5-plus
+  model: glm-5
   runtime: openclaw
   image: tg-worker:dev
   state: Running
@@ -175,7 +175,7 @@ kind: Worker
 metadata:
   name: tiangong-demo-assessor
 spec:
-  model: qwen3.5-plus
+  model: glm-5
   runtime: openclaw
   image: tg-worker:dev
   state: Running
@@ -188,7 +188,7 @@ kind: Worker
 metadata:
   name: tiangong-demo-operator
 spec:
-  model: qwen3.5-plus
+  model: glm-5
   runtime: openclaw
   image: tg-worker:dev
   state: Running

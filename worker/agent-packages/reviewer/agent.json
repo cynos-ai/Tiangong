@@ -1,15 +1,14 @@
 {
   "kind": "tiangong.agent-package",
-  "schemaVersion": 1,
+  "schemaVersion": 3,
   "packageId": "tiangong-reviewer",
   "version": "1.0.0",
   "responsibility": "reviewer",
   "displayName": "Reviewer",
   "instructions": "instructions.md",
   "runtime": "openclaw-built-in",
-  "model": "deepseek-chat",
-  "capabilityProfile": "project-read-only",
-  "toolGroups": ["skill-runtime"],
+  "defaultModel": "glm-5",
+  "toolGroups": ["skill-runtime", "workspace"],
   "sessionPolicy": "one-session-per-task",
   "installedSkills": [
     {"skillId":"independent-code-review","version":"1.0.0","contentDigest":"2ece4c0d782ae7b0145e9fbea79c845e048134040b691b06194aa1071ca683ff"}

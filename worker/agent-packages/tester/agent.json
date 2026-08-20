@@ -1,15 +1,14 @@
 {
   "kind": "tiangong.agent-package",
-  "schemaVersion": 1,
+  "schemaVersion": 3,
   "packageId": "tiangong-tester",
   "version": "1.0.0",
   "responsibility": "tester",
   "displayName": "Tester",
   "instructions": "instructions.md",
   "runtime": "openclaw-built-in",
-  "model": "deepseek-chat",
-  "capabilityProfile": "controlled-testing",
-  "toolGroups": ["skill-runtime", "controlled-test"],
+  "defaultModel": "glm-5",
+  "toolGroups": ["skill-runtime", "workspace"],
   "sessionPolicy": "one-session-per-task",
   "installedSkills": [
     {"skillId":"scenario-testing","version":"1.0.0","contentDigest":"75657917aea96eb7d1104c50e9ca31fd6aba81a864d75cade0fad82b055cb10a"}

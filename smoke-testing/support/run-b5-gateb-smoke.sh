@@ -27,16 +27,6 @@ member_responsibility() {
   esac
 }
 
-member_capability() {
-  case "$1" in
-    leader) printf 'coordination-control\n' ;;
-    architect|challenger|reviewer) printf 'project-read-only\n' ;;
-    developer) printf 'local-development\n' ;;
-    tester) printf 'controlled-testing\n' ;;
-    *) return 1 ;;
-  esac
-}
-
 member_skills() {
   case "$1" in
     leader) printf 'work-coordination,work-planning\n' ;;
@@ -453,15 +443,15 @@ for pair in \
   "${LEADER_NAME}:leader" "${DESIGNER_NAME}:designer" \
   "${IMPLEMENTOR_NAME}:implementor" "${ASSESSOR_NAME}:assessor" "${OPERATOR_NAME}:operator"; do
   member="${pair%%:*}"; role="${pair##*:}"; responsibility="$(member_responsibility "${role}")"
-  runtime="$([[ "${responsibility}" == developer ]] && printf codex-app-server || printf openclaw-built-in)"
-  model="$([[ "${responsibility}" == developer ]] && printf '%s' "${CODEX_MODEL}" || printf deepseek-chat)"
+  runtime=openclaw-built-in
+  model=glm-5
   TIANGONG_MEMBER_WORKER_CONTAINER="$(worker_container "${member}")" \
   TIANGONG_MEMBER_RESPONSIBILITY="${responsibility}" \
     TIANGONG_MEMBER_RUNTIME="${runtime}" \
     TIANGONG_MEMBER_MODEL="${model}" \
+    TIANGONG_MEMBER_REVISION=1 \
     TIANGONG_MEMBER_AGENT_PACKAGE_ID="tiangong-${responsibility}" \
     TIANGONG_MEMBER_AGENT_PACKAGE_VERSION=1.0.0 \
-    TIANGONG_MEMBER_CAPABILITY_PROFILE="$(member_capability "${responsibility}")" \
     TIANGONG_MEMBER_ALLOWED_SKILLS="$(member_skills "${responsibility}")" \
     TIANGONG_MEMBER_COORDINATION_CONTROL_ENDPOINT="http://${COORD_CONTAINER}:8780/v1/coordination/admit" \
     TIANGONG_MEMBER_COORDINATION_CONTROL_TOKEN="${CONTROL_TOKEN}" \
@@ -490,15 +480,15 @@ for pair in \
   "${LEADER_NAME}:leader" "${DESIGNER_NAME}:designer" \
   "${IMPLEMENTOR_NAME}:implementor" "${ASSESSOR_NAME}:assessor" "${OPERATOR_NAME}:operator"; do
   member="${pair%%:*}"; role="${pair##*:}"; responsibility="$(member_responsibility "${role}")"
-  runtime="$([[ "${responsibility}" == developer ]] && printf codex-app-server || printf openclaw-built-in)"
-  model="$([[ "${responsibility}" == developer ]] && printf '%s' "${CODEX_MODEL}" || printf deepseek-chat)"
+  runtime=openclaw-built-in
+  model=glm-5
   TIANGONG_MEMBER_WORKER_CONTAINER="$(worker_container "${member}")" \
   TIANGONG_MEMBER_RESPONSIBILITY="${responsibility}" \
   TIANGONG_MEMBER_RUNTIME="${runtime}" \
   TIANGONG_MEMBER_MODEL="${model}" \
+  TIANGONG_MEMBER_REVISION=1 \
   TIANGONG_MEMBER_AGENT_PACKAGE_ID="tiangong-${responsibility}" \
   TIANGONG_MEMBER_AGENT_PACKAGE_VERSION=1.0.0 \
-  TIANGONG_MEMBER_CAPABILITY_PROFILE="$(member_capability "${responsibility}")" \
   TIANGONG_MEMBER_ALLOWED_SKILLS="$(member_skills "${responsibility}")" \
   TIANGONG_MEMBER_COORDINATION_CONTROL_ENDPOINT="http://${COORD_CONTAINER}:8780/v1/coordination/admit" \
   TIANGONG_MEMBER_COORDINATION_CONTROL_TOKEN="${CONTROL_TOKEN}" \

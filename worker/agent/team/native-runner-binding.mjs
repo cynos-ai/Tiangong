@@ -35,8 +35,8 @@ function coordinationTaskSpec(task) {
 
 function assertImplementorAssignment({ task, member, projectBinding, taskBinding }) {
   const spec = coordinationTaskSpec(task);
-  if (!isMemberConfig(member) || !["developer", "implementor"].includes(member.role) || !member.enabled || member.capabilityProfile !== "local-development") {
-    throw new Error("Native Runner deployment requires an enabled Developer MemberConfig with local-development capability");
+  if (!isMemberConfig(member) || !["developer", "implementor"].includes(member.role) || !member.enabled) {
+    throw new Error("Native Runner deployment requires an enabled Developer MemberConfig");
   }
   if (!isProjectBinding(projectBinding) || !isTaskBinding(taskBinding)) {
     throw new Error("Native Runner deployment requires immutable legacy Project/Task bindings");

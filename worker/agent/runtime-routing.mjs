@@ -1,13 +1,13 @@
 import { canonicalJson, sha256 } from "./canonical-json.mjs";
 
 const RESPONSIBILITY = /^[a-z][a-z0-9_-]{0,63}$/u;
-const RUNTIMES = new Set(["openclaw-built-in", "codex-app-server"]);
+const RUNTIME = "openclaw-built-in";
 
 export const RESPONSIBILITY_RUNTIME_MATRIX = Object.freeze({
   leader: Object.freeze({ responsibility: "leader", runtime: "openclaw-built-in", coding: false }),
   architect: Object.freeze({ responsibility: "architect", runtime: "openclaw-built-in", coding: false }),
   challenger: Object.freeze({ responsibility: "challenger", runtime: "openclaw-built-in", coding: false }),
-  developer: Object.freeze({ responsibility: "developer", runtime: "codex-app-server", coding: true }),
+  developer: Object.freeze({ responsibility: "developer", runtime: "openclaw-built-in", coding: true }),
   reviewer: Object.freeze({ responsibility: "reviewer", runtime: "openclaw-built-in", coding: false }),
   tester: Object.freeze({ responsibility: "tester", runtime: "openclaw-built-in", coding: false }),
 });
@@ -23,7 +23,7 @@ function responsibility(value) {
 export function assertMemberRuntimeRoute({ responsibility: inputResponsibility, configuredRuntime, configuredModel, selectedRuntime, selectedModel, fallback = "none" } = {}) {
   const resolved = responsibility(inputResponsibility); const expected = RESPONSIBILITY_RUNTIME_MATRIX[resolved];
   if (fallback !== "none") fail("FALLBACK_FORBIDDEN", "Initial MemberConfig routes require fallback=none");
-  if (!RUNTIMES.has(configuredRuntime) || configuredRuntime !== expected.runtime) fail("RUNTIME_RESPONSIBILITY_MISMATCH", `${resolved} must configure ${expected.runtime}`);
+  if (configuredRuntime !== RUNTIME || configuredRuntime !== expected.runtime) fail("RUNTIME_RESPONSIBILITY_MISMATCH", `${resolved} must configure ${expected.runtime}`);
   if (selectedRuntime !== configuredRuntime) fail("RUNTIME_CONFIG_MISMATCH", "Selected runtime differs from current MemberConfig");
   if (typeof configuredModel !== "string" || configuredModel.length === 0 || selectedModel !== configuredModel) fail("MODEL_CONFIG_MISMATCH", "Selected model differs from current MemberConfig");
   const route = { schemaVersion: 2, responsibility: resolved, runtime: configuredRuntime, model: configuredModel, coding: expected.coding, fallback: "none" };
@@ -38,6 +38,6 @@ export function runtimeRouteFromEnvironment(env = process.env) {
   const configuredModel = env.TIANGONG_MEMBER_MODEL;
   if (!configuredRuntime || !configuredModel) fail("MEMBER_CONFIG_MISSING", "Current MemberConfig runtime and model projection are required");
   const selectedRuntime = env.TIANGONG_CODEX_RUNTIME === "1" ? "codex-app-server" : "openclaw-built-in";
-  const selectedModel = env.TIANGONG_SELECTED_MODEL ?? env.TIANGONG_CODEX_MODEL ?? env.AGENTTEAMS_MODEL;
+  const selectedModel = env.AGENTTEAMS_MODEL ?? env.TIANGONG_SELECTED_MODEL ?? env.TIANGONG_CODEX_MODEL;
   return assertMemberRuntimeRoute({ responsibility: inputResponsibility, configuredRuntime, configuredModel, selectedRuntime, selectedModel, fallback: env.OPENCLAW_AGENT_HARNESS_FALLBACK ?? "none" });
 }

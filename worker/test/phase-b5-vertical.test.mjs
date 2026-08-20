@@ -86,7 +86,7 @@ function resultFor({ task, role, claim, playbookDigest }) {
   return createResultEnvelope(input);
 }
 
-test("B5 vertical contract keeps one authority while routing Leader builtin and Implementor Codex", async (t) => {
+test("B5 vertical contract keeps one authority while routing Leader and Developer through built-in", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "tiangong-b5-vertical-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const playbook = readPlaybookManifest("software-change-delivery");
@@ -100,21 +100,21 @@ test("B5 vertical contract keeps one authority while routing Leader builtin and 
   const leaderRoute = runtimeRouteFromEnvironment({
     AGENTTEAMS_WORKER_ROLE: "team_leader",
     TIANGONG_MEMBER_RUNTIME: "openclaw-built-in",
-    TIANGONG_MEMBER_MODEL: "deepseek-chat",
-    TIANGONG_SELECTED_MODEL: "deepseek-chat",
+    TIANGONG_MEMBER_MODEL: "glm-5",
+    AGENTTEAMS_MODEL: "glm-5",
     TIANGONG_CODEX_RUNTIME: "0",
     OPENCLAW_AGENT_HARNESS_FALLBACK: "none",
   });
   const implementorRoute = runtimeRouteFromEnvironment({
     TIANGONG_MEMBER_RESPONSIBILITY: "developer",
-    TIANGONG_MEMBER_RUNTIME: "codex-app-server",
-    TIANGONG_MEMBER_MODEL: "deepseek-v4-flash",
-    TIANGONG_CODEX_MODEL: "deepseek-v4-flash",
-    TIANGONG_CODEX_RUNTIME: "1",
+    TIANGONG_MEMBER_RUNTIME: "openclaw-built-in",
+    TIANGONG_MEMBER_MODEL: "glm-5",
+    AGENTTEAMS_MODEL: "glm-5",
+    TIANGONG_CODEX_RUNTIME: "0",
     OPENCLAW_AGENT_HARNESS_FALLBACK: "none",
   });
   assert.equal(leaderRoute.runtime, "openclaw-built-in");
-  assert.equal(implementorRoute.runtime, "codex-app-server");
+  assert.equal(implementorRoute.runtime, "openclaw-built-in");
   await createProject(project, deps(root, LEADER, channel()));
 
   const design = buildTaskBinding({

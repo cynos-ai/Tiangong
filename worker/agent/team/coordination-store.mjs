@@ -131,21 +131,19 @@ export function createTeamRouteBinding(input) {
 export function isTeamRouteBinding(value) { return digestRecord(value, createTeamRouteBinding); }
 
 export function createMemberConfig(input) {
-  exact(input, new Set(["memberId", "teamId", "workerName", "matrixUserId", "role", "controlProfileId", "enabled", "createdAt", "revision", "runtime", "model", "agentPackageId", "agentPackageVersion", "capabilityProfile", "allowedSkills"]), "MemberConfig");
+  exact(input, new Set(["memberId", "teamId", "workerName", "matrixUserId", "role", "controlProfileId", "enabled", "createdAt", "revision", "runtime", "model", "agentPackageId", "agentPackageVersion", "allowedSkills"]), "MemberConfig");
   const responsibility = input.role === "team_leader" ? "leader" : input.role === "implementor" ? "developer" : input.role;
-  const runtime = input.runtime ?? (responsibility === "developer" ? "codex-app-server" : "openclaw-built-in");
-  const capabilityDefaults = { leader: "coordination-control", architect: "project-read-only", challenger: "project-read-only", developer: "local-development", reviewer: "project-read-only", tester: "controlled-testing" };
-  if (!["openclaw-built-in", "codex-app-server"].includes(runtime)) throw new Error("MemberConfig runtime is unsupported");
+  const runtime = input.runtime ?? "openclaw-built-in";
+  if (runtime !== "openclaw-built-in") throw new Error("MemberConfig runtime is unsupported");
   const agentPackageVersion = bounded(input.agentPackageVersion ?? "1.0.0", "agentPackageVersion", 32);
   if (!/^\d+\.\d+\.\d+$/u.test(agentPackageVersion)) throw new Error("MemberConfig Agent package version is invalid");
   return freezeDigest({
-    kind: "tiangong.member-config", schemaVersion: 3,
+    kind: "tiangong.member-config", schemaVersion: 5,
     memberId: identifier(input.memberId, "memberId"), teamId: identifier(input.teamId, "teamId"), revision: positiveInteger(input.revision ?? 1, "revision"),
     workerName: identifier(input.workerName, "workerName"), matrixUserId: bounded(input.matrixUserId, "matrixUserId", 256),
     role: bounded(input.role, "role", 128), controlProfileId: identifier(input.controlProfileId, "controlProfileId"),
-    enabled: input.enabled === true, runtime, model: identifier(input.model ?? (runtime === "codex-app-server" ? "deepseek-v4-flash" : "deepseek-chat"), "model"),
+    enabled: input.enabled === true, runtime, model: identifier(input.model ?? "glm-5", "model"),
     agentPackageId: identifier(input.agentPackageId ?? `tiangong-${responsibility}`, "agentPackageId"), agentPackageVersion,
-    capabilityProfile: identifier(input.capabilityProfile ?? capabilityDefaults[responsibility] ?? "legacy-read-only", "capabilityProfile"),
     allowedSkills: idList(input.allowedSkills ?? [], "allowedSkills", 64), createdAt: timestamp(input.createdAt, "createdAt"),
   });
 }

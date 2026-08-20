@@ -202,7 +202,7 @@ export function registerNativeRunnerTool(api, { env = process.env, fetchImpl = g
   if (env.TIANGONG_NATIVE_RUNNER_EXEC_POLICY !== "deny") {
     throw new Error("native Runner requires generic host-side exec to be denied");
   }
-  if (env.TIANGONG_MEMBER_RESPONSIBILITY !== "developer" || env.TIANGONG_MEMBER_AGENT_PACKAGE_ID !== "tiangong-developer" || env.TIANGONG_MEMBER_RUNTIME !== "codex-app-server" || env.TIANGONG_MEMBER_CAPABILITY_PROFILE !== "local-development") {
+  if (env.TIANGONG_MEMBER_RESPONSIBILITY !== "developer" || env.TIANGONG_MEMBER_AGENT_PACKAGE_ID !== "tiangong-developer" || env.TIANGONG_MEMBER_RUNTIME !== "openclaw-built-in") {
     throw new Error("native Runner requires the current Developer Agent package capability");
   }
   const endpoint = runnerBrokerEndpointForWorker({ role: BROKER_ROLE, env });

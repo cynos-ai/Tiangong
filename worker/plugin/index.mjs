@@ -12,7 +12,6 @@ import { createToolResultCaptureHook, defaultToolResultCapturePath } from "../ag
 import { assertPluginApi } from "../agent/preflight/openclaw-preflight.mjs";
 import { registerAgentPackageRuntime } from "../agent/skills/runtime.mjs";
 import { registerMemberCoordinationHooks } from "../agent/team/member-coordination-hooks.mjs";
-import { registerNativeRunnerTool } from "../agent/team/native-runner-tool.mjs";
 import { registerLeaderCoordinationHooks } from "../agent/team/leader-coordination-hooks.mjs";
 import { isLeaderEnvironment, registerLeaderOpenClawTools } from "../agent/team/leader-openclaw-tools.mjs";
 
@@ -55,7 +54,6 @@ export default definePluginEntry({
         token: process.env.TIANGONG_COORDINATION_CONTROL_TOKEN,
         memberId: process.env.TIANGONG_MEMBER_ID,
       });
-      registerNativeRunnerTool(api, { env: process.env });
     }
     if (leaderEnvironment) {
       registerLeaderCoordinationHooks(api, { env: process.env });

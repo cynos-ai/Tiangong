@@ -242,7 +242,7 @@ function projectAgents(memberConfigs, tasks, toolResults) {
     return {
       memberId: member.memberId,
       responsibility: typeof member.role === "string" ? member.role.slice(0, 128) : null,
-      runtime: boundedId(member.runtime), model: boundedId(member.model), agentPackageId: boundedId(member.agentPackageId), agentPackageVersion: boundedId(member.agentPackageVersion), capabilityProfile: boundedId(member.capabilityProfile),
+      runtime: boundedId(member.runtime), model: boundedId(member.model), agentPackageId: boundedId(member.agentPackageId), agentPackageVersion: boundedId(member.agentPackageVersion),
       allowedSkills: Array.isArray(member.allowedSkills) ? member.allowedSkills.slice(0, 64).map(boundedId).filter(Boolean) : [], status: assigned.length ? "active" : "waiting",
       activeTasks: assigned.slice(0, 16).map((task) => ({ taskId: task.taskId, workId: task.workId, sessionRef: task.sessionRef })), usedSkills,
     };
