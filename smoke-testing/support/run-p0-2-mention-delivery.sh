@@ -26,7 +26,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 readonly REPO_ROOT
-readonly TARGET_IMAGE="tiangong-worker-designer:dev"
+readonly TARGET_IMAGE="tg-worker:dev"
 readonly STOCK_LEADER_IMAGE="higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-copaw-worker:v1.2.0"
 readonly TEAM_NAME="tiangong-p0-2-mention"
 readonly LEADER_NAME="tiangong-p0-2-mention-leader"

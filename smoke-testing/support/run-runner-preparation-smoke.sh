@@ -28,9 +28,9 @@ TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/tiangong-runner-preparation-smoke.XXXXXX
 readonly TEMP_ROOT
 readonly IMPLEMENT_REQUEST="${TEMP_ROOT}/implement.json"
 readonly ASSESS_REQUEST="${TEMP_ROOT}/assess.json"
-readonly IMAGE_LEADER="tiangong-worker-leader:dev"
-readonly IMAGE_IMPLEMENTOR="tiangong-worker-implementor:dev"
-readonly IMAGE_ASSESSOR="tiangong-worker-assessor:dev"
+readonly IMAGE_LEADER="tg-worker:dev"
+readonly IMAGE_IMPLEMENTOR="tg-worker:dev"
+readonly IMAGE_ASSESSOR="tg-worker:dev"
 export IMPLEMENT_REQUEST ASSESS_REQUEST
 
 cd "$REPO_ROOT"

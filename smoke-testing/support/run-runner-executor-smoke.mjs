@@ -20,7 +20,7 @@ import { runCommand } from "../../worker/agent/runner/runner-port.mjs";
 const supportDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(supportDirectory, "../..");
 const fixtureSource = path.join(repositoryRoot, "smoke-testing/fixtures/runner-isolation");
-const image = process.env.TIANGONG_RUNNER_IMAGE ?? "tiangong-worker-implementor:dev";
+const image = process.env.TIANGONG_RUNNER_IMAGE ?? "tg-worker:dev";
 const dockerPath = process.env.TIANGONG_DOCKER_PATH ?? "/usr/bin/docker";
 const runId = `run-${randomUUID()}`;
 const runDocker = createDockerCommandRunner({ dockerPath });

@@ -10,11 +10,34 @@ readonly MANAGER_CONTAINER="agentteams-manager"
 readonly CONTROLLER_CONTAINER="agentteams-controller"
 readonly DRIVER="${SCRIPT_DIR}/run-leader-smoke.sh"
 readonly DEPLOY_COORDINATION="${REPO_ROOT}/scripts/deploy-coordination-runtime.sh"
-readonly INJECT_ROLE="${REPO_ROOT}/scripts/inject-b5-role-runtime-docker.sh"
+readonly INJECT_MEMBER="${REPO_ROOT}/scripts/inject-member-runtime-docker.sh"
 readonly INJECT_LEADER="${REPO_ROOT}/scripts/inject-leader-runtime-docker.sh"
 readonly RUNNER_BROKER_SCRIPT="${REPO_ROOT}/scripts/runner-broker.sh"
 readonly OPENCODEX_DEPLOY="${REPO_ROOT}/scripts/deploy-opencodex-sidecar.sh"
 readonly NORMALIZE_GATEWAY_PROVIDER="${REPO_ROOT}/scripts/normalize-agentteams-gateway-provider.sh"
+
+member_responsibility() {
+  case "$1" in
+    leader) printf 'leader\n' ;;
+    designer) printf 'architect\n' ;;
+    implementor) printf 'developer\n' ;;
+    assessor) printf 'reviewer\n' ;;
+    operator) printf 'tester\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+member_skills() {
+  case "$1" in
+    leader) printf 'work-coordination,work-planning\n' ;;
+    architect) printf 'work-planning,plan-challenge\n' ;;
+    challenger) printf 'plan-challenge\n' ;;
+    developer) printf 'test-driven-development,independent-code-review,scenario-testing\n' ;;
+    reviewer) printf 'independent-code-review\n' ;;
+    tester) printf 'scenario-testing\n' ;;
+    *) return 1 ;;
+  esac
+}
 
 sidecar_container_name() {
   local worker_id="$1" prefix='tiangong-opencodex-' suffix digest
@@ -69,7 +92,7 @@ SIDECAR_CONTAINER="$(sidecar_container_name "${IMPLEMENTOR_NAME}")"
 readonly SIDECAR_CONTAINER
 readonly GATEWAY_PROVIDER_SNAPSHOT_ID="tiangong-${RUN_ID}"
 readonly SMOKE_MODEL="${TIANGONG_SMOKE_MODEL:-deepseek-chat}"
-readonly CODEX_MODEL="${TIANGONG_B5_CODEX_MODEL:-deepseek-v4-pro}"
+readonly CODEX_MODEL="${TIANGONG_MEMBER_CODEX_MODEL:-deepseek-v4-flash}"
 DOCKER_BINARY="$(command -v docker 2>/dev/null || true)"
 DOCKER_BINARY_REAL="$(readlink -f "${DOCKER_BINARY}" 2>/dev/null || printf '%s' "${DOCKER_BINARY}")"
 DOCKER_USES_WINDOWS_PATHS=0
@@ -148,7 +171,7 @@ wait_team_active() {
   return 1
 }
 provision_opencodex_sidecar() {
-  local image="${TIANGONG_OPENCODEX_SIDECAR_IMAGE:-tiangong-opencodex-sidecar:dev}"
+  local image="${TIANGONG_OPENCODEX_SIDECAR_IMAGE:-tg-opencodex-sidecar:dev}"
   # OpenCodex serves its data-plane API below /v1; /models is the HTML
   # dashboard and would make the Worker gateway probe accept HTML as a 200
   # response before JSON parsing. Bind the receipt to the API base explicitly.
@@ -158,20 +181,20 @@ provision_opencodex_sidecar() {
     --arg worker "${IMPLEMENTOR_NAME}" \
     --arg image "${image}" \
     --arg endpoint "${endpoint}" \
-    --arg provider "${TIANGONG_B5_CODEX_PROVIDER:-agentteams-gateway}" \
+    --arg provider "${TIANGONG_MEMBER_CODEX_PROVIDER:-agentteams-gateway}" \
     --arg model "${CODEX_MODEL}" \
     --arg credential "agentteams://credentials/${IMPLEMENTOR_NAME}" \
     '{schemaVersion:1,teamId:$team,workerId:$worker,image:$image,endpoint:$endpoint,provider:$provider,model:$model,transport:"responses-via-chat-bridge",bridge:"opencodex",credentialSource:"agentteams-secret-projection",credentialRef:$credential,generation:1}' \
     >"${SIDECAR_BINDING_FILE}"
   chmod 600 "${SIDECAR_BINDING_FILE}"
   sidecar_attempted=1
-  TIANGONG_OPENCODEX_ADAPTER_IMAGE="${TIANGONG_OPENCODEX_ADAPTER_IMAGE:-tiangong-opencodex-adapter:dev}" \
+  TIANGONG_OPENCODEX_ADAPTER_IMAGE="${TIANGONG_OPENCODEX_ADAPTER_IMAGE:-tg-opencodex-adapter:dev}" \
     TIANGONG_OPENCODEX_WORKER_CONTAINER="$(worker_container "${IMPLEMENTOR_NAME}")" \
     bash "${OPENCODEX_DEPLOY}" lifecycle provision \
       --binding "${SIDECAR_BINDING_FILE}" --snapshot "${SIDECAR_SNAPSHOT_FILE}" >/dev/null || \
     fail OPENCODEX_SIDECAR_PROVISION
   sidecar_provisioned=1
-  TIANGONG_OPENCODEX_ADAPTER_IMAGE="${TIANGONG_OPENCODEX_ADAPTER_IMAGE:-tiangong-opencodex-adapter:dev}" \
+  TIANGONG_OPENCODEX_ADAPTER_IMAGE="${TIANGONG_OPENCODEX_ADAPTER_IMAGE:-tg-opencodex-adapter:dev}" \
     TIANGONG_OPENCODEX_WORKER_CONTAINER="$(worker_container "${IMPLEMENTOR_NAME}")" \
     bash "${OPENCODEX_DEPLOY}" lifecycle ready --snapshot "${SIDECAR_SNAPSHOT_FILE}" >/dev/null || \
     fail OPENCODEX_SIDECAR_NOT_READY
@@ -213,9 +236,9 @@ cleanup() {
   fi
   if ((sidecar_attempted == 1)); then
     if ((sidecar_provisioned == 1)); then
-      TIANGONG_OPENCODEX_ADAPTER_IMAGE="${TIANGONG_OPENCODEX_ADAPTER_IMAGE:-tiangong-opencodex-adapter:dev}" \
+      TIANGONG_OPENCODEX_ADAPTER_IMAGE="${TIANGONG_OPENCODEX_ADAPTER_IMAGE:-tg-opencodex-adapter:dev}" \
         bash "${OPENCODEX_DEPLOY}" lifecycle drain --snapshot "${SIDECAR_SNAPSHOT_FILE}" >/dev/null 2>&1 || status=1
-      TIANGONG_OPENCODEX_ADAPTER_IMAGE="${TIANGONG_OPENCODEX_ADAPTER_IMAGE:-tiangong-opencodex-adapter:dev}" \
+      TIANGONG_OPENCODEX_ADAPTER_IMAGE="${TIANGONG_OPENCODEX_ADAPTER_IMAGE:-tg-opencodex-adapter:dev}" \
         bash "${OPENCODEX_DEPLOY}" lifecycle remove --snapshot "${SIDECAR_SNAPSHOT_FILE}" >/dev/null 2>&1 || status=1
     fi
     # A failed provision may create the owned container before writing its
@@ -419,19 +442,26 @@ manager_stopped=1
 for pair in \
   "${LEADER_NAME}:leader" "${DESIGNER_NAME}:designer" \
   "${IMPLEMENTOR_NAME}:implementor" "${ASSESSOR_NAME}:assessor" "${OPERATOR_NAME}:operator"; do
-  member="${pair%%:*}"; role="${pair##*:}"
-  TIANGONG_B5_WORKER_CONTAINER="$(worker_container "${member}")" \
-  TIANGONG_B5_ROLE_ID="${role}" \
-    TIANGONG_B5_COORDINATION_CONTROL_ENDPOINT="http://${COORD_CONTAINER}:8780/v1/coordination/admit" \
-    TIANGONG_B5_COORDINATION_CONTROL_TOKEN="${CONTROL_TOKEN}" \
-    TIANGONG_B5_CODEX_MODEL="${CODEX_MODEL}" \
-    TIANGONG_B5_ALLOW_STOPPED=1 \
+  member="${pair%%:*}"; role="${pair##*:}"; responsibility="$(member_responsibility "${role}")"
+  runtime=openclaw-built-in
+  model=glm-5
+  TIANGONG_MEMBER_WORKER_CONTAINER="$(worker_container "${member}")" \
+  TIANGONG_MEMBER_RESPONSIBILITY="${responsibility}" \
+    TIANGONG_MEMBER_RUNTIME="${runtime}" \
+    TIANGONG_MEMBER_MODEL="${model}" \
+    TIANGONG_MEMBER_REVISION=1 \
+    TIANGONG_MEMBER_AGENT_PACKAGE_ID="tiangong-${responsibility}" \
+    TIANGONG_MEMBER_AGENT_PACKAGE_VERSION=1.0.0 \
+    TIANGONG_MEMBER_ALLOWED_SKILLS="$(member_skills "${responsibility}")" \
+    TIANGONG_MEMBER_COORDINATION_CONTROL_ENDPOINT="http://${COORD_CONTAINER}:8780/v1/coordination/admit" \
+    TIANGONG_MEMBER_COORDINATION_CONTROL_TOKEN="${CONTROL_TOKEN}" \
+    TIANGONG_MEMBER_ALLOW_STOPPED=1 \
     TIANGONG_INJECTION_DEBUG=1 \
     TIANGONG_DOCKER_TEMP_DIR="${STATE_DIR}" \
-    bash "${INJECT_ROLE}" >>"${STATE_DIR}/inject-${role}.log" 2>&1 || {
-      code="$(sed -n 's/^b5_role_runtime_injection=fail code=//p' "${STATE_DIR}/inject-${role}.log" | tail -n 1)"
-      printf 'gateb=role_injection_failed role=%s code=%s\n' "${role}" "${code:-UNKNOWN}"
-      fail "ROLE_${role^^}_INJECTION"
+    bash "${INJECT_MEMBER}" >>"${STATE_DIR}/inject-${role}.log" 2>&1 || {
+      code="$(sed -n 's/^member_runtime_injection=fail code=//p' "${STATE_DIR}/inject-${role}.log" | tail -n 1)"
+      printf 'gateb=member_injection_failed responsibility=%s code=%s\n' "${responsibility}" "${code:-UNKNOWN}"
+      fail "MEMBER_${responsibility^^}_INJECTION"
     }
 done
 docker start "${MANAGER_CONTAINER}" >/dev/null || fail MANAGER_RESTART_AFTER_INJECTION
@@ -449,19 +479,26 @@ docker exec "${MANAGER_CONTAINER}" agt get workers -o json >/dev/null 2>&1 || fa
 for pair in \
   "${LEADER_NAME}:leader" "${DESIGNER_NAME}:designer" \
   "${IMPLEMENTOR_NAME}:implementor" "${ASSESSOR_NAME}:assessor" "${OPERATOR_NAME}:operator"; do
-  member="${pair%%:*}"; role="${pair##*:}"
-  TIANGONG_B5_WORKER_CONTAINER="$(worker_container "${member}")" \
-  TIANGONG_B5_ROLE_ID="${role}" \
-  TIANGONG_B5_COORDINATION_CONTROL_ENDPOINT="http://${COORD_CONTAINER}:8780/v1/coordination/admit" \
-  TIANGONG_B5_COORDINATION_CONTROL_TOKEN="${CONTROL_TOKEN}" \
-  TIANGONG_B5_CODEX_MODEL="${CODEX_MODEL}" \
-  TIANGONG_B5_ALLOW_STOPPED=1 \
+  member="${pair%%:*}"; role="${pair##*:}"; responsibility="$(member_responsibility "${role}")"
+  runtime=openclaw-built-in
+  model=glm-5
+  TIANGONG_MEMBER_WORKER_CONTAINER="$(worker_container "${member}")" \
+  TIANGONG_MEMBER_RESPONSIBILITY="${responsibility}" \
+  TIANGONG_MEMBER_RUNTIME="${runtime}" \
+  TIANGONG_MEMBER_MODEL="${model}" \
+  TIANGONG_MEMBER_REVISION=1 \
+  TIANGONG_MEMBER_AGENT_PACKAGE_ID="tiangong-${responsibility}" \
+  TIANGONG_MEMBER_AGENT_PACKAGE_VERSION=1.0.0 \
+  TIANGONG_MEMBER_ALLOWED_SKILLS="$(member_skills "${responsibility}")" \
+  TIANGONG_MEMBER_COORDINATION_CONTROL_ENDPOINT="http://${COORD_CONTAINER}:8780/v1/coordination/admit" \
+  TIANGONG_MEMBER_COORDINATION_CONTROL_TOKEN="${CONTROL_TOKEN}" \
+  TIANGONG_MEMBER_ALLOW_STOPPED=1 \
   TIANGONG_INJECTION_DEBUG=1 \
     TIANGONG_DOCKER_TEMP_DIR="${STATE_DIR}" \
-    bash "${INJECT_ROLE}" >>"${STATE_DIR}/reinject-${role}.log" 2>&1 || {
-      code="$(sed -n 's/^b5_role_runtime_injection=fail code=//p' "${STATE_DIR}/reinject-${role}.log" | tail -n 1)"
-      printf 'gateb=role_reinjection_failed role=%s code=%s\n' "${role}" "${code:-UNKNOWN}"
-      fail "ROLE_${role^^}_REINJECTION"
+    bash "${INJECT_MEMBER}" >>"${STATE_DIR}/reinject-${role}.log" 2>&1 || {
+      code="$(sed -n 's/^member_runtime_injection=fail code=//p' "${STATE_DIR}/reinject-${role}.log" | tail -n 1)"
+      printf 'gateb=member_reinjection_failed responsibility=%s code=%s\n' "${responsibility}" "${code:-UNKNOWN}"
+      fail "MEMBER_${responsibility^^}_REINJECTION"
     }
 done
 provision_opencodex_sidecar

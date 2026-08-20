@@ -272,7 +272,7 @@ test("playbooks.lock pins package, policy, schemas, roles, and upstream contract
       "assessor-independent-assessment-v1": "assessor/independent-assessment",
       "operator-controlled-release-v1": "operator/controlled-release",
     }[skillId];
-    assert.equal(sha256(readCanonicalText(path.join(workerRoot, "skills", `${roleId}.md`))), digest);
+    assert.equal(sha256(readCanonicalText(path.join(workerRoot, "legacy", "skills", `${roleId}.md`))), digest);
   }
 });
 

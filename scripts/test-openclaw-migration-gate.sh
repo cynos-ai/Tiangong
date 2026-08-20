@@ -17,9 +17,9 @@ fail() {
 # Windows; normalize only this static contract before matching it.
 grep -Fqx 'AGENTTEAMS_DEFAULT_WORKER_RUNTIME=openclaw' <(tr -d '\r' < "${REPO_ROOT}/.env.example") || fail ENV_DEFAULT_NOT_OPENCLAW
 grep -Fq ": \"\${AGENTTEAMS_DEFAULT_WORKER_RUNTIME:=openclaw}\"" "${REPO_ROOT}/scripts/agentteams.sh" || fail BOOTSTRAP_DEFAULT_NOT_OPENCLAW
-grep -Fq 'readonly OPENCLAW_RUNTIME=pi' "${REPO_ROOT}/scripts/inject-b5-role-runtime-docker.sh" || fail OPENCLAW_NATIVE_RUNTIME_MISSING
+grep -Fq 'readonly OPENCLAW_RUNTIME=pi' "${REPO_ROOT}/scripts/inject-member-runtime-docker.sh" || fail OPENCLAW_NATIVE_RUNTIME_MISSING
 grep -Fq 'tiangong-control' "${REPO_ROOT}/worker/plugin/openclaw.plugin.json" || fail CONTROL_PLUGIN_MISSING
-if rg -n 'tiangong-pi|TIANGONG_OPENCLAW_NATIVE|registerAgentHarness' "${REPO_ROOT}/worker/plugin" "${REPO_ROOT}/worker/bin/openclaw" "${REPO_ROOT}/scripts/inject-b5-role-runtime-docker.sh" >/dev/null; then
+if rg -n 'tiangong-pi|TIANGONG_OPENCLAW_NATIVE|registerAgentHarness' "${REPO_ROOT}/worker/plugin" "${REPO_ROOT}/worker/bin/openclaw" "${REPO_ROOT}/scripts/inject-member-runtime-docker.sh" >/dev/null; then
   fail LEGACY_HARNESS_REFERENCE_PRESENT
 fi
 grep -Fq 'configure_builtin_gateway' "${REPO_ROOT}/worker/bin/openclaw" || fail BUILTIN_GATEWAY_OVERRIDE_MISSING

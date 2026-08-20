@@ -3,7 +3,7 @@
 Tiangong is an evidence-backed AI software engineering team built on [AgentTeams](https://github.com/agentscope-ai/AgentTeams).
 
 > [!NOTE]
-> v0.1.0, v0.2.0, v0.3.0, v0.3.1, and v0.4.0 are historical source releases. v0.4.1 is the current OpenClaw-native, evidence-backed five-role delivery team: Team Leader, Designer, Implementor, Assessor, and Operator. Historical Reviewer experiments and the Tiangong-owned Pi runtime are not active paths. The target Web product and runtime described by the design documents are planned work, not implemented capabilities. See the [v0.4.1 release notes](docs/releases/v0.4.1.md) and [changelog](CHANGELOG.md).
+> v0.4.1 is the latest source release and records the completed OpenClaw runtime migration. Current development has implemented M0–M3 and M5: the coordination foundation, six long-lived Agent packages, capability-bound portable Skills, a chat-first Matrix workbench, and the OpenClaw built-in execution foundation. A disposable local M6 real-project coding vertical has also completed the WorkSpec → Plan/Challenge → Developer Commit → independent Review/Tester → CloseGuard → clean-rerun path; this does not claim production deployment. See the [v0.4.1 release notes](docs/releases/v0.4.1.md), [product MVP](docs/design/product-mvp.zh.md), and [changelog](CHANGELOG.md).
 >
 > The implementation-independent target is defined by the [team-control design](docs/design/evidence-backed-team-control.md) ([中文](docs/design/evidence-backed-team-control.zh.md)). The first public product slice is specified separately in the [product MVP design（中文）](docs/design/product-mvp.zh.md); it does not claim those capabilities already exist.
 
@@ -38,7 +38,7 @@ Edit the generated `.env` and set at least:
 AGENTTEAMS_LLM_API_KEY=your-api-key
 ```
 
-The defaults use Alibaba Cloud Coding Plan with `qwen3.5-plus`. To use another OpenAI-compatible provider, change `AGENTTEAMS_OPENAI_BASE_URL` and `AGENTTEAMS_DEFAULT_MODEL` as well.
+The defaults use Alibaba Cloud Coding Plan with `glm-5`. Provider credentials and routing are configured through AgentTeams. To use another official AgentTeams provider or model, update `AGENTTEAMS_OPENAI_BASE_URL` and `AGENTTEAMS_DEFAULT_MODEL`, then revise the affected Worker through AgentTeams so Tiangong can bind the new model as a fresh MemberConfig revision.
 
 The configuration parser accepts one `KEY=VALUE` assignment per line; it does not execute shell syntax. Never commit `.env`.
 
@@ -69,7 +69,7 @@ Run `make help` for the complete command list. Uninstall removes the Tiangong-ow
 
 ### OpenClaw-native Worker image smoke test
 
-The local Worker image extends the public AgentTeams `v1.2.2` Worker image at an immutable digest and retains its pinned Node.js `22.23.2` runtime. Model turns run in OpenClaw's embedded runtime; coding turns use OpenClaw's official Codex app-server path. Tiangong contributes only its control plugin, role tools, gates, coordination, and evidence.
+The local Worker image extends the public AgentTeams `v1.2.2` Worker image at an immutable digest and retains its pinned Node.js `22.23.2` runtime. All initial professional turns, including Developer coding turns, run through OpenClaw's built-in runtime. Tiangong contributes only its control plugin, Agent/Skill tools, gates, coordination, and direct machine facts.
 
 With AgentTeams running, choose the fast channel smoke or the full approval smoke:
 
@@ -78,25 +78,41 @@ make test-worker-image-basic  # Gateway, Matrix, persistent session, credential 
 make test-worker-image        # Also Gate, restart recovery, approval, replay, and Evidence
 ```
 
-Both levels build `tiangong-worker:dev`, create a disposable Worker through the AgentTeams declarative API, and use the real Worker-scoped Gateway and Matrix room. The Basic smoke validates a gated `read` through Matrix, an exact nonce response, matching Evidence, and the credential boundary.
+Both levels build `tg-worker:dev`, create a disposable Worker through the AgentTeams declarative API, and use the real Worker-scoped Gateway and Matrix room. The Basic smoke validates a gated `read` through Matrix, an exact nonce response, matching Evidence, and the credential boundary.
 
 The Full smoke additionally exercises a constrained workspace write, approval, Worker restart, replay, and Evidence. Cross-Worker-restart recovery uses a versioned Tiangong pending-operation envelope and does not depend on a Tiangong-owned model transcript.
 
 Cleanup removes the temporary Worker and the exact MinIO prefix owned by the reserved smoke identity. It never operates on another Worker prefix. Provider credentials are not copied into the image, repository, model configuration, session, or Evidence.
 
-The Worker resource retains AgentTeams' supported `openclaw` runtime, Node.js version, entrypoint, and gateway. A narrow `openclaw` command wrapper injects the Tiangong control plugin path into the generated configuration and then delegates to the upstream executable. OpenClaw continues to own Matrix, model turns, configuration retrieval, storage sync, re-login, readiness, channel policy, and reply delivery. Tiangong owns the five closed RoleProfiles, validated SOUL/Skill context, WorkRun state, Evidence, approval, and Gate behavior.
+The Worker resource retains AgentTeams' supported `openclaw` runtime, Node.js version, entrypoint, and gateway. A narrow `openclaw` command wrapper injects the Tiangong control plugin path into the generated configuration and then delegates to the upstream executable. OpenClaw continues to own Matrix, model turns, configuration retrieval, storage sync, re-login, readiness, channel policy, and reply delivery. Tiangong owns Work/WorkSpec/Plan/Task/Result coordination, bounded execution records, Operation policy, recovery, and its product experience.
 
 Optional, backend-neutral Worker tracing is documented in [`docs/observability.md`](./docs/observability.md). It is disabled by default, exports only allowlisted sanitized OpenTelemetry spans, and remains diagnostic telemetry rather than authorization or hash-chained Evidence. The bounded [`peer transport diagnostic`](./docs/peer-transport-diagnostic.md) keeps exact ping/pong markers in deterministic Worker code while deriving targets only from authenticated effective Matrix allowlists; it is transport-only and is not Team Work or Evidence.
 
-The evidence-first five-role walkthrough is documented in [`docs/demo-script.md`](./docs/demo-script.md). `make check-demo-contract` independently checks the fixed profiles, Skill binding/evaluation boundary, Playbook lock, and Runner fixture before a real smoke run.
+### Chat-first Matrix workbench
+
+The deployment-owned Coordination runtime now serves the M3 workbench at its root URL. A Human signs in with a current Matrix identity; Tiangong keeps the resulting access token only in a bounded in-memory session and returns an HttpOnly, SameSite cookie. Every chat, runtime-fact request, and SSE update rechecks Matrix identity and membership in the configured unencrypted Team Room. Session revocation closes the fact stream, and process restart forgets all Web sessions.
+
+The workbench uses Matrix history/sync/send for the center conversation and never stores message bodies in PostgreSQL. The left rail shows the configured Team/Room and Leader admission backlog. The right panel projects Room Work history, nullable WorkSpec, Plan refs/history, Challenger and other Results, Agent/model/actual Skill use, Tasks, ToolResults, deliverables, and timeline facts. Selecting a Work changes only that panel; the send contract rejects any Work routing field.
+
+Set `AGENTTEAMS_MATRIX_URL` in the Coordination runtime environment to enable Human Web login. `TIANGONG_COORDINATION_MATRIX_TOKEN` remains optional and enables only the deployment-owned outbox sender. HTTPS deployments keep secure cookies enabled; a loopback HTTP development deployment must explicitly set `TIANGONG_WEB_SECURE_COOKIES=0`. Encrypted Rooms fail closed in the first version.
+
+Run the focused deterministic contract with:
+
+```bash
+make test-chat-first-web
+```
 
 The current runtime is intentionally constrained:
 
 - it claims only the Worker-scoped `agentteams-gateway` provider and disables OpenClaw's fallback to another agent harness;
 - provider credentials stay deployment-scoped and are injected by the selected OpenClaw runtime only in memory;
 - unapproved OpenClaw extensions, prompt templates, and automatic repository context are disabled;
-- every image loads a strict, digest-bound RoleProfile plus code-owned SOUL and Skill resources from `/opt/tiangong-worker`; environment variables, Worker names, prompts, and tool arguments cannot select or elevate its role;
-- OpenClaw owns its conversation/session persistence; Tiangong WorkRun, Evidence, idempotency, pending payload, and rollback state use independent roots beneath the synchronized state directory, so conversation reset cannot erase business state;
+- one generic `tg-worker` image is configured by authenticated AgentTeams identity, MemberConfig, ControlProfile, and deployment-owned runtime bindings; image names, prompts, and Task text cannot grant a responsibility or capability;
+- runtime, current AgentTeams Worker model, Agent package, capability profile, and allowed Skill set are fixed by the current MemberConfig revision and checked before OpenClaw configuration mutation and on each new turn; Provider/model changes use AgentTeams administration rather than Task or prompt input;
+- the six initial Agent packages are Leader, Architect, Challenger, Developer, Reviewer, and Tester; Leader uses one logical session per Work and every professional Task receives its own deterministic logical session reference;
+- top-level tools are fail-closed from Agent package `toolGroups`: Leader gets coordination plus Skill runtime, while the five professional members get Skill runtime plus the machine-locked OpenClaw workspace tools; deployments remain responsible for each isolated workspace, credential, and network boundary;
+- product Skill authority is exactly the digest-locked Agent-package installation intersected with `MemberConfig.allowedSkills`; the Agent selects an enabled Skill through `tiangong_use_skill`, and the bounded ToolResult records its ID/version/content digest without granting capabilities;
+- OpenClaw owns its conversation/session persistence; Tiangong coordination and control state uses independent protected storage, so conversation reset cannot erase product facts;
 - restartable writes persist a digest-bound operation envelope and a separate mode-`600` content payload under that state directory; raw write content never enters Evidence, but is visible to principals with Worker storage administration access and follows explicit operation retention;
 - only gated `read` and path-restricted, atomic `write` are active; `write` requires persisted approval from the same authenticated Matrix sender that requested it, ignores upstream owner assertions for authorization, supports restart recovery, and blocks duplicate execution;
 - runtime state, credential-bearing paths, symlink traversal, workspace escape, image input, and unbounded shell access are unavailable to the gated tool surface.
@@ -105,10 +121,10 @@ To build and inspect the image without creating a Worker:
 
 ```bash
 make build-worker-image
-docker run --rm --entrypoint openclaw tiangong-worker:dev --version
+docker run --rm --entrypoint openclaw tg-worker:dev --version
 ```
 
-The build also produces dedicated `tiangong-worker-leader:dev`, `tiangong-worker-designer:dev`, `tiangong-worker-implementor:dev`, `tiangong-worker-assessor:dev`, and `tiangong-worker-operator:dev` images. Each image contains the same controlled runtime but a fixed RoleProfile and closed tool surface. The professional images bind their Task, role, Skill, WorkRun, ResultEnvelope, and Evidence through code; Implementor and Assessor commands use the isolated Runner boundary, while Operator uses only the structured deployment boundary. No historical Reviewer image or Practice compatibility path is built.
+The active build produces one generic `tg-worker:dev` runtime plus the deployment-owned runner/deployment service images; Codex/OpenCodex auxiliary targets are not built by the product path. It does not build role-specific Worker images. The initial MemberConfig contract routes all six professional Agents through OpenClaw built-in and defaults them to `glm-5`. An administrator may change a specific Worker's Provider/model through AgentTeams; Tiangong accepts the model only when it matches the authenticated Worker projection and records the change as a new MemberConfig revision. A Task, prompt, or Skill cannot change it.
 
 ### Interrupted write reconciliation
 
@@ -155,14 +171,17 @@ Evidence rotates at 16 MiB into ordered segments whose ranges and terminal hashe
 
 Do not expose this profile beyond one machine. A multi-user deployment requires a different, deliberately designed identity, TLS, storage, network, secret-management, and container-isolation model.
 
-## Maintainer Skills
+## Agent and maintainer Skills
 
-Portable project Skills under [`.agents/skills/`](./.agents/skills/) guide Skill authoring and the design and execution of Tiangong smoke tests. They are maintainer workflows loaded only after project trust; they are not yet product Worker Skills.
+Six product Skills under [`worker/skills/`](./worker/skills/) ship in `tg-worker`: `work-coordination`, `work-planning`, `plan-challenge`, `test-driven-development`, `independent-code-review`, and `scenario-testing`. Their packages include trigger truth tables and deterministic success/blocked/cleanup cases. Agent packages under [`worker/agent-packages/`](./worker/agent-packages/) lock each installed Skill version and content digest; MemberConfig enables only a subset.
 
-Validate their structure, public-safety checks, and trigger cases with:
+Portable maintainer Skills under [`.agents/skills/`](./.agents/skills/) remain repository workflows loaded only after project trust and are not Worker product Skills.
+
+Validate both product and maintainer Skill structures, public-safety checks, trigger cases, Agent package locks, and behavior-case shape with:
 
 ```bash
 make check-skills
+make test-product-agent-skills
 ```
 
 ## Development

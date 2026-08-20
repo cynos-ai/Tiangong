@@ -20,7 +20,7 @@
 
 Leader 的 OpenClaw plugin 注册也接受同一个 AgentTeams `team_leader` 身份断言，因此 v1.2.2 不必额外注入 `TIANGONG_ROLE_ID=leader` 才能出现 Leader 工具面。这个推导只适用于唯一的 Leader；普通 `worker` 不能因此获得任何 Tiangong 专业角色。Designer/Implementor/Assessor/Operator 仍必须由部署层绑定明确的 `TIANGONG_ROLE_ID`，并注入成员协调 endpoint、短期 token 和 `TIANGONG_MEMBER_ID`；这部分仍是 Phase C 的部署前置。
 
-标准的五个固定 RoleProfile 镜像现在把各自的 `TIANGONG_ROLE_ID` 作为镜像事实 materialize；Chat-only 编程路径另有 `canary-chat-bridge-implementor` target，避免把普通 bridge 镜像误当成 Implementor。镜像内角色只能缩小工具面，不能替代部署层的协调 token、binding 或 sidecar receipt 注入。
+当前实现已由一个 `tg-worker` 通用镜像取代固定 RoleProfile 镜像。部署层通过 MemberConfig 投影责任、runtime、model、Coordination endpoint/token 和 sidecar receipt；镜像名称不能授予专业身份或能力。
 
 ## 2. WorkRun 重启恢复
 
@@ -53,7 +53,7 @@ tiangong-work-run reconcile <run-id> --action resume|abandon \
 
 B5 A/B 必须固定同一 repo/commit、Task、模型、预算、环境和 capability，然后分别记录 runtime 路由、ToolResult/Result、测试和 local commit 事实。单次模型成功、模型自评或“看起来完成”不构成通过条件。真实 OpenClaw built-in 与受限 Codex 的质量/安全 A/B 必须在独立 canary Team 中执行，并保留 WebUI、Matrix、重启、取消和 cleanup 的直接机器事实。
 
-当前公开代码已提供可重复的角色路由、owner/recovery 合同、B4 Codex/Runner/Coordination/WebUI/Matrix seam，以及 `scripts/inject-b5-role-runtime-docker.sh` 部署注入器。注入器只接受显式角色、只重建受支持的单 auth-volume Worker 拓扑、保留安全边界，并在新容器内校验路由。2026-08-16 的 fresh Team 启动验证真实通过五个角色的路由门和 `readyWorkers=4/4`；2026-08-17 的 Gate B `ab23` 又完成了同一 Team 的 Task/ToolResult/Leader relay、重启恢复、Matrix/WebUI seam 和精确 cleanup。
+当前公开代码已提供可重复的 MemberConfig Agent package/capability/allowedSkills/runtime/model 路由、owner/recovery 合同、B4 Codex/Runner/Coordination/WebUI/Matrix seam，以及 `scripts/inject-member-runtime-docker.sh` 部署注入器。注入器只接受显式责任、Agent package/version、capability profile、allowedSkills、runtime 和 model，只重建受支持的单 auth-volume Worker 拓扑、保留安全边界，并在新容器内校验 Agent package、Skill digest lock 和模型路由。2026-08-16 的 fresh Team 启动验证真实通过五个角色的路由门和 `readyWorkers=4/4`；2026-08-17 的 Gate B `ab23` 又完成了同一 Team 的 Task/ToolResult/Leader relay、重启恢复、Matrix/WebUI seam 和精确 cleanup。
 
 ## 5. Gate B 与真实 coding A/B 结果（2026-08-17）
 

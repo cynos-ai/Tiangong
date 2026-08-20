@@ -1,4 +1,6 @@
-// Code-owned closed registries for the Tiangong Agent Plane.
+// Historical v0.4.1 closed registries retained only for non-active Runner and
+// release regression tests. The product plugin and tg-worker Agent path must
+// not import this module; M1/M2 use agent-packages/ and product Skills.
 //
 // A RoleProfile selects one authenticated responsibility identity, one SOUL,
 // and an allowlisted set of same-authority Skills. The registries contain no
@@ -233,42 +235,42 @@ const registries = deepFreeze({
     "kernel-workspace-v1": {
       id: "kernel-workspace-v1",
       supportedRoleIds: ["kernel"],
-      relativePath: "skills/kernel/workspace.md",
+      relativePath: "legacy/skills/kernel/workspace.md",
       digest: "b386903cc1466ddc536887c3156383aba91853a5040e86aaa627d62b5ec7568f",
       maxBytes: 16 * 1024,
     },
     "leader-coordination-v1": {
       id: "leader-coordination-v1",
       supportedRoleIds: ["leader"],
-      relativePath: "skills/leader/coordination.md",
+      relativePath: "legacy/skills/leader/coordination.md",
       digest: "40bb638aca7292fe5da65ac65071f6d2e70067ac7a50daf2abd7318704a99f34",
       maxBytes: 16 * 1024,
     },
     "designer-design-delivery-v1": {
       id: "designer-design-delivery-v1",
       supportedRoleIds: ["designer"],
-      relativePath: "skills/designer/design-delivery.md",
+      relativePath: "legacy/skills/designer/design-delivery.md",
       digest: "42b3946603971a7ea5d5a6d0fd596698441d06ac149c311c9fe5b4d5832bc477",
       maxBytes: 16 * 1024,
     },
     "implementor-controlled-implementation-v1": {
       id: "implementor-controlled-implementation-v1",
       supportedRoleIds: ["implementor"],
-      relativePath: "skills/implementor/controlled-implementation.md",
+      relativePath: "legacy/skills/implementor/controlled-implementation.md",
       digest: "70e3d641f48bb5d509eb9d504bec3174fff58c2de2a8a97f7078e2a5f5abb411",
       maxBytes: 16 * 1024,
     },
     "assessor-independent-assessment-v1": {
       id: "assessor-independent-assessment-v1",
       supportedRoleIds: ["assessor"],
-      relativePath: "skills/assessor/independent-assessment.md",
+      relativePath: "legacy/skills/assessor/independent-assessment.md",
       digest: "9cc86efdee42e8d9a72f93dde19034887ab9fff0030875dcda0892e22d29183e",
       maxBytes: 16 * 1024,
     },
     "operator-controlled-release-v1": {
       id: "operator-controlled-release-v1",
       supportedRoleIds: ["operator"],
-      relativePath: "skills/operator/controlled-release.md",
+      relativePath: "legacy/skills/operator/controlled-release.md",
       digest: "7dff663862ff447be965a54f793a3cd0233915bc533cad2431536bc695c4cc8c",
       maxBytes: 16 * 1024,
     },

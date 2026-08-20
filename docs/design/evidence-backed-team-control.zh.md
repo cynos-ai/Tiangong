@@ -430,7 +430,9 @@ MemberConfig 定义成员实际拥有的工作能力，包括：
 
 受控的 ContentRef 和上下文组装负责执行配置的数据范围。自由文本仍可能携带敏感内容，因此仍需要路由纪律、脱敏和监控；Tiangong 不声称能够实现完美的语义数据防泄漏。
 
-专业身份和能力来自已认证的 AgentTeams 状态、MemberConfig、ControlProfile 和加载的 Agent 包，而不是角色专用容器镜像。部署应优先使用一个版本化的通用 Worker runtime 镜像，再按成员配置身份、模型/runtime route、Skills 和能力绑定。共享镜像绝不意味着共享权限。
+专业身份和能力来自已认证的 AgentTeams 状态、MemberConfig、ControlProfile 和加载的 Agent 包，而不是角色专用容器镜像。Provider、Provider credential 和 Worker 当前 model 以 AgentTeams 官方控制面为权威；Agent 包只提供初始 `defaultModel`，不能覆盖已认证 Worker 配置。Tiangong 将当前 model 绑定进 MemberConfig revision，并要求部署投影与 AgentTeams 为该 Worker 生成的实际 OpenClaw model 配置完全一致；不能假设 AgentTeams 一定提供 `AGENTTEAMS_MODEL` 环境变量。管理员通过 AgentTeams 修改单个 Worker 后，只有在 Worker 生命周期重建使实际配置生效时才能产生新 revision；旧 Session/绑定随之失效。Task、Prompt、Skill 和模型自己都不能改 Provider/Model。
+
+第一版不在 Agent package、MemberConfig 和环境之间复制一个抽象 `capabilityProfile` 字段。Agent package 的显式 `toolGroups` 决定顶层工具集合，MemberConfig 的 Skill allowlist 只缩小已安装 Skill，工作区、可写路径、网络和凭据由部署绑定及 ControlProfile 决定。Leader 使用协调工具；其余五个专业成员使用固定 OpenClaw 版本验证过的共同 workspace 工具。仓库中的机器可读工具锁是 allowlist 的单一来源，镜像合同必须核对 pinned OpenClaw 实际注册的工具；新增上游工具默认拒绝。专业职责只限制交付物和交付链位置，不充当文件系统安全边界；工具层不承诺 Reviewer 等角色只读。只有 Developer Commit 能进入交付链。部署应优先使用一个版本化的通用 Worker runtime 镜像。共享镜像或工具组绝不意味着共享工作区、凭据或交付权。
 
 ### 7.3 ControlProfile
 
@@ -780,7 +782,7 @@ Leader 为每个 Work 使用独立的逻辑会话。成员为每个 Task 使用�
 
 ### 12.2 模型与预算
 
-ControlProfile 和 MemberConfig 定义允许使用的模型、token/成本/时间限制以及并发限制。模型 fallback 必须明确；一个 provider 失败时，Tiangong 不会悄悄切换 provider 或模型。
+AgentTeams 官方控制面定义 Provider、凭据和每个 Worker 的当前 model。ControlProfile 给出模型、token/成本/时间和并发上限，MemberConfig revision 保存 Tiangong 当前接受的 Worker model 投影。三者必须一致；AgentTeams 管理员变更会使旧 revision 和旧 Session 失效，普通聊天不能修改它们。模型 fallback 必须明确；一个 provider 失败时，Tiangong 不会悄悄切换 provider 或模型。
 
 预算或资源耗尽时，系统会停止新的模型调用和本地执行进程，记录这一事实并通知 Leader。它不会伪造 Result，也不会删除已经开始的 Operation；该 Operation 仍按正常结果和恢复规则处理。Leader 可以取消、重新委托或缩小工作范围。经过授权的管理员可以修改当前配置；普通聊天不能增加预算。
 

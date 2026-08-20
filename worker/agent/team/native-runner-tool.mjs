@@ -14,7 +14,9 @@ const ID = /^[A-Za-z0-9._:-]{1,128}$/u;
 const MEMBER_ID = /^[A-Za-z0-9@!#$%&*+./:=?_-]{1,160}$/u;
 const RUN_ID = /^run-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const DIGEST = /^[0-9a-f]{64}$/u;
-const ROLE = "implementor";
+// The current Runner broker still names its credential-free execution lane
+// `implementor`; Agent package identity and authorization use Developer.
+const BROKER_ROLE = "implementor";
 const MAX_BINDING_BYTES = 16 * 1024;
 const MAX_OUTPUT_BYTES = 8 * 1024;
 const GENERIC_HOST_EXEC_TOOLS = new Set(["bash", "exec", "process", "shell", "terminal"]);
@@ -45,7 +47,7 @@ function baseBinding(input) {
     taskId: requirePattern(input.taskId, ID, "taskId"),
     workId: requirePattern(input.workId, ID, "workId"),
     assigneeMemberId: requirePattern(input.assigneeMemberId, MEMBER_ID, "assigneeMemberId"),
-    role: input.role === ROLE ? ROLE : (() => { throw new Error("native Runner binding role is invalid"); })(),
+    role: input.role === BROKER_ROLE ? BROKER_ROLE : (() => { throw new Error("native Runner binding role is invalid"); })(),
     runId: requirePattern(input.runId, RUN_ID, "runId"),
   };
 }
@@ -104,7 +106,7 @@ export function createNativeRunnerTool({ bindingFile, journalFile, endpoint, mem
   return Object.freeze({
     name: "tiangong_run_command",
     label: "Tiangong bounded Runner command",
-    description: "Run the deployment-authored immutable command plan for the assigned Implementor Task through the Runner broker. The model cannot choose argv, cwd, timeout, environment, or output limits.",
+    description: "Run the deployment-authored immutable command plan for the assigned Developer Task through the Runner broker. The model cannot choose argv, cwd, timeout, environment, or output limits.",
     parameters: Type.Object({ taskId: Type.String({ pattern: ID.source }) }, { additionalProperties: false }),
     execute: async (_toolCallId, params) => {
       exactKeys(params, ["taskId"], "native Runner tool parameters");
@@ -139,26 +141,25 @@ export function createNativeRunnerTool({ bindingFile, journalFile, endpoint, mem
           throw new Error("native Runner Result is not bound to this Worker Task");
         }
         if (task.result) {
-          coordinationResult = { resultId: task.result.resultId, replayed: true };
+          coordinationResult = { taskId: task.result.taskId, replayed: true };
         } else {
           const work = await coordinationStore.getWork(binding.workId);
           if (!work?.work || work.work.workId !== binding.workId) throw new Error("native Runner Result Work binding is unavailable");
-          const artifactRefs = result.changeRevisionRef ? [`change-revision:${result.changeRevisionRef.contentDigest}`] : [];
+          const deliverableRefs = result.changeRevisionRef ? [{ adapter: "runner-change-revision@1", ref: result.changeRevisionRef.contentDigest }] : [];
           const submitted = await coordinationStore.submitResult({
             result: createResult({
-              resultId: `result-${sha256({ taskId, source: "native-runner" })}`,
               workId: binding.workId,
               taskId,
-              producerMemberId: actorId,
-              toolResultIds: [],
-              artifactRefs,
-              claim: boundedText(`Native Runner completed the assigned Codex tool call${result.replayed ? " by journal replay" : ""}${result.changeRevisionRef ? `; ChangeRevision ${result.changeRevisionRef.contentDigest}` : ""}.`),
+              submittedBy: actorId,
+              toolResultRefs: [],
+              deliverableRefs,
+              summary: boundedText(`Native Runner completed the assigned Codex tool call${result.replayed ? " by journal replay" : ""}${result.changeRevisionRef ? `; ChangeRevision ${result.changeRevisionRef.contentDigest}` : ""}.`),
               createdAt: now(),
             }),
             expectedEpoch: work.epoch,
             requestId: `result-submit-${taskId}`,
           });
-          coordinationResult = { resultId: submitted.result?.resultId ?? submitted.resultId, replayed: submitted.replayed === true };
+          coordinationResult = { taskId: submitted.result?.taskId ?? taskId, replayed: submitted.replayed === true };
         }
       }
       return {
@@ -201,7 +202,10 @@ export function registerNativeRunnerTool(api, { env = process.env, fetchImpl = g
   if (env.TIANGONG_NATIVE_RUNNER_EXEC_POLICY !== "deny") {
     throw new Error("native Runner requires generic host-side exec to be denied");
   }
-  const endpoint = runnerBrokerEndpointForWorker({ role: ROLE, env });
+  if (env.TIANGONG_MEMBER_RESPONSIBILITY !== "developer" || env.TIANGONG_MEMBER_AGENT_PACKAGE_ID !== "tiangong-developer" || env.TIANGONG_MEMBER_RUNTIME !== "openclaw-built-in") {
+    throw new Error("native Runner requires the current Developer Agent package capability");
+  }
+  const endpoint = runnerBrokerEndpointForWorker({ role: BROKER_ROLE, env });
   const bindingFile = env.TIANGONG_RUNNER_BINDING_FILE;
   const journalFile = env.TIANGONG_NATIVE_RUNNER_JOURNAL_FILE;
   const memberId = env.TIANGONG_MEMBER_ID;

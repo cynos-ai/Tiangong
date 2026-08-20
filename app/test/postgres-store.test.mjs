@@ -1,171 +1,44 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import pg from "pg";
-
+import test from "node:test";
 import { PostgresCoordinationStore } from "../coordination/postgres-store.mjs";
 import { createPostgresCoordinationStore } from "../coordination/bootstrap.mjs";
 import { acquirePostgresTestLock } from "./postgres-test-lock.mjs";
-import {
-  createControlProfile,
-  createMemberConfig,
-  createResult,
-  createTaskSpec,
-  createTeamConfig,
-  createTeamRouteBinding,
-  createWorkSpec,
-} from "../../worker/agent/team/coordination-store.mjs";
+import { createControlProfile, createMemberConfig, createResult, createTaskSpec, createTeamConfig, createTeamRouteBinding, createWorkSpec } from "../../worker/agent/team/coordination-store.mjs";
 
-const { Pool } = pg;
-const connectionString = process.env.TIANGONG_TEST_POSTGRES_URL;
-const disposable = process.env.TIANGONG_TEST_POSTGRES_DISPOSABLE === "1";
-const skipReason = connectionString && disposable ? undefined : "set TIANGONG_TEST_POSTGRES_URL and TIANGONG_TEST_POSTGRES_DISPOSABLE=1 for a disposable PostgreSQL test database";
-const NOW = "2026-08-15T02:00:00.000Z";
-
-test("Postgres deployment bootstrap requires an injected connection string", () => {
-  assert.throws(() => createPostgresCoordinationStore({ connectionString: "" }), /DATABASE_URL is required/u);
-});
-
-function fixtures() {
+const { Pool } = pg; const connectionString = process.env.TIANGONG_TEST_POSTGRES_URL; const disposable = process.env.TIANGONG_TEST_POSTGRES_DISPOSABLE === "1"; const skipReason = connectionString && disposable ? undefined : "set disposable PostgreSQL variables"; const NOW = "2026-08-15T02:00:00.000Z";
+function records() {
   const profile = createControlProfile({ profileId: "profile-pg", revision: 1, maxTimelineEntries: 64, maxOutboxEntries: 32, maxTasksPerWork: 8, toolResultRetentionMs: 60_000 });
-  const team = createTeamConfig({ teamId: "team-pg", revision: 1, leaderMemberId: "leader-pg", memberIds: ["leader-pg"], controlProfileId: profile.profileId, createdAt: NOW });
+  const team = createTeamConfig({ teamId: "team-pg", revision: 1, leaderMemberId: "leader-pg", memberIds: ["leader-pg", "developer-pg"], controlProfileId: profile.profileId, createdAt: NOW });
   const route = createTeamRouteBinding({ routeId: "route-pg", teamId: team.teamId, revision: 1, channel: "matrix", roomId: "!room-pg:example.test", createdAt: NOW });
-  return { profile, team, route };
+  const leader = createMemberConfig({ memberId: "leader-pg", teamId: team.teamId, workerName: "leader-pg", matrixUserId: "@leader-pg:example.test", role: "leader", controlProfileId: profile.profileId, enabled: true, createdAt: NOW });
+  const developer = createMemberConfig({ memberId: "developer-pg", teamId: team.teamId, workerName: "developer-pg", matrixUserId: "@developer-pg:example.test", role: "developer", controlProfileId: profile.profileId, enabled: true, createdAt: NOW });
+  return { profile, team, route, leader, developer };
 }
-
-function spec(workId) {
-  return createWorkSpec({ workId, revision: 1, objective: "Persist one coordination Work", scope: "bounded PostgreSQL slice", completionContract: "read it back and drain its wake", createdAt: NOW });
+async function fixture(t, options = {}) {
+  const release = await acquirePostgresTestLock(); const pool = new Pool({ connectionString, max: 4 }); const store = new PostgresCoordinationStore({ pool, now: () => NOW, ...options });
+  t.after(async () => { await pool.query("DROP SCHEMA IF EXISTS tiangong_coordination CASCADE"); await pool.end(); release(); }); await store.migrate(); return { pool, store, ...records() };
 }
+test("Postgres bootstrap requires injected connection string", () => { assert.throws(() => createPostgresCoordinationStore({ connectionString: "" }), /DATABASE_URL is required/u); });
 
-test("Postgres CoordinationStore persists replay-safe Work, binding, timeline, and outbox", { skip: skipReason }, async (t) => {
-  const release = await acquirePostgresTestLock();
-  const pool = new Pool({ connectionString, max: 4 });
-  const store = new PostgresCoordinationStore({ pool, now: () => NOW });
-  t.after(async () => {
-    await pool.query("DROP SCHEMA IF EXISTS tiangong_coordination CASCADE");
-    await pool.end();
-    release();
-  });
-  await store.migrate();
-  const { profile, team, route } = fixtures();
-  const first = await store.createWork({
-    workId: "work-pg-1",
-    team,
-    route,
-    profile,
-    spec: spec("work-pg-1"),
-    actorId: "@human:example.test",
-    sourceEventId: "$event-pg-1",
-    requestId: "request-pg-1",
-    wakes: [{ kind: "leader-resume", targetMemberId: team.leaderMemberId }],
-  });
-  assert.equal(first.replayed, false);
-  assert.equal(first.work.epoch, 0);
-  assert.equal(first.work.timeline.length, 1);
-  assert.equal(first.wakes[0].status, "pending");
-
-  const replay = await store.createWork({
-    workId: "work-pg-1",
-    team,
-    route,
-    profile,
-    spec: spec("work-pg-1"),
-    actorId: "@human:example.test",
-    sourceEventId: "$event-pg-1",
-    requestId: "request-pg-1",
-    wakes: [{ kind: "leader-resume", targetMemberId: team.leaderMemberId }],
-  });
-  assert.equal(replay.replayed, true);
-  await assert.rejects(() => store.createWork({
-    workId: "work-pg-1",
-    team,
-    route,
-    profile,
-    spec: spec("work-pg-1"),
-    actorId: "@other:example.test",
-    sourceEventId: "$event-pg-1",
-    requestId: "request-pg-1",
-  }), /COMMAND_REQUEST_CONFLICT/u);
-
-  const changed = await store.changeWorkSpec({ workId: "work-pg-1", spec: createWorkSpec({ workId: "work-pg-1", revision: 2, objective: "Read it back", scope: "bounded PostgreSQL slice", completionContract: "read it back and drain its wake", createdAt: NOW }), profile, actorId: "@human:example.test", expectedEpoch: 0, requestId: "request-pg-spec-1" });
-  assert.equal(changed.work.epoch, 1);
-  assert.equal((await store.getWork("work-pg-1")).timeline.length, 2);
-
-  const claimed = await store.claimWake({ wakeId: first.wakes[0].wakeId, consumerId: "leader-pg", requestId: "request-pg-claim-1" });
-  assert.equal(claimed.wake.status, "claimed");
-  const acked = await store.ackWake({ wakeId: first.wakes[0].wakeId, consumerId: "leader-pg", receiptId: "receipt-pg-1", requestId: "request-pg-ack-1" });
-  assert.equal(acked.wake.status, "acked");
-  assert.equal((await store.listOutbox({ status: "acked" })).length, 1);
-  assert.equal((await store.health()).workCount, 1);
+test("Postgres M0 persists backlog, null WorkSpec, Plan, Task/Result, and Decision-free closure", { skip: skipReason }, async (t) => {
+  const value = await fixture(t); await value.store.enqueueMessageAdmission({ team: value.team, route: value.route, profile: value.profile, actorId: "@human:example.test", eventId: "$event", requestId: "admit" });
+  let routed = await value.store.routeMessage({ roomId: value.route.roomId, eventId: "$event", team: value.team, route: value.route, profile: value.profile, actorId: value.leader.memberId, title: "PG Work", requestId: "route" }); const id = routed.work.work.workId; assert.equal(routed.work.currentWorkSpec, null);
+  const formed = await value.store.changeWorkSpec({ workId: id, spec: createWorkSpec({ workId: id, revision: 1, goal: "Deliver", doneWhen: ["reported"], createdAt: NOW }), profile: value.profile, actorId: value.leader.memberId, expectedEpoch: 0, requestId: "spec" });
+  const planned = await value.store.changeWorkPlan({ workId: id, planRef: { repositoryId: "plans", commitSha: "abc" }, reason: "published", profile: value.profile, actorId: value.leader.memberId, expectedEpoch: formed.work.epoch, requestId: "plan" });
+  const task = createTaskSpec({ taskId: "task-pg", workId: id, assigneeMemberId: value.developer.memberId, objective: "Implement", createdAt: NOW }); await value.store.createTask({ task, team: value.team, member: value.developer, profile: value.profile, actorId: value.leader.memberId, expectedEpoch: planned.work.epoch, requestId: "task" });
+  const result = createResult({ workId: id, taskId: task.taskId, submittedBy: value.developer.memberId, summary: "Done", createdAt: NOW }); await value.store.submitResult({ result, team: value.team, member: value.developer, profile: value.profile, actorId: value.developer.memberId, expectedEpoch: 3, requestId: "result" });
+  const closed = await value.store.closeWork({ workId: id, team: value.team, profile: value.profile, actorId: value.leader.memberId, action: "complete", reason: "done", expectedEpoch: 4, requestId: "close" }); assert.equal(closed.work.status, "completed"); assert.equal(closed.work.timeline.at(-1).type, "work-completed"); assert.equal(typeof value.store.decideTask, "undefined");
+  assert.equal((await value.store.getResult(task.taskId)).summary, "Done"); assert.equal((await value.store.health()).pendingAdmissionCount, 0);
 });
 
-test("Postgres CoordinationStore lets the room/event unique key reject concurrent duplicate ingress", { skip: skipReason }, async (t) => {
-  const release = await acquirePostgresTestLock();
-  const pool = new Pool({ connectionString, max: 4 });
-  const store = new PostgresCoordinationStore({ pool, now: () => NOW });
-  t.after(async () => {
-    await pool.query("DROP SCHEMA IF EXISTS tiangong_coordination CASCADE");
-    await pool.end();
-    release();
-  });
-  await store.migrate();
-  const { profile, team, route } = fixtures();
-  const calls = ["a", "b"].map((suffix) => store.createWork({
-    workId: `work-pg-race-${suffix}`,
-    team,
-    route,
-    profile,
-    spec: spec(`work-pg-race-${suffix}`),
-    actorId: "@human:example.test",
-    sourceEventId: "$event-pg-race",
-    requestId: `request-pg-race-${suffix}`,
-  }));
-  const results = await Promise.allSettled(calls);
-  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
-  assert.equal(results.filter((result) => result.status === "rejected").length, 1);
-  assert.match(results.find((result) => result.status === "rejected").reason.message, /MATRIX_MESSAGE_ALREADY_BOUND|WORK_ALREADY_EXISTS/u);
-  assert.equal((await store.listWorks()).length, 1);
+test("Postgres admission serializes duplicate Matrix ingress and ordered routing", { skip: skipReason }, async (t) => {
+  const value = await fixture(t); const calls = ["a", "b"].map((suffix) => value.store.enqueueMessageAdmission({ team: value.team, route: value.route, profile: value.profile, actorId: "@human:example.test", eventId: "$same", requestId: `admit-${suffix}` })); const results = await Promise.allSettled(calls); assert.equal(results.filter((item) => item.status === "fulfilled").length, 1); assert.equal(results.filter((item) => item.status === "rejected").length, 1);
 });
 
-test("Postgres CoordinationStore persists immutable Task/Result and serializes the cancellation race", { skip: skipReason }, async (t) => {
-  const release = await acquirePostgresTestLock();
-  const pool = new Pool({ connectionString, max: 4 });
-  const store = new PostgresCoordinationStore({ pool, now: () => NOW });
-  t.after(async () => {
-    await pool.query("DROP SCHEMA IF EXISTS tiangong_coordination CASCADE");
-    await pool.end();
-    release();
-  });
-  await store.migrate();
-  const profile = createControlProfile({ profileId: "profile-pg-task", revision: 1, maxTimelineEntries: 64, maxOutboxEntries: 32, maxTasksPerWork: 8, toolResultRetentionMs: 60_000 });
-  const team = createTeamConfig({ teamId: "team-pg-task", revision: 1, leaderMemberId: "leader-pg-task", memberIds: ["leader-pg-task", "member-pg-task"], controlProfileId: profile.profileId, createdAt: NOW });
-  const route = createTeamRouteBinding({ routeId: "route-pg-task", teamId: team.teamId, revision: 1, channel: "matrix", roomId: "!room-pg-task:example.test", createdAt: NOW });
-  const leader = createMemberConfig({ memberId: "leader-pg-task", teamId: team.teamId, workerName: "leader-pg-task", matrixUserId: "@leader-pg-task:example.test", role: "leader", controlProfileId: profile.profileId, enabled: true, createdAt: NOW });
-  const member = createMemberConfig({ memberId: "member-pg-task", teamId: team.teamId, workerName: "member-pg-task", matrixUserId: "@member-pg-task:example.test", role: "implementor", controlProfileId: profile.profileId, enabled: true, createdAt: NOW });
-  await store.createWork({
-    workId: "work-pg-task",
-    team,
-    route,
-    profile,
-    spec: spec("work-pg-task"),
-    actorId: "@human-pg-task:example.test",
-    sourceEventId: "$event-pg-task",
-    requestId: "request-pg-task-work",
-  });
-  const task = createTaskSpec({ taskId: "task-pg-task", workId: "work-pg-task", assigneeMemberId: member.memberId, objective: "Run bounded verification", completionContract: "submit one result", inputRefs: [], createdAt: NOW });
-  const assigned = await store.createTask({ task, team, member, profile, actorId: leader.memberId, expectedEpoch: 0, requestId: "request-pg-task-create", wake: { targetMemberId: member.memberId } });
-  assert.equal(assigned.task.status, "assigned");
-  assert.equal(assigned.wake.kind, "task-assignment");
-  assert.equal((await store.getWork(task.workId)).epoch, 1);
-  const result = createResult({ resultId: "result-pg-task", workId: task.workId, taskId: task.taskId, producerMemberId: member.memberId, toolResultIds: [], artifactRefs: ["artifact-pg-task"], claim: "verification passed", createdAt: NOW });
-  const submitted = await store.submitResult({ result, team, member, profile, actorId: member.memberId, expectedEpoch: 1, requestId: "request-pg-task-result" });
-  assert.equal(submitted.result.resultId, result.resultId);
-  assert.equal((await store.getTask(task.taskId)).status, "reported");
-  assert.equal((await store.getResult(result.resultId)).contentDigest, result.contentDigest);
-  assert.equal((await store.health()).taskCount, 1);
-  const accepted = await store.decideTask({ taskId: task.taskId, team, profile, actorId: leader.memberId, decision: "accept", resultDigest: result.contentDigest, reason: "current result", expectedEpoch: 2, requestId: "request-pg-task-decision" });
-  assert.equal(accepted.task.status, "accepted");
-  assert.equal((await store.listDecisions({ taskId: task.taskId })).length, 1);
-  const closed = await store.closeWork({ workId: task.workId, team, profile, actorId: leader.memberId, decision: "complete", reason: "task accepted", expectedEpoch: 3, requestId: "request-pg-task-close" });
-  assert.equal(closed.work.status, "closed");
-  await assert.rejects(() => store.cancelTask({ workId: task.workId, taskId: task.taskId, profile, actorId: leader.memberId, reason: "too late", expectedEpoch: 2, requestId: "request-pg-task-cancel" }), /TASK_CANCEL_CONFLICT/u);
+test("Postgres correction atomically changes current association and preserves both timelines", { skip: skipReason }, async (t) => {
+  const value = await fixture(t); await value.store.enqueueMessageAdmission({ team: value.team, route: value.route, profile: value.profile, actorId: "@human:example.test", eventId: "$old", receivedAt: NOW, requestId: "a-old" }); const source = await value.store.routeMessage({ roomId: value.route.roomId, eventId: "$old", team: value.team, route: value.route, profile: value.profile, actorId: value.leader.memberId, title: "Old", requestId: "r-old" });
+  await value.store.enqueueMessageAdmission({ team: value.team, route: value.route, profile: value.profile, actorId: "@human:example.test", eventId: "$wrong", receivedAt: "2026-08-15T02:00:01Z", requestId: "a-wrong" }); const wrong = await value.store.routeMessage({ roomId: value.route.roomId, eventId: "$wrong", team: value.team, route: value.route, profile: value.profile, actorId: value.leader.memberId, targetWorkId: source.work.work.workId, expectedEpoch: 0, requestId: "r-wrong" });
+  await value.store.enqueueMessageAdmission({ team: value.team, route: value.route, profile: value.profile, actorId: "@human:example.test", eventId: "$correct", receivedAt: "2026-08-15T02:00:02Z", requestId: "a-correct" }); const corrected = await value.store.correctMessageAssociation({ roomId: value.route.roomId, eventId: "$wrong", correctionEventId: "$correct", team: value.team, route: value.route, profile: value.profile, actorId: value.leader.memberId, expectedSourceEpoch: wrong.work.epoch, title: "New", requestId: "correct" });
+  assert.equal((await value.store.getMessageBinding(value.route.roomId, "$wrong")).workId, corrected.targetWork.work.workId); assert.equal(corrected.sourceWork.timeline.some((entry) => entry.type === "message-association-corrected"), true);
 });

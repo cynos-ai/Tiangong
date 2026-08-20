@@ -1,0 +1,14 @@
+{
+  "shouldTrigger": [
+    "Reproduce this bug, add a focused failing test, fix it, and create a local commit.",
+    "Implement the assigned Task in the prepared worktree with regression tests.",
+    "Use the existing failure to drive the smallest code change and report ToolResults."
+  ],
+  "shouldNotTrigger": [
+    "Draft the architecture Plan without editing code.",
+    "Independently review the Developer commit.",
+    "Deploy this fix to production."
+  ],
+  "ambiguous": ["Fix this issue and make sure it works."],
+  "adjacentSkills": ["independent-code-review", "scenario-testing"]
+}

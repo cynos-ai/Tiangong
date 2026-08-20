@@ -110,3 +110,22 @@ for (const entry of skillEntries) {
   }
   console.log(`skill=${name} validation=pass`);
 }
+
+const { loadInstalledSkills } = await import("../worker/agent/skills/catalog.mjs");
+const { loadAgentPackages } = await import("../worker/agent/packages/loader.mjs");
+const installed = await loadInstalledSkills();
+const installedIds = new Set(installed.skills.map((skill) => skill.skillId));
+for (const skill of installed.skills) {
+  for (const adjacent of skill.triggers.adjacentSkills) {
+    if (!installedIds.has(adjacent) || adjacent === skill.skillId) fail(`${skill.skillId}: adjacent Skill ${adjacent} is invalid`);
+  }
+  console.log(`product_skill=${skill.skillId} version=${skill.version} digest=${skill.contentDigest} validation=pass`);
+}
+const packages = await loadAgentPackages();
+for (const agent of packages.packages) {
+  for (const lock of agent.installedSkills) {
+    const skill = installed.byId[lock.skillId];
+    if (!skill || skill.version !== lock.version || skill.contentDigest !== lock.contentDigest) fail(`${agent.packageId}: Skill lock mismatch for ${lock.skillId}`);
+  }
+  console.log(`agent_package=${agent.packageId} version=${agent.version} digest=${agent.packageDigest} validation=pass`);
+}

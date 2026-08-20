@@ -5,7 +5,7 @@ metadata:
 spec:
   model: deepseek-v4-flash
   runtime: openclaw
-  image: tiangong-worker-leader:dev
+  image: tg-worker:dev
   state: Running
   identity: |
     Name: Tiangong Smoke Leader
@@ -18,7 +18,7 @@ metadata:
 spec:
   model: deepseek-v4-flash
   runtime: openclaw
-  image: tiangong-worker-designer:dev
+  image: tg-worker:dev
   state: Running
   identity: |
     Name: Tiangong Smoke Designer
@@ -31,7 +31,7 @@ metadata:
 spec:
   model: deepseek-v4-flash
   runtime: openclaw
-  image: tiangong-worker-implementor:dev
+  image: tg-worker:dev
   state: Running
   identity: |
     Name: Tiangong Smoke Implementor
@@ -44,7 +44,7 @@ metadata:
 spec:
   model: deepseek-v4-flash
   runtime: openclaw
-  image: tiangong-worker-assessor:dev
+  image: tg-worker:dev
   state: Running
   identity: |
     Name: Tiangong Smoke Assessor
@@ -57,7 +57,7 @@ metadata:
 spec:
   model: deepseek-v4-flash
   runtime: openclaw
-  image: tiangong-worker-operator:dev
+  image: tg-worker:dev
   state: Running
   identity: |
     Name: Tiangong Smoke Operator

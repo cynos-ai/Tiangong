@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "groupId": "workspace",
+  "openclawVersion": "2026.4.14",
+  "tools": ["read", "write", "edit", "exec", "process"]
+}

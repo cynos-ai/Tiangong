@@ -69,8 +69,8 @@ config="$(make config)"
 
 cp .env .env.provider-check-base
 provider_check="$(make provider-check)"
-[[ "${provider_check}" == *'route=codex-opencodex-chat-bridge'* ]] || {
-  printf 'FAIL: Coding Plan provider route was not classified as the OpenCodex bridge.\n' >&2
+[[ "${provider_check}" == *'route=agentteams-openclaw-built-in'* ]] || {
+  printf 'FAIL: Coding Plan provider route was not classified as AgentTeams OpenClaw built-in.\n' >&2
   exit 1
 }
 [[ "${provider_check}" == *'wire_api=openai-completions'* ]] || {

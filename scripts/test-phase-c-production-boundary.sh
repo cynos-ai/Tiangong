@@ -39,7 +39,7 @@ run_step() {
     if [[ "${TIANGONG_PHASE_C_DEBUG:-0}" == 1 ]]; then
       # Only expose stable machine markers; never print arbitrary model text,
       # credentials, request bodies, or provider responses from the gate log.
-      grep -E '^(phasec|gateb=|leader_smoke_|coordination_runtime_deployment|leader_runtime_injection|b5_role_runtime_injection|.*contract=)' "${output}" | tail -n 30 >&2 || true
+      grep -E '^(phasec|gateb=|leader_smoke_|coordination_runtime_deployment|leader_runtime_injection|member_runtime_injection|.*contract=)' "${output}" | tail -n 30 >&2 || true
     fi
     return 0
   fi
@@ -48,7 +48,7 @@ run_step() {
 run_step coordination-deployment-contract bash "${SCRIPT_DIR}/test-coordination-runtime-deployment.sh"
 run_step leader-injection-contract bash "${SCRIPT_DIR}/test-leader-runtime-injection.sh"
 run_step leader-injection-docker-contract bash "${SCRIPT_DIR}/test-leader-runtime-injection-docker.sh"
-run_step role-injection-docker-contract bash "${SCRIPT_DIR}/test-b5-role-runtime-injection-docker.sh"
+run_step member-injection-docker-contract bash "${SCRIPT_DIR}/test-member-runtime-injection-docker.sh"
 run_step gateway-provider-normalizer-contract bash "${SCRIPT_DIR}/test-agentteams-gateway-provider-normalizer.sh"
 run_step openclaw-migration-default-contract bash "${SCRIPT_DIR}/test-openclaw-migration-gate.sh"
 
@@ -104,6 +104,12 @@ run_step worker-phase-c-tests "${node_bin}" --test \
   worker/test/opencodex-sidecar.test.mjs \
   worker/test/opencodex-sidecar-adapter.test.mjs \
   worker/test/canary-admission.test.mjs
+
+# This deterministic contract proves that an unresolved restarted execution is
+# classified as the expected RECOVERY_REQUIRED branch rather than a generic
+# gate failure or fabricated success.
+run_step expected-recovery-contract "${node_bin}" --test \
+  worker/test/phase-b5-recovery.test.mjs
 
 run_step app-phase-c-tests "${node_bin}" --test \
   app/test/control-api.test.mjs \

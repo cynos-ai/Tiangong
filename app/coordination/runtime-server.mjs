@@ -1,7 +1,9 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveMemberAgent } from "../../worker/agent/packages/loader.mjs";
 import { readLeaderRuntimeBinding } from "../../worker/agent/team/leader-runtime-config.mjs";
 import { createRuntimeConsoleServer } from "../server.mjs";
+import { createMatrixWebGateway } from "../matrix-web-gateway.mjs";
 import { createPostgresCoordinationStore } from "./bootstrap.mjs";
 import { createMatrixWakeConsumer } from "./matrix-wake-consumer.mjs";
 
@@ -33,11 +35,12 @@ export async function startCoordinationRuntime(options = {}) {
     store = created.store;
   }
   if (!pool || typeof pool.end !== "function") pool = { async end() {} };
+  await Promise.all(binding.members.map((memberConfig) => resolveMemberAgent({ memberConfig })));
   await store.migrate();
   const matrixUrl = options.matrixUrl ?? process.env.AGENTTEAMS_MATRIX_URL ?? process.env.TIANGONG_MATRIX_URL;
   const matrixToken = options.matrixToken ?? process.env.TIANGONG_COORDINATION_MATRIX_TOKEN;
-  if ((matrixUrl && !matrixToken) || (!matrixUrl && matrixToken)) throw new TypeError("Matrix wake consumer requires both matrix URL and token");
-  const consumer = matrixUrl ? createMatrixWakeConsumer({
+  if (!matrixUrl && matrixToken) throw new TypeError("Matrix wake consumer token requires a Matrix URL");
+  const consumer = matrixUrl && matrixToken ? createMatrixWakeConsumer({
     store,
     binding,
     matrixUrl,
@@ -46,10 +49,18 @@ export async function startCoordinationRuntime(options = {}) {
     intervalMs: options.intervalMs ?? Number(process.env.TIANGONG_COORDINATION_OUTBOX_INTERVAL_MS ?? 2_000),
     fetchImpl: options.fetchImpl,
   }) : null;
+  const matrixWebGateway = options.matrixWebGateway ?? (matrixUrl ? createMatrixWebGateway({
+    matrixUrl,
+    binding,
+    fetchImpl: options.matrixWebFetchImpl ?? options.fetchImpl,
+    secureCookies: options.secureCookies ?? process.env.TIANGONG_WEB_SECURE_COOKIES !== "0",
+  }) : null);
   const server = createRuntimeConsoleServer({
     factsFile: options.factsFile,
     captureFile: options.captureFile,
     coordinationStore: store,
+    memberConfigs: binding.members,
+    matrixWebGateway,
     coordinationControl: {
       store,
       bearerToken: controlToken,
@@ -94,6 +105,7 @@ export async function startCoordinationRuntime(options = {}) {
       if (closed) return;
       closed = true;
       await consumer?.stop();
+      await matrixWebGateway?.close?.();
       await new Promise((resolveClose, reject) => server.close((error) => error ? reject(error) : resolveClose()));
       await pool.end();
     },

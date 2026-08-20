@@ -1,0 +1,5 @@
+{
+  "success": [{"name":"independent-review","given":"Developer Result and exact readable Commit","expect":["doneWhen coverage mapped","findings classified","no code modification"]}],
+  "blocked": [{"name":"missing-commit","given":"Developer Result has no readable deliverable","expect":["blocked Result","no approval claim","request exact ContentRef"]}],
+  "cleanup": [{"name":"read-only","expect":["reviewed worktree unchanged"]}]
+}

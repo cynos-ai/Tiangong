@@ -10,10 +10,12 @@ readonly CODEX_GATEWAY_PREFLIGHT="/opt/tiangong-worker/agent/preflight/codex-gat
 readonly CODEX_CAPABILITY_DETECTOR="/opt/tiangong-worker/agent/preflight/codex-capability-detection.mjs"
 readonly CODEX_CAPABILITY_CACHE="/opt/tiangong-worker/agent/preflight/codex-capability-cache.mjs"
 readonly RUNTIME_ROUTE_PREFLIGHT="/opt/tiangong-worker/scripts/runtime-route-preflight.mjs"
+readonly AGENT_PACKAGE_LOADER="/opt/tiangong-worker/agent/packages/loader.mjs"
+readonly TOOL_ALLOWLIST_RESOLVER="/opt/tiangong-worker/scripts/resolve-openclaw-tool-allowlist.mjs"
 codex_home=""
 
-assert_role_runtime_route() {
-  [[ "${TIANGONG_RUNTIME_ROLE_ROUTING_REQUIRED:-0}" == "1" ]] || return 0
+assert_member_runtime_route() {
+  [[ "${TIANGONG_MEMBER_RUNTIME_ROUTING_REQUIRED:-0}" == "1" ]] || return 0
   local selected_runtime="openclaw-built-in"
   if [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]]; then
     selected_runtime="codex-app-server"
@@ -26,18 +28,15 @@ assert_role_runtime_route() {
     export OPENCLAW_AGENT_RUNTIME="pi"
   fi
   TIANGONG_CODEX_RUNTIME="${TIANGONG_CODEX_RUNTIME:-0}" \
+  TIANGONG_SELECTED_MODEL="${TIANGONG_SELECTED_MODEL:-${TIANGONG_CODEX_MODEL:-${AGENTTEAMS_MODEL:-}}}" \
   OPENCLAW_AGENT_HARNESS_FALLBACK="${OPENCLAW_AGENT_HARNESS_FALLBACK:-none}" \
-  TIANGONG_SELECTED_RUNTIME="${selected_runtime}" \
   /usr/bin/node --input-type=module -e '
-    const { assertRoleRuntimeRoute, roleIdFromEnvironment } = await import(process.argv[1]);
-    const roleId = roleIdFromEnvironment(process.env);
-    const route = assertRoleRuntimeRoute({
-      roleId,
-      runtime: process.env.TIANGONG_SELECTED_RUNTIME,
-      fallback: process.env.OPENCLAW_AGENT_HARNESS_FALLBACK,
-    });
-    console.error(`tiangong_runtime_route=pass role=${route.roleId} runtime=${route.runtime} fallback=${route.fallback} digest=${route.routeDigest}`);
-  ' "${RUNTIME_ROUTE_PREFLIGHT%/*}/../agent/runtime-routing.mjs"
+    const { runtimeRouteFromEnvironment } = await import(process.argv[1]);
+    const { resolveAgentRuntimeFromEnvironment } = await import(process.argv[2]);
+    const route = runtimeRouteFromEnvironment(process.env);
+    const agent = await resolveAgentRuntimeFromEnvironment(process.env);
+    console.error(`tiangong_runtime_route=pass responsibility=${route.responsibility} runtime=${route.runtime} model=${route.model} fallback=${route.fallback} digest=${route.routeDigest} agentPackage=${agent.agentPackage.packageId}@${agent.agentPackage.version} effectiveSkills=${agent.effectiveSkills.length}`);
+  ' "${RUNTIME_ROUTE_PREFLIGHT%/*}/../agent/runtime-routing.mjs" "${AGENT_PACKAGE_LOADER}"
 }
 
 # AgentTeams v1.2.2 projects the controller credential as a root-readable
@@ -298,6 +297,30 @@ configure_codex_runtime() {
   trap - RETURN
 }
 
+configure_workspace_boundary() {
+  local config_file temporary_file tool_allowlist
+  config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
+  [[ -f "${config_file}" ]] || {
+    printf '[tiangong-worker] ERROR: OpenClaw config not found: %s\n' "${config_file}" >&2
+    return 1
+  }
+  if [[ "${TIANGONG_MEMBER_RUNTIME_ROUTING_REQUIRED:-0}" == 1 ]]; then
+    tool_allowlist="$(/usr/bin/node "${TOOL_ALLOWLIST_RESOLVER}")"
+  else
+    tool_allowlist='[]'
+  fi
+  temporary_file="$(mktemp "${config_file}.tiangong-workspace.XXXXXX")"
+  trap 'rm -f "${temporary_file:-}"' RETURN
+  jq --argjson tool_allowlist "${tool_allowlist}" '
+    .tools = (.tools // {})
+    | .tools.fs = ((.tools.fs // {}) + {workspaceOnly: true})
+    | .tools.allow = $tool_allowlist
+  ' "${config_file}" >"${temporary_file}"
+  chmod 600 "${temporary_file}"
+  mv "${temporary_file}" "${config_file}"
+  trap - RETURN
+}
+
 configure_tiangong_plugin() {
   local config_file temporary_file
   config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
@@ -336,11 +359,12 @@ configure_tiangong_plugin() {
 
 if [[ "${1:-}" == "gateway" && "${2:-}" == "run" ]]; then
   load_agentteams_controller_token
-  assert_role_runtime_route
-  # Route authorization must precede any config mutation. A mismatched role
+  assert_member_runtime_route
+  # Route authorization must precede any config mutation. A mismatched MemberConfig
   # must fail closed without enabling a plugin or rewriting the OpenClaw
   # configuration on disk.
   configure_tiangong_plugin
+  configure_workspace_boundary
   configure_builtin_gateway
   configure_codex_runtime
   configure_codex_gateway

@@ -7,7 +7,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 readonly REPO_ROOT
 readonly FIXTURE_DIR="${REPO_ROOT}/smoke-testing/fixtures/runner-isolation"
 readonly RUNNER_POLICY="${REPO_ROOT}/worker/agent/runner/runner-policy.mjs"
-readonly RUNNER_IMAGE="${TIANGONG_RUNNER_IMAGE:-tiangong-worker-implementor:dev}"
+readonly RUNNER_IMAGE="${TIANGONG_RUNNER_IMAGE:-tg-worker:dev}"
 RUN_ID="run-$(cat /proc/sys/kernel/random/uuid)"
 readonly RUN_ID
 readonly RESOURCE_SUFFIX="${RUN_ID#run-}"

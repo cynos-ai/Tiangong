@@ -18,7 +18,7 @@ metadata:
 spec:
   model: deepseek-v4-flash
   runtime: openclaw
-  image: tiangong-worker-designer:dev
+  image: tg-worker:dev
   state: Running
   channelPolicy:
     groupAllowExtra:
@@ -36,7 +36,7 @@ metadata:
 spec:
   model: deepseek-v4-flash
   runtime: openclaw
-  image: tiangong-worker-designer:dev
+  image: tg-worker:dev
   state: Running
   channelPolicy:
     groupAllowExtra:

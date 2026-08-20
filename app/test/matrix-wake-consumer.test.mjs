@@ -28,7 +28,7 @@ test("Matrix wake consumer delivers Work, Task, and Result wakes, then acknowled
     team,
     route,
     profile,
-    spec: createWorkSpec({ workId: "work-consumer", revision: 1, objective: "consumer", scope: "test", completionContract: "evidence", createdAt: NOW }),
+    spec: createWorkSpec({ workId: "work-consumer", revision: 1, goal: "consumer", scope: ["test"], doneWhen: ["evidence"], createdAt: NOW }),
     actorId: "@human-consumer:example.test",
     sourceEventId: "$human-consumer",
     requestId: "request-consumer",
@@ -37,9 +37,9 @@ test("Matrix wake consumer delivers Work, Task, and Result wakes, then acknowled
       { kind: "human-reply", targetMemberId: "@human-consumer:example.test" },
     ],
   });
-  const task = createTaskSpec({ taskId: "task-consumer", workId: "work-consumer", assigneeMemberId: member.memberId, objective: "consumer task", completionContract: "one result", inputRefs: [], createdAt: NOW });
+  const task = createTaskSpec({ taskId: "task-consumer", workId: "work-consumer", assigneeMemberId: member.memberId, objective: "consumer task", constraints: ["one result"], inputs: [], createdAt: NOW });
   await store.createTask({ task, team, member, profile, actorId: leaderMember.memberId, expectedEpoch: 0, requestId: "request-consumer-task", wake: { targetMemberId: member.memberId } });
-  const result = createResult({ resultId: "result-consumer", workId: task.workId, taskId: task.taskId, producerMemberId: member.memberId, toolResultIds: [], artifactRefs: [], claim: "consumer result", createdAt: NOW });
+  const result = createResult({ workId: task.workId, taskId: task.taskId, submittedBy: member.memberId, toolResultRefs: [], deliverableRefs: [], summary: "consumer result", createdAt: NOW });
   await store.submitResult({ result, team, member, profile, actorId: member.memberId, expectedEpoch: 1, requestId: "request-consumer-result" });
   await store.enqueueWake({ workId: task.workId, taskId: task.taskId, targetMemberId: leaderMember.memberId, kind: "result-notification", requestId: "request-consumer-notification" });
   const calls = [];
@@ -81,7 +81,7 @@ test("Matrix outbox replay keeps one logical transaction after a crash before ac
     team,
     route,
     profile,
-    spec: createWorkSpec({ workId: "work-replay", revision: 1, objective: "replay", scope: "test", completionContract: "one ack", createdAt: NOW }),
+    spec: createWorkSpec({ workId: "work-replay", revision: 1, goal: "replay", scope: ["test"], doneWhen: ["one ack"], createdAt: NOW }),
     actorId: "@human-replay:example.test",
     sourceEventId: "$human-replay",
     requestId: "request-replay",

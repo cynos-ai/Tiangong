@@ -10,7 +10,7 @@ Leader 确实也是 AgentTeams 的一个 Worker，但它不是“自己记总账
 Leader Worker = 前台接待员：读 Matrix、把请求递交出去、继续执行
 Control API   = 出纳柜台：核验绑定、写入 Work 总账、生成可重试的唤醒单
 PostgreSQL   = 总账本：Work、Timeline、Matrix 事件绑定、请求重放、Outbox
-Web UI        = 玻璃橱窗：只读投影，不参与裁决
+Web 工作台    = Matrix 对话 + 只读产品事实；不参与 Work 路由或裁决
 ```
 
 因此 Worker 永远不拿数据库连接，也不能把 Team/Route/Profile 从请求体带进来。Team 绑定由 Control API 在启动时注入并固定；Worker 只提交自己通过认证 Matrix channel 重读过的 `source + event` 证明。
@@ -26,18 +26,18 @@ Web UI        = 玻璃橱窗：只读投影，不参与裁决
 - `worker/agent/team/coordination-control-client.mjs`：Worker 端 remote hook。它先调用本地认证 Matrix channel 的 `readHumanEvent(roomId, eventId)`，再调用 Control API；响应不会包含数据库句柄。
 - `worker/agent/team/leader-runtime-config.mjs`：部署层启动绑定加载器。绑定文件只放 Team/Route/Profile/Leader/member 的无凭证快照；文件必须是绝对路径、普通文件、限长且（非 Windows）权限收紧。Control API token 另由 secret manager 注入。
 - `app/coordination/bootstrap.mjs`：从部署层的 `TIANGONG_COORDINATION_DATABASE_URL` 创建 PG store。连接串只在内存中交给 `pg`，不会写日志或 Evidence。
-- `app/server.mjs`：可以通过 `coordinationStore` 接入 Web 只读投影；没有注入时仍保留本地文件后端，便于开发和现有 smoke。
+- `app/server.mjs`：通过 `coordinationStore` 接入 Web 只读事实，通过 `matrix-web-gateway.mjs` 接入 Human Matrix chat；没有注入时仍保留本地文件后端，便于开发和现有 smoke。
 
 ## 生产运行时已经补齐的启动路径
 
-部署层现在可以直接启动 `app/coordination/runtime-server.mjs`。它会读取无凭证的 Leader binding，执行 PG migration，启动 Control API 和只读 Web UI；如果同时提供 Matrix URL/token，还会启动唯一的 PG Outbox → Matrix 消费者。
+部署层现在可以直接启动 `app/coordination/runtime-server.mjs`。它会读取无凭证的 Leader binding，执行 PG migration，启动 Control API 和 M3 Web。提供 Matrix URL 即启用 Human chat；再提供 deployment Matrix token 才启动唯一的 PG Outbox → Matrix 消费者。
 
 ```powershell
 $env:TIANGONG_LEADER_RUNTIME_BINDING_FILE = "C:\\etc\\tiangong\\leader-binding.json"
 $env:TIANGONG_COORDINATION_DATABASE_URL = "postgres://..."       # 由 secret manager 注入
 $env:TIANGONG_COORDINATION_CONTROL_TOKEN = "..."                 # 只进部署进程
-$env:TIANGONG_COORDINATION_MATRIX_TOKEN = "..."                  # 只进部署进程
-$env:AGENTTEAMS_MATRIX_URL = "https://matrix.example.test"
+$env:AGENTTEAMS_MATRIX_URL = "https://matrix.example.test"      # Human Web login
+$env:TIANGONG_COORDINATION_MATRIX_TOKEN = "..."                  # 可选，只进 outbox sender
 npm --prefix app run start-coordination
 ```
 
@@ -54,7 +54,7 @@ Outbox 的两类事件如下：
 
 AgentTeams 的 MinIO 共享空间仍然保留，路径建议为 `teams/<team>/tiangong/coordination/`，用于 WorkSpec 快照、Result、Evidence 和可审计附件。它是对象/文件层，不是并发事务总账：同步主要依赖 `mc mirror`/周期 pull，bucket notification 还要单独配置；当前 v1.2.2 环境没有配置通知。即使配置了异步通知，远端故障或队列满也可能丢事件，所以 Matrix 唤醒不能以 MinIO 通知为唯一触发器。
 
-PG 负责 Work、Timeline、事件唯一绑定、请求重放和 Outbox 的事务状态；Matrix 只做低延迟唤醒，MinIO 只保存大对象和证据。Web UI 读取 PG 的受限投影，仍然一直可用。
+PG 负责 Work、Timeline、事件唯一绑定、请求重放和 Outbox 的事务状态；Matrix 负责 chat/history/sync/send 和低延迟唤醒，MinIO 只保存大对象和附件。Web 从 Matrix 读取对话、从 PG/ToolResult source 读取受限事实，不复制聊天正文。
 
 ## 生产上线的唯一外部前置
 

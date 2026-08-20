@@ -3,64 +3,75 @@ kind: Worker
 metadata:
   name: tiangong-demo-leader
 spec:
-  model: deepseek-v4-flash
+  model: glm-5
   runtime: openclaw
-  # Demo v0 uses the generic member runtime until the Leader control sidecar
-  # is deployed; the AgentTeams Team role remains team_leader.
-  image: tiangong-worker-member:dev
+  image: tg-worker:dev
   state: Running
   identity: |
-    Name: Tiangong Demo Team Leader
-    Purpose: Lead the evidence-backed software change delivery demo.
+    Name: Tiangong Demo Leader
+    Purpose: Route Room messages and coordinate Work through durable facts.
 ---
 apiVersion: agentteams.io/v1beta1
 kind: Worker
 metadata:
-  name: tiangong-demo-designer
+  name: tiangong-demo-architect
 spec:
-  model: deepseek-v4-flash
+  model: glm-5
   runtime: openclaw
-  image: tiangong-worker-designer:dev
+  image: tg-worker:dev
   state: Running
   identity: |
-    Name: Tiangong Demo Designer
-    Purpose: Produce a bounded design for the demo request.
+    Name: Tiangong Demo Architect
+    Purpose: Produce a bounded candidate Plan.
 ---
 apiVersion: agentteams.io/v1beta1
 kind: Worker
 metadata:
-  name: tiangong-demo-implementor
+  name: tiangong-demo-challenger
 spec:
-  model: deepseek-v4-flash
+  model: glm-5
   runtime: openclaw
-  image: tiangong-worker-implementor:dev
+  image: tg-worker:dev
   state: Running
   identity: |
-    Name: Tiangong Demo Implementor
-    Purpose: Execute only the bounded implementation assigned by the Leader.
+    Name: Tiangong Demo Challenger
+    Purpose: Challenge a candidate Plan without reviewing code.
 ---
 apiVersion: agentteams.io/v1beta1
 kind: Worker
 metadata:
-  name: tiangong-demo-assessor
+  name: tiangong-demo-developer
 spec:
-  model: deepseek-v4-flash
+  model: glm-5
   runtime: openclaw
-  image: tiangong-worker-assessor:dev
+  image: tg-worker:dev
   state: Running
   identity: |
-    Name: Tiangong Demo Assessor
-    Purpose: Independently assess the bounded demo implementation.
+    Name: Tiangong Demo Developer
+    Purpose: Execute only an immutable assigned Task in the prepared workspace.
 ---
 apiVersion: agentteams.io/v1beta1
 kind: Worker
 metadata:
-  name: tiangong-demo-operator
+  name: tiangong-demo-reviewer
 spec:
-  model: deepseek-v4-flash
+  model: glm-5
   runtime: openclaw
-  image: tiangong-worker-operator:dev
+  image: tg-worker:dev
   state: Running
   identity: |
-    Name: Tiangong Demo Operator
-    Purpose: Execute only approved structured release operations.
+    Name: Tiangong Demo Reviewer
+    Purpose: Review the delivered change through an independent Task.
+---
+apiVersion: agentteams.io/v1beta1
+kind: Worker
+metadata:
+  name: tiangong-demo-tester
+spec:
+  model: glm-5
+  runtime: openclaw
+  image: tg-worker:dev
+  state: Running
+  identity: |
+    Name: Tiangong Demo Tester
+    Purpose: Verify the requested behavior through an independent Task.

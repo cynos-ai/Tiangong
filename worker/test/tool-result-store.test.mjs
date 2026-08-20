@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readFile, rm, symlink, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -53,4 +53,28 @@ test("ToolResult store rejects changed duplicate calls and missing ownership", a
   await store.append(result());
   await assert.rejects(store.append(result({ resultSummary: { outcome: "error", textLength: 5, hasData: false } })), /TOOL_RESULT_CONFLICT/u);
   await assert.rejects(store.markRetention(result().toolResultId, { workId: "work-2", until: "2026-12-01T00:00:00.000Z" }), /TOOL_RESULT_OWNER_MISMATCH/u);
+});
+
+test("synchronous ToolResult append shares replay and lock semantics", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "tiangong-tool-result-sync-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const filePath = join(directory, "execution-records.json"); const store = new ToolResultStore({ filePath });
+  assert.equal(store.appendSync(result()).replayed, false);
+  assert.equal(store.appendSync(result()).replayed, true);
+  await mkdir(`${filePath}.lock`);
+  assert.throws(() => store.appendSync(result()), /TOOL_RESULT_STORE_BUSY/u);
+  const stale = new Date("2000-01-01T00:00:00.000Z");
+  await utimes(`${filePath}.lock`, stale, stale);
+  assert.equal(store.appendSync(result()).replayed, true);
+});
+
+test("synchronous ToolResult append rejects linked state files", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "tiangong-tool-result-links-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const filePath = join(directory, "execution-records.json"); const store = new ToolResultStore({ filePath });
+  store.appendSync(result());
+  await link(filePath, join(directory, "hard-link.json"));
+  assert.throws(() => store.appendSync(result()), /state file is invalid/u);
+  const symbolicPath = join(directory, "symbolic-link.json"); await symlink(filePath, symbolicPath);
+  assert.throws(() => new ToolResultStore({ filePath: symbolicPath }).appendSync(result()), /state file is invalid/u);
 });

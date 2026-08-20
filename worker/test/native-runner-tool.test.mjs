@@ -154,11 +154,11 @@ test("native Runner tool submits one bounded Result through the Coordination gat
     fetchImpl,
   });
   const result = await tool.execute("call-result", { taskId: binding.taskId });
-  assert.match(result.details.coordinationResult.resultId, /^result-[0-9a-f]{64}$/u);
+  assert.equal(result.details.coordinationResult.taskId, binding.taskId);
   assert.equal(result.details.coordinationResult.replayed, false);
   assert.equal(calls.filter((call) => call.url.endsWith("/v1/coordination/results")).length, 1);
   const submitted = calls.find((call) => call.url.endsWith("/v1/coordination/results"));
-  assert.equal(JSON.parse(submitted.init.body).result.claim.startsWith("Native Runner completed"), true);
+  assert.equal(JSON.parse(submitted.init.body).result.summary.startsWith("Native Runner completed"), true);
 });
 
 test("native Runner registration is opt-in and exposes one bounded tool", () => {
@@ -175,6 +175,9 @@ test("native Runner registration is opt-in and exposes one bounded tool", () => 
       TIANGONG_RUNNER_BINDING_FILE: "binding.json",
       TIANGONG_NATIVE_RUNNER_JOURNAL_FILE: join(tmpdir(), "journal.jsonl"),
       TIANGONG_MEMBER_ID: MEMBER_ID,
+      TIANGONG_MEMBER_RESPONSIBILITY: "developer",
+      TIANGONG_MEMBER_AGENT_PACKAGE_ID: "tiangong-developer",
+      TIANGONG_MEMBER_RUNTIME: "openclaw-built-in",
     },
   }), /binding file, journal file/u);
   const hooks = [];
@@ -186,6 +189,9 @@ test("native Runner registration is opt-in and exposes one bounded tool", () => 
       TIANGONG_NATIVE_RUNNER_JOURNAL_FILE: join(tmpdir(), "journal.jsonl"),
       TIANGONG_NATIVE_RUNNER_EXEC_POLICY: "deny",
       TIANGONG_MEMBER_ID: MEMBER_ID,
+      TIANGONG_MEMBER_RESPONSIBILITY: "developer",
+      TIANGONG_MEMBER_AGENT_PACKAGE_ID: "tiangong-developer",
+      TIANGONG_MEMBER_RUNTIME: "openclaw-built-in",
     },
   });
   assert.deepEqual(enabled, { enabled: true, tool: "tiangong_run_command", hooks: ["before_tool_call"] });

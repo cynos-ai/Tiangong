@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-readonly CONTROL_IMAGE="${TIANGONG_RUNNER_CONTROL_IMAGE:-tiangong-runner-broker:dev}"
+readonly CONTROL_IMAGE="${TIANGONG_RUNNER_CONTROL_IMAGE:-tg-runner-broker:dev}"
 
 fail() { printf 'runner_broker_linux=fail code=%s\n' "$1" >&2; exit 1; }
 command -v docker >/dev/null 2>&1 || fail DOCKER_COMMAND_NOT_FOUND

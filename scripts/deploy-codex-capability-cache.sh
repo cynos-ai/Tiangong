@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 readonly NETWORK="${TIANGONG_AGENTTEAMS_NETWORK:-agentteams-net}"
-readonly IMAGE="${TIANGONG_CODEX_CAPABILITY_CACHE_IMAGE:-tiangong-codex-capability-cache:dev}"
+readonly IMAGE="${TIANGONG_CODEX_CAPABILITY_CACHE_IMAGE:-tg-codex-capability-cache:dev}"
 readonly CONTAINER="${TIANGONG_CODEX_CAPABILITY_CACHE_CONTAINER:-tiangong-codex-capability-cache}"
 readonly VOLUME="${TIANGONG_CODEX_CAPABILITY_CACHE_VOLUME:-tiangong-codex-capability-cache}"
 readonly CACHE_DIR="/var/lib/tiangong-capabilities"

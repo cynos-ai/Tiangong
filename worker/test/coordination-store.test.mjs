@@ -1,373 +1,107 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { sha256 } from "../agent/canonical-json.mjs";
-import { ToolResultStore } from "../agent/gates/tool-result-store.mjs";
 import {
-  CoordinationStore,
-  createControlProfile,
-  createMemberConfig,
-  createResult,
-  createTaskSpec,
-  createTeamConfig,
-  createTeamRouteBinding,
-  createWorkSpec,
+  CoordinationStore, createContentRef, createControlProfile, createMemberConfig, createResult,
+  createTaskSpec, createTeamConfig, createTeamRouteBinding, createWorkSpec,
 } from "../agent/team/coordination-store.mjs";
 
 const NOW = "2026-08-15T00:00:00.000Z";
-
-function profile() {
-  return createControlProfile({
-    profileId: "profile-default",
-    revision: 1,
-    maxTimelineEntries: 64,
-    maxOutboxEntries: 32,
-    maxTasksPerWork: 8,
-    toolResultRetentionMs: 24 * 60 * 60 * 1000,
-  });
+function records() {
+  const profile = createControlProfile({ profileId: "profile", revision: 1, maxTimelineEntries: 64, maxOutboxEntries: 32, maxTasksPerWork: 8, toolResultRetentionMs: 60_000 });
+  const team = createTeamConfig({ teamId: "team", revision: 1, leaderMemberId: "leader", memberIds: ["leader", "developer"], controlProfileId: profile.profileId, createdAt: NOW });
+  const route = createTeamRouteBinding({ routeId: "route", teamId: team.teamId, revision: 1, channel: "matrix", roomId: "!room:example.test", createdAt: NOW });
+  const leader = createMemberConfig({ memberId: "leader", teamId: team.teamId, workerName: "leader", matrixUserId: "@leader:example.test", role: "leader", controlProfileId: profile.profileId, enabled: true, runtime: "openclaw-built-in", model: "glm-5", allowedSkills: [], createdAt: NOW });
+  const developer = createMemberConfig({ memberId: "developer", teamId: team.teamId, workerName: "developer", matrixUserId: "@developer:example.test", role: "developer", controlProfileId: profile.profileId, enabled: true, runtime: "openclaw-built-in", model: "glm-5", allowedSkills: [], createdAt: NOW });
+  return { profile, team, route, leader, developer };
+}
+async function fixture(t, options = {}) {
+  const root = await mkdtemp(join(tmpdir(), "tiangong-m0-store-")); t.after(() => rm(root, { recursive: true, force: true }));
+  return { root, store: new CoordinationStore({ filePath: join(root, "state.json"), now: () => NOW, ...options }), ...records() };
+}
+async function newWork(value, eventId = "$event-1", title = "New request") {
+  await value.store.enqueueMessageAdmission({ team: value.team, route: value.route, profile: value.profile, actorId: "@human:example.test", eventId, requestId: `admit-${eventId}` });
+  return value.store.routeMessage({ roomId: value.route.roomId, eventId, team: value.team, route: value.route, profile: value.profile, actorId: value.leader.memberId, title, requestId: `route-${eventId}` });
+}
+async function formSpec(value, work, requestId = "spec-1") {
+  return value.store.changeWorkSpec({ workId: work.work.workId, spec: createWorkSpec({ workId: work.work.workId, revision: 1, goal: "Deliver the requested change", scope: ["repository"], constraints: ["local commit only"], doneWhen: ["tests pass"], unresolvedAssumptions: [], createdAt: NOW }), profile: value.profile, actorId: value.leader.memberId, expectedEpoch: work.epoch, requestId });
 }
 
-function team() {
-  return createTeamConfig({
-    teamId: "team-alpha",
-    revision: 1,
-    leaderMemberId: "leader-1",
-    memberIds: ["leader-1", "member-1"],
-    controlProfileId: "profile-default",
-    createdAt: NOW,
-  });
-}
-
-function route() {
-  return createTeamRouteBinding({
-    routeId: "route-alpha",
-    teamId: "team-alpha",
-    revision: 1,
-    channel: "matrix",
-    roomId: "!room:example.test",
-    createdAt: NOW,
-  });
-}
-
-function member() {
-  return createMemberConfig({
-    memberId: "member-1",
-    teamId: "team-alpha",
-    workerName: "worker-member-1",
-    matrixUserId: "@member:example.test",
-    role: "analyst",
-    controlProfileId: "profile-default",
-    enabled: true,
-    createdAt: NOW,
-  });
-}
-
-function initialSpec(workId = "work-1") {
-  return createWorkSpec({
-    workId,
-    revision: 1,
-    objective: "Understand the repository",
-    scope: "Read-only project inspection",
-    completionContract: "Return a bounded report with direct references",
-    createdAt: NOW,
-  });
-}
-
-function specInput(overrides = {}) {
-  return {
-    workId: "work-1",
-    revision: 1,
-    objective: "Understand the repository",
-    scope: "Read-only project inspection",
-    completionContract: "Return a bounded report with direct references",
-    createdAt: NOW,
-    ...overrides,
-  };
-}
-
-async function fixture(t) {
-  const root = await mkdtemp(join(tmpdir(), "tiangong-coordination-store-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const filePath = join(root, "coordination.jsonl");
-  const store = new CoordinationStore({ filePath, now: () => NOW });
-  return { root, filePath, store, controlProfile: profile(), team: team(), route: route(), member: member() };
-}
-
-async function admitted(fixtureValue, requestId = "work-request-1") {
-  return fixtureValue.store.createWork({
-    workId: "work-1",
-    team: fixtureValue.team,
-    route: fixtureValue.route,
-    profile: fixtureValue.controlProfile,
-    spec: initialSpec(),
-    actorId: "@human:example.test",
-    sourceEventId: "$human-event-1",
-    requestId,
-  });
-}
-
-function taskSpec(overrides = {}) {
-  return createTaskSpec({
-    taskId: "task-1",
-    workId: "work-1",
-    assigneeMemberId: "member-1",
-    objective: "Inspect the current runtime",
-    completionContract: "Submit one bounded Result",
-    inputRefs: [],
-    createdAt: NOW,
-    ...overrides,
-  });
-}
-
-function toolResult(overrides = {}) {
-  const callKey = sha256({ actorId: "worker-member-1", taskId: "task-1", toolCallId: "call-1" });
-  return {
-    version: 1,
-    toolResultId: sha256({ source: "openclaw.tool_result_persist", callKey }),
-    callKey,
-    workId: "work-1",
-    taskId: "task-1",
-    actorId: "worker-member-1",
-    runtimeProfile: "openclaw-built-in",
-    tool: "read",
-    requestSummary: { toolName: "read", toolCallId: "call-1" },
-    resultSummary: { outcome: "success", textLength: 2, hasData: false },
-    outputRef: null,
-    startedAt: NOW,
-    completedAt: "2026-08-15T00:00:01.000Z",
-    ...overrides,
-  };
-}
-
-test("B1 domain records are typed, digest-bound, and reject extra fields", () => {
-  const value = profile();
-  assert.equal(value.kind, "tiangong.control-profile");
-  assert.equal(value.contentDigest, sha256({
-    kind: value.kind,
-    schemaVersion: value.schemaVersion,
-    profileId: value.profileId,
-    revision: value.revision,
-    maxTimelineEntries: value.maxTimelineEntries,
-    maxOutboxEntries: value.maxOutboxEntries,
-    maxTasksPerWork: value.maxTasksPerWork,
-    toolResultRetentionMs: value.toolResultRetentionMs,
-  }));
-  assert.throws(() => createTeamConfig({
-    teamId: "team-alpha",
-    revision: 1,
-    leaderMemberId: "leader-1",
-    memberIds: ["member-1"],
-    controlProfileId: "profile-default",
-    createdAt: NOW,
-  }), /leaderMemberId/u);
-  assert.throws(() => createWorkSpec({ ...initialSpec(), unexpected: true }), /unknown fields/u);
+test("M0 Work supports title, null WorkSpec, immutable Plan ContentRef, and restart recovery", async (t) => {
+  const value = await fixture(t); const routed = await newWork(value); const id = routed.work.work.workId;
+  assert.equal(routed.work.currentWorkSpec, null); assert.equal(routed.work.status, "open"); assert.equal(routed.work.work.title, "New request");
+  await assert.rejects(value.store.createTask({ task: createTaskSpec({ taskId: "too-early", workId: id, assigneeMemberId: value.developer.memberId, objective: "Do work", createdAt: NOW }), team: value.team, member: value.developer, profile: value.profile, actorId: value.leader.memberId, expectedEpoch: 0, requestId: "too-early" }), /TASK_WORK_CONFLICT/u);
+  const formed = await formSpec(value, routed.work);
+  const renamed = await value.store.changeWorkTitle({ workId: id, title: "Readable title", profile: value.profile, actorId: value.leader.memberId, expectedEpoch: formed.work.epoch, requestId: "title-1" });
+  const planRef = createContentRef({ repositoryId: "plans", commitSha: "abc123" });
+  const planned = await value.store.changeWorkPlan({ workId: id, planRef, reason: "Architect candidate challenged", profile: value.profile, actorId: value.leader.memberId, expectedEpoch: renamed.work.epoch, requestId: "plan-1" });
+  assert.deepEqual(planned.work.currentPlanRef, planRef); assert.equal(planned.work.work.title, "Readable title");
+  const reopened = new CoordinationStore({ filePath: join(value.root, "state.json"), now: () => NOW });
+  assert.equal((await reopened.getWork(id)).currentWorkSpec.goal, "Deliver the requested change");
 });
 
-test("WorkSpec changes use epoch and requestId replay, and survive a reopened store", async (t) => {
-  const fixtureValue = await fixture(t);
-  const first = await admitted(fixtureValue);
-  assert.equal(first.replayed, false);
-  assert.equal(first.work.epoch, 0);
-  assert.equal(first.work.timeline.length, 1);
+test("M0 Task projects assigned/reported and complete-work needs no CoordinationDecision", async (t) => {
+  const value = await fixture(t); const routed = await newWork(value); let work = (await formSpec(value, routed.work)).work;
+  const task = createTaskSpec({ taskId: "task-1", workId: work.work.workId, assigneeMemberId: value.developer.memberId, objective: "Implement", inputs: [], constraints: ["no push"], createdAt: NOW });
+  const assigned = await value.store.createTask({ task, team: value.team, member: value.developer, profile: value.profile, actorId: value.leader.memberId, expectedEpoch: work.epoch, requestId: "task-1" });
+  assert.equal(assigned.task.status, "assigned"); assert.match(assigned.task.sessionRef, /^member-[a-f0-9]{48}$/u);
+  const reopenedForSession = new CoordinationStore({ filePath: join(value.root, "state.json"), now: () => NOW });
+  assert.equal((await reopenedForSession.getTask(task.taskId)).sessionRef, assigned.task.sessionRef);
+  assert.notEqual(assigned.task.sessionRef, work.work.leaderSessionId); work = await value.store.getWork(work.work.workId);
+  await assert.rejects(value.store.closeWork({ workId: work.work.workId, team: value.team, profile: value.profile, actorId: value.leader.memberId, action: "complete", reason: "too early", expectedEpoch: work.epoch, requestId: "close-early" }), /WORK_CLOSE_GUARD_FAILED/u);
+  const result = createResult({ workId: work.work.workId, taskId: task.taskId, submittedBy: value.developer.memberId, summary: "Implemented and tested", deliverableRefs: [], toolResultRefs: [], createdAt: NOW });
+  await value.store.submitResult({ result, team: value.team, member: value.developer, profile: value.profile, actorId: value.developer.memberId, expectedEpoch: work.epoch, requestId: "result-1" });
+  assert.equal((await value.store.getTask(task.taskId)).status, "reported"); work = await value.store.getWork(work.work.workId);
+  const closed = await value.store.closeWork({ workId: work.work.workId, team: value.team, profile: value.profile, actorId: value.leader.memberId, action: "complete", reason: "doneWhen satisfied", expectedEpoch: work.epoch, requestId: "close-1" });
+  assert.equal(closed.work.status, "completed"); assert.equal(closed.work.timeline.at(-1).type, "work-completed"); assert.equal(typeof value.store.decideTask, "undefined");
+  await assert.rejects(value.store.changeWorkPlan({ workId: work.work.workId, planRef: { repositoryId: "plans", commitSha: "late" }, reason: "late", profile: value.profile, actorId: value.leader.memberId, expectedEpoch: closed.work.epoch, requestId: "late-plan" }), /WORK_EPOCH_OR_CHANGE_CONFLICT/u);
+});
 
-  const changed = await fixtureValue.store.changeWorkSpec({
-    workId: "work-1",
-    spec: createWorkSpec(specInput({ revision: 2, objective: "Understand the OpenClaw boundary" })),
-    profile: fixtureValue.controlProfile,
-    actorId: "@human:example.test",
-    expectedEpoch: 0,
-    requestId: "spec-request-1",
+test("M0 cancellation and CloseGuard fail closed on active or unresolved machine state", async (t) => {
+  const value = await fixture(t, {
+    cancellationGuard: { async stopAndInspect() { return { stopped: false, writerReleased: false, unresolvedOperations: [] }; } },
+    closeGuard: { async inspect() { return { activeExecutions: ["task-1"], unresolvedOperations: [], pendingApprovals: [], unreadableContentRefs: [] }; } },
   });
-  assert.equal(changed.replayed, false);
-  assert.equal(changed.work.epoch, 1);
-  assert.equal(changed.work.currentWorkSpec.revision, 2);
+  const routed = await newWork(value); let work = (await formSpec(value, routed.work)).work;
+  const task = createTaskSpec({ taskId: "task-1", workId: work.work.workId, assigneeMemberId: value.developer.memberId, objective: "Implement", createdAt: NOW });
+  await value.store.createTask({ task, team: value.team, member: value.developer, profile: value.profile, actorId: value.leader.memberId, expectedEpoch: work.epoch, requestId: "task-1" }); work = await value.store.getWork(work.work.workId);
+  await assert.rejects(value.store.cancelTask({ workId: work.work.workId, taskId: task.taskId, team: value.team, profile: value.profile, actorId: value.leader.memberId, reason: "stop", expectedEpoch: work.epoch, requestId: "cancel-1" }), /TASK_CANCEL_GUARD_FAILED/u);
+  const clean = await fixture(t); const pending = await newWork(clean, "$stop-event");
+  const stopped = await clean.store.closeWork({ workId: pending.work.work.workId, team: clean.team, profile: clean.profile, actorId: clean.leader.memberId, action: "stop", reason: "requirement withdrawn", expectedEpoch: 0, requestId: "stop-null" });
+  assert.equal(stopped.work.status, "stopped");
+});
 
-  const replay = await fixtureValue.store.changeWorkSpec({
-    workId: "work-1",
-    spec: createWorkSpec(specInput({ revision: 2, objective: "Understand the OpenClaw boundary" })),
-    profile: fixtureValue.controlProfile,
-    actorId: "@human:example.test",
-    expectedEpoch: 0,
-    requestId: "spec-request-1",
-  });
+test("M0 CloseGuard rejects active execution, unresolved Operation, pending Approval, and unreadable delivery", async (t) => {
+  for (const [field, marker] of [["activeExecutions", "task-active"], ["unresolvedOperations", "operation-1"], ["pendingApprovals", "operation-2"], ["unreadableContentRefs", "ref-1"]]) {
+    const value = await fixture(t, { closeGuard: { async inspect() { return { activeExecutions: [], unresolvedOperations: [], pendingApprovals: [], unreadableContentRefs: [], [field]: [marker] }; } } });
+    const routed = await newWork(value, `$guard-${field}`); const formed = await formSpec(value, routed.work, `spec-${field}`);
+    await assert.rejects(value.store.closeWork({ workId: formed.work.work.workId, team: value.team, profile: value.profile, actorId: value.leader.memberId, action: "complete", reason: "must fail closed", expectedEpoch: formed.work.epoch, requestId: `close-${field}` }), /WORK_CLOSE_GUARD_FAILED/u);
+  }
+});
+
+test("M0 room routing is ordered, idempotent, and UI-independent", async (t) => {
+  const value = await fixture(t);
+  await value.store.enqueueMessageAdmission({ team: value.team, route: value.route, profile: value.profile, actorId: "@human:example.test", eventId: "$event-a", receivedAt: "2026-08-15T00:00:00.000Z", requestId: "admit-a" });
+  await value.store.enqueueMessageAdmission({ team: value.team, route: value.route, profile: value.profile, actorId: "@human:example.test", eventId: "$event-b", receivedAt: "2026-08-15T00:00:01.000Z", requestId: "admit-b" });
+  await assert.rejects(value.store.routeMessage({ roomId: value.route.roomId, eventId: "$event-b", team: value.team, route: value.route, profile: value.profile, actorId: value.leader.memberId, title: "B", requestId: "route-b" }), /MESSAGE_ROUTE_ORDER_CONFLICT/u);
+  const first = await value.store.routeMessage({ roomId: value.route.roomId, eventId: "$event-a", team: value.team, route: value.route, profile: value.profile, actorId: value.leader.memberId, title: "A", requestId: "route-a" });
+  const second = await value.store.routeMessage({ roomId: value.route.roomId, eventId: "$event-b", team: value.team, route: value.route, profile: value.profile, actorId: value.leader.memberId, targetWorkId: first.work.work.workId, expectedEpoch: first.work.epoch, requestId: "route-b" });
+  assert.equal(second.binding.workId, first.work.work.workId); assert.equal((await value.store.admissionMetrics()).pendingCount, 0);
+  const replay = await value.store.routeMessage({ roomId: value.route.roomId, eventId: "$event-b", team: value.team, route: value.route, profile: value.profile, actorId: value.leader.memberId, targetWorkId: first.work.work.workId, expectedEpoch: first.work.epoch, requestId: "route-b" });
   assert.equal(replay.replayed, true);
-  assert.equal(replay.work.epoch, 1);
-  await assert.rejects(fixtureValue.store.changeWorkSpec({
-    workId: "work-1",
-    spec: createWorkSpec(specInput({ revision: 2, objective: "Conflicting request" })),
-    profile: fixtureValue.controlProfile,
-    actorId: "@human:example.test",
-    expectedEpoch: 1,
-    requestId: "spec-request-1",
-  }), /COMMAND_REQUEST_CONFLICT/u);
-
-  const reopened = new CoordinationStore({ filePath: fixtureValue.filePath, now: () => NOW });
-  const state = await reopened.getWork("work-1");
-  assert.equal(state.epoch, 1);
-  assert.equal(state.timeline.length, 2);
-  assert.equal((await reopened.health()).sequence, 2);
-  assert.deepEqual((await reopened.listWorks()).map((work) => work.work.workId), ["work-1"]);
 });
 
-test("Task, durable wake, ToolResult citation, and one-result ownership form one B1 path", async (t) => {
-  const fixtureValue = await fixture(t);
-  await admitted(fixtureValue);
-  const created = await fixtureValue.store.createTask({
-    task: taskSpec(),
-    team: fixtureValue.team,
-    member: fixtureValue.member,
-    profile: fixtureValue.controlProfile,
-    actorId: "worker-member-1",
-    expectedEpoch: 0,
-    requestId: "task-request-1",
-    wake: { targetMemberId: "member-1", kind: "task-assignment" },
-  });
-  assert.equal(created.task.status, "assigned");
-  assert.equal(created.wake.status, "pending");
-  assert.equal((await fixtureValue.store.getWork("work-1")).epoch, 1);
-
-  const claimed = await fixtureValue.store.claimWake({
-    wakeId: created.wake.wakeId,
-    consumerId: "member-1",
-    requestId: "wake-claim-1",
-  });
-  assert.equal(claimed.wake.status, "claimed");
-  const acked = await fixtureValue.store.ackWake({
-    wakeId: created.wake.wakeId,
-    consumerId: "member-1",
-    receiptId: "matrix-event-1",
-    requestId: "wake-ack-1",
-  });
-  assert.equal(acked.wake.status, "acked");
-
-  const toolStore = new ToolResultStore({ filePath: join(fixtureValue.root, "tool-results.json") });
-  const observed = toolResult();
-  await toolStore.append(observed);
-  const result = createResult({
-    resultId: "result-1",
-    workId: "work-1",
-    taskId: "task-1",
-    producerMemberId: "member-1",
-    toolResultIds: [observed.toolResultId],
-    artifactRefs: [],
-    claim: "The runtime boundary is present",
-    createdAt: "2026-08-15T00:00:02.000Z",
-  });
-  const submitted = await fixtureValue.store.submitResult({
-    result,
-    team: fixtureValue.team,
-    member: fixtureValue.member,
-    profile: fixtureValue.controlProfile,
-    actorId: "worker-member-1",
-    expectedEpoch: 1,
-    requestId: "result-request-1",
-    toolResultStore: toolStore,
-  });
-  assert.equal(submitted.replayed, false);
-  assert.equal((await fixtureValue.store.getTask("task-1")).status, "reported");
-  assert.equal((await fixtureValue.store.getWork("work-1")).epoch, 2);
-  assert.equal((await toolStore.list()).retentionMarks.length, 1);
-
-  const replay = await fixtureValue.store.submitResult({
-    result,
-    team: fixtureValue.team,
-    member: fixtureValue.member,
-    profile: fixtureValue.controlProfile,
-    actorId: "worker-member-1",
-    expectedEpoch: 1,
-    requestId: "result-request-1",
-    toolResultStore: toolStore,
-  });
-  assert.equal(replay.replayed, true);
-  await assert.rejects(fixtureValue.store.cancelTask({
-    workId: "work-1",
-    taskId: "task-1",
-    profile: fixtureValue.controlProfile,
-    actorId: "leader-1",
-    reason: "too late",
-    expectedEpoch: 2,
-    requestId: "cancel-after-result",
-  }), /TASK_CANCEL_CONFLICT/u);
-});
-
-test("cancellation wins the Result race and journal tampering fails closed", async (t) => {
-  const fixtureValue = await fixture(t);
-  await admitted(fixtureValue);
-  await fixtureValue.store.createTask({
-    task: taskSpec(),
-    team: fixtureValue.team,
-    member: fixtureValue.member,
-    profile: fixtureValue.controlProfile,
-    actorId: "worker-member-1",
-    expectedEpoch: 0,
-    requestId: "task-request-1",
-  });
-  const cancelled = await fixtureValue.store.cancelTask({
-    workId: "work-1",
-    taskId: "task-1",
-    profile: fixtureValue.controlProfile,
-    actorId: "leader-1",
-    reason: "scope withdrawn",
-    expectedEpoch: 1,
-    requestId: "cancel-request-1",
-  });
-  assert.equal(cancelled.task.status, "cancelled");
-  const result = createResult({
-    resultId: "result-1",
-    workId: "work-1",
-    taskId: "task-1",
-    producerMemberId: "member-1",
-    claim: "late",
-    createdAt: "2026-08-15T00:00:02.000Z",
-  });
-  await assert.rejects(fixtureValue.store.submitResult({
-    result,
-    team: fixtureValue.team,
-    member: fixtureValue.member,
-    profile: fixtureValue.controlProfile,
-    actorId: "worker-member-1",
-    expectedEpoch: 2,
-    requestId: "result-request-late",
-  }), /RESULT_TASK_CONFLICT/u);
-
-  const journal = await readFile(fixtureValue.filePath, "utf8");
-  const tampered = journal.replace("scope withdrawn", "scope changed");
-  await rm(fixtureValue.filePath);
-  await import("node:fs/promises").then(({ writeFile }) => writeFile(fixtureValue.filePath, tampered));
-  await assert.rejects(new CoordinationStore({ filePath: fixtureValue.filePath, now: () => NOW }).health(), /Invalid coordination journal/u);
-});
-
-test("Leader Task decision and Work closure are typed, replay-safe, and durable", async (t) => {
-  const fixtureValue = await fixture(t);
-  await admitted(fixtureValue);
-  await fixtureValue.store.createTask({
-    task: taskSpec(),
-    team: fixtureValue.team,
-    member: fixtureValue.member,
-    profile: fixtureValue.controlProfile,
-    actorId: "leader-1",
-    expectedEpoch: 0,
-    requestId: "decision-task-create",
-  });
-  const result = createResult({ resultId: "decision-result-1", workId: "work-1", taskId: "task-1", producerMemberId: "member-1", claim: "bounded result", createdAt: "2026-08-15T00:00:02.000Z" });
-  await fixtureValue.store.submitResult({ result, team: fixtureValue.team, member: fixtureValue.member, profile: fixtureValue.controlProfile, actorId: "worker-member-1", expectedEpoch: 1, requestId: "decision-result-submit" });
-  await assert.rejects(() => fixtureValue.store.decideTask({ taskId: "task-1", team: fixtureValue.team, profile: fixtureValue.controlProfile, actorId: "leader-1", decision: "accept", resultDigest: "a".repeat(64), reason: "wrong digest", expectedEpoch: 2, requestId: "decision-wrong-digest" }), /TASK_DECISION_RESULT_CONFLICT/u);
-  const accepted = await fixtureValue.store.decideTask({ taskId: "task-1", team: fixtureValue.team, profile: fixtureValue.controlProfile, actorId: "leader-1", decision: "accept", resultDigest: result.contentDigest, reason: "matches the submitted Result", expectedEpoch: 2, requestId: "decision-accept-1" });
-  assert.equal(accepted.decision.decision, "accept");
-  assert.equal(accepted.task.status, "accepted");
-  assert.equal((await fixtureValue.store.listDecisions()).length, 1);
-  const replay = await fixtureValue.store.decideTask({ taskId: "task-1", team: fixtureValue.team, profile: fixtureValue.controlProfile, actorId: "leader-1", decision: "accept", resultDigest: result.contentDigest, reason: "matches the submitted Result", expectedEpoch: 2, requestId: "decision-accept-1" });
-  assert.equal(replay.replayed, true);
-  const closed = await fixtureValue.store.closeWork({ workId: "work-1", team: fixtureValue.team, profile: fixtureValue.controlProfile, actorId: "leader-1", decision: "complete", reason: "all Tasks accepted", expectedEpoch: 3, requestId: "decision-close-1" });
-  assert.equal(closed.work.status, "closed");
-  assert.equal(closed.decision.decision, "complete");
-  assert.equal((await fixtureValue.store.getWork("work-1")).epoch, 4);
-  const reopened = new CoordinationStore({ filePath: fixtureValue.filePath, now: () => NOW });
-  assert.equal((await reopened.getTask("task-1")).decision.decision, "accept");
-  assert.equal((await reopened.getWork("work-1")).closeDecision.decision, "complete");
-  assert.equal((await reopened.listDecisions()).length, 2);
-  await assert.rejects(() => reopened.closeWork({ workId: "work-1", team: fixtureValue.team, profile: fixtureValue.controlProfile, actorId: "member-1", decision: "stop", reason: "wrong actor", expectedEpoch: 4, requestId: "decision-wrong-actor" }), /WORK_CLOSE_ACTOR_NOT_LEADER/u);
+test("M0 mistaken association correction preserves history and current replay target", async (t) => {
+  const value = await fixture(t); const source = await newWork(value, "$old", "Old Work");
+  await value.store.enqueueMessageAdmission({ team: value.team, route: value.route, profile: value.profile, actorId: "@human:example.test", eventId: "$wrong", receivedAt: "2026-08-15T00:00:01.000Z", requestId: "admit-wrong" });
+  const attached = await value.store.routeMessage({ roomId: value.route.roomId, eventId: "$wrong", team: value.team, route: value.route, profile: value.profile, actorId: value.leader.memberId, targetWorkId: source.work.work.workId, expectedEpoch: source.work.epoch, requestId: "route-wrong" });
+  await value.store.enqueueMessageAdmission({ team: value.team, route: value.route, profile: value.profile, actorId: "@human:example.test", eventId: "$correction", receivedAt: "2026-08-15T00:00:02.000Z", requestId: "admit-correction" });
+  const corrected = await value.store.correctMessageAssociation({ roomId: value.route.roomId, eventId: "$wrong", correctionEventId: "$correction", team: value.team, route: value.route, profile: value.profile, actorId: value.leader.memberId, expectedSourceEpoch: attached.work.epoch, title: "Separate Work", requestId: "correct-1" });
+  assert.notEqual(corrected.targetWork.work.workId, source.work.work.workId); assert.equal((await value.store.getMessageBinding(value.route.roomId, "$wrong")).workId, corrected.targetWork.work.workId);
+  assert.equal(corrected.sourceWork.timeline.some((entry) => entry.type === "message-association-corrected"), true);
+  const replay = await value.store.routeMessage({ roomId: value.route.roomId, eventId: "$wrong", team: value.team, route: value.route, profile: value.profile, actorId: value.leader.memberId, targetWorkId: source.work.work.workId, expectedEpoch: corrected.sourceWork.epoch, requestId: "another-route" });
+  assert.equal(replay.binding.workId, corrected.targetWork.work.workId);
 });

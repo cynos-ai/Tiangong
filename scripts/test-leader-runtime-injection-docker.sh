@@ -16,7 +16,7 @@ cat >"${TEST_ROOT}/inspect.json" <<'JSON'
     "State": {"Running": true},
     "Name": "/leader-test",
     "Config": {
-      "Image": "tiangong-worker-leader:dev",
+      "Image": "tg-worker:dev",
       "Entrypoint": ["/opt/agentteams/scripts/worker-entrypoint.sh"],
       "Cmd": [],
       "WorkingDir": "/root/agentteams-fs/agents/leader-test",
@@ -53,7 +53,7 @@ cat >"${TEST_ROOT}/inspect-volume.json" <<'JSON'
     "State": {"Running": true},
     "Name": "/leader-test",
     "Config": {
-      "Image": "tiangong-worker-leader:dev",
+      "Image": "tg-worker:dev",
       "Entrypoint": ["/opt/agentteams/scripts/worker-entrypoint.sh"],
       "Cmd": [],
       "WorkingDir": "/root/agentteams-fs/agents/leader-test",
@@ -140,7 +140,7 @@ TIANGONG_LEADER_WORKER_CONTAINER=leader-test \
 TIANGONG_LEADER_RUNTIME_BINDING_FILE="${binding}" \
 TIANGONG_COORDINATION_CONTROL_ENDPOINT=http://coordination-runtime:8780/v1/coordination/admit \
 TIANGONG_COORDINATION_CONTROL_TOKEN=test-control-token-123456 \
-  "${SCRIPT_DIR}/inject-leader-runtime-docker.sh" >"${output}"
+  bash "${SCRIPT_DIR}/inject-leader-runtime-docker.sh" >"${output}"
 
 grep -Fq 'leader_runtime_injection=pass container=leader-test' "${output}"
 grep -Fq -- '--mount type=bind,src=' "${TEST_ROOT}/run.args"
@@ -166,7 +166,7 @@ if PATH="${TEST_ROOT}/bin:${PATH}" \
   TIANGONG_LEADER_RUNTIME_BINDING_FILE="${binding}" \
   TIANGONG_COORDINATION_CONTROL_ENDPOINT=http://coordination-runtime:8780/v1/coordination/admit \
   TIANGONG_COORDINATION_CONTROL_TOKEN=test-control-token-123456 \
-    "${SCRIPT_DIR}/inject-leader-runtime-docker.sh" >"${TEST_ROOT}/invalid-gateway-output" 2>&1; then
+    bash "${SCRIPT_DIR}/inject-leader-runtime-docker.sh" >"${TEST_ROOT}/invalid-gateway-output" 2>&1; then
   printf 'expected invalid gateway rejection\n' >&2
   exit 1
 fi
@@ -180,7 +180,7 @@ if PATH="${TEST_ROOT}/bin:${PATH}" \
   TIANGONG_LEADER_RUNTIME_BINDING_FILE="${binding}" \
   TIANGONG_COORDINATION_CONTROL_ENDPOINT=http://coordination-runtime:8780/v1/coordination/admit \
   TIANGONG_COORDINATION_CONTROL_TOKEN=test-control-token-123456 \
-    "${SCRIPT_DIR}/inject-leader-runtime-docker.sh" >"${TEST_ROOT}/resource-output" 2>&1; then
+    bash "${SCRIPT_DIR}/inject-leader-runtime-docker.sh" >"${TEST_ROOT}/resource-output" 2>&1; then
   printf 'expected resource-limit rejection\n' >&2
   exit 1
 fi
@@ -197,7 +197,7 @@ TIANGONG_LEADER_WORKER_CONTAINER=leader-test \
 TIANGONG_LEADER_RUNTIME_BINDING_FILE="${binding}" \
 TIANGONG_COORDINATION_CONTROL_ENDPOINT=http://coordination-runtime:8780/v1/coordination/admit \
 TIANGONG_COORDINATION_CONTROL_TOKEN=test-control-token-123456 \
-  "${SCRIPT_DIR}/inject-leader-runtime-docker.sh" >"${volume_output}"
+  bash "${SCRIPT_DIR}/inject-leader-runtime-docker.sh" >"${volume_output}"
 grep -Fq 'leader_runtime_injection=pass container=leader-test' "${volume_output}"
 grep -Fq 'source=leader-test-binding,destination=/run/tiangong-leader,readonly' "${TEST_ROOT}/run.args"
 if grep -Fq 'test-control-token-123456' "${volume_output}"; then

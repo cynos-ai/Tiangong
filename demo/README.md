@@ -1,8 +1,8 @@
 # Tiangong Demo
 
-这是一条不改变默认 provider 的可演示路径：5 个已有 Tiangong Worker 镜像组成一个 Team，使用当前默认 DeepSeek 路由，通过真实 Matrix 消息触发 Leader 房间。它复用现有 AgentTeams、OpenClaw、Tiangong runtime 和 WebUI；没有为 Demo 引入另一套业务流程。
+这是一条不改变默认 provider 的通用演示入口：Leader、Architect、Challenger、Developer、Reviewer、Tester 使用同一个 `tg-worker:dev` 镜像，由 AgentTeams 身份和部署配置区分职责。它复用现有 AgentTeams、OpenClaw、Tiangong Coordination runtime 和 Matrix；没有为 Demo 引入另一套业务流程。
 
-为了不把尚未部署的 Leader Coordination Control sidecar 硬塞进演示，这个 v0 Demo 的 AgentTeams `team_leader` 使用 `tiangong-worker-member:dev` 作为可响应的演示 runtime。它能真实收发 Matrix 消息，但不宣称已经完成 Tiangong Leader 的 Project/Task 协调。后续 control runtime 就绪后，只需把 `demo/fixtures/workers.yaml` 的 Leader 镜像换回 `tiangong-worker-leader:dev`，不需要改 Team、WebUI 或发送路径。
+当前公开 fixture 和确定性合同已证明 M1 Agent package、M2 product Skill 和 M3 chat-first Web 的配置、安全会话、Matrix chat 与 Work 投影边界。它仍不把部署侧完整 binding、真实 AgentTeams/Matrix 运行或 M4 真实项目纵切冒充为已实现能力。
 
 ## 启动
 
@@ -12,12 +12,12 @@
 ./scripts/tiangong-demo.sh run
 ```
 
-脚本会创建 `tiangong-demo-*` 资源，等待 5 个 Worker 和 Team 进入 Active，然后向 Leader 房间发送一个只读演示请求。脚本成功后打开：
+`start` 只创建 `tiangong-demo-*` 资源并等待 6 个 Worker 和 Team 进入 Active。由于 AgentTeams v1.2.2 manifest 不能表达 Agent package/MemberConfig 字段，发送 turn 前还必须由部署层完成 Coordination runtime 和六成员注入；没有该机器事实时 `run`/`send` 会拒绝发送，而不是让未绑定 Worker 接收消息。脚本成功后打开：
 
 - Dashboard：<http://127.0.0.1:13000/>
 - Element Web：<http://127.0.0.1:18088/#/login>
 
-登录后进入 Leader 房间即可看到真实回复和 Team 状态。也可以用 `show` 在终端查看最近的有界消息。若只想准备环境而不发送消息，用 `start`；查看状态用 `status`；发送自己的只读提示用 `send "..."`。
+部署层完成 binding 并显式设置 `TIANGONG_DEMO_M1_RUNTIME_READY=1` 后，登录进入 Leader 房间即可看到真实回复和 Team 状态。也可以用 `show` 在终端查看最近的有界消息。若只想准备环境而不发送消息，用 `start`；查看状态用 `status`；发送自己的只读提示用 `send "..."`。
 
 ## 清理
 

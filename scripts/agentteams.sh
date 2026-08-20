@@ -199,12 +199,12 @@ provider_route() {
       route="codex-native-responses"
       wire_api="openai-responses"
       ;;
-    openai-compat:https://coding.dashscope.aliyuncs.com/v1:qwen*)
-      route="codex-opencodex-chat-bridge"
+    openai-compat:https://coding.dashscope.aliyuncs.com/v1:glm-*|openai-compat:https://coding.dashscope.aliyuncs.com/v1:qwen*)
+      route="agentteams-openclaw-built-in"
       wire_api="openai-completions"
       ;;
     *)
-      die "Unsupported provider route: provider=${provider}, base_url=${normalized}, model=${model}. Use provider=qwen for DashScope native, DeepSeek Responses, or the Coding Plan Chat bridge."
+      die "Unsupported provider route: provider=${provider}, base_url=${normalized}, model=${model}. Use a supported AgentTeams-managed model route."
       ;;
   esac
 
@@ -241,7 +241,7 @@ load_config() {
   # the Manager's k8s default otherwise projects an unreachable controller
   # URL into OpenClaw workers.
   : "${AGENTTEAMS_AI_GATEWAY_URL:=http://aigw-local.agentteams.io:8080}"
-  : "${AGENTTEAMS_DEFAULT_MODEL:=qwen3.5-plus}"
+  : "${AGENTTEAMS_DEFAULT_MODEL:=glm-5}"
   : "${AGENTTEAMS_ADMIN_USER:=admin}"
   : "${AGENTTEAMS_PORT_GATEWAY:=18080}"
   : "${AGENTTEAMS_PORT_CONSOLE:=18001}"

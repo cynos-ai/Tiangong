@@ -1,121 +1,109 @@
-import { EvidenceRecorder } from "../evidence/recorder.mjs";
-import { TeamCoordinationGate } from "./tool-wrapper.mjs";
-import { createTeamChannel } from "./channel-adapter.mjs";
+import { Type } from "typebox";
+
+import { sha256 } from "../canonical-json.mjs";
+import { createContentRef, createTaskSpec, createWorkSpec } from "./coordination-store.mjs";
 import { createRemoteCoordinationStore } from "./coordination-control-client.mjs";
-import { createTeamSync } from "./sync-adapter.mjs";
-import { defaultStateDirectory } from "../persistence/state-directory.mjs";
-import { workerStatePaths } from "../persistence/state-paths.mjs";
-import { defaultTiangongRoot } from "./shared-fs.mjs";
-import { readPlaybookManifest } from "../playbook/resolver.mjs";
-import { projectDisposition } from "../team/project-chain.mjs";
-import { createRunnerBrokerPreparationClient } from "../runner/preparation-client.mjs";
-import { createLeaderToolRegistry } from "../work/leader-tools.mjs";
-import { TurnGateState } from "../gates/turn-state.mjs";
 
 const LEADER_ROLE = "leader";
-const MATRIX_USER_ID = /^@[^:\s]+:[^\s]+$/u;
+const ID = Type.String({ pattern: "^[A-Za-z0-9@!#$%&*+./:=?_-]{1,160}$" });
+const EVENT_ID = Type.String({ pattern: "^\\$[^\\s]{1,255}$" });
+const CONTENT_REF = Type.Union([
+  Type.Object({ repositoryId: ID, commitSha: Type.String({ minLength: 1, maxLength: 128 }) }, { additionalProperties: false }),
+  Type.Object({ adapter: ID, ref: Type.String({ minLength: 1, maxLength: 512 }) }, { additionalProperties: false }),
+]);
 const TOOL_NAMES = Object.freeze([
-  "team_create_project",
-  "team_dispatch_task",
-  "team_check_result",
-  "team_decide_task",
-  "team_report",
-  "team_read_coordination_work",
+  "tiangong_list_pending_messages", "tiangong_route_message", "tiangong_correct_message_association",
+  "tiangong_read_work", "tiangong_rename_work", "tiangong_set_work_spec", "tiangong_publish_plan",
+  "tiangong_create_task", "tiangong_cancel_task", "tiangong_complete_work", "tiangong_stop_work",
 ]);
 
-function required(value, name) {
-  if (typeof value !== "string" || value === "") throw new Error(`${name} is required`);
-  return value;
+function required(value, name) { if (typeof value !== "string" || value === "") throw new Error(`${name} is required`); return value; }
+function ok(details) { return { content: [{ type: "text", text: JSON.stringify(details) }], details }; }
+function requestId(action, toolCallId, params) { return `${action}-${sha256({ toolCallId, params }).slice(0, 48)}`; }
+function now() { return new Date().toISOString(); }
+
+export function isLeaderEnvironment(env = process.env) { return env?.TIANGONG_ROLE_ID === LEADER_ROLE || env?.AGENTTEAMS_WORKER_ROLE === "team_leader"; }
+
+function definitions(store, memberId) {
+  return [
+    {
+      name: "tiangong_list_pending_messages", label: "List messages awaiting Leader routing",
+      description: "Read bounded Matrix event references awaiting semantic routing. Message bodies remain in Matrix.",
+      parameters: Type.Object({}, { additionalProperties: false }), executionMode: "sequential",
+      async execute() { return ok(await store.listMessageAdmissions({ status: "pending" })); },
+    },
+    {
+      name: "tiangong_route_message", label: "Route one Matrix message",
+      description: "Associate a pending Human Matrix event with an open Work, or create a new requirement-pending Work. UI selection is never an input.",
+      parameters: Type.Object({ eventId: EVENT_ID, targetWorkId: Type.Optional(ID), title: Type.Optional(Type.String({ minLength: 1, maxLength: 160 })), expectedEpoch: Type.Optional(Type.Integer({ minimum: 0 })) }, { additionalProperties: false }), executionMode: "sequential",
+      async execute(toolCallId, params) {
+        if (params.targetWorkId && !Number.isSafeInteger(params.expectedEpoch)) throw new Error("Routing to an existing Work requires expectedEpoch");
+        if (!params.targetWorkId && !params.title) throw new Error("Creating a Work requires a bounded title");
+        return ok(await store.routeMessage({ ...params, actorId: memberId, requestId: requestId("route-message", toolCallId, params) }));
+      },
+    },
+    {
+      name: "tiangong_correct_message_association", label: "Correct a mistaken message association",
+      description: "Correct the current Work association without deleting history or moving Tasks, Results, ToolResults, or Operations.",
+      parameters: Type.Object({ eventId: EVENT_ID, correctionEventId: EVENT_ID, targetWorkId: Type.Optional(ID), title: Type.Optional(Type.String({ minLength: 1, maxLength: 160 })), expectedSourceEpoch: Type.Integer({ minimum: 0 }), expectedTargetEpoch: Type.Optional(Type.Integer({ minimum: 0 })), stopSourceIfEmpty: Type.Optional(Type.Boolean()) }, { additionalProperties: false }), executionMode: "sequential",
+      async execute(toolCallId, params) {
+        if (params.targetWorkId && !Number.isSafeInteger(params.expectedTargetEpoch)) throw new Error("Existing correction target requires expectedTargetEpoch");
+        if (!params.targetWorkId && !params.title) throw new Error("New correction target requires a title");
+        return ok(await store.correctMessageAssociation({ ...params, actorId: memberId, requestId: requestId("correct-message", toolCallId, params) }));
+      },
+    },
+    {
+      name: "tiangong_read_work", label: "Read one durable Work", description: "Read the current Work projection and bounded timeline.",
+      parameters: Type.Object({ workId: ID }, { additionalProperties: false }), executionMode: "sequential",
+      async execute(_toolCallId, params) { return ok({ work: await store.getWork(params.workId) }); },
+    },
+    {
+      name: "tiangong_rename_work", label: "Rename Work", description: "Change bounded display metadata only.",
+      parameters: Type.Object({ workId: ID, title: Type.String({ minLength: 1, maxLength: 160 }), expectedEpoch: Type.Integer({ minimum: 0 }) }, { additionalProperties: false }), executionMode: "sequential",
+      async execute(toolCallId, params) { return ok(await store.changeWorkTitle({ ...params, actorId: memberId, requestId: requestId("rename-work", toolCallId, params) })); },
+    },
+    {
+      name: "tiangong_set_work_spec", label: "Form or revise WorkSpec", description: "Publish the Leader's complete current understanding of the Work.",
+      parameters: Type.Object({ workId: ID, goal: Type.String({ minLength: 1, maxLength: 4096 }), scope: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 2048 }), { maxItems: 32 })), constraints: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 2048 }), { maxItems: 32 })), doneWhen: Type.Array(Type.String({ minLength: 1, maxLength: 2048 }), { minItems: 1, maxItems: 32 }), unresolvedAssumptions: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 2048 }), { maxItems: 32 })), expectedEpoch: Type.Integer({ minimum: 0 }) }, { additionalProperties: false }), executionMode: "sequential",
+      async execute(toolCallId, params) {
+        const work = await store.getWork(params.workId); if (!work) throw new Error("WORK_NOT_FOUND");
+        const spec = createWorkSpec({ workId: params.workId, revision: (work.currentWorkSpec?.revision ?? 0) + 1, goal: params.goal, scope: params.scope ?? [], constraints: params.constraints ?? [], doneWhen: params.doneWhen, unresolvedAssumptions: params.unresolvedAssumptions ?? [], createdAt: now() });
+        return ok(await store.changeWorkSpec({ workId: params.workId, spec, actorId: memberId, expectedEpoch: params.expectedEpoch, requestId: requestId("set-work-spec", toolCallId, params) }));
+      },
+    },
+    {
+      name: "tiangong_publish_plan", label: "Publish current Plan", description: "Set the immutable Markdown ContentRef used as current shared Plan.",
+      parameters: Type.Object({ workId: ID, planRef: CONTENT_REF, reason: Type.String({ minLength: 1, maxLength: 2048 }), expectedEpoch: Type.Integer({ minimum: 0 }) }, { additionalProperties: false }), executionMode: "sequential",
+      async execute(toolCallId, params) { return ok(await store.changeWorkPlan({ ...params, planRef: createContentRef(params.planRef), actorId: memberId, requestId: requestId("publish-plan", toolCallId, params) })); },
+    },
+    {
+      name: "tiangong_create_task", label: "Create Task", description: "Create one immutable TaskSpec for an enabled member. No role, stage, kind, or DAG is encoded.",
+      parameters: Type.Object({ workId: ID, taskId: ID, assigneeMemberId: ID, objective: Type.String({ minLength: 1, maxLength: 4096 }), inputs: Type.Optional(Type.Array(CONTENT_REF, { maxItems: 32 })), constraints: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 2048 }), { maxItems: 32 })), expectedEpoch: Type.Integer({ minimum: 0 }) }, { additionalProperties: false }), executionMode: "sequential",
+      async execute(toolCallId, params) {
+        const task = createTaskSpec({ taskId: params.taskId, workId: params.workId, assigneeMemberId: params.assigneeMemberId, objective: params.objective, inputs: params.inputs ?? [], constraints: params.constraints ?? [], createdAt: now() });
+        return ok(await store.createTask({ task, actorId: memberId, expectedEpoch: params.expectedEpoch, requestId: requestId("create-task", toolCallId, params) }));
+      },
+    },
+    {
+      name: "tiangong_cancel_task", label: "Cancel Task", description: "Cancel an unreported Task only after runtime cancellation guards pass.",
+      parameters: Type.Object({ workId: ID, taskId: ID, reason: Type.String({ minLength: 1, maxLength: 2048 }), expectedEpoch: Type.Integer({ minimum: 0 }) }, { additionalProperties: false }), executionMode: "sequential",
+      async execute(toolCallId, params) { return ok(await store.cancelTask({ ...params, actorId: memberId, requestId: requestId("cancel-task", toolCallId, params) })); },
+    },
+    ...["complete", "stop"].map((action) => ({
+      name: `tiangong_${action}_work`, label: `${action === "complete" ? "Complete" : "Stop"} Work`, description: `${action === "complete" ? "Semantically complete" : "Stop"} the Work after CloseGuard verifies machine facts.`,
+      parameters: Type.Object({ workId: ID, reason: Type.String({ minLength: 1, maxLength: 4096 }), expectedEpoch: Type.Integer({ minimum: 0 }) }, { additionalProperties: false }), executionMode: "sequential",
+      async execute(toolCallId, params) { return ok(await store.closeWork({ ...params, action, actorId: memberId, requestId: requestId(`${action}-work`, toolCallId, params) })); },
+    })),
+  ];
 }
 
-/**
- * AgentTeams v1.2.2 already projects the authoritative Leader role as
- * AGENTTEAMS_WORKER_ROLE=team_leader, but it has no field for Tiangong's
- * plugin role id. Accept that one upstream identity assertion as equivalent
- * to the explicit deployment projection; all professional roles still need
- * their explicit Tiangong role binding.
- */
-export function isLeaderEnvironment(env = process.env) {
-  return env?.TIANGONG_ROLE_ID === LEADER_ROLE || env?.AGENTTEAMS_WORKER_ROLE === "team_leader";
-}
-
-function effectiveLeaderEnvironment(env) {
-  if (env?.TIANGONG_ROLE_ID === LEADER_ROLE) return env;
-  return Object.freeze({ ...env, TIANGONG_ROLE_ID: LEADER_ROLE });
-}
-
-function leaderMatrixId(env) {
-  const name = required(env.AGENTTEAMS_WORKER_NAME, "AGENTTEAMS_WORKER_NAME");
-  const domain = required(env.AGENTTEAMS_MATRIX_DOMAIN, "AGENTTEAMS_MATRIX_DOMAIN");
-  const value = `@${name}:${domain}`;
-  if (!MATRIX_USER_ID.test(value)) throw new Error("Leader Matrix identity is invalid");
-  return value;
-}
-
-function invocationFor(context, env) {
-  const sessionId = context.sessionId ?? context.sessionKey;
-  if (typeof sessionId !== "string" || sessionId === "") {
-    throw new Error("OpenClaw Leader session context is unavailable");
-  }
-  const actorId = context.requesterSenderId;
-  if (typeof actorId !== "string" || !MATRIX_USER_ID.test(actorId)) {
-    throw new Error("OpenClaw Leader requester identity is unavailable");
-  }
-  return Object.freeze({
-    sessionId,
-    turnId: `${sessionId}:openclaw-leader`,
-    actor: Object.freeze({ id: actorId, channel: context.messageChannel ?? "matrix" }),
-    ingress: Object.freeze({ channel: context.messageChannel ?? "matrix", sessionKey: context.sessionKey ?? sessionId }),
-    resumed: false,
-    turnState: new TurnGateState(),
-    observability: null,
-    workerName: env.AGENTTEAMS_WORKER_NAME,
-  });
-}
-
-/**
- * Register Tiangong's closed Leader coordination surface as ordinary
- * OpenClaw tools. The model remains in OpenClaw's embedded runtime; this
- * adapter only projects the existing deterministic tool definitions into the
- * upstream tool registry and supplies the authenticated Matrix invocation
- * context that the Gate requires.
- */
-export function registerLeaderOpenClawTools(api, {
-  env = process.env,
-  fetchImpl = globalThis.fetch,
-} = {}) {
+export function registerLeaderOpenClawTools(api, { env = process.env, fetchImpl = globalThis.fetch } = {}) {
   if (!isLeaderEnvironment(env)) return { enabled: false };
   if (typeof api?.registerTool !== "function") throw new Error("OpenClaw registerTool API is unavailable");
-  const leaderEnv = effectiveLeaderEnvironment(env);
   const endpoint = required(env.TIANGONG_COORDINATION_CONTROL_ENDPOINT, "TIANGONG_COORDINATION_CONTROL_ENDPOINT");
   const token = required(env.TIANGONG_COORDINATION_CONTROL_TOKEN, "TIANGONG_COORDINATION_CONTROL_TOKEN");
-  const playbook = readPlaybookManifest("software-change-delivery");
-  const workerName = required(env.AGENTTEAMS_WORKER_NAME, "AGENTTEAMS_WORKER_NAME");
-  leaderMatrixId(env);
-
-  api.registerTool((context = {}) => {
-    const workspaceDir = context.workspaceDir ?? `/root/agentteams-fs/agents/${workerName}`;
-    const stateDirectory = defaultStateDirectory(workspaceDir);
-    const paths = workerStatePaths(stateDirectory);
-    const evidence = new EvidenceRecorder({ filePath: paths.evidenceFilePath });
-    const channel = createTeamChannel({ evidence, env: leaderEnv, fetchImpl });
-    const coordinationStore = createRemoteCoordinationStore({ endpoint, token, fetchImpl });
-    const invocation = invocationFor(context, env);
-    const deps = {
-      rootDir: defaultTiangongRoot(env),
-      env: leaderEnv,
-      channel,
-      sync: createTeamSync(),
-      evidence,
-      gate: new TeamCoordinationGate(),
-      getInvocation: () => invocation,
-      maxRevisionWaves: playbook.maxRevisionWaves,
-      getProjectDisposition: (projectId) => projectDisposition(projectId, deps),
-      runnerBrokerPreparation: createRunnerBrokerPreparationClient(),
-      coordinationStore,
-    };
-    return createLeaderToolRegistry({ playbook, deps }).definitions();
-  }, { names: [...TOOL_NAMES] });
-
+  const memberId = required(env.TIANGONG_MEMBER_ID ?? env.AGENTTEAMS_WORKER_NAME, "TIANGONG_MEMBER_ID");
+  const store = createRemoteCoordinationStore({ endpoint, token, fetchImpl, memberId });
+  api.registerTool(() => definitions(store, memberId), { names: [...TOOL_NAMES] });
   return { enabled: true, tools: [...TOOL_NAMES], runtime: "openclaw-built-in" };
 }
