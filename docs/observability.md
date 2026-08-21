@@ -1,102 +1,114 @@
-# Worker observability
+# Worker observability and AgentLoop
 
-Tiangong can export a sanitized Worker turn trace through the OpenTelemetry Protocol (OTLP). Tracing is optional, backend-neutral, and disabled by default.
+Tiangong can export diagnostic OpenTelemetry traces and OpenClaw runtime metrics to an OTLP/HTTP collector. Export is disabled by default and is never a product authority.
 
-## Boundary
+## Authority and privacy boundary
 
-OpenTelemetry traces are diagnostic telemetry. They may be delayed, dropped, sampled, or unavailable and therefore are **not** Tiangong Evidence. A trace cannot authorize an operation, prove an external side effect, or certify a result. Tiangong's hash-chained Evidence remains the audit record.
+PostgreSQL remains the sole Tiangong authority for Work, Task, Result, Matrix admission, request replay, and wake-outbox state. Matrix remains the Room/message/history authority. AgentLoop and OpenTelemetry data can be delayed, sampled, dropped, or unavailable, so they cannot authorize an operation, satisfy CloseGuard, prove an external side effect, or certify a Result.
 
-Official OpenClaw remains responsible for Matrix ingress and delivery. The first Tiangong-owned span begins when OpenClaw invokes the registered control-plugin hook or tool.
+Tiangong does not restore the removed hash-chain Evidence runtime. Machine facts, model prose, Matrix delivery observations, and diagnostic telemetry remain distinct facts.
 
-## Configuration
+AgentLoop content capture is **off by default**. This integration permits it only when the Worker is explicitly marked `isolated-test`. Do not enable it for production, private repositories, customer data, or unreviewed retention policies. Hidden chain of thought is neither collected nor claimed.
 
-Configure the `tiangong-control` OpenClaw plugin with an OTLP HTTP trace endpoint:
+## Supported integration
 
-```json
-{
-  "plugins": {
-    "entries": {
-      "tiangong-control": {
-        "enabled": true,
-        "config": {
-          "observability": {
-            "enabled": true,
-            "endpoint": "http://collector.example.test:4318/v1/traces"
-          }
-        }
-      }
-    }
-  }
-}
+The M8 integration is pinned and verified against:
+
+- OpenClaw built-in `2026.4.14`;
+- Alibaba LoongSuite `opentelemetry-instrumentation-openclaw` `0.1.5-beta` release archive and Apache-2.0 license, both checksum-verified during the image build;
+- OpenClaw's built-in `diagnostics-otel` plugin;
+- OTLP over HTTP/Protobuf only;
+- OpenTelemetry Collector Core `0.136.0` at an immutable image digest.
+
+The release plugin's original lock selected vulnerable OpenTelemetry/protobuf dependencies. Tiangong replaces only that transport dependency set with locked, audited `@opentelemetry/exporter-trace-otlp-proto@0.221.0` and OpenTelemetry SDK `2.10.0`; the image build fails on a high/critical production audit finding. The complete replacement lock is `worker/agentloop-package-lock.json`.
+
+Official references:
+
+- [Alibaba Cloud: Integrate OpenClaw with Cloud Monitor 2.0](https://www.alibabacloud.com/help/en/cms/cloudmonitor-2-0/monitor-openclaw-applications)
+- [OpenClaw: OpenTelemetry export](https://docs.openclaw.ai/gateway/opentelemetry)
+
+Tiangong does not execute the vendor's remote `curl | bash` installer. The Worker image downloads a fixed public release archive and license, verifies their hashes, installs locked dependencies without lifecycle scripts, and verifies plugin loading in the finished image.
+
+## Credential-isolating topology
+
+```text
+OpenClaw Worker (no Alibaba Cloud credential)
+  ├─ AgentLoop traces ─┐
+  ├─ diagnostics metrics ── OTLP HTTP/Protobuf ──> tiangong-agentloop-collector
+  └─ Tiangong control spans ─┘                       └─ inject x-arms-* headers ──> AgentLoop
 ```
 
-The endpoint must be an absolute HTTP or HTTPS `/v1/traces` URL without embedded credentials, query parameters, or fragments. Headers and arbitrary exporter options are intentionally unsupported. Missing configuration, or `{ "enabled": false }`, selects a no-op implementation.
+Workers are hard-coded to `http://tiangong-agentloop-collector:4318`. They reject Alibaba Cloud AgentLoop credentials, arbitrary OTLP endpoint overrides, OTLP headers, certificate/key paths, and ambient exporter overrides. Only the collector receives the write credential.
 
-A focused diagnostic image can embed the same non-secret endpoint without changing the default image behavior:
+Create a repository-external file owned by the operator with mode `0600`:
+
+```dotenv
+AGENTLOOP_ENDPOINT=https://<project>.<region>.log.aliyuncs.com/apm/trace/opentelemetry
+AGENTLOOP_LICENSE_KEY=<new-license-key>
+AGENTLOOP_PROJECT=<sls-project>
+AGENTLOOP_WORKSPACE=<cms-workspace-id>
+```
+
+Use the base endpoint without `/v1/traces` or `/v1/metrics`; the Collector appends the signal path. Never reuse a key that has appeared in chat, source, logs, shell history, or an evidence artifact—rotate it first.
+
+Start the collector only after the AgentTeams network exists:
 
 ```bash
-TIANGONG_OTEL_EXPORTER_ENDPOINT=http://tiangong-otel-collector:4318/v1/traces \
-  make build-worker-image
+export TIANGONG_AGENTLOOP_SECRET_FILE=/absolute/path/outside/Tiangong/agentloop.env
+make agentloop-collector-start
+make agentloop-collector-status
 ```
 
-The build validates the embedded endpoint inside the finished image. Explicit plugin configuration takes precedence, including an explicit disable. Do not put credentials or tokens in this build argument; authenticated exporter headers are intentionally outside the current contract. Ambient `OTEL_EXPORTER_OTLP_*` variables are rejected when the exporter is enabled so they cannot inject headers, certificates, private-key paths, or alternate exporter behavior behind this allowlist.
+Enable a disposable Worker injection explicitly:
 
-## Trace model
+```bash
+export TIANGONG_AGENTLOOP_ENABLED=1
+export TIANGONG_AGENTLOOP_CONTENT_CAPTURE=isolated-test
+export TIANGONG_AGENTLOOP_SERVICE_NAME=tiangong-m8-test
+```
 
-A completed attempt can contain:
+Then run the existing Leader/member injection command for the owned disposable Workers. Stop the collector with:
+
+```bash
+make agentloop-collector-stop
+```
+
+The secret file is validated as a non-symlink regular file, limited to four exact fields, mode `0600` or stricter, and an exact Alibaba Cloud HTTPS OTLP base. The collector is read-only, capability-dropped, resource-bounded, attached only to the AgentTeams network, and ownership-labeled for exact cleanup.
+
+## Correlation model
+
+The Tiangong control plugin adds bounded attributes to matching spans:
 
 ```text
-tiangong.control.attempt
-├── tiangong.lifecycle.checkpoint
-├── tiangong.runtime.setup
-├── tiangong.gateway.resolve
-├── tiangong.session.open_or_reuse
-├── tiangong.openclaw.agent_turn
-├── gen_ai.chat
-└── execute_tool
+tiangong.work.id
+tiangong.task.id
+tiangong.member.id
+tiangong.session.ref
+tiangong.turn.id
+tiangong.skill.id
+tiangong.tool_result.id
+tiangong.tool_call.id
 ```
 
-Short checkpoint spans make phase entry observable even while a later operation remains in flight. Deterministic peer transport controls emit one of `peer.transport.start`, `peer.transport.ping`, or `peer.transport.pong`; they intentionally complete without a pi/model operation, so absence of model phases on such a completed Harness root is expected rather than `unknown`.
+Leader admission establishes Work/turn correlation. Member Task admission establishes Work/Task/member/session correlation. Skill selection and ToolResult persistence fill their identifiers when those machine facts exist. Correlation does not grant authority and missing correlation remains `unknown`; it is never guessed.
 
-Model activity uses these sanitized phases:
+The Web runtime may expose a validated `https://agentloop4service.console.aliyun.com/.../app/llm_agent/app-list` link. Work and Task links add only their Tiangong identifier filter. The Web does not copy AgentLoop traces or credentials.
 
-```text
-openclaw.turn.start
-model.request.ready
-model.response.received
-model.response.start
-model.response.progress
-model.retry
+## Tiangong-owned spans
+
+The `tiangong-control` plugin can also export sanitized control spans to the same local collector. Its endpoint is credential-free and supports only absolute `/v1/traces` OTLP HTTP/Protobuf URLs. It does not export prompts, responses, Matrix bodies, tool arguments/results, headers, credentials, raw exception text, or stack traces.
+
+The diagnostic hierarchy can include control attempts, lifecycle checkpoints, model boundary checkpoints, and tool execution. A trace shows observed timing and correlation only. Silence is `unknown`; it is not proof of a deadlock. Only an explicit timeout or abort is a terminal machine observation.
+
+## Verification
+
+Run the deterministic contracts and image build:
+
+```bash
+make test-agentloop-contract
+npm --prefix worker test
+npm --prefix app test
+make build-worker-image
 ```
 
-`openclaw.turn.start` is deliberately separate from provider activity. Control hooks emit the request/response checkpoints without reading prompt or response content. Progress is coalesced to at most one checkpoint per minute and 32 checkpoints per model operation rather than producing a span per token. Provider-internal retry details are not invented when the upstream API does not expose them.
-
-A progress checkpoint proves real response-stream activity. A local timer heartbeat would prove only that the Worker event loop can schedule a timer, not that the provider is progressing, so it is not labeled as model activity. Interpret the furthest correlated fact without promoting telemetry into Evidence:
-
-| Correlated facts | Diagnostic interpretation |
-|---|---|
-| `openclaw.turn.start` only | OpenClaw turn started; provider dispatch is not established |
-| `model.request.ready` without a response | waiting at the provider boundary; silence is only a suspected stall |
-| `model.response.received` / `model.response.start` | provider responded and the response stream opened |
-| recent `model.response.progress` | real response-stream activity was observed |
-| `model.retry` | upstream retry was observed; the turn is degraded, not proven stuck |
-| terminal `timeout` / `upstream_abort` | the corresponding explicit bound or cancellation fired |
-| no correlated telemetry or receiver failure | `unknown`, never inferred as deadlock |
-
-Telemetry alone cannot prove a deadlock. A prolonged silent interval becomes a terminal diagnosis only when an explicit timeout or abort occurs.
-
-Tool spans wrap the Tiangong-authorized backend execution, not model claims. Terminal outcomes are `complete`, `pending`, `error`, `timeout`, or `upstream_abort`.
-
-## Data policy
-
-The exporter allowlists span names and attributes. It exports only bounded identifiers, digested attempt/turn/session correlation values, provider/model identifiers, timeout, retry counters, tool name, Gate outcome, phase, terminal outcome, and stable error type.
-
-It does not export:
-
-- prompts, model responses, or transcripts;
-- credentials, headers, or Matrix message bodies;
-- actor display names or raw correlation identifiers;
-- tool arguments, results, or write content;
-- raw exception messages or stack traces.
-
-Exporter failure does not change the authoritative turn result. Queue, batch, and export time are bounded. Automated verification must query machine-readable OTLP data; a visualization UI such as AgentScope Studio, Jaeger, or Grafana is optional and replaceable.
+A real AgentLoop acceptance run additionally requires a newly issued LicenseKey injected only through the external collector secret file. Success requires machine-observed OTLP export plus a queryable AgentLoop trace correlated to real Work/Task identifiers. Until that run is performed, local plugin loading and collector validation do **not** constitute cloud reporting proof.

@@ -260,19 +260,19 @@ Web 主工作台至少展示：
 
 第一版不展示模型隐藏思维，不伪造逐步推理，也不建设 Trace 瀑布图、成本看板或完整评测平台。
 
-## 8. 后续 AgentLoop 兼容
+## 8. M8 AgentLoop 诊断接入
 
-第一版不接入 AgentLoop，但从第一天保留稳定关联：
+M8 已在默认关闭的前提下接入 AgentLoop，并保留以下稳定关联：
 
 ```text
 workId / taskId / memberId / sessionRef / turnId / skillId / toolResultId
 ```
 
-后续直接使用 AgentLoop 作为可替换的观测与评估后端，优先复用 OpenClaw 官方 OpenTelemetry 能力。Tiangong Web 第一阶段只提供“查看运行轨迹”入口并跳转 AgentLoop，不复制其控制台。
+AgentLoop 是可替换的诊断后端。Worker 使用 OpenClaw/AgentLoop 插件将无凭据 OTLP HTTP/Protobuf 发送到独立 Collector，由 Collector 注入阿里云写入鉴权；Provider/model 仍由 AgentTeams 管理。Tiangong Web 只提供经固定官方域名和路径校验的“查看运行轨迹”入口，不复制控制台或 Trace 数据。
 
-AgentLoop 可以展示可见输入、可见回复、AgentTeams 当前 Provider/Model 标识、Skill、工具、Token、耗时和错误。模型未公开的隐藏 Chain of Thought 不得被声称为可见。OpenClaw built-in 的实际 turn/tool 可见性先通过固定版本验证，Tiangong ToolResult 只补自己的有界机器事实。
+AgentLoop 可在明确批准的隔离测试中展示可见输入、可见回复、AgentTeams 当前 Provider/Model 标识、Skill、工具、Token、耗时和错误。模型未公开的隐藏 Chain of Thought 不得被声称为可见。Tiangong ToolResult 只补自己的有界机器事实。
 
-Trace 可以采样、延迟或丢失，AgentLoop 不可用也不能影响 Work、Task、Result、ToolResult 或完成判断。内容采集默认关闭；测试环境显式开启前必须完成脱敏、留存和凭据边界确认。
+Trace 可以采样、延迟或丢失，AgentLoop 不可用也不能影响 Work、Task、Result、ToolResult 或完成判断。内容采集默认关闭，当前只有显式 `isolated-test` 才允许启用；真实云端上报还必须使用仓库外轮换凭据并单独形成机器验证。详见 [`m8-agentloop-diagnostic-integration.md`](m8-agentloop-diagnostic-integration.md) 和 [`../observability.md`](../observability.md)。
 
 ## 9. 命名
 

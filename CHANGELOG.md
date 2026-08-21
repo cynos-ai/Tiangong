@@ -15,6 +15,8 @@ All notable changes to Tiangong are documented here. Tiangong follows Semantic V
 - Added the M3 chat-first Web workbench with Matrix login, Room history pagination, live sync, local echo, ordinary Human message send, Team/Room navigation, Leader backlog metrics, and side-by-side Work facts.
 - Added bounded Work timeline payload projection plus Plan history, candidate deliverables, Challenger Results, Agent/model/actual Skill use, Task/Result/ToolResult, deliverable, waiting, cancellation, and recovery-state rendering.
 - Added an in-memory Matrix Web session gateway with HttpOnly/SameSite cookies, CSRF checks, current `whoami` and bound-Room membership validation, SSE revocation, unencrypted-Room enforcement, strict CSP, and no browser credential storage.
+- Added default-off AgentLoop diagnostics for OpenClaw traces and runtime metrics, bounded Work/Task/Member/Session/Turn/Skill/ToolResult correlation, and validated Web links to the official AgentLoop console.
+- Added a credential-isolating OpenTelemetry Collector: Workers use fixed credential-free OTLP HTTP/Protobuf while the independently managed Collector injects Alibaba Cloud write headers from a repository-external `0600` file.
 
 ### Changed
 
@@ -25,6 +27,7 @@ All notable changes to Tiangong are documented here. Tiangong follows Semantic V
 - Matrix URL alone now enables Human Web chat; the deployment Matrix token remains optional and enables only the outbox consumer.
 - Made PostgreSQL the sole product authority for Work, Task, Result, Matrix admission, request replay, and wake outbox state; Web/runtime no longer fall back to a file store.
 - Kept Matrix admission lease/order processing and internal wake claim/ack processing as separate transactional concerns.
+- Pinned and checksum-verified the public AgentLoop OpenClaw plugin and license; replaced its vulnerable release transport lock with an audited exact OpenTelemetry dependency lock.
 
 ### Fixed
 
@@ -44,6 +47,7 @@ All notable changes to Tiangong are documented here. Tiangong follows Semantic V
 
 - Completed a disposable local M6 real-project delivery run through WorkSpec, candidate Plan and independent Challenge, a signed-off Developer Commit, independent Reviewer and Tester Results, CloseGuard, and a clean rerun; Push, deployment, and production writes remained closed.
 - The M7 deterministic Worker/App suites, product Agent/Skill package checks, generic demo contract, and six-responsibility MemberConfig injection contract pass.
+- M8 deterministic correlation, secret-file, Collector, Web-link, plugin-loading, Worker credential-denial, full Worker/App, and generic image contracts pass locally; real AgentLoop cloud delivery remains a separate credentialed acceptance run.
 - The M3 focused App contract passes `18/18`, covering Matrix identity/session containment, CSRF, Room binding, pagination projection, Human sender preservation, response bounds, one active sync, revocation, E2EE denial, strict CSP, and Work fact rendering.
 - The full App suite passes `33/33` against an owned disposable PostgreSQL 16 container, including Task SessionRef persistence, Room routing, correction, restart, Web projection, and cleanup; without injected test variables the same four PostgreSQL cases remain explicit skips.
 - The deployment-owned Coordination image builds with the M3 assets and gateway; browser inspection confirms the three-column workbench, view-only Work selection, ordinary message send, independent right-panel scrolling, and zero new console errors.
