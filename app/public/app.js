@@ -11,6 +11,8 @@ const state = {
   syncToken: null,
   facts: null,
   selectedWorkId: null,
+  diagnostics: new Map(),
+  diagnosticLoadingWorkId: null,
   running: false,
   runtimeStream: null,
 };
@@ -34,6 +36,15 @@ function errorLabel(code) {
     CSRF_INVALID: "当前操作已失效，请刷新会话。",
     ROOM_ROUTE_NOT_BOUND: "该 Room 未绑定到当前 Team。",
     WEB_SESSION_CAPACITY_EXCEEDED: "当前 Web 会话已达上限。",
+    DIAGNOSTICS_NOT_CONFIGURED: "此部署未配置 AgentLoop 只读诊断查询。",
+    DIAGNOSTICS_WEB_SESSION_UNAVAILABLE: "诊断查询要求已验证的 Matrix Web 会话。",
+    DIAGNOSTICS_SCOPE_UNAVAILABLE: "当前 Work 诊断范围不可用。",
+    DIAGNOSTIC_WORK_NOT_FOUND: "当前 Team Room 中没有这个 Work。",
+    DIAGNOSTICS_CAPACITY_EXCEEDED: "诊断查询已达并发上限，请稍后重试。",
+    DIAGNOSTICS_UNAVAILABLE: "AgentLoop 诊断暂时不可用；权威 Work 事实不受影响。",
+    DIAGNOSTICS_RESPONSE_INVALID: "AgentLoop 返回了不安全或无效的诊断响应。",
+    DIAGNOSTICS_RESPONSE_TOO_LARGE: "AgentLoop 诊断响应超过安全上限。",
+    DIAGNOSTICS_REQUEST_INVALID: "诊断查询范围无效。",
   };
   return labels[code] ?? `请求未完成（${code || "UNKNOWN"}）`;
 }
@@ -64,6 +75,8 @@ function showLogin(message = "") {
   state.runtimeStream = null;
   state.session = null;
   state.csrfToken = null;
+  state.diagnostics.clear();
+  state.diagnosticLoadingWorkId = null;
   loginView.classList.remove("hidden");
   workspace.classList.add("hidden");
   $("#login-error").textContent = message;
@@ -291,12 +304,75 @@ function renderWorkDetail(work) {
   const trajectory = $("#work-trajectory");
   trajectory.classList.toggle("hidden", !work.trajectoryUrl);
   if (work.trajectoryUrl) trajectory.href = work.trajectoryUrl; else trajectory.removeAttribute("href");
+  renderDiagnostics(work);
   renderSpec(work);
   renderPlan(work);
   renderAgents(work);
   renderTasks(work);
   renderTools(work);
   renderTimeline(work);
+}
+
+function diagnosticDuration(value) { return typeof value === "number" ? `${value.toLocaleString("zh-CN", { maximumFractionDigits: 3 })} ms` : "未知"; }
+function diagnosticTime(nanos) { if (typeof nanos !== "string" || !/^[0-9]{1,20}$/u.test(nanos)) return "时间未知"; return formatTime(Number(nanos.slice(0, 13).padEnd(13, "0"))); }
+
+function renderDiagnostics(work) {
+  const entry = state.diagnostics.get(work.workId) ?? null;
+  const loading = state.diagnosticLoadingWorkId === work.workId;
+  const anyLoading = state.diagnosticLoadingWorkId !== null;
+  const buttonNode = $("#load-diagnostics");
+  buttonNode.disabled = anyLoading;
+  buttonNode.textContent = entry?.value ? "刷新轨迹" : loading ? "正在查询…" : "按需加载轨迹";
+  clear($("#diagnostics-list"));
+  $("#diagnostics-summary").classList.add("hidden");
+  $("#diagnostics-meta").textContent = "";
+  if (loading) { $("#diagnostics-state").textContent = "正在查询只读诊断源…"; return; }
+  if (anyLoading) { $("#diagnostics-state").textContent = "另一 Work 的诊断查询正在进行…"; return; }
+  if (!entry) { $("#diagnostics-state").textContent = "尚未查询"; return; }
+  if (entry.error) { $("#diagnostics-state").textContent = errorLabel(entry.error); return; }
+  const value = entry.value;
+  $("#diagnostics-state").textContent = value.availability === "observed" ? (value.truncated ? "已观察到部分轨迹" : "已观察到轨迹") : "未观察到匹配 Span；状态未知";
+  $("#diagnostics-summary").classList.remove("hidden");
+  $("#diagnostics-span-count").textContent = String(value.summary?.observedSpanCount ?? value.spanCount ?? 0);
+  $("#diagnostics-trace-count").textContent = String(value.summary?.traceCount ?? 0);
+  $("#diagnostics-token-count").textContent = value.summary?.totalTokens === null || value.summary?.totalTokens === undefined ? "未知" : value.summary.totalTokens.toLocaleString("zh-CN");
+  $("#diagnostics-duration").textContent = diagnosticDuration(value.summary?.llmDurationMs);
+  $("#diagnostics-error-count").textContent = String(value.summary?.observedErrorSpanCount ?? 0);
+  const completeness = value.truncated ? "结果已截断，不代表完整执行" : value.windowLimited ? "仅查询最后 24 小时窗口" : "查询窗口内未触发结果上限";
+  $("#diagnostics-meta").textContent = `${completeness} · ${value.cacheState === "hit" ? "内存缓存" : "SLS 查询"} · ${formatTime(value.queriedAt)} · ${value.environment}`;
+  const list = $("#diagnostics-list");
+  for (const span of value.spans ?? []) {
+    const card = document.createElement("div"); card.className = "diagnostic-span";
+    const row = document.createElement("div"); row.className = "card-title-row";
+    const observedStatus = ({ OK: "无错误", ERROR: "错误", UNSET: "无错误状态", UNKNOWN: "状态未知" })[span.statusCode] ?? "状态未知";
+    row.append(text("span", span.name, "card-title"), text("span", observedStatus, `diagnostic-status ${span.statusCode.toLowerCase()}`));
+    const identity = [span.kind, span.model, span.taskId].filter(Boolean).join(" · ") || "无附加分类";
+    card.append(row, text("div", `${diagnosticTime(span.startEpochNanos)} · ${diagnosticDuration(span.durationMs)}`, "card-meta"), text("div", identity, "card-meta"));
+    if (span.usage && span.model) {
+      const usage = [`in ${span.usage.inputTokens ?? "?"}`, `out ${span.usage.outputTokens ?? "?"}`, `total ${span.usage.totalTokens ?? "?"}`].join(" · ");
+      card.append(text("div", usage, "diagnostic-usage"));
+    }
+    list.append(card);
+  }
+  if (!(value.spans ?? []).length) list.append(factCard("AgentLoop", "没有观察到属于此 Work 的匹配 Span。这不证明 Work 未运行或失败。"));
+}
+
+async function loadDiagnostics() {
+  const workId = state.selectedWorkId;
+  if (!workId || state.diagnosticLoadingWorkId) return;
+  state.diagnosticLoadingWorkId = workId;
+  const work = (state.facts?.works ?? []).find((candidate) => candidate.workId === workId);
+  if (work) renderDiagnostics(work);
+  try {
+    const value = await api(`/api/diagnostics/works/${encodeURIComponent(workId)}/trace`);
+    state.diagnostics.set(workId, { value });
+  } catch (error) {
+    if (error.status !== 401) state.diagnostics.set(workId, { error: error.code || "DIAGNOSTICS_UNAVAILABLE" });
+  } finally {
+    if (state.diagnosticLoadingWorkId === workId) state.diagnosticLoadingWorkId = null;
+    const current = (state.facts?.works ?? []).find((candidate) => candidate.workId === state.selectedWorkId);
+    if (current) renderDiagnostics(current);
+  }
 }
 
 function renderSpec(work) {
@@ -421,6 +497,7 @@ $("#logout-button").addEventListener("click", async () => {
 });
 
 $("#load-older").addEventListener("click", () => void loadHistory(true));
+$("#load-diagnostics").addEventListener("click", () => void loadDiagnostics());
 $("#message-body").addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); $("#composer").requestSubmit(); } });
 $("#composer").addEventListener("submit", async (event) => {
   event.preventDefault();

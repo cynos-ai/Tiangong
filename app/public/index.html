@@ -73,6 +73,20 @@
           <div id="work-empty" class="empty-state"><div class="empty-icon" aria-hidden="true">⌁</div><h3>选择一个 Work</h3><p>查看需求、Plan、Agent、Task 和交付物。选择只影响这里的查看范围。</p></div>
           <div id="work-detail" class="work-detail hidden">
             <section class="detail-hero"><div class="detail-title-row"><span id="work-status" class="status-badge"></span><span id="work-epoch" class="muted"></span></div><h2 id="work-title"></h2><p id="work-activity" class="muted"></p><a id="work-trajectory" class="trajectory-link hidden" target="_blank" rel="noreferrer noopener">在 AgentLoop 查看运行轨迹 ↗</a></section>
+            <section class="detail-section diagnostics-section" aria-labelledby="diagnostics-title">
+              <div class="section-heading"><h3 id="diagnostics-title">AgentLoop 诊断轨迹</h3><span class="diagnostic-pill">非权威</span></div>
+              <p class="diagnostic-notice">Span 可能被采样、延迟、重复或丢失，不参与 Work 完成、授权或恢复判断。</p>
+              <div class="diagnostic-actions"><button id="load-diagnostics" class="ghost diagnostic-button" type="button">按需加载轨迹</button><span id="diagnostics-state" class="muted" aria-live="polite">尚未查询</span></div>
+              <div id="diagnostics-summary" class="diagnostics-summary hidden">
+                <div><span>Observed spans</span><strong id="diagnostics-span-count">—</strong></div>
+                <div><span>Traces</span><strong id="diagnostics-trace-count">—</strong></div>
+                <div><span>Total tokens</span><strong id="diagnostics-token-count">—</strong></div>
+                <div><span>LLM span 耗时合计</span><strong id="diagnostics-duration">—</strong></div>
+                <div><span>Observed errors</span><strong id="diagnostics-error-count">—</strong></div>
+              </div>
+              <p id="diagnostics-meta" class="diagnostics-meta"></p>
+              <div id="diagnostics-list" class="diagnostics-list"></div>
+            </section>
             <section class="detail-section"><div class="section-heading"><h3>WorkSpec</h3><span id="spec-revision" class="count"></span></div><div id="work-spec"></div></section>
             <section class="detail-section"><div class="section-heading"><h3>Plan</h3><span id="plan-state" class="count"></span></div><div id="plan-content"></div></section>
             <section class="detail-section"><div class="section-heading"><h3>Agents &amp; Skills</h3><span id="agent-count" class="count"></span></div><div id="agent-list"></div></section>

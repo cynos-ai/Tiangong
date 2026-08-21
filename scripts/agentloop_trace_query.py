@@ -7,74 +7,27 @@ import argparse
 import json
 import os
 import re
-import stat
 import sys
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
-EXPECTED_SECRET_FIELDS = {
-    "ALIBABA_CLOUD_ACCESS_KEY_ID",
-    "ALIBABA_CLOUD_ACCESS_KEY_SECRET",
-}
-VALUE_PATTERN = re.compile(r"^[^\s\x00-\x1f\x7f]+$")
-NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$")
-ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
-MAX_SECRET_BYTES = 8192
-MAX_RESULTS = 100
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-
-class QueryFailure(Exception):
-    """A bounded failure safe to report without backend details."""
+from agentloop_query_adapter.core import (
+    ID_PATTERN,
+    MAX_RESULTS,
+    QueryFailure,
+    bounded_name,
+    load_secret,
+    object_field,
+    validate_endpoint,
+    validate_window,
+)
 
 
 def fail(code: str) -> None:
     print(f"agentloop_trace_query=fail code={code}", file=sys.stderr)
     raise SystemExit(1)
-
-
-def load_secret(path_text: str) -> dict[str, str]:
-    if not path_text:
-        raise QueryFailure("QUERY_SECRET_FILE_REQUIRED")
-    path = Path(os.path.abspath(Path(path_text).expanduser()))
-    try:
-        metadata = path.lstat()
-    except OSError as error:
-        raise QueryFailure("QUERY_SECRET_FILE_INVALID") from error
-    if not stat.S_ISREG(metadata.st_mode) or path.is_symlink():
-        raise QueryFailure("QUERY_SECRET_FILE_UNSAFE")
-    if os.name != "nt" and ((metadata.st_mode & 0o077) != 0 or metadata.st_uid != os.getuid()):
-        raise QueryFailure("QUERY_SECRET_FILE_UNSAFE")
-    try:
-        raw = path.read_bytes()
-    except OSError as error:
-        raise QueryFailure("QUERY_SECRET_FILE_INVALID") from error
-    if len(raw) > MAX_SECRET_BYTES or b"\r" in raw:
-        raise QueryFailure("QUERY_SECRET_FILE_INVALID")
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError as error:
-        raise QueryFailure("QUERY_SECRET_FILE_INVALID") from error
-
-    values: dict[str, str] = {}
-    for line in text.split("\n"):
-        if not line:
-            continue
-        if "=" not in line:
-            raise QueryFailure("QUERY_SECRET_FILE_INVALID")
-        key, value = line.split("=", 1)
-        if key not in EXPECTED_SECRET_FIELDS or key in values or not VALUE_PATTERN.fullmatch(value):
-            raise QueryFailure("QUERY_SECRET_FILE_INVALID")
-        values[key] = value
-    if values.keys() != EXPECTED_SECRET_FIELDS:
-        raise QueryFailure("QUERY_SECRET_FILE_INCOMPLETE")
-    return values
-
-
-def bounded_name(value: str, code: str, pattern: re.Pattern[str] = NAME_PATTERN) -> str:
-    if not pattern.fullmatch(value):
-        raise QueryFailure(code)
-    return value
 
 
 def parse_args() -> argparse.Namespace:
@@ -93,50 +46,15 @@ def parse_args() -> argparse.Namespace:
 
 
 def validate_args(args: argparse.Namespace) -> str:
-    project = bounded_name(args.project, "PROJECT_INVALID")
+    endpoint, _project = validate_endpoint(args.endpoint, args.project)
     bounded_name(args.service, "SERVICE_INVALID")
     bounded_name(args.expected_work_id, "WORK_ID_INVALID", ID_PATTERN)
     bounded_name(args.expected_task_id, "TASK_ID_INVALID", ID_PATTERN)
     bounded_name(args.expected_environment, "ENVIRONMENT_INVALID")
-    if args.from_epoch < 0 or args.to_epoch <= args.from_epoch or args.to_epoch - args.from_epoch > 86400:
-        raise QueryFailure("TIME_WINDOW_INVALID")
+    validate_window(args.from_epoch, args.to_epoch)
     if not 1 <= args.minimum_correlated_spans <= MAX_RESULTS:
         raise QueryFailure("CORRELATED_SPAN_THRESHOLD_INVALID")
-
-    endpoint_text = args.endpoint if "://" in args.endpoint else f"https://{args.endpoint}"
-    endpoint = urlparse(endpoint_text)
-    try:
-        endpoint_port = endpoint.port
-    except ValueError as error:
-        raise QueryFailure("ENDPOINT_INVALID") from error
-    if (
-        endpoint.scheme != "https"
-        or endpoint.username
-        or endpoint.password
-        or endpoint_port not in (None, 443)
-        or endpoint.path not in ("", "/")
-        or endpoint.params
-        or endpoint.query
-        or endpoint.fragment
-        or not endpoint.hostname
-        or not endpoint.hostname.endswith(".log.aliyuncs.com")
-        or not endpoint.hostname.startswith(f"{project}.")
-    ):
-        raise QueryFailure("ENDPOINT_INVALID")
-    return endpoint.hostname
-
-
-def object_field(contents: dict[str, Any], key: str) -> dict[str, Any]:
-    value = contents.get(key, {})
-    if isinstance(value, dict):
-        return value
-    if isinstance(value, str):
-        try:
-            decoded = json.loads(value)
-        except json.JSONDecodeError:
-            return {}
-        return decoded if isinstance(decoded, dict) else {}
-    return {}
+    return endpoint
 
 
 def run_query(args: argparse.Namespace, endpoint: str, secret: dict[str, str]) -> dict[str, Any]:
@@ -163,7 +81,7 @@ def run_query(args: argparse.Namespace, endpoint: str, secret: dict[str, str]) -
             MAX_RESULTS,
         )
         logs = response.get_logs()
-    except Exception as error:  # The backend exception may contain sensitive request context.
+    except Exception as error:  # Backend exceptions may contain sensitive request context.
         raise QueryFailure("QUERY_FAILED") from error
 
     if len(logs) >= MAX_RESULTS:
@@ -183,8 +101,8 @@ def run_query(args: argparse.Namespace, endpoint: str, secret: dict[str, str]) -
         trace_id = contents.get("traceID", contents.get("traceId", contents.get("trace_id")))
         if isinstance(trace_id, str) and re.fullmatch(r"[0-9a-fA-F]{16,32}", trace_id):
             trace_ids.add(trace_id.lower())
-        attributes = object_field(contents, "attributes")
-        resources = object_field(contents, "resources")
+        attributes = object_field(contents, "attributes", "attribute")
+        resources = object_field(contents, "resources", "resource")
         if attributes.get("deployment.environment") == args.expected_environment or resources.get("deployment.environment") == args.expected_environment:
             environment_seen = True
         if attributes.get("tiangong.work.id") == args.expected_work_id and attributes.get("tiangong.task.id") == args.expected_task_id:

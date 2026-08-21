@@ -2,6 +2,8 @@
 set -Eeuo pipefail
 
 readonly NETWORK="${TIANGONG_AGENTTEAMS_NETWORK:-agentteams-net}"
+readonly QUERY_NETWORK="${TIANGONG_AGENTLOOP_QUERY_NETWORK:-tiangong-agentloop-diagnostics}"
+readonly QUERY_ADAPTER_CONTAINER="${TIANGONG_AGENTLOOP_QUERY_ADAPTER_CONTAINER:-tiangong-agentloop-query-adapter}"
 readonly IMAGE="${TIANGONG_COORDINATION_IMAGE:-tiangong-coordination-runtime:dev}"
 readonly CONTAINER="${TIANGONG_COORDINATION_CONTAINER:-tiangong-coordination-runtime}"
 readonly OWNER="tiangong-deployment"
@@ -68,7 +70,7 @@ validate_env_keys() {
     [[ "${line}" == *=* ]] || fail ENV_LINE_INVALID
     key="${line%%=*}"
     case "${key}" in
-      TIANGONG_COORDINATION_DATABASE_URL|TIANGONG_COORDINATION_CONTROL_TOKEN|TIANGONG_COORDINATION_MATRIX_TOKEN|AGENTTEAMS_MATRIX_URL|TIANGONG_COORDINATION_CONSUMER_ID|TIANGONG_COORDINATION_OUTBOX_INTERVAL_MS|TIANGONG_WEB_SECURE_COOKIES|TIANGONG_LEADER_RUNTIME_BINDING_FILE|TIANGONG_COORDINATION_PORT|NODE_ENV) ;;
+      TIANGONG_COORDINATION_DATABASE_URL|TIANGONG_COORDINATION_CONTROL_TOKEN|TIANGONG_COORDINATION_MATRIX_TOKEN|AGENTTEAMS_MATRIX_URL|TIANGONG_COORDINATION_CONSUMER_ID|TIANGONG_COORDINATION_OUTBOX_INTERVAL_MS|TIANGONG_WEB_SECURE_COOKIES|TIANGONG_AGENTLOOP_QUERY_ADAPTER_URL|TIANGONG_LEADER_RUNTIME_BINDING_FILE|TIANGONG_COORDINATION_PORT|NODE_ENV) ;;
       *) fail UNSUPPORTED_ENVIRONMENT_KEY ;;
     esac
   done <"${ENV_FILE}"
@@ -94,6 +96,13 @@ require_inputs() {
   fi
   if grep -Eq '^TIANGONG_WEB_SECURE_COOKIES=' "${ENV_FILE}"; then
     grep -Eq '^TIANGONG_WEB_SECURE_COOKIES=[01]$' "${ENV_FILE}" || fail WEB_SECURE_COOKIES_INVALID
+  fi
+  if grep -Eq '^TIANGONG_AGENTLOOP_QUERY_ADAPTER_URL=' "${ENV_FILE}"; then
+    grep -Fxq 'TIANGONG_AGENTLOOP_QUERY_ADAPTER_URL=http://agentloop-query-adapter:8791' "${ENV_FILE}" || fail QUERY_ADAPTER_URL_INVALID
+    docker network inspect "${QUERY_NETWORK}" >/dev/null 2>&1 || fail QUERY_NETWORK_NOT_FOUND
+    [[ "$(docker container inspect --format '{{index .Config.Labels "io.tiangong.owner"}}' "${QUERY_ADAPTER_CONTAINER}" 2>/dev/null || true)" == "${OWNER}" ]] || fail QUERY_ADAPTER_NOT_FOUND
+    [[ "$(docker container inspect --format '{{index .Config.Labels "io.tiangong.component"}}' "${QUERY_ADAPTER_CONTAINER}" 2>/dev/null || true)" == "agentloop-query-adapter" ]] || fail QUERY_ADAPTER_NOT_FOUND
+    [[ "$(docker container inspect --format '{{.State.Running}}' "${QUERY_ADAPTER_CONTAINER}" 2>/dev/null || true)" == true ]] || fail QUERY_ADAPTER_NOT_RUNNING
   fi
   if grep -Eq '^(TIANGONG_LEADER_RUNTIME_BINDING_FILE|TIANGONG_COORDINATION_PORT|NODE_ENV)=' "${ENV_FILE}"; then
     fail RESERVED_ENVIRONMENT_KEY
@@ -142,6 +151,11 @@ start() {
     fi
     run_args+=("${IMAGE}")
     "${run_args[@]}" >/dev/null
+  fi
+  if grep -Fxq 'TIANGONG_AGENTLOOP_QUERY_ADAPTER_URL=http://agentloop-query-adapter:8791' "${ENV_FILE}"; then
+    if [[ "$(docker container inspect --format "{{if index .NetworkSettings.Networks \"${QUERY_NETWORK}\"}}true{{else}}false{{end}}" "${CONTAINER}" 2>/dev/null || true)" != true ]]; then
+      docker network connect "${QUERY_NETWORK}" "${CONTAINER}" >/dev/null
+    fi
   fi
   for _ in $(seq 1 60); do
     if docker exec "${CONTAINER}" node --input-type=module -e 'const r=await fetch("http://127.0.0.1:8780/readyz"); if (!r.ok) process.exit(1);' >/dev/null 2>&1; then

@@ -15,6 +15,7 @@ const MAX_SSE_CLIENTS = 32;
 const DIGEST = /^[a-f0-9]{64}$/u;
 const AGENTLOOP_CONSOLE_URL = process.env.TIANGONG_AGENTLOOP_CONSOLE_URL || "";
 const AGENTLOOP_FILTER_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
+const DIAGNOSTIC_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
 
 export function parseAgentLoopConsoleUrl(value) {
   if (value === undefined || value === null || value === "") return null;
@@ -295,6 +296,39 @@ function json(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
+function diagnosticWindow(work, now = Date.now()) {
+  const createdAt = Date.parse(work?.work?.createdAt);
+  const timelineTimes = Array.isArray(work?.timeline) ? work.timeline.map((entry) => Date.parse(entry?.at)).filter(Number.isFinite) : [];
+  if (!Number.isFinite(createdAt)) throw Object.assign(new Error("DIAGNOSTIC_WORK_TIME_INVALID"), { code: "DIAGNOSTIC_WORK_TIME_INVALID", status: 502 });
+  const latestAt = timelineTimes.length ? Math.max(...timelineTimes) : createdAt;
+  const open = work.status === "open";
+  const requestedFrom = Math.max(0, Math.floor(createdAt / 1000) - 60);
+  const toEpoch = Math.max(requestedFrom + 1, open ? Math.floor(now / 1000) + 1 : Math.floor(latestAt / 1000) + 300);
+  const fromEpoch = Math.max(requestedFrom, toEpoch - 86_400);
+  return { fromEpoch, toEpoch, windowLimited: fromEpoch > requestedFrom };
+}
+
+async function readDiagnosticWork({ request, matrixWebGateway, coordinationStore, coordinationControl, diagnosticsClient, now }) {
+  if (!matrixWebGateway) throw Object.assign(new Error("DIAGNOSTICS_WEB_SESSION_UNAVAILABLE"), { code: "DIAGNOSTICS_WEB_SESSION_UNAVAILABLE", status: 503 });
+  await matrixWebGateway.authorizeRead(request);
+  if (!diagnosticsClient) throw Object.assign(new Error("DIAGNOSTICS_NOT_CONFIGURED"), { code: "DIAGNOSTICS_NOT_CONFIGURED", status: 503 });
+  if (!coordinationStore || typeof coordinationStore.getWork !== "function" || !coordinationControl?.team || !coordinationControl?.route) throw Object.assign(new Error("DIAGNOSTICS_SCOPE_UNAVAILABLE"), { code: "DIAGNOSTICS_SCOPE_UNAVAILABLE", status: 503 });
+  const url = new URL(request.url ?? "/", "http://tiangong.invalid");
+  if (url.search || url.hash) throw Object.assign(new Error("DIAGNOSTICS_REQUEST_INVALID"), { code: "DIAGNOSTICS_REQUEST_INVALID", status: 422 });
+  const match = url.pathname.match(/^\/api\/diagnostics\/works\/([^/]+)\/trace$/u);
+  if (!match) throw Object.assign(new Error("DIAGNOSTICS_REQUEST_INVALID"), { code: "DIAGNOSTICS_REQUEST_INVALID", status: 422 });
+  let workId;
+  try { workId = decodeURIComponent(match[1]); } catch { throw Object.assign(new Error("DIAGNOSTICS_REQUEST_INVALID"), { code: "DIAGNOSTICS_REQUEST_INVALID", status: 422 }); }
+  if (!DIAGNOSTIC_ID.test(workId)) throw Object.assign(new Error("DIAGNOSTICS_REQUEST_INVALID"), { code: "DIAGNOSTICS_REQUEST_INVALID", status: 422 });
+  const work = await coordinationStore.getWork(workId);
+  if (!work || work.work?.teamId !== coordinationControl.team.teamId || work.work?.routeId !== coordinationControl.route.routeId || work.work?.roomId !== coordinationControl.route.roomId) {
+    throw Object.assign(new Error("DIAGNOSTIC_WORK_NOT_FOUND"), { code: "DIAGNOSTIC_WORK_NOT_FOUND", status: 404 });
+  }
+  const window = diagnosticWindow(work, now());
+  const result = await diagnosticsClient.query({ workId, fromEpoch: window.fromEpoch, toEpoch: window.toEpoch });
+  return { ...result, windowLimited: window.windowLimited };
+}
+
 function applySecurityHeaders(response) {
   response.setHeader("content-security-policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
   response.setHeader("x-content-type-options", "nosniff");
@@ -312,9 +346,13 @@ export function createRuntimeConsoleServer(options = {}) {
   const agentLoopConsoleUrl = parseAgentLoopConsoleUrl(options.agentLoopConsoleUrl ?? AGENTLOOP_CONSOLE_URL);
   const sseIntervalMs = Number.isSafeInteger(options.sseIntervalMs) && options.sseIntervalMs >= 100 && options.sseIntervalMs <= 60_000 ? options.sseIntervalMs : 1_000;
   const sseClients = new Map();
-  const coordinationControl = options.coordinationControl ? createCoordinationAdmissionHandler(options.coordinationControl) : null;
+  const coordinationControlOptions = options.coordinationControl ?? null;
+  const coordinationControl = coordinationControlOptions ? createCoordinationAdmissionHandler(coordinationControlOptions) : null;
   const matrixWebGateway = options.matrixWebGateway ?? null;
+  const diagnosticsClient = options.diagnosticsClient ?? null;
+  const now = typeof options.now === "function" ? options.now : () => Date.now();
   if (matrixWebGateway && (typeof matrixWebGateway.handle !== "function" || typeof matrixWebGateway.authorizeRead !== "function")) throw new TypeError("matrixWebGateway is invalid");
+  if (diagnosticsClient && typeof diagnosticsClient.query !== "function") throw new TypeError("diagnosticsClient is invalid");
   const readiness = typeof options.readiness === "function"
     ? options.readiness
     : async () => {
@@ -333,6 +371,14 @@ export function createRuntimeConsoleServer(options = {}) {
       if (await matrixWebGateway.handle(request, response)) return;
     }
     if (request.method !== "GET") return json(response, 405, { error: "method_not_allowed" });
+    if (request.url?.startsWith("/api/diagnostics/")) {
+      try {
+        return json(response, 200, await readDiagnosticWork({ request, matrixWebGateway, coordinationStore, coordinationControl: coordinationControlOptions, diagnosticsClient, now }));
+      } catch (error) {
+        const code = typeof error?.code === "string" && /^[A-Z0-9_:-]{1,96}$/u.test(error.code) ? error.code : "DIAGNOSTICS_UNAVAILABLE";
+        return json(response, Number.isSafeInteger(error?.status) ? error.status : 503, { error: code });
+      }
+    }
     if (request.url === "/healthz") return json(response, 200, { ok: true });
     if (request.url === "/readyz") {
       try {

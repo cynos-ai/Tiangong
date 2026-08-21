@@ -4,6 +4,7 @@ import { resolveMemberAgent } from "../../worker/agent/packages/loader.mjs";
 import { readLeaderRuntimeBinding } from "../../worker/agent/team/leader-runtime-config.mjs";
 import { createRuntimeConsoleServer } from "../server.mjs";
 import { createMatrixWebGateway } from "../matrix-web-gateway.mjs";
+import { createAgentLoopDiagnosticsClient } from "./agentloop-diagnostics.mjs";
 import { createPostgresCoordinationStore } from "./bootstrap.mjs";
 import { createMatrixWakeConsumer } from "./matrix-wake-consumer.mjs";
 
@@ -55,7 +56,12 @@ export async function startCoordinationRuntime(options = {}) {
     fetchImpl: options.matrixWebFetchImpl ?? options.fetchImpl,
     secureCookies: options.secureCookies ?? process.env.TIANGONG_WEB_SECURE_COOKIES !== "0",
   }) : null);
+  const diagnosticsClient = options.diagnosticsClient === undefined ? createAgentLoopDiagnosticsClient({
+    adapterUrl: process.env.TIANGONG_AGENTLOOP_QUERY_ADAPTER_URL,
+    fetchImpl: options.diagnosticsFetchImpl ?? options.fetchImpl,
+  }) : options.diagnosticsClient;
   const server = createRuntimeConsoleServer({
+    diagnosticsClient,
     factsFile: options.factsFile,
     captureFile: options.captureFile,
     coordinationStore: store,
