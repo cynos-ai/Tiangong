@@ -1,0 +1,5 @@
+{
+  "success": [{"name":"local-fix","given":"owned writable worktree and immutable TaskSpec","expect":["failure reproduced","focused tests pass after change","local Commit ContentRef","no push"]}],
+  "blocked": [{"name":"workspace-mismatch","given":"writable root is not assigned to the Task","expect":["execution refused","no file change","bounded failure Result"]}],
+  "cleanup": [{"name":"owned-worktree","expect":["only owned temporary resources removed","worktree state reported"]}]
+}

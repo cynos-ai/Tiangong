@@ -1,106 +1,21 @@
-#!/usr/bin/env node
-
 import { readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
-import { sha256 } from "../worker/agent/canonical-json.mjs";
-import { loadRoleProfileBundle, assertRuntimeProfileMaterialized, roleRegistrySnapshot } from "../worker/agent/config/role-profile.mjs";
-import { buildBaseSystemPrompt } from "../worker/agent/context/base-system-prompt.mjs";
-import { readPlaybookManifest } from "../worker/agent/playbook/resolver.mjs";
-import { inspectRunnerFixture } from "../worker/agent/runner/docker-executor.mjs";
+import { loadAgentPackages } from "../worker/agent/packages/loader.mjs";
+import { loadInstalledSkills } from "../worker/agent/skills/catalog.mjs";
 
-const ROOT = resolve(join(fileURLToPath(new URL(".", import.meta.url)), ".."));
-const WORKER_ROOT = join(ROOT, "worker");
-const ROLES = ["leader", "designer", "implementor", "assessor", "operator"];
-const EXPECTED_TOOLS = Object.freeze({
-  leader: ["team_create_project", "team_dispatch_task", "team_check_result", "team_decide_task", "team_report"],
-  designer: ["team_resolve_task", "team_submit_result"],
-  implementor: ["team_resolve_task", "run_command", "team_submit_result"],
-  assessor: ["team_resolve_task", "run_test_command", "team_submit_result"],
-  operator: ["team_resolve_task", "deploy_release", "team_submit_result"],
-});
-
-function fail(message) {
-  throw new Error(`DEMO_CONTRACT_INVALID: ${message}`);
+const workers = await readFile(new URL("../demo/fixtures/workers.yaml", import.meta.url), "utf8");
+const team = await readFile(new URL("../demo/fixtures/team.yaml", import.meta.url), "utf8");
+const demoScript = await readFile(new URL("./tiangong-demo.sh", import.meta.url), "utf8");
+const responsibilities = ["leader", "architect", "challenger", "developer", "reviewer", "tester"];
+for (const responsibility of responsibilities) {
+  if (!workers.includes(`tiangong-demo-${responsibility}`) || !team.includes(`tiangong-demo-${responsibility}`)) throw new Error(`demo member missing: ${responsibility}`);
 }
-
-async function loadSourceProfile(roleId) {
-  return loadRoleProfileBundle({
-    profilePath: join(WORKER_ROOT, "role-profiles", `${roleId}.json`),
-    resourceRoot: WORKER_ROOT,
-  });
-}
-
-function withoutSkills(bundle) {
-  return Object.freeze({ ...bundle, skills: Object.freeze([]) });
-}
-
-async function main() {
-  const registry = roleRegistrySnapshot();
-  if (Object.hasOwn(registry.roles, "reviewer") || Object.hasOwn(registry, "practices")) {
-    fail("historical Reviewer/Practice authority is present in the active registry");
-  }
-
-  const profiles = {};
-  const skillEvaluation = {};
-  for (const roleId of ROLES) {
-    const bundle = await loadSourceProfile(roleId);
-    assertRuntimeProfileMaterialized(bundle);
-    if (bundle.profile.roleId !== roleId) fail(`profile role mismatch for ${roleId}`);
-    if (bundle.profile.toolIds.join("\n") !== EXPECTED_TOOLS[roleId].join("\n")) {
-      fail(`tool surface mismatch for ${roleId}`);
-    }
-    const withSkill = buildBaseSystemPrompt(bundle);
-    const withoutSkill = buildBaseSystemPrompt(withoutSkills(bundle));
-    if (!withSkill.includes(bundle.skills[0].id)) fail(`Skill is absent from the trusted ${roleId} context`);
-    if (withSkill === withoutSkill) fail(`with/without Skill evaluation did not change ${roleId} context`);
-    const profileBytes = Buffer.from((await readFile(join(WORKER_ROOT, "role-profiles", `${roleId}.json`), "utf8")).replaceAll("\r\n", "\n"), "utf8");
-    if (bundle.profileDigest !== sha256(profileBytes)) {
-      fail(`profile digest mismatch for ${roleId}`);
-    }
-    profiles[roleId] = {
-      profileDigest: bundle.profileDigest,
-      skillId: bundle.skills[0].id,
-      skillDigest: bundle.skills[0].digest,
-      toolIds: bundle.profile.toolIds,
-    };
-    skillEvaluation[roleId] = {
-      withSkillPromptDigest: sha256(withSkill),
-      withoutSkillPromptDigest: sha256(withoutSkill),
-      toolSurfaceUnchanged: bundle.profile.toolIds.join("\n") === withoutSkills(bundle).profile.toolIds.join("\n"),
-    };
-  }
-
-  const playbook = readPlaybookManifest("software-change-delivery");
-  const lock = JSON.parse(await readFile(join(ROOT, "playbooks.lock.json"), "utf8"));
-  const transitionPolicyDigest = playbook.fileDigests["transition-policy.mjs"];
-  const locked = lock.playbooks?.find((entry) => entry.playbookId === playbook.playbookId && entry.version === playbook.version);
-  if (!locked || locked.contentDigest !== playbook.contentDigest || locked.transitionPolicyDigest !== transitionPolicyDigest) {
-    fail("playbook lock does not match the verified package");
-  }
-  for (const [relativePath, digest] of Object.entries(playbook.fileDigests)) {
-    if (locked.fileDigests?.[relativePath] !== digest) fail(`playbook file lock mismatch for ${relativePath}`);
-  }
-
-  const fixture = await inspectRunnerFixture(join(ROOT, "smoke-testing", "fixtures", "runner-isolation"));
-  const result = {
-    status: "pass",
-    playbook: {
-      id: playbook.playbookId,
-      version: playbook.version,
-      contentDigest: playbook.contentDigest,
-      transitionPolicyDigest,
-    },
-    fixtureDigest: fixture.digest,
-    profiles,
-    skillEvaluation,
-    evaluationMeaning: "Skill text changes trusted context only; fixed profile, closed tool surface, and playbook authority remain unchanged.",
-  };
-  process.stdout.write(`${JSON.stringify(result)}\n`);
-}
-
-main().catch((error) => {
-  process.stderr.write(`${error.message}\n`);
-  process.exitCode = 1;
-});
+const images = [...workers.matchAll(/^\s*image:\s*(\S+)\s*$/gmu)].map((match) => match[1]);
+if (images.length !== responsibilities.length || images.some((image) => image !== "tg-worker:dev")) throw new Error("demo must use only generic tg-worker");
+if (/tiangong-worker-(?:leader|designer|implementor|assessor|operator)/u.test(workers)) throw new Error("role-specific image remains in demo");
+if ((workers.match(/model: glm-5/gu) ?? []).length !== 6) throw new Error("demo AgentTeams model baseline must use GLM-5 for all six Workers");
+const [{ packages }, { skills }] = await Promise.all([loadAgentPackages(), loadInstalledSkills()]);
+if (packages.length !== responsibilities.length || packages.some((agent) => !responsibilities.includes(agent.responsibility))) throw new Error("demo Agent packages are incomplete");
+if (skills.length !== 6) throw new Error("demo product Skills are incomplete");
+if (!demoScript.includes("TIANGONG_DEMO_M1_RUNTIME_READY") || !demoScript.includes("M1 Agent package and Coordination bindings are not proven")) throw new Error("demo send path must fail closed without M1 deployment bindings");
+process.stdout.write(`${JSON.stringify({ status: "pass", image: "tg-worker:dev", responsibilities, agentPackages: packages.length, productSkills: skills.length })}\n`);

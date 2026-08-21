@@ -1,0 +1,14 @@
+{
+  "shouldTrigger": [
+    "Independently challenge this candidate Plan against every doneWhen item.",
+    "Find unsupported assumptions and missing failure-path verification in the Plan.",
+    "Assess whether the revised technical route needs another Plan challenge."
+  ],
+  "shouldNotTrigger": [
+    "Write the initial implementation Plan.",
+    "Review the Developer's code diff.",
+    "Publish this Plan as currentPlanRef."
+  ],
+  "ambiguous": ["Tell me what is risky about this proposal."],
+  "adjacentSkills": ["work-planning", "independent-code-review"]
+}

@@ -30,24 +30,3 @@ export function sha256(value) {
     : canonicalJson(value);
   return createHash("sha256").update(input).digest("hex");
 }
-
-export function operationDigest(operation) {
-  return sha256(operation);
-}
-
-export function operationRequestDigest(operation) {
-  return sha256({
-    policyVersion: operation.policyVersion,
-    workspaceScope: operation.workspaceScope,
-    toolName: operation.toolName,
-    target: operation.target,
-    input: operation.input ?? null,
-  });
-}
-
-export function idempotencyKey({ sessionId, turnId, toolCallId, operationDigest: digest }) {
-  for (const [name, value] of Object.entries({ sessionId, turnId, toolCallId, operationDigest: digest })) {
-    if (typeof value !== "string" || value === "") throw new TypeError(`${name} must be a non-empty string`);
-  }
-  return sha256({ sessionId, turnId, toolCallId, operationDigest: digest });
-}

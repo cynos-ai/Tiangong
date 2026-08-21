@@ -1,21 +1,45 @@
 ARG AGENTTEAMS_WORKER_IMAGE=higress-registry.cn-hangzhou.cr.aliyuncs.com/agentteams/agentteams-worker@sha256:daf587ad042f9564abb2347db5c4205ecc25d1b322e09fdd0d58a2a16c2d5c85
-ARG DOCKER_CLI_IMAGE=docker.io/library/docker@sha256:0135662b510037ea581d99c2e5929c5e01185139c0b86986a418bd4da0b98a44
-FROM ${DOCKER_CLI_IMAGE} AS docker-cli
 FROM ${AGENTTEAMS_WORKER_IMAGE} AS worker-base
 
 ARG TIANGONG_OTEL_EXPORTER_ENDPOINT=""
-ARG TIANGONG_CODEX_GATEWAY_HOSTS=agentteams-controller
-ARG TIANGONG_CODEX_BASE_URL=
+ARG TIANGONG_NPM_REGISTRY=https://registry.npmjs.org
+ARG AGENTLOOP_OPENCLAW_PLUGIN_VERSION=0.1.5-beta
+ARG AGENTLOOP_OPENCLAW_PLUGIN_SHA256=f48f0524beeed4d2ba4301d718fa36f7d24858714ac44aa6b69137fd07d1863f
+ARG AGENTLOOP_OPENCLAW_LICENSE_SHA256=43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1
 
 LABEL org.opencontainers.image.title="Tiangong Worker"
-LABEL org.opencontainers.image.description="AgentTeams Worker image with OpenClaw native runtime and Codex app-server"
+LABEL org.opencontainers.image.description="AgentTeams Worker image with the pinned OpenClaw built-in runtime"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 LABEL org.opencontainers.image.source="https://github.com/cynos-ai/Tiangong"
+
+COPY agentloop-package-lock.json scripts/audit-lockfile.mjs /tmp/
+RUN set -eu; \
+    plugin_dir=/opt/agentloop/opentelemetry-instrumentation-openclaw; \
+    archive=/tmp/agentloop-openclaw.tar.gz; \
+    license=/tmp/agentloop-openclaw.LICENSE; \
+    mkdir -p "${plugin_dir}" /opt/tiangong-worker/licenses; \
+    curl -fsSL --retry 3 "https://github.com/alibaba/loongsuite-js/releases/download/opentelemetry-instrumentation-openclaw/v${AGENTLOOP_OPENCLAW_PLUGIN_VERSION}/opentelemetry-instrumentation-openclaw.tar.gz" -o "${archive}"; \
+    curl -fsSL --retry 3 "https://raw.githubusercontent.com/alibaba/loongsuite-js-plugins/60c560a4d35ded23c973b558b4f6c28303b30b20/opentelemetry-instrumentation-openclaw/LICENSE" -o "${license}"; \
+    echo "${AGENTLOOP_OPENCLAW_PLUGIN_SHA256}  ${archive}" | sha256sum -c -; \
+    echo "${AGENTLOOP_OPENCLAW_LICENSE_SHA256}  ${license}" | sha256sum -c -; \
+    tar --extract --gzip --file "${archive}" --strip-components=1 --no-same-owner --no-same-permissions --directory "${plugin_dir}"; \
+    cp "${license}" /opt/tiangong-worker/licenses/agentloop-openclaw-Apache-2.0.txt; \
+    cd "${plugin_dir}"; \
+    node -e 'const fs=require("node:fs"); const path="package.json"; const value=JSON.parse(fs.readFileSync(path,"utf8")); value.dependencies["@opentelemetry/exporter-trace-otlp-proto"]="0.221.0"; value.dependencies["@opentelemetry/resources"]="2.10.0"; value.dependencies["@opentelemetry/sdk-trace-base"]="2.10.0"; fs.writeFileSync(path, JSON.stringify(value, null, 2)+"\n")'; \
+    cp /tmp/agentloop-package-lock.json ./package-lock.json; \
+    npm ci --omit=dev --ignore-scripts --no-audit --no-fund --registry="${TIANGONG_NPM_REGISTRY}"; \
+    node /tmp/audit-lockfile.mjs ./package-lock.json; \
+    test "$(node -p 'require("./package.json").version')" = "${AGENTLOOP_OPENCLAW_PLUGIN_VERSION}"; \
+    test "$(node -p 'require("./package.json").license')" = "Apache-2.0"; \
+    test "$(node -p 'require("@opentelemetry/exporter-trace-otlp-proto/package.json").version')" = "0.221.0"; \
+    chown -R 0:0 /opt/agentloop /opt/tiangong-worker/licenses; \
+    rm -f "${archive}" "${license}"; \
+    npm cache clean --force
 
 WORKDIR /opt/tiangong-worker
 COPY package.json package-lock.json ./
 COPY scripts/ ./scripts/
-RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/ \
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund --registry="${TIANGONG_NPM_REGISTRY}" \
     && ln -s /opt/openclaw ./node_modules/openclaw \
     && npm cache clean --force \
     && test -x /usr/bin/git \
@@ -35,165 +59,26 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund --registry=https://r
     && test "$(stat -c '%F:%u' /usr/lib/git-core)" = "directory:0"
 
 COPY agent/ ./agent/
-COPY --from=team_playbooks . /opt/team-playbooks/
+COPY openclaw-workspace-tools.json ./openclaw-workspace-tools.json
+COPY agent-packages/ ./agent-packages/
+COPY skills/ ./skills/
 COPY observability/ ./observability/
 COPY --chmod=755 plugin/ ./plugin/
-COPY roles/ ./roles/
-COPY skills/ ./skills/
 RUN npm run check-observability \
+    && node --input-type=module -e 'import("./agent/packages/loader.mjs").then(async ({loadAgentPackages}) => { const value = await loadAgentPackages(); if (value.packages.length !== 6) process.exit(1); })' \
+    && node ./scripts/verify-openclaw-workspace-tools.mjs \
     && node -e 'import("./plugin/index.mjs").then((module) => { if (module.default?.id !== "tiangong-control") process.exit(1); })'
 
-COPY --chmod=755 bin/codex bin/codex-app-server bin/openclaw bin/tiangong-reconcile bin/tiangong-retain bin/tiangong-work-run /opt/tiangong-worker/bin/
-COPY scripts/codex-app-server-proxy.mjs /opt/tiangong-worker/scripts/codex-app-server-proxy.mjs
+COPY --chmod=755 bin/openclaw /opt/tiangong-worker/bin/
 
 ENV PATH="/opt/tiangong-worker/bin:/opt/tiangong-worker/node_modules/.bin:${PATH}" \
     OPENCLAW_AGENT_HARNESS_FALLBACK=none \
     OPENCLAW_AGENT_RUNTIME=pi \
-    TIANGONG_CODEX_GATEWAY_HOSTS="${TIANGONG_CODEX_GATEWAY_HOSTS}" \
-    TIANGONG_CODEX_BASE_URL="${TIANGONG_CODEX_BASE_URL}" \
     TIANGONG_OTEL_EXPORTER_ENDPOINT="${TIANGONG_OTEL_EXPORTER_ENDPOINT}"
 
 WORKDIR /root/agentteams-fs
 
-FROM worker-base AS deployment-service
-WORKDIR /opt/tiangong-worker
-ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/deployment/service.mjs"]
-
-FROM worker-base AS codex-capability-cache
-WORKDIR /opt/tiangong-worker
-ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/preflight/codex-capability-cache-service.mjs"]
-
-FROM worker-base AS runner-broker
-COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
-WORKDIR /opt/tiangong-worker
-ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/runner/broker-server.mjs"]
-
-FROM worker-base AS admission-control
-WORKDIR /opt/tiangong-worker
-ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/gates/admission-control-server.mjs"]
-
-FROM worker-base AS deployment-broker
-COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
-WORKDIR /opt/tiangong-worker
-ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/deployment/broker-server.mjs"]
-
-FROM worker-base AS opencodex-sidecar
-RUN npm install --global --no-audit --no-fund --registry=https://registry.npmjs.org/ \
-      @bitkyc08/opencodex@2.15.0 \
-    && ocx --version
-WORKDIR /opt/tiangong-worker
-ENTRYPOINT ["/bin/sh", "-c", "exec sleep infinity"]
-
-FROM worker-base AS opencodex-receipt-service
-WORKDIR /opt/tiangong-worker
-ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/deployment/opencodex-sidecar-receipt-service.mjs"]
-
-FROM worker-base AS opencodex-adapter
-COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
-WORKDIR /opt/tiangong-worker
-ENTRYPOINT ["/usr/bin/node", "/opt/tiangong-worker/agent/deployment/opencodex-sidecar-receipt-service.mjs"]
-
-FROM worker-base AS kernel
-COPY role-profiles/kernel.json /opt/tiangong-worker/profile.json
-RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role kernel
-
-FROM worker-base AS leader
-COPY role-profiles/leader.json /opt/tiangong-worker/profile.json
-ENV TIANGONG_ROLE_ID=leader
-RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role leader
-
-FROM worker-base AS designer
-COPY role-profiles/designer.json /opt/tiangong-worker/profile.json
-ENV TIANGONG_ROLE_ID=designer
-RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role designer
-
-FROM worker-base AS implementor
-COPY role-profiles/implementor.json /opt/tiangong-worker/profile.json
-ENV TIANGONG_ROLE_ID=implementor
-RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role implementor
-
-FROM worker-base AS assessor
-COPY role-profiles/assessor.json /opt/tiangong-worker/profile.json
-ENV TIANGONG_ROLE_ID=assessor
-RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role assessor
-
-FROM worker-base AS operator
-COPY role-profiles/operator.json /opt/tiangong-worker/profile.json
-ENV TIANGONG_ROLE_ID=operator
-RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role operator
-
-FROM kernel AS default
-
-FROM worker-base AS canary
-ARG TIANGONG_CODEX_GATEWAY_HOSTS=agentteams-controller
-ARG TIANGONG_CODEX_PROVIDER=agentteams-gateway
-ARG TIANGONG_CODEX_MODEL=deepseek-v4-pro
-ARG TIANGONG_CODEX_MODEL_ALIAS=
-ARG TIANGONG_CODEX_BASE_URL=
-ARG TIANGONG_CODEX_CREDENTIAL_SOURCE=agentteams-consumer-token
-ARG TIANGONG_CODEX_TRANSPORT=auto
-ARG TIANGONG_CODEX_BRIDGE=auto
-ARG TIANGONG_CODEX_CAPABILITY_CACHE_PATH=/var/lib/tiangong-capabilities/codex.json
-ARG TIANGONG_CODEX_CAPABILITY_CACHE_URL=http://tiangong-codex-capability-cache:8788
-ARG TIANGONG_CODEX_CAPABILITY_CACHE_SHARED=1
-ENV TIANGONG_RUNTIME_LANE=openclaw-canary \
-    TIANGONG_CANARY_REQUIRED=1 \
-    TIANGONG_CANARY_ADMISSION=local \
-    TIANGONG_CODEX_RUNTIME=1 \
-    TIANGONG_CODEX_GATEWAY_HOSTS="${TIANGONG_CODEX_GATEWAY_HOSTS}" \
-    TIANGONG_CODEX_PROVIDER="${TIANGONG_CODEX_PROVIDER}" \
-    TIANGONG_CODEX_MODEL="${TIANGONG_CODEX_MODEL}" \
-    TIANGONG_CODEX_MODEL_ALIAS="${TIANGONG_CODEX_MODEL_ALIAS}" \
-    TIANGONG_CODEX_BASE_URL="${TIANGONG_CODEX_BASE_URL}" \
-    TIANGONG_CODEX_CREDENTIAL_SOURCE="${TIANGONG_CODEX_CREDENTIAL_SOURCE}" \
-    TIANGONG_CODEX_TRANSPORT="${TIANGONG_CODEX_TRANSPORT}" \
-    TIANGONG_CODEX_BRIDGE="${TIANGONG_CODEX_BRIDGE}" \
-    TIANGONG_CODEX_CAPABILITY_CACHE_PATH="${TIANGONG_CODEX_CAPABILITY_CACHE_PATH}" \
-    TIANGONG_CODEX_CAPABILITY_CACHE_URL="${TIANGONG_CODEX_CAPABILITY_CACHE_URL}" \
-    TIANGONG_CODEX_CAPABILITY_CACHE_SHARED="${TIANGONG_CODEX_CAPABILITY_CACHE_SHARED}" \
-    OPENCLAW_AGENT_RUNTIME=codex \
-    OPENCLAW_AGENT_HARNESS_FALLBACK=none
-
-# Gate A admission-control canary: the Worker consumes a deployment-owned
-# Control API over the AgentTeams network; binding/replay state stays outside
-# the Worker image and is projected by the smoke/deployment owner.
-FROM canary AS canary-admission-control
-ENV TIANGONG_CANARY_ADMISSION=control \
-    TIANGONG_CONTROL_API_REQUIRED=1 \
-    TIANGONG_CONTROL_API_URL=http://tiangong-admission-control:8789/healthz \
-    TIANGONG_CONTROL_API_ADMISSION_URL=http://tiangong-admission-control:8789/v1/admission \
-    TIANGONG_CONTROL_API_TIMEOUT_MS=1500
-
-# Explicit opt-in lane for Chat/Completions-only coding models. The bridge itself
-# is AgentTeams-owned and must be reachable through the internal gateway route.
-FROM worker-base AS canary-chat-bridge
-ARG TIANGONG_CODEX_GATEWAY_HOSTS=agentteams-controller
-ARG TIANGONG_CODEX_PROVIDER=agentteams-gateway
-ARG TIANGONG_CODEX_MODEL=qwen3.7-plus
-ARG TIANGONG_CODEX_MODEL_ALIAS=qwen-coding
-ARG TIANGONG_CODEX_BASE_URL=
-ARG TIANGONG_CODEX_CREDENTIAL_SOURCE=agentteams-consumer-token
-ARG TIANGONG_CODEX_TRANSPORT=responses-via-chat-bridge
-ARG TIANGONG_CODEX_BRIDGE=opencodex
-ENV TIANGONG_RUNTIME_LANE=openclaw-canary \
-    TIANGONG_CANARY_REQUIRED=1 \
-    TIANGONG_CANARY_ADMISSION=local \
-    TIANGONG_CODEX_RUNTIME=1 \
-    TIANGONG_CODEX_GATEWAY_HOSTS="${TIANGONG_CODEX_GATEWAY_HOSTS}" \
-    TIANGONG_CODEX_PROVIDER="${TIANGONG_CODEX_PROVIDER}" \
-    TIANGONG_CODEX_MODEL="${TIANGONG_CODEX_MODEL}" \
-    TIANGONG_CODEX_MODEL_ALIAS="${TIANGONG_CODEX_MODEL_ALIAS}" \
-    TIANGONG_CODEX_BASE_URL="${TIANGONG_CODEX_BASE_URL}" \
-    TIANGONG_CODEX_CREDENTIAL_SOURCE="${TIANGONG_CODEX_CREDENTIAL_SOURCE}" \
-    TIANGONG_CODEX_TRANSPORT="${TIANGONG_CODEX_TRANSPORT}" \
-    TIANGONG_CODEX_BRIDGE="${TIANGONG_CODEX_BRIDGE}" \
-    OPENCLAW_AGENT_RUNTIME=codex \
-    OPENCLAW_AGENT_HARNESS_FALLBACK=none
-
-# Chat-only coding canary with the fixed Implementor profile. The profile and
-# role id are image facts; deployment still supplies the Worker-scoped
-# Coordination endpoint/token and sidecar receipt.
-FROM canary-chat-bridge AS canary-chat-bridge-implementor
-COPY role-profiles/implementor.json /opt/tiangong-worker/profile.json
-ENV TIANGONG_ROLE_ID=implementor
-RUN node /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role implementor
+# One generic runtime image. AgentTeams identity, MemberConfig, Agent package,
+# and ControlProfile select responsibility, current model, Skills, and workspace binding.
+FROM worker-base AS tg-worker
+FROM tg-worker AS default

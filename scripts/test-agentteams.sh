@@ -69,8 +69,8 @@ config="$(make config)"
 
 cp .env .env.provider-check-base
 provider_check="$(make provider-check)"
-[[ "${provider_check}" == *'route=codex-opencodex-chat-bridge'* ]] || {
-  printf 'FAIL: Coding Plan provider route was not classified as the OpenCodex bridge.\n' >&2
+[[ "${provider_check}" == *'route=agentteams-openclaw-built-in'* ]] || {
+  printf 'FAIL: Coding Plan provider route was not classified as AgentTeams OpenClaw built-in.\n' >&2
   exit 1
 }
 [[ "${provider_check}" == *'wire_api=openai-completions'* ]] || {
@@ -91,7 +91,7 @@ sed -i \
   -e 's#^AGENTTEAMS_OPENAI_BASE_URL=.*#AGENTTEAMS_OPENAI_BASE_URL=https://api.deepseek.com/v1#' \
   -e 's/^AGENTTEAMS_DEFAULT_MODEL=.*/AGENTTEAMS_DEFAULT_MODEL=deepseek-chat/' .env
 provider_check="$(make provider-check)"
-[[ "${provider_check}" == *'route=codex-native-responses'* ]] || {
+[[ "${provider_check}" == *'route=agentteams-openclaw-built-in'* ]] || {
   printf 'FAIL: DeepSeek Chat provider route was not classified as the native Responses route.\n' >&2
   exit 1
 }

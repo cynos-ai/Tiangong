@@ -1,0 +1,5 @@
+{
+  "success": [{"name":"candidate-plan","given":"non-null WorkSpec and readable project facts","expect":["immutable Markdown ContentRef","verification and risks","no task progress state"]}],
+  "blocked": [{"name":"missing-work-spec","given":"null WorkSpec","expect":["blocked report","no fabricated Plan","request Leader clarification"]}],
+  "cleanup": [{"name":"immutable-output","expect":["temporary authoring files are owned or absent"]}]
+}

@@ -18,7 +18,7 @@ metadata:
 spec:
   model: qwen3.5-plus
   runtime: openclaw
-  image: tiangong-worker-designer:dev
+  image: tg-worker:dev
   state: Running
   identity: |
     Name: Tiangong P0.2 Target Worker

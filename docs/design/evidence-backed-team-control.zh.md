@@ -3,6 +3,8 @@
 > 状态：目标设计。
 >
 > 本文定义 Tiangong 应达到的形态，与具体实现无关。
+>
+> 落实本目标设计的第一条公开产品纵切见 [`product-mvp.zh.md`](product-mvp.zh.md)。
 
 <a id="1-purpose"></a>
 ## 1. 目的
@@ -132,8 +134,8 @@ WorkSpec、TaskSpec、Result、稳定的内容引用和类型化的 Operation �
 
 持久化的协调模型只包含：
 
-- Work 及其只追加时间线；
-- Work 当前的 WorkSpec 投影；
+- Work、其有界展示标题及只追加时间线；
+- Work 当前的 WorkSpec 和当前 Plan 引用投影；
 - 带有不可变 TaskSpec 的 Task；
 - 每个 Task 至多一个不可变 Result；
 - 不可变 ContentRef；
@@ -161,12 +163,16 @@ Leader 的操作是命令，会追加带类型的 Work 时间线事实。每条�
 
 ### 5.1 消息接纳与 Work 创建
 
-一条经过认证的 Human 消息通过通道集成进入系统。它的平台消息标识符就是入口幂等键。
+一条经过认证的 Human 消息通过通道集成进入系统。它的平台消息标识符就是入口幂等键。Team 的 Leader 会收到这条普通通道事件和开放 Work 的有界摘要，并执行一次幂等的接纳操作：
 
-- 明确关联到一个开放 Work 的消息，会追加到该 Work 的时间线；
-- 没有明确关联的消息，会原子地创建一个新的 Work 及其第一条时间线记录；
-- 对关联关系有歧义的输入默认创建新 Work，避免把无关上下文悄悄合并；
-- 附件使用 ContentRef，普通文本仍是普通消息。
+- 把平台消息引用关联到一个开放 Work，并将该引用追加到其时间线；或
+- 原子地创建新 Work、绑定该引用并追加第一条时间线记录。
+
+在 Leader 提交任一操作前，该事件可以留在一个以平台消息标识符为键、有界且持久的待归单队列中。这是基础设施状态，不是 Work 或 Task：它只保存通道引用、已认证 actor、接收时间、lease/retry 数据和有界错误码，不保存消息正文。归单唤醒必须幂等，并按稳定的 Room 顺序处理。Leader 模型不可用时，消息仍在通道中可见并等待重试，不会丢失，也不会创建一个猜测出来的 Work。运维和 Web 可以观察待处理数量、最老等待时间和最后一个有界错误，而无需读取复制的消息内容。
+
+这种路由是 Leader 的语义判断，不是 Human 在 UI 中选择的消息作用域。Kernel 仍会验证操作者是当前 Leader，并且目标 Work 仍开放、属于同一 Team 和通道路由。Web 选择可以改变当前查看哪个 Work 的事实，但绝不能决定下一条 Room 消息进入哪个 Work。Work 路由不会修改 Human 消息正文，不会向其通道内容增加 Tiangong 字段，也不要求使用 thread 或 reply 约定。Tiangong 只保存平台消息引用及其 Work 绑定，消息文本仍以通道为来源。
+
+关联有歧义时，Leader 默认创建新 Work，避免把无关上下文悄悄合并，并且可以在继续行动前向 Human 确认。附件使用 ContentRef，普通文本仍是普通消息。
 
 Work 投影最初可以是：
 
@@ -175,25 +181,32 @@ Work 投影最初可以是：
   "workId": "work-123",
   "teamId": "team-a",
   "epoch": 1,
+  "title": "交付所请求的变更",
   "workSpec": null,
+  "currentPlanRef": null,
   "createdBy": "human-42",
   "createdAt": "2026-08-09T10:00:00Z"
 }
 ```
 
-原始请求是 Work 时间线的第一条记录，不会在上面的投影中重复保存。
+原始请求的平台消息引用是 Work 时间线的第一条记录。消息正文仍保留在通道中，不会复制到上面的投影或第二份聊天存储中。
 
-### 5.2 更正有歧义的关联
+`title` 是供 Human 导航和搜索使用的有界、非唯一展示元数据。它绝不是标识符、授权输入、幂等键、Session key 或遥测关联值。临时标题可以来自第一条消息；Leader 形成 WorkSpec 时可以完善它，已授权 Human 也可以重命名。重命名会追加 `work-title-changed`。其他成员可以读取标题，但不能修改。
 
-当 Leader 询问一条有歧义的消息是否属于较早的 Work，Human 确认属于时：
+### 5.2 更正错误关联
 
-1. 原始平台消息引用和确认会追加到较早的 Work；
-2. 占位 Work 会收到一条 `work-stopped` 事实，理由中标明较早的 Work；
-3. 占位 Work 会离开活跃视图，但不会从物理存储中删除。
+Human 的纠正仍是一条普通、经过认证的通道消息。来源 Work 仍开放时，Leader 可以执行一次受限的 `correct-message-association` 命令：
 
-保留这个占位 Work，是为了支持消息重放和历史解释。Tiangong 不增加通用的 Work 合并、重新挂接或继承协议。
+1. 验证原始绑定、纠正消息、当前 Leader 以及相同的 Team 和通道路由；
+2. 指向另一个开放 Work，或以纠正消息为起点原子创建一个新的 `workSpec: null` Work；
+3. 向来源和目标 Work 都追加 `message-association-corrected` 事实，并原子更新当前消息关联投影；
+4. 保留原始时间线记录，使消息重放和最初的归单错误仍可解释。
 
-通常，占位 Work 保持 `workSpec: null`，也不会收到 Task。如果工作或外部效果已经发生，Leader 必须显式处理这些事实；运行时不会自动合并它们。
+重新处理原始平台事件时会读取纠正后的当前关联，绝不会把它移回来源 Work。不可变的初始接收记录只用于历史解释，不能作为过期的路由响应。
+
+如果最初的歧义创建了占位 Work，且之后没有 Task 或外部效果，同一事务会停止该占位 Work，并在理由中标明目标 Work。如果来源 Work 已经终止，则绝不改写它；纠正消息会启动一个新 Work，并把原始消息和已终止 Work 作为上下文引用。
+
+Task、Result、ToolResult 和 Operation 绝不会在 Work 之间移动。如果错误关联后已经发生工作或外部效果，Leader 必须更新仍开放的来源 WorkSpec，取消或完成其 Task，并显式处理其 Operation。这只是受限的消息关联纠正，不是通用 Work 合并、Task 迁移、重新挂接或继承协议。
 
 ### 5.3 形成和变更 WorkSpec
 
@@ -222,19 +235,31 @@ WorkSpec 是 Leader 对整件 Work 的简洁当前理解。它可以包含：
 
 当前 WorkSpec 非空，是创建 Task 和执行 `complete-work` 的机器前置条件。即使 WorkSpec 为空，Work 仍然可以被停止。
 
-### 5.4 已存在的 Task 不会悄悄改变
+`workSpec: null` 是合法的中间投影，不是数据缺失或损坏。API 必须显式返回它；Web 将其显示为“需求待形成”，不能凭空渲染空 Plan、Task 或完成状态。
 
-已经派发的 Task 不会自动接收后来的 WorkSpec。它的 TaskSpec 仍是委托权威。
+### 5.4 共享 Work Plan
 
-WorkSpec 发生变化后，由 Leader 决定：
+较复杂的软件交付或其他多 Agent Work 可以维护一份当前 Plan。Plan 是 Markdown ContentRef，是团队当前准备如何满足 WorkSpec 的共享工作指南。它不是 Task 清单、工作流、授权对象、完成检查表或独立聚合。
+
+已经发布的 Plan 内容不可变。灵活性来自创建新的 Markdown ContentRef，再由 Leader 追加一条带新引用和有界理由的 `work-plan-changed`。`currentPlanRef` 是这些事实的投影；候选 Plan ContentRef 在 Leader 发布前只是普通 Task 交付物。系统不存在 Plan 表、Plan 状态、Plan Approval、PlanStep schema 或版本状态机。
+
+Architect 通常是主要作者。任何成员都可以通过普通沟通或 Result 提出修改建议；Leader 可以做小型协调修改，也可以要求 Architect 修订。只有 Leader 能修改 `currentPlanRef`。默认的软件交付方法要求初始 Plan 和实质性技术变更在发布前由 Challenger 挑战，但“实质性”仍由 Leader 在 Skill 指引下判断，不成为 Kernel 工作流阶段。如果改变 Human 的目标、范围、约束或 `doneWhen`，必须先修改 WorkSpec，不能把变化藏进 Plan。
+
+形成 Plan 所需的规划、研究和挑战 Task，可以在当前 Plan 尚不存在时创建。Leader 创建执行 Task 时，可以把当时的 Plan ContentRef 作为输入，同时只把相关背景和 Plan 片段组织进 TaskSpec。同一 Work 的成员可以按需读取完整当前 Plan，但它会明确标为背景。Plan Markdown 不保存执行进度；Task、Result、ToolResult 和 Operation 事实才是权威记录。
+
+### 5.5 已存在的 Task 不会悄悄改变
+
+已经派发的 Task 不会自动接收后来的 WorkSpec 或 Plan。它不可变的 TaskSpec 和已引用输入仍是委托权威。
+
+WorkSpec 或 Plan 发生变化后，由 Leader 决定：
 
 - 无关的 Task 无需更新；
 - 可以将有用但不具权威性的上下文作为明确指向某个 Task 的背景消息发送；或者
 - 实质性变化要求安全取消旧 Task 并创建新 Task。
 
-Agent 可以查询当前 Work 摘要，但返回结果会标记为背景，不能重写 TaskSpec。Tiangong 不把 Task 绑定到 WorkSpec 版本，也不引入通用的 Task 更新协议。
+Agent 可以查询当前 Work 摘要和当前 Plan，但返回结果会标记为背景，不能重写 TaskSpec。Tiangong 不把 Task 绑定到可变的 Work 或 Plan 投影，也不引入通用的 Task 更新协议。
 
-### 5.5 等待 Human 输入
+### 5.6 等待 Human 输入
 
 澄清属于普通 Work 通信，不是 Approval 对象。
 
@@ -244,7 +269,7 @@ Agent 可以查询当前 Work 摘要，但返回结果会标记为背景，不�
 
 提醒计时器、投递重试和等待标签属于基础设施或投影，不是权威业务对象。
 
-### 5.6 Work 终止
+### 5.7 Work 终止
 
 Leader 有两个 Work 终态命令：
 
@@ -282,11 +307,12 @@ Work 完成和停止是内部语义决定，不需要 Kernel 级别的 Human 确
 }
 ```
 
-TaskSpec 是完整的语义委托。它不可变，只包含 objective、inputs 和必要的普通语言 constraints。
+TaskSpec 是完整的语义委托。它不可变，只包含 objective、inputs 和必要的普通语言 constraints。Leader 可以把选出的 Work 背景和相关 Plan 片段组织进这些文本，同时把完整 Plan ContentRef 作为输入引用。运行时默认不会注入整份 Plan，也不会增加 Markdown section、行号范围或 PlanStep selector。
 
 Task 不会复制：
 
 - WorkSpec 版本；
+- Plan 进度或可变 Plan 状态；
 - role 或 task-kind 枚举；
 - workflow stage；
 - dependency graph；
@@ -404,6 +430,10 @@ MemberConfig 定义成员实际拥有的工作能力，包括：
 
 受控的 ContentRef 和上下文组装负责执行配置的数据范围。自由文本仍可能携带敏感内容，因此仍需要路由纪律、脱敏和监控；Tiangong 不声称能够实现完美的语义数据防泄漏。
 
+专业身份和能力来自已认证的 AgentTeams 状态、MemberConfig、ControlProfile 和加载的 Agent 包，而不是角色专用容器镜像。Provider、Provider credential 和 Worker 当前 model 以 AgentTeams 官方控制面为权威；Agent 包只提供初始 `defaultModel`，不能覆盖已认证 Worker 配置。Tiangong 将当前 model 绑定进 MemberConfig revision，并要求部署投影与 AgentTeams 为该 Worker 生成的实际 OpenClaw model 配置完全一致；不能假设 AgentTeams 一定提供 `AGENTTEAMS_MODEL` 环境变量。管理员通过 AgentTeams 修改单个 Worker 后，只有在 Worker 生命周期重建使实际配置生效时才能产生新 revision；旧 Session/绑定随之失效。Task、Prompt、Skill 和模型自己都不能改 Provider/Model。
+
+第一版不在 Agent package、MemberConfig 和环境之间复制一个抽象 `capabilityProfile` 字段。Agent package 的显式 `toolGroups` 决定顶层工具集合，MemberConfig 的 Skill allowlist 只缩小已安装 Skill，工作区、可写路径、网络和凭据由部署绑定及 ControlProfile 决定。Leader 使用协调工具；其余五个专业成员使用固定 OpenClaw 版本验证过的共同 workspace 工具。仓库中的机器可读工具锁是 allowlist 的单一来源，镜像合同必须核对 pinned OpenClaw 实际注册的工具；新增上游工具默认拒绝。专业职责只限制交付物和交付链位置，不充当文件系统安全边界；工具层不承诺 Reviewer 等角色只读。只有 Developer Commit 能进入交付链。部署应优先使用一个版本化的通用 Worker runtime 镜像。共享镜像或工具组绝不意味着共享工作区、凭据或交付权。
+
 ### 7.3 ControlProfile
 
 ControlProfile 是企业级上限。它定义：
@@ -435,6 +465,8 @@ ControlProfile 是企业级上限。它定义：
 ### 7.5 Skills 与上下文
 
 Skill 是版本化的方法、指令和可复用代码。它们可以提供强默认值，但不能授予能力、追加特权事件，也不能直接改变 Task 或 Work 事实。
+
+部署的 Agent 包提供已安装 Skill 集合，MemberConfig 启用其中一个子集；成员只能使用两者交集。Skill 可以跨专业职责复用，不由 Human、Leader、Task 或 prompt 动态指派。Agent 根据触发说明在已启用 Skill 中自主选择。在线安装和 Task 级 Skill 变更不属于第一版产品边界。实际解析的 Skill 身份和版本属于执行元数据，不是 Task 权威。
 
 对 Task Agent 而言，上下文按权威和用途分层：
 
@@ -632,7 +664,7 @@ Tiangong 使用：
 - **Execution Record 存储**：存储 ToolResult、有界日志、trace、模型和 Skill 调用元数据以及诊断信息；以及
 - **Git 和 Adapter 所有的内容存储**：存储持久化内容。
 
-会话状态、准备好的环境映射、写入锁、提醒计时器和请求重放记录属于基础设施状态，不是新的领域记录。
+会话状态、待归单消息引用、Room cursor 和归单 lease、准备好的环境映射、写入锁、提醒计时器和请求重放记录属于基础设施状态，不是新的领域记录。
 
 Operation 事件永远不会从 CoordinationStore 中采样。不存在第二个机器事实索引、哈希链台账或内容清单。
 
@@ -750,7 +782,7 @@ Leader 为每个 Work 使用独立的逻辑会话。成员为每个 Task 使用�
 
 ### 12.2 模型与预算
 
-ControlProfile 和 MemberConfig 定义允许使用的模型、token/成本/时间限制以及并发限制。模型 fallback 必须明确；一个 provider 失败时，Tiangong 不会悄悄切换 provider 或模型。
+AgentTeams 官方控制面定义 Provider、凭据和每个 Worker 的当前 model。ControlProfile 给出模型、token/成本/时间和并发上限，MemberConfig revision 保存 Tiangong 当前接受的 Worker model 投影。三者必须一致；AgentTeams 管理员变更会使旧 revision 和旧 Session 失效，普通聊天不能修改它们。模型 fallback 必须明确；一个 provider 失败时，Tiangong 不会悄悄切换 provider 或模型。
 
 预算或资源耗尽时，系统会停止新的模型调用和本地执行进程，记录这一事实并通知 Leader。它不会伪造 Result，也不会删除已经开始的 Operation；该 Operation 仍按正常结果和恢复规则处理。Leader 可以取消、重新委托或缩小工作范围。经过授权的管理员可以修改当前配置；普通聊天不能增加预算。
 
@@ -758,11 +790,12 @@ ControlProfile 和 MemberConfig 定义允许使用的模型、token/成本/时�
 
 Work 的 `epoch` 是内部乐观并发令牌。协调写入带上它读取到的 epoch，成功时原子递增。Epoch 不是 WorkSpec 版本、语义依据、幂等键或完成标准。
 
-在已认证操作者和命令类型的范围内，`requestId` 会原子地绑定到规范化请求和有界响应。重复相同请求时返回保存的响应；使用相同 ID 提交不同内容会发生冲突。重放记录是有界的基础设施状态，不会出现在 Work 时间线中。
+在已认证操作者和命令类型的范围内，`requestId` 会原子地绑定到规范化请求和有界响应。重复相同请求时返回保存的响应；使用相同 ID 提交不同内容会发生冲突。重放记录是有界的基础设施状态，不会出现在 Work 时间线中。消息接纳使用平台消息标识符作为重放身份；保存的接收回执不会冻结 Work ID。返回的当前关联必须从消息关联投影读取，因此之后的纠正不会被重放撤销。
 
 存储至少为以下操作提供原子边界：
 
 - 消息接纳与 Work 创建；
+- 消息关联纠正、两个 Work 的时间线事实以及当前绑定投影更新；
 - WorkSpec 事件、投影和 epoch 更新；
 - Task 创建、时间线事实和 epoch 更新；
 - Result 提交与 Task 取消之间的竞争；
@@ -784,6 +817,8 @@ Work 的 `epoch` 是内部乐观并发令牌。协调写入带上它读取到的
 - 每个 Operation 都是 `not-executed`、`succeeded` 或 `safe-failure`；
 - 没有待处理的 Approval，也没有不确定、需要恢复或未解决的事件路径；以及
 - 每个被引用的 deliverable 仍然可以解析。
+
+有 Result 的 Task 投影为 `reported`；不存在逐 Task 的 `accepted` 或 `blocked` 处置，也不存在 CoordinationDecision。`complete-work` 本身就是 Leader 对 WorkSpec 已满足的语义确认。CloseGuard 不能把这个判断重新包装成第二份逐 Task 记录。
 
 CloseGuard 直接读取 Task、Result、ContentRef 和 Operation 的事实来源。它不会建立中间证据索引，也不会信任调用者选择的一份依据列表。
 
@@ -832,7 +867,7 @@ Shell 文本分析在这三层中都只是辅助措施。
 ## 14. 系统不变量
 
 1. 每个 Work 都从一条经过认证、去重的 Human 消息开始。
-2. 有歧义的关联绝不会悄悄混合无关 Work；更正不会删除历史，也不会引入通用合并协议。
+2. 每条 Human 通道消息最初都由 Leader 使用平台消息标识符恰好接纳一次；UI 选择和调用方提供的 Work 标记都不能授予关联。受限且经过认证的纠正可以更新当前关联，但绝不会删除历史、迁移 Task 或 Operation 事实，也不会引入通用合并协议。
 3. WorkSpec 历史由完整的 `work-spec-changed` 时间线快照构成；当前 WorkSpec 只是它们的投影。
 4. 当前 WorkSpec 为空时，不会创建 Task。
 5. TaskSpec 和 assignee 不可变；之后的 WorkSpec 变化不会悄悄修改它们。
@@ -853,6 +888,6 @@ Shell 文本分析在这三层中都只是辅助措施。
 20. 不确定或需要恢复的 Operation 绝不会被盲目重试、靠断言宣布安全、通过取消 Task 隐藏，或转移到另一个 Work。
 21. 后续重试或回滚都是新的 Operation；唯一例外是完全包含在原始不可变 request 和调用中的即时补偿。
 22. Operation 事件是永久的、只追加的 CoordinationStore 事实。Result 引用的 ToolResult 会在 Work 留存期内保留。
-23. 终止 Work 要求每个 Task 和 Operation 都有安全的机器处置，并且没有活跃执行所有者。
+23. 终止 Work 要求每个 Task 都有 Result 或取消事实，每个 Operation 都有安全终态事件，并且没有活跃执行所有者。
 24. 只有 Leader 决定 Work 在语义上是否完成；Kernel 的关闭检查不编码专业流程。
 25. 新的硬控制在进入 Kernel 前，必须有具体威胁、机器可验证属性以及明确的摩擦分析。

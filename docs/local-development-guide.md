@@ -1,16 +1,16 @@
 # Tiangong 本地跑起来指南（新手版）
 
 > 根据本地栈验证整理。跟着本文走，可以避开常见的版本、网络、资源和 Matrix 消息格式问题。
-> 示例按 Linux + Docker 29.x + 16 核 16G 验证；低于 8G 内存不建议一次启动 5 个 Worker。
+> 示例按 Linux + Docker 29.x + 16 核 16G 验证；低于 8G 内存不建议一次启动 6 个 Worker。
 
 ## 0. 一图流
 
 ```text
 make init → 配 .env → make up → make verify → 验证 Dashboard → make login
     ↓
-make build-worker-image（构建 9 个本地镜像）
+make build-worker-image（构建 1 个通用 Worker 和 3 个 runner/deployment 辅助镜像）
     ↓
-agt apply 创建 5 Worker → 等 Team Active
+agt apply 创建 6 Worker → 等 Team Active
     ↓
 Element 或 Matrix 脚本发消息（⚠️ 不要用 Dashboard 聊天）→ 查看 Evidence
 ```
@@ -19,7 +19,7 @@ Element 或 Matrix 脚本发消息（⚠️ 不要用 Dashboard 聊天）→ 查
 
 - Linux/macOS、Bash、`make`、`curl`、`jq`
 - Docker daemon 运行中（`docker info` 可用）
-- 一个 OpenAI 兼容的 LLM API Key（默认走阿里云百炼 Coding Plan，模型 `qwen3.5-plus`）
+- 一个 OpenAI 兼容的 LLM API Key（默认走阿里云百炼 Coding Plan，模型 `glm-5`）
 
 以下命令均假定在 Tiangong 仓库根目录执行：
 
@@ -87,58 +87,25 @@ make login       # 打印 Element 地址和凭据文件位置，不打印密码
 make build-worker-image
 ```
 
-产出 9 个镜像：`tiangong-worker`、5 个角色镜像、`runner-broker`、`deployment-service` 和 `deployment-broker`。
+active build 只产出一个通用 `tg-worker:dev`。旧 Runner、Deployment、Codex/OpenCodex target 已在 M7 删除。角色不再对应镜像；六个 Agent package 和六个产品 Skill 都预装在通用 Worker 中。
 
 ### 坑 4：`npm ci` 访问 npmjs.org 超时
 
-`worker/Dockerfile` 的 npm registry 是公开 npmjs 源。国内网络不通时，可以临时替换，构建结束后自动还原；不要用 `git checkout -- worker/Dockerfile` 覆盖自己原本的本地修改：
+`worker/Dockerfile` 默认使用公开 npmjs。国内网络不通时，通过构建脚本允许的公开 mirror 参数切换，不修改工作树：
 
 ```bash
-(
-  set -Eeuo pipefail
-  backup="$(mktemp)"
-  cp worker/Dockerfile "${backup}"
-  cleanup() {
-    cp "${backup}" worker/Dockerfile
-    rm -f "${backup}" worker/Dockerfile.bak
-  }
-  trap cleanup EXIT
-
-  sed -i.bak 's#https://registry.npmjs.org/#https://registry.npmmirror.com/#g' worker/Dockerfile
-  make build-worker-image
-)
-git diff -- worker/Dockerfile   # 应与构建前的状态相同
+TIANGONG_NPM_REGISTRY=https://registry.npmmirror.com make build-worker-image
 ```
 
-### 坑 5：`docker.io` digest 404
+脚本只允许 npmjs 与 npmmirror，其他 registry 会 fail closed。
 
-如果 Docker 配置的镜像加速器对 `docker.io/library/docker@sha256:...` 返回 404，BuildKit 可能不会自动回退。先按 `worker/Dockerfile` 第 2 行的 digest 预拉取，再用**不带 `--pull`** 的命令构建全部目标：
+### 坑 5：基础 Worker 镜像拉取失败
 
-```bash
-# 必须在仓库根目录执行；digest 以 worker/Dockerfile 第 2 行为准
-DOCKER_CLI_DIGEST=sha256:0135662b510037ea581d99c2e5929c5e01185139c0b86986a418bd4da0b98a44
-docker pull "docker.io/library/docker@${DOCKER_CLI_DIGEST}"
+Worker 只从 `worker/Dockerfile` 中固定的 AgentTeams Worker digest 构建 `tg-worker`。镜像拉取失败时先检查 Docker registry/代理配置；不要改用未固定 tag，也不要恢复已删除的 Docker CLI、Runner 或 Deployment target。
 
-build_target() {
-  docker build \
-    --build-context "team_playbooks=${PWD}/team-playbooks" \
-    --target "$1" --tag "$2" worker
-}
+## 4. 创建团队（以下手工五角色步骤仅用于 v0.4.1 历史排障）
 
-build_target default tiangong-worker:dev
-build_target leader tiangong-worker-leader:dev
-build_target designer tiangong-worker-designer:dev
-build_target implementor tiangong-worker-implementor:dev
-build_target assessor tiangong-worker-assessor:dev
-build_target operator tiangong-worker-operator:dev
-build_target runner-broker tiangong-runner-broker:dev
-build_target deployment-service tiangong-deployment-service:dev
-build_target deployment-broker tiangong-deployment-broker:dev
-```
-
-这里没有 `--pull`；否则仍可能再次触发加速器上的 digest 404。构建目标或 digest 以后发生变化时，以 `scripts/build-worker-image.sh` 和 `worker/Dockerfile` 的当前内容为准。
-
-## 4. 创建团队（推荐 `agt apply`，不推荐 Dashboard 表单）
+> 当前产品路径使用 `demo/fixtures/` 中的六成员配置，以及部署侧 Agent package/MemberConfig 注入。下面旧的 Designer/Implementor/Assessor/Operator 命令不代表 M1/M2 active path；新验证优先运行 `make check-demo-contract`、`make check-skills` 和 `bash scripts/test-member-runtime-injection-docker.sh`。M3 chat-first Web 已实现，但在实际部署注入 Matrix URL、binding、PostgreSQL 和当前 Human identity 前，不要用这些旧命令宣称真实产品纵切成功。
 
 Dashboard 适合看状态和做管理；`agt apply` 更容易复现。下面使用 `tiangong-demo-` 前缀，避免和其他本地资源重名。若这些资源已经存在，先换一个前缀。
 
@@ -151,9 +118,9 @@ kind: Worker
 metadata:
   name: tiangong-demo-leader
 spec:
-  model: qwen3.5-plus
+  model: glm-5
   runtime: openclaw
-  image: tiangong-worker-leader:dev
+  image: tg-worker:dev
   state: Running
   identity: |
     Name: Tiangong Demo Team Leader
@@ -164,9 +131,9 @@ kind: Worker
 metadata:
   name: tiangong-demo-designer
 spec:
-  model: qwen3.5-plus
+  model: glm-5
   runtime: openclaw
-  image: tiangong-worker-designer:dev
+  image: tg-worker:dev
   state: Running
   identity: |
     Name: Tiangong Demo Designer
@@ -177,9 +144,9 @@ kind: Worker
 metadata:
   name: tiangong-demo-implementor
 spec:
-  model: qwen3.5-plus
+  model: glm-5
   runtime: openclaw
-  image: tiangong-worker-implementor:dev
+  image: tg-worker:dev
   state: Running
   identity: |
     Name: Tiangong Demo Implementor
@@ -190,9 +157,9 @@ kind: Worker
 metadata:
   name: tiangong-demo-assessor
 spec:
-  model: qwen3.5-plus
+  model: glm-5
   runtime: openclaw
-  image: tiangong-worker-assessor:dev
+  image: tg-worker:dev
   state: Running
   identity: |
     Name: Tiangong Demo Assessor
@@ -203,9 +170,9 @@ kind: Worker
 metadata:
   name: tiangong-demo-operator
 spec:
-  model: qwen3.5-plus
+  model: glm-5
   runtime: openclaw
-  image: tiangong-worker-operator:dev
+  image: tg-worker:dev
   state: Running
   identity: |
     Name: Tiangong Demo Operator

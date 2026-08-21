@@ -1,0 +1,14 @@
+{
+  "shouldTrigger": [
+    "Review this exact Developer commit against WorkSpec and its tests.",
+    "Independently inspect the diff for correctness, security, and missing coverage.",
+    "Produce blocking and non-blocking review findings without editing the code."
+  ],
+  "shouldNotTrigger": [
+    "Challenge the candidate Plan before implementation.",
+    "Fix the code and amend the Developer commit.",
+    "Run the end-to-end user scenario and cleanup fixture resources."
+  ],
+  "ambiguous": ["Check whether this change is good."],
+  "adjacentSkills": ["plan-challenge", "scenario-testing"]
+}

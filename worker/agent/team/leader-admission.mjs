@@ -1,16 +1,14 @@
 import { sha256 } from "../canonical-json.mjs";
 import {
-  createWorkSpec,
   isControlProfile,
   isMemberConfig,
   isTeamConfig,
   isTeamRouteBinding,
-} from "./coordination-store.mjs";
+} from "./coordination-contracts.mjs";
 
 const MATRIX_USER_ID = /^@[A-Za-z0-9._=+\/-]+:[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/u;
 const MATRIX_EVENT_ID = /^\$[^\s]{1,255}$/u;
 const MATRIX_ROOM_ID = /^![^\s]{1,255}$/u;
-const SESSION_ID = /^[A-Za-z0-9@!#$%&*+./:=?_-]{1,160}$/u;
 const MAX_BODY_BYTES = 4096;
 
 export class LeaderAdmissionDeniedError extends Error {
@@ -57,8 +55,8 @@ function assertHumanEvent(event, source) {
       /[\u0000\r\n]/u.test(content.body)) {
     deny("HUMAN_EVENT_CONTENT_INVALID", "Human Matrix message must contain one bounded plain-text body");
   }
-  if (Object.keys(content).some((key) => key.startsWith("com.tiangong.") || key === "m.relates_to")) {
-    deny("HUMAN_EVENT_CONTROL_CONTENT", "Control or reply events cannot create a new Work");
+  if (Object.keys(content).some((key) => key.startsWith("com.tiangong."))) {
+    deny("HUMAN_EVENT_CONTROL_CONTENT", "Tiangong control events cannot enter Human message admission");
   }
   return Object.freeze({ eventId, roomId, sender, body: content.body });
 }
@@ -84,8 +82,8 @@ function assertAdmissionBindings({ team, route, profile, leaderMember, members, 
   }
 }
 
-export async function admitHumanMatrixEvent({ store, source, event, team, route, profile, leaderMember, members = [], leaderSessionId, now = () => new Date().toISOString() } = {}) {
-  if (!store || typeof store.createWork !== "function") throw new TypeError("Leader admission requires a CoordinationStore");
+export async function admitHumanMatrixEvent({ store, source, event, team, route, profile, leaderMember, members = [], now = () => new Date().toISOString() } = {}) {
+  if (!store || typeof store.enqueueMessageAdmission !== "function") throw new TypeError("Leader admission requires a CoordinationStore with a durable message backlog");
   if (typeof now !== "function") throw new TypeError("Leader admission clock is required");
   const normalizedSource = assertSource(source);
   if (normalizedSource.route !== "team-room") deny("HUMAN_ROUTE_NOT_BOUND", "Only the bound Team room can admit a Work");
@@ -93,45 +91,27 @@ export async function admitHumanMatrixEvent({ store, source, event, team, route,
   assertAdmissionBindings({ team, route, profile, leaderMember, members, event: normalizedEvent });
 
   const admissionDigest = sha256({ teamId: team.teamId, routeId: route.routeId, eventId: normalizedEvent.eventId });
-  const workId = `work-${admissionDigest.slice(0, 48)}`;
-  const requestId = `matrix-work-${admissionDigest.slice(0, 48)}`;
-  const sessionId = leaderSessionId ?? `leader-${sha256({ workId, leaderMemberId: leaderMember.memberId }).slice(0, 48)}`;
-  if (typeof sessionId !== "string" || !SESSION_ID.test(sessionId)) deny("LEADER_SESSION_INVALID", "Native Leader session binding is invalid");
-  const createdAt = now();
-  const spec = createWorkSpec({
-    workId,
-    revision: 1,
-    objective: normalizedEvent.body,
-    scope: "Human request from the bound Team Matrix room",
-    completionContract: "The native Leader session must keep the Work facts and visible reply consistent with the durable store",
-    createdAt,
-  });
-  const admitted = await store.createWork({
-    workId,
+  const admitted = await store.enqueueMessageAdmission({
     team,
     route,
     profile,
-    spec,
     actorId: normalizedSource.actorId,
-    sourceEventId: normalizedEvent.eventId,
-    leaderSessionId: sessionId,
-    requestId,
-    wakes: [
-      { kind: "leader-resume", targetMemberId: leaderMember.memberId },
-      { kind: "human-reply", targetMemberId: normalizedSource.actorId },
-    ],
+    eventId: normalizedEvent.eventId,
+    receivedAt: now(),
+    requestId: `matrix-admission-${admissionDigest.slice(0, 48)}`,
   });
+  const leased = admitted.binding || typeof store.leaseMessageAdmission !== "function"
+    ? null
+    : await store.leaseMessageAdmission({ roomId: normalizedEvent.roomId, eventId: normalizedEvent.eventId, consumerId: leaderMember.memberId });
   return Object.freeze({
-    replayed: admitted.replayed,
-    work: admitted.work,
-    wakes: admitted.wakes,
+    replayed: admitted.replayed && leased?.replayed !== false,
+    admission: Object.freeze(leased?.admission ?? admitted.admission),
+    binding: admitted.binding ? Object.freeze(admitted.binding) : null,
     source: normalizedSource,
-    event: normalizedEvent,
-    leaderSession: Object.freeze({
-      sessionId,
-      memberId: leaderMember.memberId,
-      workerName: leaderMember.workerName,
-      runtime: "openclaw-native",
+    event: Object.freeze({
+      eventId: normalizedEvent.eventId,
+      roomId: normalizedEvent.roomId,
+      sender: normalizedEvent.sender,
     }),
   });
 }

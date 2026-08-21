@@ -6,354 +6,170 @@ readonly UPSTREAM_OPENCLAW="/usr/local/bin/openclaw"
 readonly PLUGIN_ID="tiangong-control"
 readonly PLUGIN_PATH="/opt/tiangong-worker/plugin"
 readonly PREFLIGHT="/opt/tiangong-worker/scripts/openclaw-preflight.mjs"
-readonly CODEX_GATEWAY_PREFLIGHT="/opt/tiangong-worker/agent/preflight/codex-gateway-preflight.mjs"
-readonly CODEX_CAPABILITY_DETECTOR="/opt/tiangong-worker/agent/preflight/codex-capability-detection.mjs"
-readonly CODEX_CAPABILITY_CACHE="/opt/tiangong-worker/agent/preflight/codex-capability-cache.mjs"
 readonly RUNTIME_ROUTE_PREFLIGHT="/opt/tiangong-worker/scripts/runtime-route-preflight.mjs"
-codex_home=""
+readonly AGENT_PACKAGE_LOADER="/opt/tiangong-worker/agent/packages/loader.mjs"
+readonly TOOL_ALLOWLIST_RESOLVER="/opt/tiangong-worker/scripts/resolve-openclaw-tool-allowlist.mjs"
+readonly AGENTLOOP_PLUGIN_ID="opentelemetry-instrumentation-openclaw"
+readonly AGENTLOOP_PLUGIN_PATH="/opt/agentloop/opentelemetry-instrumentation-openclaw"
+readonly AGENTLOOP_PROCESSOR_PATH="/opt/tiangong-worker/observability/agentloop-span-processor.mjs"
+readonly AGENTLOOP_COLLECTOR_ENDPOINT="http://tiangong-agentloop-collector:4318"
 
-assert_role_runtime_route() {
-  [[ "${TIANGONG_RUNTIME_ROLE_ROUTING_REQUIRED:-0}" == "1" ]] || return 0
-  local selected_runtime="openclaw-built-in"
-  if [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]]; then
-    selected_runtime="codex-app-server"
-  fi
-  if [[ "${selected_runtime}" == "codex-app-server" ]]; then
-    export OPENCLAW_AGENT_RUNTIME="codex"
-  else
-    # The pinned OpenClaw image names its built-in runtime `pi`; this is an
-    # upstream identifier and not a Tiangong harness.
-    export OPENCLAW_AGENT_RUNTIME="pi"
-  fi
-  TIANGONG_CODEX_RUNTIME="${TIANGONG_CODEX_RUNTIME:-0}" \
+assert_member_runtime_route() {
+  [[ "${TIANGONG_MEMBER_RUNTIME_ROUTING_REQUIRED:-0}" == "1" ]] || return 0
+  export OPENCLAW_AGENT_RUNTIME="pi"
+  TIANGONG_SELECTED_MODEL="${TIANGONG_SELECTED_MODEL:-${AGENTTEAMS_MODEL:-}}" \
   OPENCLAW_AGENT_HARNESS_FALLBACK="${OPENCLAW_AGENT_HARNESS_FALLBACK:-none}" \
-  TIANGONG_SELECTED_RUNTIME="${selected_runtime}" \
   /usr/bin/node --input-type=module -e '
-    const { assertRoleRuntimeRoute, roleIdFromEnvironment } = await import(process.argv[1]);
-    const roleId = roleIdFromEnvironment(process.env);
-    const route = assertRoleRuntimeRoute({
-      roleId,
-      runtime: process.env.TIANGONG_SELECTED_RUNTIME,
-      fallback: process.env.OPENCLAW_AGENT_HARNESS_FALLBACK,
-    });
-    console.error(`tiangong_runtime_route=pass role=${route.roleId} runtime=${route.runtime} fallback=${route.fallback} digest=${route.routeDigest}`);
-  ' "${RUNTIME_ROUTE_PREFLIGHT%/*}/../agent/runtime-routing.mjs"
+    const { runtimeRouteFromEnvironment } = await import(process.argv[1]);
+    const { resolveAgentRuntimeFromEnvironment } = await import(process.argv[2]);
+    const route = runtimeRouteFromEnvironment(process.env);
+    const agent = await resolveAgentRuntimeFromEnvironment(process.env);
+    console.error(`tiangong_runtime_route=pass responsibility=${route.responsibility} runtime=${route.runtime} model=${route.model} fallback=${route.fallback} digest=${route.routeDigest} agentPackage=${agent.agentPackage.packageId}@${agent.agentPackage.version} effectiveSkills=${agent.effectiveSkills.length}`);
+  ' "${RUNTIME_ROUTE_PREFLIGHT%/*}/../agent/runtime-routing.mjs" "${AGENT_PACKAGE_LOADER}"
 }
 
-# AgentTeams v1.2.2 projects the controller credential as a root-readable
-# file. OpenClaw's native AgentTeams tools consume the equivalent environment
-# variable, so bridge the deployment-owned file into the child process without
-# ever printing or persisting the token. An explicitly provided environment
-# value remains authoritative; an unreadable or empty file fails closed when a
-# canary actually needs the controller credential.
 load_agentteams_controller_token() {
   local token_file="${AGENTTEAMS_AUTH_TOKEN_FILE:-}"
-  if [[ -n "${AGENTTEAMS_AUTH_TOKEN:-}" ]]; then
-    return 0
-  fi
-  [[ -n "${token_file}" ]] || return 0
-  [[ -r "${token_file}" ]] || {
-    printf '[tiangong-worker] ERROR: AgentTeams controller token file is not readable.\n' >&2
-    return 1
-  }
+  [[ -z "${AGENTTEAMS_AUTH_TOKEN:-}" ]] || return 0
+  [[ -z "${token_file}" ]] && return 0
+  [[ -r "${token_file}" ]] || { printf '[tiangong-worker] ERROR: AgentTeams controller token file is not readable.\n' >&2; return 1; }
   AGENTTEAMS_AUTH_TOKEN="$(<"${token_file}")"
-  [[ -n "${AGENTTEAMS_AUTH_TOKEN}" ]] || {
-    printf '[tiangong-worker] ERROR: AgentTeams controller token file is empty.\n' >&2
-    return 1
-  }
+  [[ -n "${AGENTTEAMS_AUTH_TOKEN}" ]] || { printf '[tiangong-worker] ERROR: AgentTeams controller token file is empty.\n' >&2; return 1; }
   export AGENTTEAMS_AUTH_TOKEN
 }
 
-cleanup_codex_home() {
-  [[ -n "${codex_home}" ]] || return 0
-  rm -rf -- "${codex_home}"
-  codex_home=""
-}
-
-configure_codex_gateway() {
-  local config_file provider_base_url provider_api_key provider_id model_id provider_toml_id temporary_file base_url_override credential_source bridge_mode provider_http_headers sidecar_receipt_path sidecar_receipt_url transport_mode cache_path cache_url cache_result resolved_transport resolved_bridge resolved_base_url cache_hit
-  [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]] || return 0
+update_config() {
+  local suffix="$1" filter="$2" config_file temporary_file
   config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
-  [[ -f "${config_file}" ]] || {
-    printf '[tiangong-worker] ERROR: OpenClaw config not found: %s\n' "${config_file}" >&2
-    return 1
-  }
-  provider_id="${TIANGONG_CODEX_PROVIDER:-agentteams-gateway}"
-  model_id="${TIANGONG_CODEX_MODEL:-deepseek-v4-pro}"
-  transport_mode="${TIANGONG_CODEX_TRANSPORT:-auto}"
-  bridge_mode="${TIANGONG_CODEX_BRIDGE:-auto}"
-  credential_source="${TIANGONG_CODEX_CREDENTIAL_SOURCE:-agentteams-consumer-token}"
-  [[ "${credential_source}" == "agentteams-consumer-token" ]] || {
-    printf '[tiangong-worker] ERROR: unsupported Codex credential source: %s\n' "${credential_source}" >&2
-    return 1
-  }
-  [[ "${provider_id}" =~ ^[A-Za-z0-9_-]+$ ]] || {
-    printf '[tiangong-worker] ERROR: unsafe Codex provider id: %s\n' "${provider_id}" >&2
-    return 1
-  }
-  provider_api_key="$(jq -er --arg provider "${provider_id}" '.models.providers[$provider].apiKey // empty' "${config_file}" || true)"
-  provider_api_key="${provider_api_key:-${AGENTTEAMS_WORKER_GATEWAY_KEY:-}}"
-  [[ -n "${provider_api_key}" ]] || {
-    printf '[tiangong-worker] ERROR: AgentTeams Worker consumer token is unavailable.\n' >&2
-    return 1
-  }
-  base_url_override="${TIANGONG_CODEX_BASE_URL:-}"
-  sidecar_receipt_path="${TIANGONG_CODEX_SIDECAR_RECEIPT_PATH:-}"
-  sidecar_receipt_url="${TIANGONG_CODEX_SIDECAR_RECEIPT_URL:-}"
-  if [[ -z "${sidecar_receipt_path}" && -z "${sidecar_receipt_url}" && -n "${AGENTTEAMS_WORKER_NAME:-}" ]]; then
-    sidecar_receipt_url="${TIANGONG_CODEX_SIDECAR_RECEIPT_SERVICE_URL:-http://tiangong-opencodex-adapter:8790}/v1/receipts/${AGENTTEAMS_WORKER_NAME}"
-  fi
-  if [[ -n "${base_url_override}" ]]; then
-    provider_base_url="${base_url_override}"
-  else
-    provider_base_url="$(jq -er --arg provider "${provider_id}" '.models.providers[$provider].baseUrl' "${config_file}")"
-  fi
-  if [[ "${transport_mode}" == "auto" || "${bridge_mode}" == "auto" ]]; then
-    [[ "${TIANGONG_CODEX_CAPABILITY_CACHE_SHARED:-0}" == "1" ]] || {
-      printf '[tiangong-worker] ERROR: Codex auto routing requires a deployment-owned shared capability cache.\n' >&2
-      return 1
-    }
-    cache_path="${TIANGONG_CODEX_CAPABILITY_CACHE_PATH:-/var/lib/tiangong-capabilities/codex.json}"
-    cache_url="${TIANGONG_CODEX_CAPABILITY_CACHE_URL:-}"
-    cache_result="$(
-      TIANGONG_CODEX_CACHE_PROVIDER="${provider_id}" \
-      TIANGONG_CODEX_CACHE_MODEL="${model_id}" \
-      TIANGONG_CODEX_CACHE_BASE_URL="${provider_base_url}" \
-      TIANGONG_CODEX_CACHE_TOKEN="${provider_api_key}" \
-      TIANGONG_CODEX_CACHE_RECEIPT_PATH="${sidecar_receipt_path}" \
-      TIANGONG_CODEX_CACHE_RECEIPT_URL="${sidecar_receipt_url}" \
-      TIANGONG_CODEX_CACHE_PATH="${cache_path}" \
-      TIANGONG_CODEX_CACHE_URL="${cache_url}" \
-      /usr/bin/node --input-type=module -e '
-        const { CODEX_DETECTOR_VERSION, detectCodexRoute, readOpenCodexSidecarReceipt } = await import(process.argv[1]);
-        const { createCodexCapabilityCache } = await import(process.argv[2]);
-        const { createRemoteCodexCapabilityCache } = await import(process.argv[3]);
-        const provider = process.env.TIANGONG_CODEX_CACHE_PROVIDER;
-        const model = process.env.TIANGONG_CODEX_CACHE_MODEL;
-        const baseUrl = process.env.TIANGONG_CODEX_CACHE_BASE_URL;
-        const cache = process.env.TIANGONG_CODEX_CACHE_URL
-          ? createRemoteCodexCapabilityCache({ endpoint: process.env.TIANGONG_CODEX_CACHE_URL })
-          : createCodexCapabilityCache({ path: process.env.TIANGONG_CODEX_CACHE_PATH });
-        const resolved = await cache.resolve({
-          provider,
-          model,
-          baseUrl,
-          detectorVersion: CODEX_DETECTOR_VERSION,
-          probe: (fingerprint) => detectCodexRoute({
-            provider,
-            model,
-            baseUrl: fingerprint.baseUrl,
-            consumerToken: process.env.TIANGONG_CODEX_CACHE_TOKEN,
-            requireBridgeReceipt: false,
-          }),
-        });
-        let endpoint = resolved.record.baseUrl;
-        if (resolved.record.transport === "responses-via-chat-bridge") {
-          const receipt = await readOpenCodexSidecarReceipt(process.env.TIANGONG_CODEX_CACHE_RECEIPT_PATH || undefined, { provider, model, receiptUrl: process.env.TIANGONG_CODEX_CACHE_RECEIPT_URL || undefined });
-          endpoint = receipt.endpoint;
-        }
-        console.log(JSON.stringify({ endpoint, transport: resolved.record.transport, bridge: resolved.record.transport === "responses-via-chat-bridge" ? "opencodex" : null, cacheHit: resolved.cacheHit, outcome: resolved.record.outcome, reasonCode: resolved.record.reasonCode }));
-      ' "${CODEX_CAPABILITY_DETECTOR}" "${CODEX_CAPABILITY_CACHE}" "/opt/tiangong-worker/agent/preflight/codex-capability-cache-remote.mjs"
-    )"
-    resolved_transport="$(jq -er '.transport' <<<"${cache_result}")"
-    resolved_bridge="$(jq -r '.bridge // "none"' <<<"${cache_result}")"
-    resolved_base_url="$(jq -er '.endpoint' <<<"${cache_result}")"
-    cache_hit="$(jq -r '.cacheHit' <<<"${cache_result}")"
-    transport_mode="${resolved_transport}"
-    bridge_mode="${resolved_bridge}"
-    provider_base_url="${resolved_base_url}"
-    base_url_override="${resolved_base_url}"
-    if [[ -n "${cache_url}" ]]; then
-      printf '[tiangong-worker] codex_capability_cache=pass hit=%s route=%s bridge=%s service=%s\n' "${cache_hit}" "${transport_mode}" "${bridge_mode}" "${cache_url}" >&2
-    else
-      printf '[tiangong-worker] codex_capability_cache=pass hit=%s route=%s bridge=%s path=%s\n' "${cache_hit}" "${transport_mode}" "${bridge_mode}" "${cache_path}" >&2
-    fi
-  fi
-  export TIANGONG_CODEX_TRANSPORT="${transport_mode}"
-  export TIANGONG_CODEX_BRIDGE="${bridge_mode}"
-  TIANGONG_PREFLIGHT_CONSUMER_TOKEN="${provider_api_key}" \
-  TIANGONG_PREFLIGHT_BASE_URL="${base_url_override}" \
-  TIANGONG_PREFLIGHT_SIDECAR_RECEIPT_PATH="${sidecar_receipt_path}" \
-  TIANGONG_PREFLIGHT_SIDECAR_RECEIPT_URL="${sidecar_receipt_url}" \
-  TIANGONG_CODEX_TRANSPORT="${transport_mode}" \
-  TIANGONG_CODEX_BRIDGE="${bridge_mode}" \
-  /usr/bin/node --input-type=module -e '
-    const { runCodexGatewayPreflightFromFile } = await import(process.argv[1]);
-    const result = await runCodexGatewayPreflightFromFile({
-      configPath: process.argv[2],
-      consumerToken: process.env.TIANGONG_PREFLIGHT_CONSUMER_TOKEN,
-      baseUrlOverride: process.env.TIANGONG_PREFLIGHT_BASE_URL || undefined,
-      sidecarReceiptPath: process.env.TIANGONG_PREFLIGHT_SIDECAR_RECEIPT_PATH || undefined,
-      sidecarReceiptUrl: process.env.TIANGONG_PREFLIGHT_SIDECAR_RECEIPT_URL || undefined,
-    });
-    console.log(`codex_gateway_preflight=pass provider=${result.provider} model=${result.model} gateway_probe=${result.gatewayProbe} gateway_probe_contract=${result.gatewayProbeContract} transport=${result.transport} bridge=${result.bridge ?? "none"} credential_source=${result.credentialSource} sidecar=${result.sidecarReadiness ?? "none"} sidecar_id=${result.sidecarId ?? "none"} sidecar_generation=${result.sidecarGeneration ?? "none"}`);
-  ' "${CODEX_GATEWAY_PREFLIGHT}" "${config_file}"
-  temporary_file="$(mktemp "${config_file}.tiangong-codex-credential.XXXXXX")"
+  [[ -f "${config_file}" ]] || { printf '[tiangong-worker] ERROR: OpenClaw config not found: %s\n' "${config_file}" >&2; return 1; }
+  temporary_file="$(mktemp "${config_file}.${suffix}.XXXXXX")"
   trap 'rm -f "${temporary_file:-}"' RETURN
-  jq --arg provider "${provider_id}" --arg base_url "${base_url_override}" '
-    if (.models.providers[$provider] | type) == "object"
-    then (if $base_url != "" then .models.providers[$provider].baseUrl = $base_url else . end)
-      | del(.models.providers[$provider].apiKey)
-    else .
-    end
-  ' "${config_file}" >"${temporary_file}"
+  jq "${filter}" "${config_file}" >"${temporary_file}"
   chmod 600 "${temporary_file}"
   mv "${temporary_file}" "${config_file}"
   trap - RETURN
-  unset DEEPSEEK_API_KEY DEEPSEEK_BASE_URL CODEX_API_KEY OPENAI_BASE_URL
-  codex_home="$(mktemp -d "${TMPDIR:-/tmp}/tiangong-codex-home.XXXXXX")"
-  chmod 700 "${codex_home}"
-  provider_toml_id="$(printf '%s' "${provider_id}" | jq -Rsa .)"
-  provider_http_headers=""
-  if [[ "${bridge_mode}" == "opencodex" ]]; then
-    # OpenCodex deliberately requires its dedicated admission header on Responses/Chat routes;
-    # the value is still the scoped AgentTeams consumer token, never an upstream provider key.
-    provider_http_headers=$'env_http_headers = { "x-opencodex-api-key" = "OPENAI_API_KEY" }\n'
-  fi
-  printf 'model_provider = %s\n\n[model_providers.%s]\nname = %s\nbase_url = %s\nenv_key = "OPENAI_API_KEY"\nwire_api = "responses"\n%s\nsupports_websockets = false\n\n[features]\nresponses_websockets = false\nresponses_websockets_v2 = false\nplugins = false\napps = false\n' \
-    "${provider_toml_id}" "${provider_id}" "${provider_toml_id}" "$(printf '%s' "${provider_base_url}" | jq -Rsa .)" "${provider_http_headers}" >"${codex_home}/config.toml"
-  chmod 600 "${codex_home}/config.toml"
-  export CODEX_HOME="${codex_home}"
-  # This is the scoped AgentTeams consumer token. The upstream provider key stays behind the gateway/bridge.
-  export OPENAI_API_KEY="${provider_api_key}"
-  export OPENCLAW_CODEX_APP_SERVER_BIN="/opt/tiangong-worker/bin/codex-app-server"
-  trap cleanup_codex_home EXIT INT TERM
 }
 
 configure_builtin_gateway() {
-  local config_file gateway_url gateway_base_url provider_id temporary_file
-  [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]] && return 0
-  config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
+  local gateway_url gateway_base_url provider_id
   gateway_url="${AGENTTEAMS_AI_GATEWAY_URL:-}"
   [[ -n "${gateway_url}" ]] || return 0
-  [[ "${gateway_url}" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$ ]] || {
-    printf '[tiangong-worker] ERROR: AgentTeams gateway URL is invalid for the built-in runtime.\n' >&2
-    return 1
-  }
-  [[ -f "${config_file}" ]] || {
-    printf '[tiangong-worker] ERROR: OpenClaw config not found: %s\n' "${config_file}" >&2
-    return 1
-  }
+  [[ "${gateway_url}" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$ ]] || { printf '[tiangong-worker] ERROR: AgentTeams gateway URL is invalid.\n' >&2; return 1; }
   gateway_base_url="${gateway_url%/}/v1"
-  provider_id="${TIANGONG_CODEX_PROVIDER:-agentteams-gateway}"
-  temporary_file="$(mktemp "${config_file}.tiangong-gateway.XXXXXX")"
-  trap 'rm -f "${temporary_file:-}"' RETURN
-  jq --arg provider_id "${provider_id}" --arg base_url "${gateway_base_url}" '
-    if (.models.providers[$provider_id] | type) == "object"
-    then .models.providers[$provider_id].baseUrl = $base_url
-    else error("AgentTeams gateway provider is missing")
-    end
-  ' "${config_file}" >"${temporary_file}"
-  chmod 600 "${temporary_file}"
-  mv "${temporary_file}" "${config_file}"
-  trap - RETURN
+  provider_id="agentteams-gateway"
+  TIANGONG_PROVIDER_ID="${provider_id}" TIANGONG_GATEWAY_BASE_URL="${gateway_base_url}" update_config tiangong-gateway '
+    env.TIANGONG_PROVIDER_ID as $provider
+    | env.TIANGONG_GATEWAY_BASE_URL as $base_url
+    | if (.models.providers[$provider] | type) == "object"
+      then .models.providers[$provider].baseUrl = $base_url
+      else error("AgentTeams gateway provider is missing") end
+  '
   printf '[tiangong-worker] builtin_gateway_override=pass provider=%s\n' "${provider_id}" >&2
 }
 
-configure_codex_runtime() {
-  local config_file temporary_file model_id model_ref model_alias provider_id
-  [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]] || return 0
-  config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
-  [[ -f "${config_file}" ]] || {
-    printf '[tiangong-worker] ERROR: OpenClaw config not found: %s\n' "${config_file}" >&2
-    return 1
-  }
-  temporary_file="$(mktemp "${config_file}.tiangong-codex.XXXXXX")"
-  trap 'rm -f "${temporary_file:-}"' RETURN
-  provider_id="${TIANGONG_CODEX_PROVIDER:-agentteams-gateway}"
-  model_id="${TIANGONG_CODEX_MODEL:-deepseek-v4-pro}"
-  model_ref="codex/${model_id}"
-  model_alias="${TIANGONG_CODEX_MODEL_ALIAS:-${model_id}}"
-  jq --arg provider_id "${provider_id}" --arg model_id "${model_id}" --arg model_ref "${model_ref}" --arg model_alias "${model_alias}" '
-    .models = (.models // {})
-    | .models.providers = (.models.providers // {})
-    | if (.models.providers[$provider_id] | type) == "object"
-      then .models.providers[$provider_id].models = [
-        ((.models.providers[$provider_id].models // [])[] | select(.id != $model_id and .id != ("codex/" + $model_id))),
-        {id: $model_id, name: $model_id, reasoning: true, contextWindow: 256000, maxTokens: 65536}
-      ]
-      else .
-      end
-    | .plugins = (.plugins // {})
-    | .plugins.entries = (.plugins.entries // {})
-    | .plugins.entries.codex = ((.plugins.entries.codex // {}) + {enabled: true})
-    | .plugins.entries.codex.config = ((.plugins.entries.codex.config // {}) + {
-        appServer: ((.plugins.entries.codex.config.appServer // {}) + {
-          transport: "stdio",
-          command: "/opt/tiangong-worker/bin/codex-app-server"
-        })
-      })
-    | .plugins.allow = if (.plugins.allow | type) == "array"
-        then ([.plugins.allow[], "codex"] | unique)
-        else .plugins.allow end
-    | .agents = (.agents // {})
-    | .agents.defaults = (.agents.defaults // {})
-    | .agents.defaults.model = {primary: $model_ref, fallbacks: []}
-    | .agents.defaults.models = (.agents.defaults.models // {})
-    | .agents.defaults.models[$model_ref] = ((.agents.defaults.models[$model_ref] // {}) + {alias: $model_alias})
-    | .agents.defaults.embeddedHarness = {runtime: "codex", fallback: "none"}
-  ' "${config_file}" >"${temporary_file}"
-  chmod 600 "${temporary_file}"
-  mv "${temporary_file}" "${config_file}"
-  trap - RETURN
+configure_workspace_boundary() {
+  local tool_allowlist
+  if [[ "${TIANGONG_MEMBER_RUNTIME_ROUTING_REQUIRED:-0}" == "1" ]]; then tool_allowlist="$(/usr/bin/node "${TOOL_ALLOWLIST_RESOLVER}")"; else tool_allowlist='[]'; fi
+  TIANGONG_TOOL_ALLOWLIST="${tool_allowlist}" update_config tiangong-workspace '
+    (env.TIANGONG_TOOL_ALLOWLIST | fromjson) as $allow
+    | .tools = (.tools // {})
+    | .tools.fs = ((.tools.fs // {}) + {workspaceOnly: true})
+    | .tools.allow = $allow
+  '
 }
 
 configure_tiangong_plugin() {
-  local config_file temporary_file
-  config_file="${OPENCLAW_CONFIG_PATH:-${HOME}/openclaw.json}"
-  [[ -f "${config_file}" ]] || {
-    printf '[tiangong-worker] ERROR: OpenClaw config not found: %s\n' "${config_file}" >&2
-    return 1
-  }
-
-  temporary_file="$(mktemp "${config_file}.tiangong.XXXXXX")"
-  trap 'rm -f "${temporary_file:-}"' RETURN
-  jq --arg plugin_id "${PLUGIN_ID}" --arg plugin_path "${PLUGIN_PATH}" \
-    --argjson disable_codex_discovery "$([[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]] && printf false || printf true)" '
-    .plugins = (.plugins // {})
+  TIANGONG_PLUGIN_ID="${PLUGIN_ID}" TIANGONG_PLUGIN_PATH="${PLUGIN_PATH}" update_config tiangong-plugin '
+    env.TIANGONG_PLUGIN_ID as $id | env.TIANGONG_PLUGIN_PATH as $path
+    | .plugins = (.plugins // {})
     | .plugins.load = (.plugins.load // {})
-    | .plugins.load.paths = ([((.plugins.load.paths // [])[]), $plugin_path] | unique)
+    | .plugins.load.paths = ([((.plugins.load.paths // [])[]), $path] | unique)
     | .plugins.entries = (.plugins.entries // {})
-    | .plugins.entries[$plugin_id] = ((.plugins.entries[$plugin_id] // {}) + {
-        enabled: true
-      })
-    | .plugins.allow = if (.plugins.allow | type) == "array"
-        then ([.plugins.allow[], $plugin_id] | unique)
-        else [$plugin_id]
-        end
-    | if $disable_codex_discovery
-      then .plugins.entries.codex = ((.plugins.entries.codex // {}) + {
+    | .plugins.entries[$id] = ((.plugins.entries[$id] // {}) + {enabled: true})
+    | .plugins.allow = if (.plugins.allow | type) == "array" then ([.plugins.allow[], $id] | unique) else [$id] end
+  '
+}
+
+assert_no_agentloop_credentials() {
+  local name
+  while IFS= read -r name; do
+    case "${name}" in
+      ARMS_*|OTEL_*|OPENCLAW_OTEL_PRELOADED)
+        [[ -z "${!name:-}" ]] || { printf '[tiangong-worker] ERROR: AgentLoop credentials and exporter overrides belong in the collector, not the Worker.\n' >&2; return 1; }
+        ;;
+    esac
+  done < <(compgen -e)
+}
+
+configure_agentloop() {
+  local enabled="${TIANGONG_AGENTLOOP_ENABLED:-0}" service_name="${TIANGONG_AGENTLOOP_SERVICE_NAME:-openclaw}"
+  [[ "${enabled}" == 0 || "${enabled}" == 1 ]] || { printf '[tiangong-worker] ERROR: TIANGONG_AGENTLOOP_ENABLED must be 0 or 1.\n' >&2; return 1; }
+  assert_no_agentloop_credentials
+  if [[ "${enabled}" == 0 ]]; then
+    TIANGONG_AGENTLOOP_PLUGIN_ID="${AGENTLOOP_PLUGIN_ID}" TIANGONG_AGENTLOOP_PLUGIN_PATH="${AGENTLOOP_PLUGIN_PATH}" update_config agentloop-disabled '
+      env.TIANGONG_AGENTLOOP_PLUGIN_ID as $id | env.TIANGONG_AGENTLOOP_PLUGIN_PATH as $path
+      | del(.plugins.entries[$id])
+      | .plugins.entries["diagnostics-otel"] = {enabled: false}
+      | .plugins.allow = [(.plugins.allow // [])[] | select(. != $id and . != "diagnostics-otel")]
+      | .plugins.load.paths = [(.plugins.load.paths // [])[] | select(. != $path)]
+      | .diagnostics = {enabled: false, otel: {enabled: false, traces: false, metrics: false, logs: false}}
+      | .plugins.entries["tiangong-control"].config.observability = {enabled: false}
+    '
+    return 0
+  fi
+  [[ "${TIANGONG_AGENTLOOP_CONTENT_CAPTURE:-}" == isolated-test ]] || { printf '[tiangong-worker] ERROR: AgentLoop requires explicit isolated-test content capture.\n' >&2; return 1; }
+  [[ "${TIANGONG_AGENTLOOP_OTLP_ENDPOINT:-${AGENTLOOP_COLLECTOR_ENDPOINT}}" == "${AGENTLOOP_COLLECTOR_ENDPOINT}" ]] || { printf '[tiangong-worker] ERROR: AgentLoop Worker export must use the fixed credential-isolating collector.\n' >&2; return 1; }
+  [[ "${service_name}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || { printf '[tiangong-worker] ERROR: AgentLoop service name is invalid.\n' >&2; return 1; }
+  TIANGONG_AGENTLOOP_PLUGIN_ID="${AGENTLOOP_PLUGIN_ID}" \
+  TIANGONG_AGENTLOOP_PLUGIN_PATH="${AGENTLOOP_PLUGIN_PATH}" \
+  TIANGONG_AGENTLOOP_PROCESSOR_PATH="${AGENTLOOP_PROCESSOR_PATH}" \
+  TIANGONG_AGENTLOOP_ENDPOINT="${AGENTLOOP_COLLECTOR_ENDPOINT}" \
+  TIANGONG_AGENTLOOP_SERVICE="${service_name}" \
+  TIANGONG_AGENTLOOP_MEMBER_ID="${TIANGONG_MEMBER_ID:-${AGENTTEAMS_WORKER_NAME:-unknown-member}}" \
+  update_config agentloop-enabled '
+    env.TIANGONG_AGENTLOOP_PLUGIN_ID as $id
+    | env.TIANGONG_AGENTLOOP_PLUGIN_PATH as $path
+    | env.TIANGONG_AGENTLOOP_PROCESSOR_PATH as $processor
+    | env.TIANGONG_AGENTLOOP_ENDPOINT as $endpoint
+    | env.TIANGONG_AGENTLOOP_SERVICE as $service
+    | env.TIANGONG_AGENTLOOP_MEMBER_ID as $member
+    | .plugins.load.paths = ([((.plugins.load.paths // [])[]), $path] | unique)
+    | .plugins.allow = ([((.plugins.allow // [])[]), $id, "diagnostics-otel"] | unique)
+    | .plugins.entries[$id] = {enabled: true, config: {
+        endpoint: $endpoint,
+        serviceName: $service,
+        debug: false,
+        batchSize: 10,
+        flushIntervalMs: 1000,
+        enableTracePropagation: false,
+        spanProcessorModule: $processor,
+        globalSpanAttributes: {"tiangong.member.id": $member, "deployment.environment": "isolated-test"}
+      }}
+    | .plugins.entries["diagnostics-otel"] = {enabled: true}
+    | .diagnostics = ((.diagnostics // {}) + {enabled: true})
+    | .diagnostics.otel = ((.diagnostics.otel // {}) + {
         enabled: true,
-        config: ((.plugins.entries.codex.config // {}) + {discovery: {enabled: false}})
-      })
-      else .
-      end
-  ' "${config_file}" >"${temporary_file}"
-  chmod 600 "${temporary_file}"
-  mv "${temporary_file}" "${config_file}"
-  trap - RETURN
+        endpoint: $endpoint,
+        protocol: "http/protobuf",
+        serviceName: $service,
+        traces: false,
+        metrics: true,
+        logs: false
+      } | del(.headers))
+    | .plugins.entries["tiangong-control"].config.observability = {enabled: true, endpoint: ($endpoint + "/v1/traces")}
+  '
+  printf '[tiangong-worker] agentloop=enabled transport=collector content_capture=isolated-test service=%s\n' "${service_name}" >&2
 }
 
 if [[ "${1:-}" == "gateway" && "${2:-}" == "run" ]]; then
   load_agentteams_controller_token
-  assert_role_runtime_route
-  # Route authorization must precede any config mutation. A mismatched role
-  # must fail closed without enabling a plugin or rewriting the OpenClaw
-  # configuration on disk.
+  assert_member_runtime_route
   configure_tiangong_plugin
+  configure_agentloop
+  configure_workspace_boundary
   configure_builtin_gateway
-  configure_codex_runtime
-  configure_codex_gateway
   /usr/bin/node "${PREFLIGHT}"
-  if [[ "${TIANGONG_CODEX_RUNTIME:-0}" == "1" ]]; then
-    printf '[tiangong-worker] Starting upstream OpenClaw with the native Codex app-server runtime.\n' >&2
-    "${UPSTREAM_OPENCLAW}" "$@"
-    status=$?
-    cleanup_codex_home
-    exit "${status}"
-  else
-    printf '[tiangong-worker] Starting upstream OpenClaw built-in runtime (pinned id pi).\n' >&2
-  fi
+  printf '[tiangong-worker] Starting upstream OpenClaw built-in runtime (pinned id pi).\n' >&2
 fi
 
 exec "${UPSTREAM_OPENCLAW}" "$@"

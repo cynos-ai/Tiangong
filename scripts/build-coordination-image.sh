@@ -24,7 +24,10 @@ actual_node_version="$(docker run --rm --entrypoint node "${IMAGE}" --version)"
 
 docker run --rm --entrypoint node "${IMAGE}" --input-type=module -e '
   const module = await import("/opt/tiangong/app/coordination/runtime-server.mjs");
-  if (typeof module.startCoordinationRuntime !== "function") process.exit(1);
+  const { loadAgentPackages } = await import("/opt/tiangong/worker/agent/packages/loader.mjs");
+  const { loadInstalledSkills } = await import("/opt/tiangong/worker/agent/skills/catalog.mjs");
+  const [agents, skills] = await Promise.all([loadAgentPackages(), loadInstalledSkills()]);
+  if (typeof module.startCoordinationRuntime !== "function" || agents.packages.length !== 6 || skills.skills.length !== 6) process.exit(1);
 '
 
 printf 'tiangong_coordination_image=ready image=%s node=%s\n' "${IMAGE}" "${actual_node_version}"

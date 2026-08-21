@@ -1,0 +1,5 @@
+{
+  "success": [{"name":"clear-work","given":"clear goal and doneWhen with an enabled member","expect":["complete WorkSpec","one bounded next Task","no invented machine facts"]}],
+  "blocked": [{"name":"null-ambiguous","given":"materially ambiguous request and null WorkSpec","expect":["Human clarification","no Task creation","Work remains open"]}],
+  "cleanup": [{"name":"no-external-resource","expect":["no external resource created"]}]
+}

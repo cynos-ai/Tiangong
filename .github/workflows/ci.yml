@@ -47,17 +47,13 @@ jobs:
         run: make test-peer-mention-smoke-contract
       - name: Test paused Worker liveness boundary
         run: make test-pause-worker-boundary
-      - name: Test Leader smoke oracle contract
-        run: make test-leader-smoke-contract
-      - name: Test Phase 4 recovery contract
-        run: make test-phase4-recovery
       - name: Validate project Agent Skills and demo contract
         run: |
           node --check scripts/check-skills.mjs
           node --check scripts/check-demo-contract.mjs
-          node --check scripts/verify-professional-state.mjs
           make check-skills
           make check-demo-contract
+          make test-agentloop-contract
       - name: Install and run actionlint
         env:
           ACTIONLINT_VERSION: 1.7.7
@@ -82,37 +78,25 @@ jobs:
         with:
           node-version: 22.23.2
           cache: npm
-          cache-dependency-path: worker/package-lock.json
-      - name: Install locked Worker dependencies
+          cache-dependency-path: |
+            worker/package-lock.json
+            app/package-lock.json
+      - name: Install locked runtime dependencies
         run: |
           npm ci --prefix worker --omit=dev --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/
-      - name: Test Worker runtime
+          npm ci --prefix app --omit=dev --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/
+      - name: Test Worker and PostgreSQL-authority contracts
         run: |
           test ! -e worker/node_modules/@earendil-works/pi-coding-agent
           while IFS= read -r module; do node --check "${module}"; done < <(
             find worker/agent worker/plugin -type f -name '*.mjs' -print | sort
           )
           npm test --prefix worker
-      - name: Audit production dependencies
-        run: |
-          set +e
-          npm audit --prefix worker --omit=dev --registry=https://registry.npmjs.org/ --json > /tmp/worker-audit.json
-          audit_status=$?
-          set -e
-          if [[ "${audit_status}" -ne 0 ]]; then
-            jq '{metadata: .metadata.vulnerabilities, vulnerabilities: (.vulnerabilities | keys)}' \
-              /tmp/worker-audit.json >&2 || true
-            exit "${audit_status}"
-          fi
-          jq -e '.metadata.vulnerabilities.total == 0' /tmp/worker-audit.json >/dev/null
+          npm test --prefix app
+      - name: Audit production dependency locks
+        run: node worker/scripts/audit-lockfile.mjs worker/package-lock.json worker/agentloop-package-lock.json
       - name: Build Worker image
         run: ./scripts/build-worker-image.sh
-      - name: Test disposable execution and deployment boundaries
-        run: |
-          make test-runner-executor
-          make test-runner-broker
-          make test-deployment-service
-
   dco:
     name: DCO
     if: github.event_name == 'pull_request'

@@ -67,6 +67,32 @@ TIANGONG_COORDINATION_HOST_PORT=18780 \
   "${REPO_ROOT}/scripts/deploy-coordination-runtime.sh" start >"${output_port}"
 grep -q -- '--publish 127.0.0.1:18780:8780/tcp' "${TEST_ROOT}/docker-port.log"
 
+printf '%s\n' 'AGENTTEAMS_MATRIX_URL=https://matrix.example.test' 'TIANGONG_WEB_SECURE_COOKIES=0' >>"${env_file}"
+output_web="${TEST_ROOT}/output-web"
+FAKE_DOCKER_LOG="${TEST_ROOT}/docker-web.log" \
+PATH="${TEST_ROOT}/bin:${PATH}" \
+TIANGONG_LEADER_RUNTIME_BINDING_FILE="${binding}" \
+TIANGONG_COORDINATION_ENV_FILE="${env_file}" \
+  "${REPO_ROOT}/scripts/deploy-coordination-runtime.sh" start >"${output_web}"
+grep -q 'coordination_runtime_deployment=ready' "${output_web}"
+
+matrix_token_only="${TEST_ROOT}/matrix-token-only.env"
+printf '%s\n' \
+  'TIANGONG_COORDINATION_DATABASE_URL=postgres://coordination.invalid/db' \
+  'TIANGONG_COORDINATION_CONTROL_TOKEN=coordination-control-token-123456' \
+  'TIANGONG_COORDINATION_MATRIX_TOKEN=matrix-consumer-token-123456' \
+  >"${matrix_token_only}"
+chmod 600 "${matrix_token_only}"
+if FAKE_DOCKER_LOG="${TEST_ROOT}/docker-token-only.log" \
+  PATH="${TEST_ROOT}/bin:${PATH}" \
+  TIANGONG_LEADER_RUNTIME_BINDING_FILE="${binding}" \
+  TIANGONG_COORDINATION_ENV_FILE="${matrix_token_only}" \
+  "${REPO_ROOT}/scripts/deploy-coordination-runtime.sh" start >"${TEST_ROOT}/token-only.out" 2>&1; then
+  printf 'FAIL: Matrix consumer token without Matrix URL was accepted.\n' >&2
+  exit 1
+fi
+grep -q 'MATRIX_URL_INVALID' "${TEST_ROOT}/token-only.out"
+
 output_volume="${TEST_ROOT}/output-volume"
 FAKE_DOCKER_LOG="${TEST_ROOT}/docker-volume.log" \
 PATH="${TEST_ROOT}/bin:${PATH}" \

@@ -1,0 +1,14 @@
+{
+  "shouldTrigger": [
+    "Run normal and failure-path scenarios for this implemented change in the disposable test fixture.",
+    "Verify retry, restart, and cleanup behavior for the exact Developer commit.",
+    "Produce a scenario truth table with direct observations and cleanup proof."
+  ],
+  "shouldNotTrigger": [
+    "Review the code diff for maintainability.",
+    "Modify the implementation until unit tests pass.",
+    "Test this directly in production."
+  ],
+  "ambiguous": ["Test the feature thoroughly."],
+  "adjacentSkills": ["test-driven-development", "independent-code-review"]
+}

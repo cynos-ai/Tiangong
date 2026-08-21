@@ -1,0 +1,16 @@
+{
+  "shouldTrigger": [
+    "Turn this clear Human request into a WorkSpec and delegate the next Task.",
+    "All Task Results are in; decide whether this Work can be completed safely.",
+    "The goal is ambiguous in two material ways. Coordinate a clarification with the Human."
+  ],
+  "shouldNotTrigger": [
+    "Write the detailed technical implementation Plan for this WorkSpec.",
+    "Review commit abc123 for authorization bugs.",
+    "Implement the failing parser test and create a local commit."
+  ],
+  "ambiguous": [
+    "Help move this software Work forward without changing its scope."
+  ],
+  "adjacentSkills": ["work-planning", "independent-code-review"]
+}

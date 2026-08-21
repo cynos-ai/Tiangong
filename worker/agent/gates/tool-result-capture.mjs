@@ -2,6 +2,7 @@ import { join } from "node:path";
 
 import { sha256 } from "../canonical-json.mjs";
 import { ToolResultStore } from "./tool-result-store.mjs";
+import { enrichToolResultCorrelation } from "../../observability/hooks.mjs";
 
 const WORKER_NAME_PATTERN = /^[A-Za-z0-9._-]+$/u;
 
@@ -16,6 +17,15 @@ function contentShape(content) {
     textLength: typeof part?.text === "string" ? part.text.length : undefined,
     hasData: typeof part?.data === "string",
   }));
+}
+
+function skillUseSummary(event) {
+  if (event?.toolName !== "tiangong_use_skill") return null;
+  const details = event?.result?.details ?? event?.result?.result?.details;
+  const value = details?.skillUse;
+  if (!value || typeof value !== "object" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value.skillId ?? "") ||
+      !/^\d+\.\d+\.\d+$/u.test(value.version ?? "") || !/^[a-f0-9]{64}$/u.test(value.contentDigest ?? "")) return null;
+  return { skillId: value.skillId, skillVersion: value.version, skillContentDigest: value.contentDigest, skillTrigger: bounded(value.trigger, 256), agentPackageId: bounded(value.agentPackageId, 128), agentPackageVersion: bounded(value.agentPackageVersion, 32) };
 }
 
 export function summarizeToolResult(event = {}) {
@@ -45,15 +55,17 @@ export function defaultToolResultCapturePath(env = process.env) {
   return join(stateRoot, "tool-results", "openclaw.json");
 }
 
-export function createToolResultCaptureHook({ filePath, now = () => new Date() } = {}) {
+export function createToolResultCaptureHook({ filePath, now = () => new Date(), onRecord } = {}) {
   if (typeof filePath !== "string" || filePath.length === 0) {
     throw new TypeError("ToolResult capture filePath is required");
   }
   if (typeof now !== "function") throw new TypeError("ToolResult capture clock is required");
+  if (onRecord !== undefined && typeof onRecord !== "function") throw new TypeError("ToolResult capture onRecord must be a function");
   const store = new ToolResultStore({ filePath });
-  return async (event, ctx = {}) => {
+  return (event, ctx = {}) => {
     const timestamp = now().toISOString();
     const summary = summarizeToolResult(event);
+    const skillUse = skillUseSummary(event);
     if (!summary.toolCallId) throw new Error("TOOL_RESULT_CAPTURE_GAP");
     const actorId = bounded(ctx.actorId ?? ctx.senderId ?? ctx.agentId, 128);
     if (!actorId) throw new Error("TOOL_RESULT_CAPTURE_GAP");
@@ -72,7 +84,7 @@ export function createToolResultCaptureHook({ filePath, now = () => new Date() }
             ? "error"
             : "success";
     const startedAt = bounded(event.startedAt, 64) ?? timestamp;
-    const record = {
+    const record = enrichToolResultCorrelation({
       toolResultId,
       callKey,
       ...(bounded(ctx.workId, 256) ? { workId: bounded(ctx.workId, 256) } : {}),
@@ -90,12 +102,14 @@ export function createToolResultCaptureHook({ filePath, now = () => new Date() }
         textLength,
         hasData: summary.content.some((part) => part.hasData === true),
         isSynthetic: summary.isSynthetic,
+        ...(skillUse ?? {}),
       },
       outputRef: event.outputRef ?? null,
       startedAt,
       completedAt: timestamp,
-    };
-    await store.append(record);
+    }, ctx, event);
+    store.appendSync(record);
+    onRecord?.(record, ctx, event);
     return undefined;
   };
 }

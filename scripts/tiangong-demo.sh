@@ -63,10 +63,11 @@ stop_demo() {
   local name
   for name in \
     tiangong-demo-leader \
-    tiangong-demo-designer \
-    tiangong-demo-implementor \
-    tiangong-demo-assessor \
-    tiangong-demo-operator; do
+    tiangong-demo-architect \
+    tiangong-demo-challenger \
+    tiangong-demo-developer \
+    tiangong-demo-reviewer \
+    tiangong-demo-tester; do
     delete_worker_if_owned "${name}"
   done
   docker exec "${MANAGER_CONTAINER}" rm -f "${MANAGER_WORKERS_FILE}" "${MANAGER_TEAM_FILE}" >/dev/null 2>&1 || true
@@ -88,7 +89,7 @@ wait_team() {
   local json
   for _ in $(seq 1 "${WAIT_TEAM_ATTEMPTS}"); do
     json="$(docker exec "${MANAGER_CONTAINER}" agt get teams "${TEAM_NAME}" -o json 2>/dev/null || true)"
-    if jq -e '.phase == "Active" and .leaderReady == true and .readyWorkers == 4 and .totalWorkers == 4' <<<"${json}" >/dev/null 2>&1; then
+    if jq -e '.phase == "Active" and .leaderReady == true and .readyWorkers == 5 and .totalWorkers == 5' <<<"${json}" >/dev/null 2>&1; then
       return 0
     fi
     sleep 3
@@ -111,10 +112,11 @@ start_demo() {
   resource_exists teams "${TEAM_NAME}" && die "${TEAM_NAME} already exists; run '$0 stop' first."
   for name in \
     tiangong-demo-leader \
-    tiangong-demo-designer \
-    tiangong-demo-implementor \
-    tiangong-demo-assessor \
-    tiangong-demo-operator; do
+    tiangong-demo-architect \
+    tiangong-demo-challenger \
+    tiangong-demo-developer \
+    tiangong-demo-reviewer \
+    tiangong-demo-tester; do
     resource_exists workers "${name}" && die "${name} already exists; run '$0 stop' first."
   done
 
@@ -124,10 +126,11 @@ start_demo() {
   docker exec "${MANAGER_CONTAINER}" agt apply -f "${MANAGER_WORKERS_FILE}" >/dev/null
   for name in \
     tiangong-demo-leader \
-    tiangong-demo-designer \
-    tiangong-demo-implementor \
-    tiangong-demo-assessor \
-    tiangong-demo-operator; do
+    tiangong-demo-architect \
+    tiangong-demo-challenger \
+    tiangong-demo-developer \
+    tiangong-demo-reviewer \
+    tiangong-demo-tester; do
     log "waiting for ${name}"
     wait_worker "${name}" || die "${name} did not become Matrix-ready"
   done
@@ -142,7 +145,8 @@ start_demo() {
 
 send_to_leader() {
   require_stack
-  local message="${*:-请介绍这支 Tiangong 团队的五个角色，并提出一个只读的 design Task。不要执行写操作。}"
+  [[ "${TIANGONG_DEMO_M1_RUNTIME_READY:-0}" == 1 ]] || die "M1 Agent package and Coordination bindings are not proven; inject all six MemberConfigs before sending and set TIANGONG_DEMO_M1_RUNTIME_READY=1."
+  local message="${*:-请介绍这支 Tiangong 团队的六个专业成员，并提出一个只读的规划 Task。不要执行写操作。}"
   local team_json leader_uid leader_room
   team_json="$(docker exec "${MANAGER_CONTAINER}" agt get workers "${LEADER_NAME}" -o json)"
   leader_uid="$(jq -er '.matrixUserID' <<<"${team_json}")"
@@ -199,15 +203,17 @@ usage() {
   cat <<'EOF'
 Usage: scripts/tiangong-demo.sh <start|run|send|show|status|stop>
 
-  start              create the five-role demo Team and leave it running
+  start              create the six-member generic-image demo Team and leave it running
   run [message]      start, then send a read-only prompt to the Leader
   send [message]     send a formatted Matrix mention to the Leader
   show               print the latest bounded messages in the Team room
   status             show Team/Worker state and browser URLs
   stop               delete only the tiangong-demo-* resources
 
-The demo uses the existing local DeepSeek default route and prebuilt Worker images.
-It does not modify provider configuration or persist credentials.
+The demo uses the existing local DeepSeek route and prebuilt generic Worker image.
+start provisions only AgentTeams resources. run/send require deployment-proven M1
+MemberConfig and Coordination bindings plus TIANGONG_DEMO_M1_RUNTIME_READY=1.
+The script does not modify provider configuration or persist credentials.
 EOF
 }
 

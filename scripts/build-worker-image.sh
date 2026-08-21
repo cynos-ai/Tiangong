@@ -2,261 +2,77 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly SCRIPT_DIR
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-readonly REPO_ROOT
-readonly IMAGE="tiangong-worker:dev"
-readonly CANARY_IMAGE="tiangong-worker-canary:dev"
-readonly CANARY_MEMBER_IMAGE="tiangong-worker-canary-member:dev"
-readonly LEADER_IMAGE="tiangong-worker-leader:dev"
-readonly DESIGNER_IMAGE="tiangong-worker-designer:dev"
-readonly IMPLEMENTOR_IMAGE="tiangong-worker-implementor:dev"
-readonly ASSESSOR_IMAGE="tiangong-worker-assessor:dev"
-readonly OPERATOR_IMAGE="tiangong-worker-operator:dev"
-readonly RUNNER_BROKER_IMAGE="tiangong-runner-broker:dev"
-readonly DEPLOYMENT_SERVICE_IMAGE="tiangong-deployment-service:dev"
-readonly DEPLOYMENT_BROKER_IMAGE="tiangong-deployment-broker:dev"
-readonly CODEX_CAPABILITY_CACHE_IMAGE="tiangong-codex-capability-cache:dev"
-readonly OPENCODEX_SIDECAR_IMAGE="tiangong-opencodex-sidecar:dev"
-readonly OPENCODEX_RECEIPT_SERVICE_IMAGE="tiangong-opencodex-receipt-service:dev"
-readonly OPENCODEX_ADAPTER_IMAGE="tiangong-opencodex-adapter:dev"
+readonly SCRIPT_DIR REPO_ROOT
+readonly IMAGE="tg-worker:dev"
 readonly EXPECTED_NODE_VERSION="v22.23.2"
-readonly EXPECTED_CODEX_VERSION="codex-cli 0.120.0"
 readonly EXPECTED_GIT_VERSION="git version 2.43.0"
-readonly EXPECTED_UTIL_LINUX_VERSION="2.39.3"
-readonly EXPECTED_DOCKER_CLI_VERSION="28.3.3"
 
-command -v docker >/dev/null 2>&1 || {
-  printf 'ERROR: docker is required.\n' >&2
-  exit 1
-}
+command -v docker >/dev/null 2>&1 || { printf 'ERROR: docker is required.\n' >&2; exit 1; }
+docker info >/dev/null 2>&1 || { printf 'ERROR: the Docker daemon is unavailable.\n' >&2; exit 1; }
 
-docker info >/dev/null 2>&1 || {
-  printf 'ERROR: the Docker daemon is unavailable.\n' >&2
-  exit 1
-}
-
-validate_codex_gateway_override() {
-  local base_url="${TIANGONG_CODEX_BASE_URL:-}" hosts="${TIANGONG_CODEX_GATEWAY_HOSTS:-}"
-  if [[ -n "${base_url}" ]]; then
-    [[ "${base_url}" =~ ^https?://[^@/?#[:space:]]+(/[^?#[:space:]]*)?$ ]] || {
-      printf 'ERROR: TIANGONG_CODEX_BASE_URL must be an HTTP(S) URL without credentials, query, or fragment.\n' >&2
-      exit 1
-    }
-  fi
-  if [[ -n "${hosts}" ]]; then
-    [[ "${hosts}" =~ ^[A-Za-z0-9.-]+(,[A-Za-z0-9.-]+)*$ ]] || {
-      printf 'ERROR: TIANGONG_CODEX_GATEWAY_HOSTS must be a comma-separated host allowlist.\n' >&2
-      exit 1
-    }
-  fi
-}
-
-validate_codex_gateway_override
-
-# Git Bash rewrites Unix-looking container paths in `docker run` arguments as
-# Windows host paths. Build contexts intentionally keep that conversion, but
-# validation entrypoints and workdirs belong inside the container namespace.
-run_image() {
-  MSYS_NO_PATHCONV=1 docker run "$@"
-}
-
-build_args=(--pull --build-context "team_playbooks=${REPO_ROOT}/team-playbooks")
-if [[ -n "${TIANGONG_OTEL_EXPORTER_ENDPOINT:-}" ]]; then
-  build_args+=(--build-arg "TIANGONG_OTEL_EXPORTER_ENDPOINT=${TIANGONG_OTEL_EXPORTER_ENDPOINT}")
-fi
-# These are non-secret, deployment-owned Codex routing values. They are baked
-# into all Tiangong Worker profiles so a later runtime injection can use the
-# same explicit endpoint without copying a provider credential into the image.
-if [[ -n "${TIANGONG_CODEX_GATEWAY_HOSTS:-}" ]]; then
-  build_args+=(--build-arg "TIANGONG_CODEX_GATEWAY_HOSTS=${TIANGONG_CODEX_GATEWAY_HOSTS}")
-fi
-if [[ -n "${TIANGONG_CODEX_BASE_URL:-}" ]]; then
-  build_args+=(--build-arg "TIANGONG_CODEX_BASE_URL=${TIANGONG_CODEX_BASE_URL}")
+if [[ -n "${TIANGONG_NPM_REGISTRY:-}" ]]; then
+  [[ "${TIANGONG_NPM_REGISTRY}" =~ ^https://(registry\.npmjs\.org|registry\.npmmirror\.com)/?$ ]] || {
+    printf 'ERROR: TIANGONG_NPM_REGISTRY must be an approved public registry.\n' >&2
+    exit 1
+  }
 fi
 
-printf '[Tiangong] Building %s\n' "${IMAGE}"
-docker build "${build_args[@]}" --target default --tag "${IMAGE}" "${REPO_ROOT}/worker"
-printf '[Tiangong] Building isolated OpenClaw canary image %s\n' "${CANARY_IMAGE}"
-docker build "${build_args[@]}" --target canary --tag "${CANARY_IMAGE}" "${REPO_ROOT}/worker"
-printf '[Tiangong] Building fixed Implementor Chat bridge image %s\n' "${CANARY_MEMBER_IMAGE}"
-docker build "${build_args[@]}" --target canary-chat-bridge-implementor --tag "${CANARY_MEMBER_IMAGE}" "${REPO_ROOT}/worker"
-printf '[Tiangong] Building leader profile image %s\n' "${LEADER_IMAGE}"
-docker build "${build_args[@]}" --target leader --tag "${LEADER_IMAGE}" "${REPO_ROOT}/worker"
-for role in designer implementor assessor operator; do
-  image_var="${role^^}_IMAGE"
-  image="${!image_var}"
-  printf '[Tiangong] Building %s profile image %s\n' "${role}" "${image}"
-  docker build "${build_args[@]}" --target "${role}" --tag "${image}" "${REPO_ROOT}/worker"
-done
-printf '[Tiangong] Building controlled Runner broker image %s\n' "${RUNNER_BROKER_IMAGE}"
-docker build "${build_args[@]}" --target runner-broker --tag "${RUNNER_BROKER_IMAGE}" "${REPO_ROOT}/worker"
-printf '[Tiangong] Building disposable deployment service image %s\n' "${DEPLOYMENT_SERVICE_IMAGE}"
-docker build "${build_args[@]}" --target deployment-service --tag "${DEPLOYMENT_SERVICE_IMAGE}" "${REPO_ROOT}/worker"
-printf '[Tiangong] Building controlled deployment broker image %s\n' "${DEPLOYMENT_BROKER_IMAGE}"
-docker build "${build_args[@]}" --target deployment-broker --tag "${DEPLOYMENT_BROKER_IMAGE}" "${REPO_ROOT}/worker"
-printf '[Tiangong] Building deployment-owned Codex capability cache image %s\n' "${CODEX_CAPABILITY_CACHE_IMAGE}"
-docker build "${build_args[@]}" --target codex-capability-cache --tag "${CODEX_CAPABILITY_CACHE_IMAGE}" "${REPO_ROOT}/worker"
-printf '[Tiangong] Building deployment-owned OpenCodex sidecar image %s\n' "${OPENCODEX_SIDECAR_IMAGE}"
-docker build "${build_args[@]}" --target opencodex-sidecar --tag "${OPENCODEX_SIDECAR_IMAGE}" "${REPO_ROOT}/worker"
-printf '[Tiangong] Building OpenCodex receipt service image %s\n' "${OPENCODEX_RECEIPT_SERVICE_IMAGE}"
-docker build "${build_args[@]}" --target opencodex-receipt-service --tag "${OPENCODEX_RECEIPT_SERVICE_IMAGE}" "${REPO_ROOT}/worker"
-printf '[Tiangong] Building OpenCodex AgentTeams adapter image %s\n' "${OPENCODEX_ADAPTER_IMAGE}"
-docker build "${build_args[@]}" --target opencodex-adapter --tag "${OPENCODEX_ADAPTER_IMAGE}" "${REPO_ROOT}/worker"
+run_image() { MSYS_NO_PATHCONV=1 docker run "$@"; }
+build_args=(--pull)
+[[ -z "${TIANGONG_NPM_REGISTRY:-}" ]] || build_args+=(--build-arg "TIANGONG_NPM_REGISTRY=${TIANGONG_NPM_REGISTRY}")
+[[ -z "${TIANGONG_OTEL_EXPORTER_ENDPOINT:-}" ]] || build_args+=(--build-arg "TIANGONG_OTEL_EXPORTER_ENDPOINT=${TIANGONG_OTEL_EXPORTER_ENDPOINT}")
 
-actual_node_version="$(run_image --rm --entrypoint node "${IMAGE}" --version)"
-[[ "${actual_node_version}" == "${EXPECTED_NODE_VERSION}" ]] || {
-  printf 'ERROR: expected Node.js %s, got %s.\n' "${EXPECTED_NODE_VERSION}" "${actual_node_version}" >&2
-  exit 1
+build() {
+  local target="$1" image="$2"
+  printf '[Tiangong] Building target=%s image=%s\n' "${target}" "${image}"
+  docker build "${build_args[@]}" --target "${target}" --tag "${image}" "${REPO_ROOT}/worker"
 }
 
-actual_docker_cli_version="$(run_image --rm --entrypoint /usr/local/bin/docker "${RUNNER_BROKER_IMAGE}" --version | awk '{print $3}' | tr -d ',')"
-[[ "${actual_docker_cli_version}" == "${EXPECTED_DOCKER_CLI_VERSION}" ]] || {
-  printf 'ERROR: expected Runner broker Docker CLI %s, got %s.\n' "${EXPECTED_DOCKER_CLI_VERSION}" "${actual_docker_cli_version}" >&2
-  exit 1
-}
+build default "${IMAGE}"
 
+[[ "$(run_image --rm --entrypoint node "${IMAGE}" --version)" == "${EXPECTED_NODE_VERSION}" ]] || { printf 'ERROR: Node version mismatch.\n' >&2; exit 1; }
+[[ "$(run_image --rm --entrypoint /usr/bin/git "${IMAGE}" --version)" == "${EXPECTED_GIT_VERSION}" ]] || { printf 'ERROR: Git version mismatch.\n' >&2; exit 1; }
 run_image --rm --entrypoint node "${IMAGE}" --input-type=module -e '
-  if (await import("node:fs").then(({ existsSync }) => existsSync("/opt/tiangong-worker/node_modules/@earendil-works/pi-coding-agent"))) process.exit(1);
+  const { existsSync, readFileSync } = await import("node:fs");
+  if (existsSync("/opt/tiangong-worker/node_modules/@earendil-works/pi-coding-agent")) process.exit(1);
+  const agentLoop = JSON.parse(readFileSync("/opt/agentloop/opentelemetry-instrumentation-openclaw/package.json", "utf8"));
+  if (agentLoop.version !== "0.1.5-beta" || agentLoop.license !== "Apache-2.0" || agentLoop.dependencies["@opentelemetry/exporter-trace-otlp-proto"] !== "0.221.0" || !existsSync("/opt/tiangong-worker/licenses/agentloop-openclaw-Apache-2.0.txt")) process.exit(1);
+  if (existsSync("/opt/tiangong-worker/node_modules/@opentelemetry/exporter-trace-otlp-http")) process.exit(1);
+  const plugin = await import("/opt/tiangong-worker/plugin/index.mjs");
+  if (plugin.default?.id !== "tiangong-control") process.exit(1);
+  const { assertMemberRuntimeRoute } = await import("/opt/tiangong-worker/agent/runtime-routing.mjs");
+  const { loadAgentPackages } = await import("/opt/tiangong-worker/agent/packages/loader.mjs");
+  const { loadInstalledSkills } = await import("/opt/tiangong-worker/agent/skills/catalog.mjs");
+  const [agents, skills] = await Promise.all([loadAgentPackages(), loadInstalledSkills()]);
+  if (agents.packages.length !== 6 || skills.skills.length !== 6 || await import("node:fs").then(({ existsSync }) => existsSync("/opt/tiangong-worker/legacy"))) process.exit(1);
+  assertMemberRuntimeRoute({ responsibility: "leader", configuredRuntime: "openclaw-built-in", configuredModel: "glm-5", selectedRuntime: "openclaw-built-in", selectedModel: "glm-5" });
+  assertMemberRuntimeRoute({ responsibility: "developer", configuredRuntime: "openclaw-built-in", configuredModel: "glm-5", selectedRuntime: "openclaw-built-in", selectedModel: "glm-5" });
 '
+run_image --rm --workdir /opt/tiangong-worker --entrypoint node "${IMAGE}" ./scripts/verify-openclaw-workspace-tools.mjs
 
-# `bin/codex` is the runtime app-server entrypoint and intentionally requires
-# the in-memory gateway environment. Inspect the managed CLI package directly
-# for the image-version contract instead of starting that runtime wrapper.
-actual_codex_version="$(run_image --rm --entrypoint /opt/tiangong-worker/node_modules/.bin/codex "${CANARY_IMAGE}" --version)"
-[[ "${actual_codex_version}" == "${EXPECTED_CODEX_VERSION}" ]] || {
-  printf 'ERROR: expected managed Codex %s, got %s.\n' "${EXPECTED_CODEX_VERSION}" "${actual_codex_version}" >&2
+probe_log="$(mktemp "${TMPDIR:-/tmp}/tiangong-agentloop-image.XXXXXX")"
+trap 'rm -f "${probe_log:-}"' EXIT
+set +e
+# shellcheck disable=SC2016 # HOME/OPENCLAW_CONFIG_PATH expand in the container shell.
+run_image --rm --entrypoint /bin/bash \
+  --env HOME=/tmp/tiangong-m8-home \
+  --env OPENCLAW_CONFIG_PATH=/tmp/tiangong-m8-home/openclaw.json \
+  --env AGENTTEAMS_WORKER_NAME=tiangong-m8-image-check \
+  --env TIANGONG_AGENTLOOP_ENABLED=1 \
+  --env TIANGONG_AGENTLOOP_CONTENT_CAPTURE=isolated-test \
+  --env TIANGONG_AGENTLOOP_SERVICE_NAME=tiangong-m8-image-check \
+  "${IMAGE}" -lc 'mkdir -p "${HOME}"; printf %s '\''{"gateway":{"mode":"local"}}'\'' >"${OPENCLAW_CONFIG_PATH}"; chmod 600 "${OPENCLAW_CONFIG_PATH}"; timeout 12 /opt/tiangong-worker/bin/openclaw gateway run' \
+  >"${probe_log}" 2>&1
+probe_status=$?
+set -e
+if [[ "${probe_status}" != 124 ]] || ! grep -Eq 'ready \(3 plugins:.*opentelemetry-instrumentation-openclaw' "${probe_log}" || grep -Eqi 'plugin not found|blocked plugin|Unrecognized key' "${probe_log}"; then
+  tail -80 "${probe_log}" >&2
+  printf 'ERROR: AgentLoop plugin did not load cleanly in pinned OpenClaw.\n' >&2
   exit 1
-}
-member_canary_profile="$(run_image --rm --entrypoint node "${CANARY_MEMBER_IMAGE}" \
-  /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role implementor)"
-printf '%s\n' "${member_canary_profile}" | grep -Fq '"runtimeReady":true' || {
-  printf 'ERROR: fixed Implementor Chat bridge profile is not runtime-ready.\n' >&2
-  exit 1
-}
-actual_opencodex_version="$(run_image --rm --entrypoint ocx "${OPENCODEX_SIDECAR_IMAGE}" --version)"
-[[ "${actual_opencodex_version}" == *"2.15.0"* ]] || {
-  printf 'ERROR: expected OpenCodex 2.15.0, got %s.\n' "${actual_opencodex_version}" >&2
-  exit 1
-}
-# Probe the managed CLI's app-server directly; the `bin/codex` wrapper is the
-# credential-gated runtime entrypoint and is not a build-time health probe.
-run_image --rm --workdir /opt/tiangong-worker \
-  --env OPENCLAW_CODEX_APP_SERVER_BIN=/opt/tiangong-worker/node_modules/.bin/codex \
-  --entrypoint node "${CANARY_IMAGE}" \
-  scripts/probe-codex-app-server.mjs
-
-actual_git_version="$(run_image --rm --entrypoint /usr/bin/git "${IMAGE}" --version)"
-[[ "${actual_git_version}" == "${EXPECTED_GIT_VERSION}" ]] || {
-  printf 'ERROR: expected Git %s, got %s.\n' "${EXPECTED_GIT_VERSION}" "${actual_git_version}" >&2
-  exit 1
-}
-actual_prlimit_version="$(run_image --rm --entrypoint /usr/bin/prlimit "${IMAGE}" --version | head -n 1)"
-[[ "${actual_prlimit_version}" == "prlimit from util-linux ${EXPECTED_UTIL_LINUX_VERSION}" ]] || {
-  printf 'ERROR: expected prlimit from util-linux %s, got %s.\n' "${EXPECTED_UTIL_LINUX_VERSION}" "${actual_prlimit_version}" >&2
-  exit 1
-}
-actual_flock_version="$(run_image --rm --entrypoint /usr/bin/flock "${IMAGE}" --version | head -n 1)"
-[[ "${actual_flock_version}" == "flock from util-linux ${EXPECTED_UTIL_LINUX_VERSION}" ]] || {
-  printf 'ERROR: expected flock from util-linux %s, got %s.\n' "${EXPECTED_UTIL_LINUX_VERSION}" "${actual_flock_version}" >&2
-  exit 1
-}
-
-run_image --rm --workdir /opt/tiangong-worker --entrypoint node "${IMAGE}" \
-  --input-type=module -e '
-    import {
-      createWorkerObservability,
-      resolveObservabilityConfig,
-    } from "./observability/tracing.mjs";
-    const config = resolveObservabilityConfig(undefined, process.env);
-    const expected = Boolean(process.env.TIANGONG_OTEL_EXPORTER_ENDPOINT);
-    if (config.enabled !== expected) process.exit(1);
-    const observability = createWorkerObservability({ config });
-    await observability.shutdown();
-  '
-reconciliation_help="$(run_image --rm --entrypoint tiangong-reconcile "${IMAGE}" --help)"
-grep -Fq 'tiangong-reconcile inspect' <<<"${reconciliation_help}" || {
-  printf 'ERROR: the Worker reconciliation entrypoint is unavailable.\n' >&2
-  exit 1
-}
-work_run_recovery_help="$(run_image --rm --entrypoint tiangong-work-run "${IMAGE}" --help)"
-grep -Fq 'tiangong-work-run inspect' <<<"${work_run_recovery_help}" || {
-  printf 'ERROR: the WorkRun recovery entrypoint is unavailable.\n' >&2
-  exit 1
-}
-retention_help="$(run_image --rm --entrypoint tiangong-retain "${IMAGE}" --help)"
-grep -Fq 'tiangong-retain compact' <<<"${retention_help}" || {
-  printf 'ERROR: the Worker retention entrypoint is unavailable.\n' >&2
-  exit 1
-}
-
-kernel_profile="$(run_image --rm --entrypoint node "${IMAGE}" \
-  /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role kernel)"
-leader_profile="$(run_image --rm --entrypoint node "${LEADER_IMAGE}" \
-  /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role leader)"
-designer_profile="$(run_image --rm --entrypoint node "${DESIGNER_IMAGE}" \
-  /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role designer)"
-implementor_profile="$(run_image --rm --entrypoint node "${IMPLEMENTOR_IMAGE}" \
-  /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role implementor)"
-assessor_profile="$(run_image --rm --entrypoint node "${ASSESSOR_IMAGE}" \
-  /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role assessor)"
-operator_profile="$(run_image --rm --entrypoint node "${OPERATOR_IMAGE}" \
-  /opt/tiangong-worker/scripts/check-role-profile.mjs --expect-role operator)"
-run_image --rm --workdir /opt/tiangong-worker --entrypoint node "${LEADER_IMAGE}" \
-  --input-type=module -e '
-    const [
-      { loadFixedRoleProfileBundle },
-      { readPlaybookManifest },
-      { TeamCoordinationGate },
-      { createLeaderToolRegistry },
-    ] = await Promise.all([
-      import("./agent/config/role-profile.mjs"),
-      import("./agent/playbook/resolver.mjs"),
-      import("./agent/team/tool-wrapper.mjs"),
-      import("./agent/work/leader-tools.mjs"),
-    ]);
-    const profileBundle = await loadFixedRoleProfileBundle();
-    if (profileBundle.profile.roleId !== "leader") process.exit(1);
-    const playbook = readPlaybookManifest("software-change-delivery");
-    const registry = createLeaderToolRegistry({
-      playbook,
-      deps: {
-        rootDir: "/root/agentteams-fs/shared",
-        env: { AGENTTEAMS_WORKER_NAME: "tiangong-leader" },
-        gate: new TeamCoordinationGate(),
-        evidence: { append: async () => {} },
-        getInvocation: () => { throw new Error("image contract does not execute tools"); },
-      },
-    });
-    if (registry.names().join(",") !== "team_create_project,team_dispatch_task,team_check_result,team_decide_task,team_report") process.exit(1);
-  '
-# Keep the final profile comparison runnable from both a native developer
-# shell and WSL, where Node may exist only inside the just-built Worker image.
-if command -v node >/dev/null 2>&1; then
-  node_command=(node)
-else
-  node_command=(docker run --rm --entrypoint node "${IMAGE}")
 fi
-"${node_command[@]}" -e '
-  const [kernel, leader, ...professionals] = process.argv.slice(1).map(JSON.parse);
-  if (kernel.roleId !== "kernel" || kernel.runtimeReady !== true) process.exit(1);
-  if (leader.roleId !== "leader" || leader.runtimeReady !== true) process.exit(1);
-  if (leader.toolIds.join(",") !== "team_create_project,team_dispatch_task,team_check_result,team_decide_task,team_report") process.exit(1);
-  if (professionals.map((profile) => profile.roleId).join(",") !== "designer,implementor,assessor,operator") process.exit(1);
-  const expectedProfessionalTools = {
-    designer: "team_resolve_task,team_submit_result",
-    implementor: "team_resolve_task,run_command,team_submit_result",
-    assessor: "team_resolve_task,run_test_command,team_submit_result",
-    operator: "team_resolve_task,deploy_release,team_submit_result",
-  };
-  if (professionals.some((profile) => profile.runtimeReady !== true || profile.toolIds.join(",") !== expectedProfessionalTools[profile.roleId])) process.exit(1);
-' "${kernel_profile}" "${leader_profile}" "${designer_profile}" "${implementor_profile}" "${assessor_profile}" "${operator_profile}"
-
-printf '[Tiangong] Worker image ready: %s (Node.js %s, OpenClaw-native control profile)\n' \
-  "${IMAGE}" "${actual_node_version}"
-printf '[Tiangong] Leader profile image validated: %s (runtimeReady=true; closed coordination tool surface)\n' \
-  "${LEADER_IMAGE}"
-printf '[Tiangong] Professional profile images validated: %s, %s, %s, %s (runtimeReady=true; role-scoped closed tools)\n' \
-  "${DESIGNER_IMAGE}" "${IMPLEMENTOR_IMAGE}" "${ASSESSOR_IMAGE}" "${OPERATOR_IMAGE}"
-printf '[Tiangong] Runner broker image validated: %s (Docker CLI %s; socket authority isolated from Workers)\n' \
-  "${RUNNER_BROKER_IMAGE}" "${actual_docker_cli_version}"
+rm -f "${probe_log}"
+trap - EXIT
+printf '[Tiangong] AgentLoop plugin load passed: version=0.1.5-beta openclaw=2026.4.14 transport=http/protobuf.\n'
+printf '[Tiangong] Generic Worker image ready: %s\n' "${IMAGE}"
+printf '[Tiangong] Runtime routes are MemberConfig-bound; no role-specific Worker image was built.\n'

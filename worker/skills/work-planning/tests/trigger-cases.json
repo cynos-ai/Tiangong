@@ -1,0 +1,14 @@
+{
+  "shouldTrigger": [
+    "Create a Markdown implementation Plan from this WorkSpec and repository facts.",
+    "Revise the candidate Plan to address the Challenger findings.",
+    "Break this software change into independently verifiable vertical slices."
+  ],
+  "shouldNotTrigger": [
+    "Decide which Agent should receive the next Task.",
+    "Challenge this Plan for missing rollback paths.",
+    "Implement the first slice in the writable worktree."
+  ],
+  "ambiguous": ["Outline how we might approach this change."],
+  "adjacentSkills": ["work-coordination", "plan-challenge"]
+}

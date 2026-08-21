@@ -49,9 +49,7 @@ function fetchMatrix(calls) {
 
 test("B2 channel reads a bound Human event and emits an idempotent Work admission reply", async () => {
   const calls = [];
-  const evidenceEvents = [];
   const channel = createTeamChannel({
-    evidence: { async append(event) { evidenceEvents.push(event); } },
     env: ENV,
     fetchImpl: fetchMatrix(calls),
   });
@@ -79,11 +77,7 @@ test("B2 channel reads a bound Human event and emits an idempotent Work admissio
   });
 
   assert.equal(first.transactionId, replay.transactionId);
-  assert.deepEqual(evidenceEvents.map((event) => event.type), ["team.work.admitted", "team.work.admitted"]);
-  assert.equal(evidenceEvents[0].workId, "work-admission-1");
-  assert.equal(evidenceEvents[0].workIdDigest.length, 64);
-  assert.ok(!JSON.stringify(evidenceEvents).includes("Inspect the native Leader runtime"));
-  assert.ok(!JSON.stringify(evidenceEvents).includes("secret-token"));
+  assert.ok(!JSON.stringify({ first, replay }).includes("secret-token"));
 
   const puts = calls.filter((call) => call.options.method === "PUT");
   assert.equal(puts.length, 2);
@@ -97,7 +91,6 @@ test("B2 channel reads a bound Human event and emits an idempotent Work admissio
 test("B2 channel rejects an unjoined or malformed Work admission target before sending", async () => {
   const calls = [];
   const channel = createTeamChannel({
-    evidence: { async append() { throw new Error("must not record"); } },
     env: ENV,
     fetchImpl: fetchMatrix(calls),
   });

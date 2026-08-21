@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { context, SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
-import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import {
   AlwaysOnSampler,
@@ -10,7 +10,7 @@ import {
   SimpleSpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
 
-const INSTRUMENTATION_NAME = "io.cynos-ai.tiangong.worker";
+const INSTRUMENTATION_NAME = "io.tiangong.worker";
 const INSTRUMENTATION_VERSION = "0.0.0";
 const SERVICE_NAME = "tiangong-worker";
 const MAX_ATTRIBUTE_LENGTH = 128;
@@ -52,7 +52,6 @@ const ATTRIBUTE_KEYS = new Set([
   "gen_ai.operation.name",
   "gen_ai.provider.name",
   "gen_ai.request.model",
-  "tiangong.approval.pending",
   "tiangong.attempt.id",
   "tiangong.gate.outcome",
   "tiangong.control.id",
@@ -64,6 +63,12 @@ const ATTRIBUTE_KEYS = new Set([
   "tiangong.timeout_ms",
   "tiangong.tool.name",
   "tiangong.turn.id",
+  "tiangong.work.id",
+  "tiangong.task.id",
+  "tiangong.member.id",
+  "tiangong.session.ref",
+  "tiangong.skill.id",
+  "tiangong.tool_result.id",
 ]);
 
 function ownKeys(value) {
@@ -184,11 +189,13 @@ function statusFor(outcome, errorType) {
 }
 
 const NOOP_OPERATION = Object.freeze({
+  setAttributes() {},
   end() {},
 });
 
 const NOOP_ATTEMPT = Object.freeze({
   checkpoint() {},
+  correlate() {},
   startOperation() { return NOOP_OPERATION; },
   finish() {},
 });
@@ -203,6 +210,9 @@ export const DISABLED_OBSERVABILITY = Object.freeze({
 function operationHandle(span) {
   let ended = false;
   return {
+    setAttributes(attributes = {}) {
+      if (!ended) span.setAttributes(safeAttributes(attributes));
+    },
     end(outcome = "complete", error) {
       if (ended) return;
       ended = true;
@@ -226,6 +236,10 @@ function attemptHandle(tracer, rootSpan, correlationAttributes) {
   const parentContext = trace.setSpan(context.active(), rootSpan);
   const root = operationHandle(rootSpan);
   return {
+    correlate(attributes = {}) {
+      root.setAttributes(attributes);
+      Object.assign(correlationAttributes, safeAttributes(attributes));
+    },
     checkpoint(phase, attributes = {}) {
       if (!PHASES.has(phase)) throw new TypeError(`Unsupported observability phase: ${phase}`);
       const span = tracer.startSpan(
@@ -303,6 +317,11 @@ export function createWorkerObservability(options = {}) {
         "tiangong.attempt.id": correlationDigest("attempt", metadata.attemptId),
         "tiangong.turn.id": correlationDigest("turn", metadata.turnId),
         "tiangong.session.id": correlationDigest("session", metadata.sessionId),
+        "tiangong.work.id": metadata.workId,
+        "tiangong.task.id": metadata.taskId,
+        "tiangong.member.id": metadata.memberId,
+        "tiangong.session.ref": metadata.sessionRef,
+        "tiangong.skill.id": metadata.skillId,
       };
       const rootSpan = tracer.startSpan("tiangong.control.attempt", {
         kind: SpanKind.INTERNAL,
