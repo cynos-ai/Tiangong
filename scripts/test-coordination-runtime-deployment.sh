@@ -17,7 +17,17 @@ set -Eeuo pipefail
 printf '%s\n' "$*" >>"${FAKE_DOCKER_LOG}"
 case "${1:-}:${2:-}" in
   network:inspect|image:inspect) exit 0 ;;
-  container:inspect) exit 1 ;;
+  container:inspect)
+    if [[ "$*" == *tiangong-agentloop-query-adapter* ]]; then
+      case "$*" in
+        *io.tiangong.owner*) printf 'tiangong-deployment\n' ;;
+        *io.tiangong.component*) printf 'agentloop-query-adapter\n' ;;
+        *State.Running*) printf 'true\n' ;;
+      esac
+      exit 0
+    fi
+    exit 1
+    ;;
   exec:*) exit 0 ;;
   run:*) exit 0 ;;
   *) exit 0 ;;
@@ -75,6 +85,35 @@ TIANGONG_LEADER_RUNTIME_BINDING_FILE="${binding}" \
 TIANGONG_COORDINATION_ENV_FILE="${env_file}" \
   "${REPO_ROOT}/scripts/deploy-coordination-runtime.sh" start >"${output_web}"
 grep -q 'coordination_runtime_deployment=ready' "${output_web}"
+
+diagnostics_env="${TEST_ROOT}/coordination-diagnostics.env"
+cp "${env_file}" "${diagnostics_env}"
+printf '%s\n' 'TIANGONG_AGENTLOOP_QUERY_ADAPTER_URL=http://agentloop-query-adapter:8791' >>"${diagnostics_env}"
+chmod 600 "${diagnostics_env}"
+output_diagnostics="${TEST_ROOT}/output-diagnostics"
+FAKE_DOCKER_LOG="${TEST_ROOT}/docker-diagnostics.log" \
+PATH="${TEST_ROOT}/bin:${PATH}" \
+TIANGONG_LEADER_RUNTIME_BINDING_FILE="${binding}" \
+TIANGONG_COORDINATION_ENV_FILE="${diagnostics_env}" \
+  "${REPO_ROOT}/scripts/deploy-coordination-runtime.sh" start >"${output_diagnostics}"
+grep -q 'coordination_runtime_deployment=ready' "${output_diagnostics}"
+grep -q 'network connect tiangong-agentloop-diagnostics tiangong-coordination-runtime' "${TEST_ROOT}/docker-diagnostics.log"
+if grep -Eq 'ALIBABA_CLOUD_ACCESS_KEY|AGENTLOOP_LICENSE_KEY' "${TEST_ROOT}/docker-diagnostics.log"; then
+  printf 'FAIL: Coordination deployment received an AgentLoop credential.\n' >&2
+  exit 1
+fi
+
+invalid_diagnostics_env="${TEST_ROOT}/coordination-invalid-diagnostics.env"
+cp "${env_file}" "${invalid_diagnostics_env}"
+printf '%s\n' 'TIANGONG_AGENTLOOP_QUERY_ADAPTER_URL=http://evil.example.test:8791' >>"${invalid_diagnostics_env}"
+chmod 600 "${invalid_diagnostics_env}"
+if FAKE_DOCKER_LOG="${TEST_ROOT}/docker-invalid-diagnostics.log" PATH="${TEST_ROOT}/bin:${PATH}" \
+  TIANGONG_LEADER_RUNTIME_BINDING_FILE="${binding}" TIANGONG_COORDINATION_ENV_FILE="${invalid_diagnostics_env}" \
+  "${REPO_ROOT}/scripts/deploy-coordination-runtime.sh" start >"${TEST_ROOT}/invalid-diagnostics.out" 2>&1; then
+  printf 'FAIL: arbitrary diagnostics endpoint was accepted.\n' >&2
+  exit 1
+fi
+grep -q 'QUERY_ADAPTER_URL_INVALID' "${TEST_ROOT}/invalid-diagnostics.out"
 
 matrix_token_only="${TEST_ROOT}/matrix-token-only.env"
 printf '%s\n' \

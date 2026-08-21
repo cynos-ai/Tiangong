@@ -8,6 +8,8 @@ COORDINATION_IMAGE_BUILD := ./scripts/build-coordination-image.sh
 COORDINATION_RUNTIME_DEPLOY := ./scripts/deploy-coordination-runtime.sh
 AGENTLOOP_COLLECTOR := ./scripts/agentloop-collector.sh
 AGENTLOOP_TRACE_QUERY := ./scripts/agentloop-trace-query.sh
+AGENTLOOP_QUERY_ADAPTER_IMAGE_BUILD := ./scripts/build-agentloop-query-adapter-image.sh
+AGENTLOOP_QUERY_ADAPTER_DEPLOY := ./scripts/deploy-agentloop-query-adapter.sh
 LEADER_RUNTIME_INJECTION_TEST := ./scripts/test-leader-runtime-injection.sh
 LEADER_RUNTIME_DOCKER_INJECTION_TEST := ./scripts/test-leader-runtime-injection-docker.sh
 MEMBER_RUNTIME_INJECTION_TEST := ./scripts/test-member-runtime-injection-docker.sh
@@ -24,7 +26,7 @@ PRODUCT_AGENT_SKILL_TEST := node --test ./worker/test/agent-packages.test.mjs ./
 CHAT_FIRST_WEB_TEST := node --test --test-concurrency=1 ./app/test/matrix-web-gateway.test.mjs ./app/test/server.test.mjs ./app/test/runtime-server.test.mjs
 B5_RUNTIME_ROUTE_TEST := node ./worker/test/runtime-routing.test.mjs
 
-.PHONY: help init up start stop down status verify config provider-check logs login uninstall test-agentteams test-agentteams-worker-admission-contract check-skills test-product-agent-skills test-chat-first-web check-demo-contract build-worker-image build-coordination-image coordination-runtime-start coordination-runtime-status coordination-runtime-stop test-coordination-runtime-deployment agentloop-collector-start agentloop-collector-status agentloop-collector-stop agentloop-trace-query test-agentloop-contract test-agentloop-query-contract test-leader-runtime-injection test-leader-runtime-injection-docker test-member-runtime-injection-docker test-b5-runtime-route test-peer-mention-smoke-contract test-peer-mention-smoke test-matrix-browser-smoke-contract matrix-browser-start matrix-browser-status matrix-browser-stop test-specialist-leader-handoff-contract test-specialist-leader-handoff test-p0-identity-pg-contract test-p0-2-mention-contract test-pause-worker-boundary test-openclaw-admission-contract test-openclaw-admission-hooks test-openclaw-admission-replay test-openclaw-tool-result-capture-matrix test-openclaw-admission-context-file test-runtime-console
+.PHONY: help init up start stop down status verify config provider-check logs login uninstall test-agentteams test-agentteams-worker-admission-contract check-skills test-product-agent-skills test-chat-first-web check-demo-contract build-worker-image build-coordination-image coordination-runtime-start coordination-runtime-status coordination-runtime-stop test-coordination-runtime-deployment build-agentloop-query-adapter-image agentloop-query-adapter-start agentloop-query-adapter-status agentloop-query-adapter-stop test-agentloop-query-adapter-deployment agentloop-collector-start agentloop-collector-status agentloop-collector-stop agentloop-trace-query test-agentloop-contract test-agentloop-query-contract test-leader-runtime-injection test-leader-runtime-injection-docker test-member-runtime-injection-docker test-b5-runtime-route test-peer-mention-smoke-contract test-peer-mention-smoke test-matrix-browser-smoke-contract matrix-browser-start matrix-browser-status matrix-browser-stop test-specialist-leader-handoff-contract test-specialist-leader-handoff test-p0-identity-pg-contract test-p0-2-mention-contract test-pause-worker-boundary test-openclaw-admission-contract test-openclaw-admission-hooks test-openclaw-admission-replay test-openclaw-tool-result-capture-matrix test-openclaw-admission-context-file test-runtime-console
 
 .PHONY: start-coordination
 
@@ -101,6 +103,21 @@ coordination-runtime-stop: ## Stop and remove only the owned Coordination runtim
 test-coordination-runtime-deployment: ## Validate Coordination runtime image/lifecycle security contract
 	@./scripts/test-coordination-runtime-deployment.sh
 
+build-agentloop-query-adapter-image: ## Build the credential-scoped read-only AgentLoop query adapter image
+	@$(AGENTLOOP_QUERY_ADAPTER_IMAGE_BUILD)
+
+agentloop-query-adapter-start: ## Start the private-network read-only AgentLoop query adapter
+	@$(AGENTLOOP_QUERY_ADAPTER_DEPLOY) start
+
+agentloop-query-adapter-status: ## Show the owned AgentLoop query adapter status
+	@$(AGENTLOOP_QUERY_ADAPTER_DEPLOY) status
+
+agentloop-query-adapter-stop: ## Remove the owned AgentLoop query adapter and private network
+	@$(AGENTLOOP_QUERY_ADAPTER_DEPLOY) stop
+
+test-agentloop-query-adapter-deployment: ## Validate the AgentLoop query adapter lifecycle and credential boundary
+	@./scripts/test-agentloop-query-adapter-deployment.sh
+
 agentloop-collector-start: ## Start the credential-isolating AgentLoop collector
 	@$(AGENTLOOP_COLLECTOR) start
 
@@ -113,11 +130,12 @@ agentloop-collector-stop: ## Remove only the owned AgentLoop collector
 agentloop-trace-query: ## Explicitly query one AgentLoop service through the read-only SLS API (ARGS required)
 	@$(AGENTLOOP_TRACE_QUERY) $(ARGS)
 
-test-agentloop-contract: ## Validate AgentLoop credential, OTLP, query, and correlation boundaries
-	@node --test ./test/agentloop-deployment.test.mjs ./test/agentloop-query.test.mjs ./worker/test/agentloop-correlation.test.mjs
+test-agentloop-contract: ## Validate AgentLoop credential, OTLP, query, adapter, and correlation boundaries
+	@node --test ./test/agentloop-deployment.test.mjs ./test/agentloop-query.test.mjs ./test/agentloop-query-adapter.test.mjs ./worker/test/agentloop-correlation.test.mjs
+	@./scripts/test-agentloop-query-adapter-deployment.sh
 
 test-agentloop-query-contract: ## Validate fail-closed AgentLoop SLS query boundaries without cloud access
-	@node --test ./test/agentloop-query.test.mjs
+	@node --test ./test/agentloop-query.test.mjs ./test/agentloop-query-adapter.test.mjs
 
 test-leader-runtime-injection: ## Validate the live Leader Worker binding/endpoint/token boundary
 	@$(LEADER_RUNTIME_INJECTION_TEST)

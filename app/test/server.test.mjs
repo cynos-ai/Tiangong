@@ -9,7 +9,11 @@ import { createControlProfile, createMemberConfig, createTeamConfig } from "../.
 
 async function get(server, path = "/api/runtime") { const response = await fetch(`http://127.0.0.1:${server.address().port}${path}`); return { response, body: path.includes("events") ? null : await response.json() }; }
 function storeProjection({ works = [], tasks = [], results = [], admissions = [], metrics = { pendingCount: 0, oldestReceivedAt: null, lastErrorCode: null } } = {}) {
-  return { async listWorks() { return works; }, async listOutbox() { return []; }, async listTasks() { return tasks; }, async listResults() { return results; }, async listMessageAdmissions() { return admissions; }, async admissionMetrics() { return metrics; }, async health() { return { ok: true }; } };
+  return {
+    async getWork(workId) { return works.find((entry) => entry.work?.workId === workId); },
+    async enqueueMessageAdmission() { throw new Error("not used by projection test"); },
+    async listWorks() { return works; }, async listOutbox() { return []; }, async listTasks() { return tasks; }, async listResults() { return results; }, async listMessageAdmissions() { return admissions; }, async admissionMetrics() { return metrics; }, async health() { return { ok: true }; },
+  };
 }
 
 test("AgentLoop console links accept only the documented fixed HTTPS route", () => {
@@ -32,8 +36,9 @@ test("chat-first workbench ships self-contained assets and strict browser header
   const response = await fetch(base); const html = await response.text();
   assert.equal(response.status, 200); assert.match(response.headers.get("content-security-policy"), /script-src 'self'/u); assert.match(response.headers.get("content-security-policy"), /frame-ancestors 'none'/u);
   assert.match(html, /Tiangong 工作台/u); assert.match(html, /MATRIX ROOM/u); assert.match(html, /WORK FACTS/u); assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)/u); assert.doesNotMatch(html, /<style/u);
-  const script = await fetch(`${base}/app.js`); const css = await fetch(`${base}/styles.css`);
-  assert.match(script.headers.get("content-type"), /text\/javascript/u); assert.match(css.headers.get("content-type"), /text\/css/u); assert.doesNotMatch(await script.text(), /(?:localStorage|sessionStorage|innerHTML|\.style\.)/u);
+  const script = await fetch(`${base}/app.js`); const css = await fetch(`${base}/styles.css`); const scriptText = await script.text(); const cssText = await css.text();
+  assert.match(script.headers.get("content-type"), /text\/javascript/u); assert.match(css.headers.get("content-type"), /text\/css/u); assert.doesNotMatch(scriptText, /(?:localStorage|sessionStorage|innerHTML|\.style\.)/u);
+  assert.match(html, /AgentLoop 诊断轨迹/u); assert.match(html, /可能被采样、延迟、重复或丢失/u); assert.match(html, /按需加载轨迹/u); assert.match(scriptText, /\/api\/diagnostics\/works\//u); assert.match(scriptText, /load-diagnostics/u); assert.match(cssText, /diagnostics-summary/u);
 });
 
 test("runtime console streams bounded facts over SSE", async (t) => {
@@ -53,6 +58,55 @@ test("runtime console projects null WorkSpec and PostgreSQL admission metrics", 
   const store = storeProjection({ works: [work], admissions: [{ eventId: "$pending", roomId: "!room:example.test", receivedAt: now, attempts: 0, lastErrorCode: null }], metrics: { pendingCount: 1, oldestReceivedAt: now, lastErrorCode: null } });
   const server = createRuntimeConsoleServer({ coordinationStore: store }).listen(0); t.after(() => server.close()); const { body } = await get(server);
   assert.equal(body.works[0].currentWorkSpec, null); assert.equal(body.works[0].requirementState, "requirement-pending"); assert.equal(body.works[0].timeline[0].payload.source.eventId, "$routed"); assert.equal(body.admissionMetrics.pendingCount, 1); assert.equal(body.pendingAdmissions[0].eventId, "$pending");
+});
+
+test("AgentLoop diagnostics endpoint revalidates Web identity and PostgreSQL Work scope", async (t) => {
+  const createdAt = "2026-08-21T00:00:00.000Z";
+  const work = { work: { workId: "work-diagnostics", teamId: "team-diagnostics", routeId: "route-diagnostics", roomId: "!diagnostics:example.test", createdAt }, status: "open", timeline: [{ at: createdAt }] };
+  const store = storeProjection({ works: [work] });
+  let authorized = 0; let observedRequest;
+  const matrixWebGateway = { async handle() { return false; }, async authorizeRead() { authorized += 1; return { session: { userId: "@human:example.test" } }; }, async close() {} };
+  const diagnosticsClient = { async query(value) { observedRequest = value; return { version: 1, availability: "unknown", complete: true, truncated: false, workId: value.workId, spans: [], summary: {}, rawContentEmitted: false, queriedAt: "2026-08-21T01:00:00.000Z", cacheState: "miss", authoritative: false }; } };
+  const coordinationControl = { store, bearerToken: "control-token-123456", team: { teamId: "team-diagnostics" }, route: { routeId: "route-diagnostics", roomId: "!diagnostics:example.test" }, profile: {}, leaderMember: {}, members: [] };
+  const server = createRuntimeConsoleServer({ coordinationStore: store, coordinationControl, matrixWebGateway, diagnosticsClient, now: () => Date.parse("2026-08-21T01:00:00.000Z") }).listen(0); t.after(() => server.close());
+  const result = await get(server, "/api/diagnostics/works/work-diagnostics/trace");
+  assert.equal(result.response.status, 200); assert.equal(authorized, 1); assert.deepEqual(observedRequest, { workId: "work-diagnostics", fromEpoch: 1787270340, toEpoch: 1787274001 }); assert.equal(result.body.authoritative, false); assert.equal(result.body.windowLimited, false);
+
+  const injection = await get(server, "/api/diagnostics/works/work-diagnostics/trace?project=other");
+  assert.equal(injection.response.status, 422); assert.equal(injection.body.error, "DIAGNOSTICS_REQUEST_INVALID");
+});
+
+test("AgentLoop diagnostics endpoint denies revoked and cross-Room requests before querying the adapter", async (t) => {
+  const work = { work: { workId: "work-other", teamId: "team", routeId: "route", roomId: "!other:example.test", createdAt: "2026-08-21T00:00:00Z" }, status: "open", timeline: [] };
+  const store = storeProjection({ works: [work] }); let queries = 0;
+  const diagnosticsClient = { async query() { queries += 1; return {}; } };
+  const control = { store, bearerToken: "control-token-123456", team: { teamId: "team" }, route: { routeId: "route", roomId: "!bound:example.test" }, profile: {}, leaderMember: {}, members: [] };
+  const revoked = { async handle() { return false; }, async authorizeRead() { throw Object.assign(new Error("revoked"), { code: "MATRIX_SESSION_REVOKED", status: 401 }); }, async close() {} };
+  const revokedServer = createRuntimeConsoleServer({ coordinationStore: store, coordinationControl: control, matrixWebGateway: revoked, diagnosticsClient }).listen(0); t.after(() => revokedServer.close());
+  assert.equal((await get(revokedServer, "/api/diagnostics/works/work-other/trace")).response.status, 401); assert.equal(queries, 0);
+
+  const allowed = { async handle() { return false; }, async authorizeRead() {}, async close() {} };
+  const scopedServer = createRuntimeConsoleServer({ coordinationStore: store, coordinationControl: control, matrixWebGateway: allowed, diagnosticsClient }).listen(0); t.after(() => scopedServer.close());
+  const scoped = await get(scopedServer, "/api/diagnostics/works/work-other/trace"); assert.equal(scoped.response.status, 404); assert.equal(scoped.body.error, "DIAGNOSTIC_WORK_NOT_FOUND"); assert.equal(queries, 0);
+});
+
+test("a blocked diagnostics query does not enter the runtime projection or SSE path", async (t) => {
+  const createdAt = "2026-08-21T00:00:00Z";
+  const work = { work: { workId: "work-slow", teamId: "team", routeId: "route", roomId: "!bound:example.test", createdAt }, status: "open", timeline: [{ at: createdAt }] };
+  const store = storeProjection({ works: [work] });
+  let release; let entered;
+  const queryEntered = new Promise((accept) => { entered = accept; });
+  const blocked = new Promise((accept) => { release = accept; });
+  const diagnosticsClient = { async query(value) { entered(); await blocked; return { workId: value.workId }; } };
+  const gateway = { async handle() { return false; }, async authorizeRead() {}, async close() {} };
+  const control = { store, bearerToken: "control-token-123456", team: { teamId: "team" }, route: { routeId: "route", roomId: "!bound:example.test" }, profile: {}, leaderMember: {}, members: [] };
+  const server = createRuntimeConsoleServer({ coordinationStore: store, coordinationControl: control, matrixWebGateway: gateway, diagnosticsClient }).listen(0); t.after(() => server.close());
+  const pending = get(server, "/api/diagnostics/works/work-slow/trace"); await queryEntered;
+  try {
+    const runtime = await Promise.race([get(server, "/api/runtime"), new Promise((_, reject) => setTimeout(() => reject(new Error("runtime projection waited for diagnostics")), 500))]);
+    assert.equal(runtime.response.status, 200);
+  } finally { release(); }
+  assert.equal((await pending).response.status, 200);
 });
 
 test("runtime console projects configured Agents, Task sessions, Plan facts, and used Skills", async (t) => {

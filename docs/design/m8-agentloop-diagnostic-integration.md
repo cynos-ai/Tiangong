@@ -1,6 +1,6 @@
 # M8 AgentLoop diagnostic integration
 
-Status: complete; local contracts and isolated real-service reporting/query acceptance verified.
+Status: M8 complete; M8.5 bounded Web diagnostics addendum implemented and independently verified.
 
 ## Objective
 
@@ -68,3 +68,21 @@ A real AgentLoop run is a separate external integration check. It must use a new
 6. Collector, Workers, Team, network additions, volumes, and external secret file are cleaned by their owners.
 
 M8's isolated real-service run satisfied these observations: a read-only SLS `logstore-tracing` query returned the exact disposable service, the expected OpenClaw lifecycle and business span shape, and real same-run PostgreSQL Work/Task correlation; the owned scope was then proven absent. This historical result closes M8 but does not replace per-run external observation for future environments.
+
+## M8.5 bounded Web diagnostics addendum
+
+M8 decision 6 describes the original M8 delivery, not a general prohibition on every future diagnostic view. M8.5 adds an explicitly deployed read-only metadata projection while retaining the external AgentLoop console as a fallback. It does not copy the console, store traces, or change any M8 authority decision.
+
+The query path is a deployment-owned Python Adapter using the public official SLS SDK. The read-only RAM key is mounted only into that Adapter from a repository-external owner-only mode-`0600` two-field file. Endpoint, project, `logstore-tracing`, exact service allowlist, environment, time/result limits, and query shape are separate validated configuration. The Node Coordination runtime receives only the fixed private URL `http://agentloop-query-adapter:8791`; Workers share no network with the Adapter.
+
+The browser route accepts only the selected Work ID. Before querying, Coordination revalidates the current Matrix Web session and bound-Room membership, then reads PostgreSQL and requires exact Team/route/Room ownership. It derives a maximum 24-hour interval from the Work's persisted timestamps. Browser input, credentials, Work text, and span content cannot select the backend target or query.
+
+The Adapter returns at most 100 deduplicated span summaries containing only Trace/Span/parent IDs, exact service, span name/kind, timestamp/duration, status, model, Work/Task IDs, and optional usage counters. Raw attributes, model content, Matrix content, tool content, status messages, stack traces, backend messages, and credentials are excluded in both the Adapter and Coordination projections. Timeout, capacity, oversized/malformed response, service/environment mismatch, duplicate conflict, and truncation are bounded and fail closed.
+
+The panel is loaded only by an explicit Human click and is visually marked **non-authoritative**. Empty or unavailable diagnostics remain unknown. Queries do not enter PostgreSQL transactions, `/api/runtime`, SSE, Matrix routing, CloseGuard, readiness, Result, ToolResult, or Work timeline. A bounded in-memory TTL cache is the only cache. Usage totals count only model-bearing LLM spans because AgentLoop can repeat child LLM usage on parent agent spans; missing fields remain unknown and cost is never estimated.
+
+M8.5 verification separates three facts:
+
+1. deterministic fixtures prove secret/config/schema denial, Web session and PostgreSQL scope, timeout/concurrency/cache, SSE independence, raw-content exclusion, and exact deployment cleanup;
+2. the built Adapter image queried historical M8 SLS records and returned four bounded correlated spans with no raw content;
+3. an owned disposable PostgreSQL replay plus a real Matrix Web login exercised the complete read path against those historical SLS observations, including cache and cross-scope denial, then removed its containers/network. This is a read-path replay, not a claim of fresh span emission; a future fresh writer run still requires a new LicenseKey.

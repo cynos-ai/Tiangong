@@ -102,6 +102,54 @@ The command queries only `logstore-tracing`, post-filters the exact `serviceName
 
 Use a RAM principal limited to the required SLS read APIs. The Collector LicenseKey is write authentication and must never be reused as query authorization. The query creates no cloud resource and needs no cleanup.
 
+### Optional Web diagnostics adapter
+
+M8.5 adds a default-off, deployment-owned query Adapter for the Web workbench. PR #101's CLI remains an explicit acceptance tool; the Web server never spawns it. The Adapter is a separate Python process using the public MIT-licensed `aliyun-log-python-sdk` `0.9.50` with an exact transitive lock. The Coordination image remains Node-only and never receives the SLS access key.
+
+```text
+Browser with current Matrix Web session
+  -> Coordination runtime
+       -> PostgreSQL Work Team/Room check
+       -> bounded HTTP request on tiangong-agentloop-diagnostics
+          -> AgentLoop query Adapter (RAM read key mounted read-only)
+             -> fixed SLS project/logstore/services/environment
+```
+
+The private diagnostics network contains only the Adapter and Coordination runtime. Worker containers remain attached to `agentteams-net` and cannot resolve or reach the Adapter. The Adapter publishes no host port, mounts the two-field secret read-only, passes no access key through Docker environment/arguments, and runs with a read-only root, no capabilities, `no-new-privileges`, and bounded CPU, memory, process, timeout, concurrency, result, and response limits.
+
+Build and start it explicitly:
+
+```bash
+make build-agentloop-query-adapter-image
+
+export TIANGONG_AGENTLOOP_QUERY_SECRET_FILE=/absolute/path/outside/Tiangong/aliyun-readonly.env
+export TIANGONG_AGENTLOOP_QUERY_ENDPOINT=https://<project>.<region>.log.aliyuncs.com
+export TIANGONG_AGENTLOOP_QUERY_PROJECT=<project>
+export TIANGONG_AGENTLOOP_QUERY_SERVICES=<exact-service>[,<exact-service>...]
+export TIANGONG_AGENTLOOP_QUERY_ENVIRONMENT=isolated-test
+make agentloop-query-adapter-start
+```
+
+The Coordination secret environment file may then contain this one non-secret, fixed endpoint selector:
+
+```dotenv
+TIANGONG_AGENTLOOP_QUERY_ADAPTER_URL=http://agentloop-query-adapter:8791
+```
+
+Restart the owned Coordination runtime after adding or removing that setting. The deployment script rejects every other Adapter URL, requires the owned running Adapter, and attaches Coordination to the private diagnostics network. `/readyz`, PostgreSQL, Matrix routing, and SSE never query SLS and stay healthy when diagnostics are absent or fail.
+
+The Web route is fixed to `GET /api/diagnostics/works/:workId/trace`. It revalidates the Matrix identity and bound-Room membership, then reads PostgreSQL and requires the Work's current Team, route, and Room to match the deployment binding. The browser cannot select an endpoint, project, Logstore, service, environment, query text, or time range. Closed Works use their bounded historical interval; open Works use at most the latest 24 hours. Results are held only in a bounded in-memory TTL cache and are never written to PostgreSQL, SSE, browser storage, Result, ToolResult, or Work timeline.
+
+The Adapter queries only `logstore-tracing`, post-filters exact service/environment/Work IDs, deduplicates by Trace/Span ID, and allowlists IDs, span name/kind, timestamps/duration, status, model, Tiangong correlation IDs, and optional usage counters. Raw attributes, prompt/response, Matrix text, tool arguments/results, status messages, stack traces, backend errors, and credentials are never returned. Truncation and 24-hour window limiting remain explicit.
+
+The panel is loaded only after the Human presses **按需加载轨迹**. It is visually separated from Work facts and permanently says that spans may be sampled, delayed, duplicated, or missing and never determine completion, authorization, or recovery. Token and LLM-duration cards are shown only when every model-bearing LLM span has the corresponding field. AgentLoop repeats child usage on some parent agent spans, so usage-only parent spans are excluded from totals. Missing values remain `unknown`, and cost is never estimated.
+
+Stop and clean up only the owned resources after removing the Adapter URL and restarting Coordination:
+
+```bash
+make agentloop-query-adapter-stop
+```
+
 The write-side secret file is validated as a non-symlink regular file, limited to four exact fields, mode `0600` or stricter, and an exact Alibaba Cloud HTTPS OTLP base. The collector is read-only, capability-dropped, resource-bounded, attached only to the AgentTeams network, and ownership-labeled for exact cleanup.
 
 ## Correlation model
@@ -121,7 +169,7 @@ tiangong.tool_call.id
 
 Leader admission establishes Work/turn correlation. Member Task admission establishes Work/Task/member/session correlation. Skill selection and ToolResult persistence fill their identifiers when those machine facts exist. Correlation does not grant authority and missing correlation remains `unknown`; it is never guessed.
 
-The Web runtime may expose a validated `https://agentloop4service.console.aliyun.com/.../app/llm_agent/app-list` link. Work and Task links add only their Tiangong identifier filter. The Web does not copy AgentLoop traces or credentials.
+The Web runtime may expose a validated `https://agentloop4service.console.aliyun.com/.../app/llm_agent/app-list` link. Work and Task links add only their Tiangong identifier filter. Without the optional Adapter, the Web does not ingest or render AgentLoop spans. With the Adapter explicitly deployed, it renders only the bounded metadata projection described above; credentials and raw spans never enter Coordination or the browser.
 
 ## Tiangong-owned spans
 
@@ -135,8 +183,10 @@ Run the deterministic contracts and image build:
 
 ```bash
 make test-agentloop-contract
+make test-agentloop-query-adapter-deployment
 npm --prefix worker test
 npm --prefix app test
+make build-agentloop-query-adapter-image
 make build-worker-image
 ```
 
