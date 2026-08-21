@@ -4,6 +4,10 @@ All notable changes to Tiangong are documented here. Tiangong follows Semantic V
 
 ## [Unreleased]
 
+No unreleased changes.
+
+## [0.5.0] - 2026-08-21
+
 ### Added
 
 - Added durable Room-level Matrix message admission, Leader routing to an open or new Work, bounded backlog metrics, and authenticated association correction without copying Human message bodies.
