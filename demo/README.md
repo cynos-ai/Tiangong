@@ -31,4 +31,4 @@
 
 ## 边界
 
-这版 Demo 的目标是展示真实的 Team/Matrix/WebUI/Worker 连接，不宣称 Qwen Coding Plan 已通过；Qwen 路由的 418 阻塞记录在 [`docs/design/phase-b6-qwen-team-canary.zh.md`](../docs/design/phase-b6-qwen-team-canary.zh.md)。
+这版 Demo 的目标是展示真实的 Team/Matrix/WebUI/Worker 连接；Provider 和当前 Worker model 由 AgentTeams 控制面管理，Demo 不维护独立模型路由。

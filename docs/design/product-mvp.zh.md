@@ -153,7 +153,7 @@ tg-worker
 
 五个专业成员的职责限制交付物和交付链位置，不被当成文件系统安全边界；工具层不承诺 Reviewer 等角色只读。路径、工作区归属、凭据、网络和外部副作用由部署代码强制。只有 Developer 本地 Commit 能进入交付链，其他成员的临时修改不得覆盖交付分支。
 
-旧的角色专用镜像、固定五角色 registry、Codex/OpenCodex active build 和 native-runner 在通用路径验证后删除，不保留兼容层。
+M7 已删除旧的角色专用镜像、固定五角色 registry、Codex/OpenCodex、native-runner、旧 Deployment/Approval/Operation 和 hash-chain Evidence 路径，不保留兼容层。PostgreSQL 是产品事实、Matrix admission 与 wake outbox 的唯一 runtime 权威；纯记录合同不包含持久化，Web 不回退到文件 store。
 
 ## 5. Skills
 
