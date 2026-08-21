@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { loadAgentPackages, resolveAgentRuntimeFromEnvironment, resolveMemberAgent } from "../agent/packages/loader.mjs";
-import { createMemberConfig } from "../agent/team/coordination-store.mjs";
+import { createMemberConfig } from "../agent/team/coordination-contracts.mjs";
 
 const NOW = "2026-08-19T00:00:00.000Z";
 const CONFIG = Object.freeze({

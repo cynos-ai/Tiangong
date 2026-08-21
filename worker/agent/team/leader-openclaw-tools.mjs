@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 
 import { sha256 } from "../canonical-json.mjs";
-import { createContentRef, createTaskSpec, createWorkSpec } from "./coordination-store.mjs";
+import { createContentRef, createTaskSpec, createWorkSpec } from "./coordination-contracts.mjs";
 import { createRemoteCoordinationStore } from "./coordination-control-client.mjs";
 
 const LEADER_ROLE = "leader";

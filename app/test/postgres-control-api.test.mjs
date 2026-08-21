@@ -5,7 +5,7 @@ import { createRuntimeConsoleServer } from "../server.mjs";
 import { PostgresCoordinationStore } from "../coordination/postgres-store.mjs";
 import { createRemoteCoordinationStore, createRemoteOpenClawLeaderAdmissionHook } from "../../worker/agent/team/coordination-control-client.mjs";
 import { acquirePostgresTestLock } from "./postgres-test-lock.mjs";
-import { createControlProfile, createMemberConfig, createTeamConfig, createTeamRouteBinding } from "../../worker/agent/team/coordination-store.mjs";
+import { createControlProfile, createMemberConfig, createTeamConfig, createTeamRouteBinding } from "../../worker/agent/team/coordination-contracts.mjs";
 
 const { Pool } = pg; const connectionString = process.env.TIANGONG_TEST_POSTGRES_URL; const disposable = process.env.TIANGONG_TEST_POSTGRES_DISPOSABLE === "1"; const skipReason = connectionString && disposable ? undefined : "set disposable PostgreSQL variables"; const NOW = "2026-08-15T04:00:00.000Z"; const TOKEN = "postgres-control-api-token";
 

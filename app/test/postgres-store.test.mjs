@@ -4,7 +4,7 @@ import test from "node:test";
 import { PostgresCoordinationStore } from "../coordination/postgres-store.mjs";
 import { createPostgresCoordinationStore } from "../coordination/bootstrap.mjs";
 import { acquirePostgresTestLock } from "./postgres-test-lock.mjs";
-import { createControlProfile, createMemberConfig, createResult, createTaskSpec, createTeamConfig, createTeamRouteBinding, createWorkSpec } from "../../worker/agent/team/coordination-store.mjs";
+import { createControlProfile, createMemberConfig, createResult, createTaskSpec, createTeamConfig, createTeamRouteBinding, createWorkSpec } from "../../worker/agent/team/coordination-contracts.mjs";
 
 const { Pool } = pg; const connectionString = process.env.TIANGONG_TEST_POSTGRES_URL; const disposable = process.env.TIANGONG_TEST_POSTGRES_DISPOSABLE === "1"; const skipReason = connectionString && disposable ? undefined : "set disposable PostgreSQL variables"; const NOW = "2026-08-15T02:00:00.000Z";
 function records() {
@@ -41,4 +41,33 @@ test("Postgres correction atomically changes current association and preserves b
   await value.store.enqueueMessageAdmission({ team: value.team, route: value.route, profile: value.profile, actorId: "@human:example.test", eventId: "$wrong", receivedAt: "2026-08-15T02:00:01Z", requestId: "a-wrong" }); const wrong = await value.store.routeMessage({ roomId: value.route.roomId, eventId: "$wrong", team: value.team, route: value.route, profile: value.profile, actorId: value.leader.memberId, targetWorkId: source.work.work.workId, expectedEpoch: 0, requestId: "r-wrong" });
   await value.store.enqueueMessageAdmission({ team: value.team, route: value.route, profile: value.profile, actorId: "@human:example.test", eventId: "$correct", receivedAt: "2026-08-15T02:00:02Z", requestId: "a-correct" }); const corrected = await value.store.correctMessageAssociation({ roomId: value.route.roomId, eventId: "$wrong", correctionEventId: "$correct", team: value.team, route: value.route, profile: value.profile, actorId: value.leader.memberId, expectedSourceEpoch: wrong.work.epoch, title: "New", requestId: "correct" });
   assert.equal((await value.store.getMessageBinding(value.route.roomId, "$wrong")).workId, corrected.targetWork.work.workId); assert.equal(corrected.sourceWork.timeline.some((entry) => entry.type === "message-association-corrected"), true);
+});
+
+test("Postgres request replay is idempotent and rejects changed content", { skip: skipReason }, async (t) => {
+  const value = await fixture(t); const input = { team: value.team, route: value.route, profile: value.profile, actorId: "@human:example.test", eventId: "$replay", requestId: "admit-replay" };
+  const first = await value.store.enqueueMessageAdmission(input); const replay = await value.store.enqueueMessageAdmission(input);
+  assert.equal(first.replayed, false); assert.equal(replay.replayed, true);
+  await assert.rejects(value.store.enqueueMessageAdmission({ ...input, eventId: "$changed" }), /COMMAND_REQUEST_CONFLICT/u);
+});
+
+test("Postgres CloseGuard blocks active execution without legacy Operation placeholders", { skip: skipReason }, async (t) => {
+  let active = true;
+  const value = await fixture(t, { closeGuard: { async inspect() { return { activeExecutions: active ? ["task-running"] : [], unreadableContentRefs: [] }; } } });
+  const spec = createWorkSpec({ workId: "work-close-guard", revision: 1, goal: "close safely", doneWhen: ["closed"], createdAt: NOW });
+  await value.store.createWork({ workId: spec.workId, team: value.team, route: value.route, profile: value.profile, spec, title: "Guarded", actorId: "@human:example.test", sourceEventId: "$guard", requestId: "create-guard" });
+  const close = () => value.store.closeWork({ workId: spec.workId, team: value.team, profile: value.profile, actorId: value.leader.memberId, action: "complete", reason: "done", expectedEpoch: 0, requestId: "close-guard" });
+  await assert.rejects(close(), /WORK_CLOSE_GUARD_FAILED/u); active = false;
+  assert.equal((await close()).work.status, "completed");
+});
+
+test("Postgres task cancellation requires process and writer release", { skip: skipReason }, async (t) => {
+  let released = false;
+  const value = await fixture(t, { cancellationGuard: { async stopAndInspect() { return { stopped: released, writerReleased: released }; } } });
+  const spec = createWorkSpec({ workId: "work-cancel", revision: 1, goal: "cancel safely", doneWhen: ["cancelled"], createdAt: NOW });
+  await value.store.createWork({ workId: spec.workId, team: value.team, route: value.route, profile: value.profile, spec, title: "Cancel", actorId: "@human:example.test", sourceEventId: "$cancel", requestId: "create-cancel" });
+  const task = createTaskSpec({ taskId: "task-cancel", workId: spec.workId, assigneeMemberId: value.developer.memberId, objective: "work", createdAt: NOW });
+  await value.store.createTask({ task, team: value.team, member: value.developer, profile: value.profile, actorId: value.leader.memberId, expectedEpoch: 0, requestId: "create-task-cancel" });
+  const cancel = () => value.store.cancelTask({ workId: spec.workId, taskId: task.taskId, team: value.team, profile: value.profile, actorId: value.leader.memberId, reason: "stop", expectedEpoch: 1, requestId: "cancel-task" });
+  await assert.rejects(cancel(), /TASK_CANCEL_GUARD_FAILED/u); released = true;
+  assert.equal((await cancel()).task.status, "cancelled");
 });

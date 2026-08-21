@@ -4,7 +4,7 @@ import {
   isMemberConfig,
   isTeamConfig,
   isTeamRouteBinding,
-} from "./coordination-store.mjs";
+} from "./coordination-contracts.mjs";
 
 const MATRIX_USER_ID = /^@[A-Za-z0-9._=+\/-]+:[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/u;
 const MATRIX_EVENT_ID = /^\$[^\s]{1,255}$/u;
