@@ -1,0 +1,35 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 128
+  batch:
+    timeout: 1s
+    send_batch_size: 64
+
+exporters:
+  otlphttp/agentloop:
+    endpoint: ${env:AGENTLOOP_ENDPOINT}
+    headers:
+      x-arms-license-key: ${env:AGENTLOOP_LICENSE_KEY}
+      x-arms-project: ${env:AGENTLOOP_PROJECT}
+      x-cms-workspace: ${env:AGENTLOOP_WORKSPACE}
+
+service:
+  telemetry:
+    logs:
+      level: warn
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/agentloop]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/agentloop]

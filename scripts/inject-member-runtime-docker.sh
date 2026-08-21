@@ -23,6 +23,9 @@ readonly COORDINATION_ENDPOINT="${TIANGONG_MEMBER_COORDINATION_CONTROL_ENDPOINT:
 readonly COORDINATION_TOKEN="${TIANGONG_MEMBER_COORDINATION_CONTROL_TOKEN:-}"
 readonly ROUTING_REQUIRED="1"
 readonly GATEWAY_URL="${TIANGONG_AGENTTEAMS_AI_GATEWAY_URL:-http://aigw-local.agentteams.io:8080}"
+readonly AGENTLOOP_ENABLED="${TIANGONG_AGENTLOOP_ENABLED:-0}"
+readonly AGENTLOOP_CONTENT_CAPTURE="${TIANGONG_AGENTLOOP_CONTENT_CAPTURE:-}"
+readonly AGENTLOOP_SERVICE_NAME="${TIANGONG_AGENTLOOP_SERVICE_NAME:-openclaw}"
 
 tmp_dir=''
 inspect_file=''
@@ -77,6 +80,11 @@ valid_token() {
 valid_gateway_url() {
   [[ "$1" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$ ]]
 }
+valid_agentloop() {
+  [[ "$AGENTLOOP_ENABLED" == 0 || "$AGENTLOOP_ENABLED" == 1 ]] || return 1
+  [[ "$AGENTLOOP_SERVICE_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || return 1
+  if [[ "$AGENTLOOP_ENABLED" == 1 ]]; then [[ "$AGENTLOOP_CONTENT_CAPTURE" == isolated-test ]]; else [[ -z "$AGENTLOOP_CONTENT_CAPTURE" ]]; fi
+}
 docker_host_path() {
   local path="$1" docker_binary docker_binary_real
   docker_binary="$(command -v "${DOCKER_COMMAND}" 2>/dev/null || true)"
@@ -118,6 +126,7 @@ fi
 valid_endpoint "${COORDINATION_ENDPOINT}" || fail COORDINATION_ENDPOINT_REQUIRED
 valid_token "${COORDINATION_TOKEN}" || fail COORDINATION_TOKEN_REQUIRED
 valid_gateway_url "${GATEWAY_URL}" || fail GATEWAY_URL_INVALID
+valid_agentloop || fail AGENTLOOP_CONFIG_INVALID
 gateway_domain="${GATEWAY_URL#*://}"
 gateway_domain="${gateway_domain%%:*}"
 readonly RUNTIME_LANE=openclaw-native
@@ -223,6 +232,10 @@ jq -r '.[0].Config.Env[]?
        $key == "TIANGONG_COORDINATION_CONTROL_ENDPOINT" or
        $key == "TIANGONG_COORDINATION_CONTROL_TOKEN" or
        $key == "TIANGONG_ADMISSION_DEBUG" or
+       ($key | startswith("TIANGONG_AGENTLOOP_")) or
+       ($key | startswith("ARMS_")) or
+       ($key | startswith("OTEL_")) or
+       $key == "OPENCLAW_OTEL_PRELOADED" or
        $key == "OPENCLAW_AGENT_RUNTIME" or
        $key == "OPENCLAW_AGENT_HARNESS_FALLBACK" or
        ($key | startswith("TIANGONG_CODEX_"))) | not)' "${inspect_file}" >"${env_file}"
@@ -233,6 +246,8 @@ jq -r '.[0].Config.Env[]?
     "${member_id}" "${COORDINATION_ENDPOINT}" "${COORDINATION_TOKEN}"
   printf 'AGENTTEAMS_AI_GATEWAY_URL=%s\nAGENTTEAMS_AI_GATEWAY_DOMAIN=%s\nTIANGONG_RUNTIME_LANE=%s\n' \
     "${GATEWAY_URL}" "${gateway_domain}" "${RUNTIME_LANE}"
+  printf 'TIANGONG_AGENTLOOP_ENABLED=%s\nTIANGONG_AGENTLOOP_SERVICE_NAME=%s\n' "${AGENTLOOP_ENABLED}" "${AGENTLOOP_SERVICE_NAME}"
+  [[ -z "${AGENTLOOP_CONTENT_CAPTURE}" ]] || printf 'TIANGONG_AGENTLOOP_CONTENT_CAPTURE=%s\n' "${AGENTLOOP_CONTENT_CAPTURE}"
   if [[ "${TIANGONG_ADMISSION_DEBUG:-0}" == 1 ]]; then printf 'TIANGONG_ADMISSION_DEBUG=1\n'; fi
   if [[ "${RESPONSIBILITY}" == leader ]]; then printf 'TIANGONG_MEMBER_COORDINATION_ENABLED=0\n'; else printf 'TIANGONG_MEMBER_COORDINATION_ENABLED=1\n'; fi
 } >>"${env_file}"

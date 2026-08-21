@@ -2,6 +2,7 @@ import { join } from "node:path";
 
 import { sha256 } from "../canonical-json.mjs";
 import { ToolResultStore } from "./tool-result-store.mjs";
+import { enrichToolResultCorrelation } from "../../observability/hooks.mjs";
 
 const WORKER_NAME_PATTERN = /^[A-Za-z0-9._-]+$/u;
 
@@ -54,11 +55,12 @@ export function defaultToolResultCapturePath(env = process.env) {
   return join(stateRoot, "tool-results", "openclaw.json");
 }
 
-export function createToolResultCaptureHook({ filePath, now = () => new Date() } = {}) {
+export function createToolResultCaptureHook({ filePath, now = () => new Date(), onRecord } = {}) {
   if (typeof filePath !== "string" || filePath.length === 0) {
     throw new TypeError("ToolResult capture filePath is required");
   }
   if (typeof now !== "function") throw new TypeError("ToolResult capture clock is required");
+  if (onRecord !== undefined && typeof onRecord !== "function") throw new TypeError("ToolResult capture onRecord must be a function");
   const store = new ToolResultStore({ filePath });
   return (event, ctx = {}) => {
     const timestamp = now().toISOString();
@@ -82,7 +84,7 @@ export function createToolResultCaptureHook({ filePath, now = () => new Date() }
             ? "error"
             : "success";
     const startedAt = bounded(event.startedAt, 64) ?? timestamp;
-    const record = {
+    const record = enrichToolResultCorrelation({
       toolResultId,
       callKey,
       ...(bounded(ctx.workId, 256) ? { workId: bounded(ctx.workId, 256) } : {}),
@@ -105,8 +107,9 @@ export function createToolResultCaptureHook({ filePath, now = () => new Date() }
       outputRef: event.outputRef ?? null,
       startedAt,
       completedAt: timestamp,
-    };
+    }, ctx, event);
     store.appendSync(record);
+    onRecord?.(record, ctx, event);
     return undefined;
   };
 }

@@ -53,6 +53,7 @@ jobs:
           node --check scripts/check-demo-contract.mjs
           make check-skills
           make check-demo-contract
+          make test-agentloop-contract
       - name: Install and run actionlint
         env:
           ACTIONLINT_VERSION: 1.7.7

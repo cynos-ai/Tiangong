@@ -5,7 +5,7 @@ TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "${TEST_ROOT}"' EXIT INT TERM
 mkdir -p "${TEST_ROOT}/bin"
 cat >"${TEST_ROOT}/inspect.json" <<'JSON'
-[{"State":{"Running":true},"Name":"/worker-test","Config":{"Image":"tg-worker:dev","Entrypoint":["/usr/bin/node"],"Cmd":["service.mjs"],"WorkingDir":"/root/agentteams-fs/agents/worker-test","User":"","Env":["AGENTTEAMS_WORKER_NAME=worker-test","AGENTTEAMS_WORKER_GATEWAY_KEY=must-not-print","TIANGONG_ROLE_ID=stale","TIANGONG_MEMBER_OBSOLETE=stale"],"Labels":{},"ExposedPorts":{"8088/tcp":{}}},"HostConfig":{"NetworkMode":"agentteams-net","Privileged":false,"ReadonlyRootfs":false,"CapAdd":[],"CapDrop":["ALL"],"SecurityOpt":["no-new-privileges:true"],"Init":true,"RestartPolicy":{"Name":"unless-stopped","MaximumRetryCount":0},"Binds":["worker-test-auth:/var/run/secrets/agentteams"],"Mounts":[{"Type":"volume","Name":"worker-test-auth","Target":"/var/run/secrets/agentteams","RW":true}],"Devices":[],"PortBindings":{"8088/tcp":[{"HostIp":"","HostPort":"18818"}]},"ExtraHosts":[],"ShmSize":67108864}}]
+[{"State":{"Running":true},"Name":"/worker-test","Config":{"Image":"tg-worker:dev","Entrypoint":["/usr/bin/node"],"Cmd":["service.mjs"],"WorkingDir":"/root/agentteams-fs/agents/worker-test","User":"","Env":["AGENTTEAMS_WORKER_NAME=worker-test","AGENTTEAMS_WORKER_GATEWAY_KEY=must-not-print","TIANGONG_ROLE_ID=stale","TIANGONG_MEMBER_OBSOLETE=stale","ARMS_LICENSE_KEY=must-not-survive","OTEL_EXPORTER_OTLP_HEADERS=must-not-survive"],"Labels":{},"ExposedPorts":{"8088/tcp":{}}},"HostConfig":{"NetworkMode":"agentteams-net","Privileged":false,"ReadonlyRootfs":false,"CapAdd":[],"CapDrop":["ALL"],"SecurityOpt":["no-new-privileges:true"],"Init":true,"RestartPolicy":{"Name":"unless-stopped","MaximumRetryCount":0},"Binds":["worker-test-auth:/var/run/secrets/agentteams"],"Mounts":[{"Type":"volume","Name":"worker-test-auth","Target":"/var/run/secrets/agentteams","RW":true}],"Devices":[],"PortBindings":{"8088/tcp":[{"HostIp":"","HostPort":"18818"}]},"ExtraHosts":[],"ShmSize":67108864}}]
 JSON
 cat >"${TEST_ROOT}/bin/docker" <<'SH'
 #!/usr/bin/env bash
@@ -28,7 +28,8 @@ case "${1:-}:${2:-}" in
     grep -Fq 'TIANGONG_MEMBER_AGENT_PACKAGE_VERSION=1.0.0' "${root}/env"
     grep -Fq "TIANGONG_MEMBER_ALLOWED_SKILLS=${TIANGONG_EXPECTED_SKILLS}" "${root}/env"
     grep -Fq 'TIANGONG_MEMBER_RUNTIME_ROUTING_REQUIRED=1' "${root}/env"
-    ! grep -Fq 'TIANGONG_MEMBER_OBSOLETE=' "${root}/env" ;;
+    grep -Fq 'TIANGONG_AGENTLOOP_ENABLED=' "${root}/env"
+    ! grep -Eq 'TIANGONG_MEMBER_OBSOLETE=|ARMS_LICENSE_KEY=|OTEL_EXPORTER_OTLP_HEADERS=' "${root}/env" ;;
   *) printf 'unexpected docker call: %s\n' "$*" >&2; exit 1 ;;
 esac
 SH
@@ -60,6 +61,10 @@ run_case challenger openclaw-built-in glm-5 plan-challenge
 run_case reviewer openclaw-built-in glm-5 independent-code-review
 run_case reviewer openclaw-built-in qwen3.7-plus independent-code-review
 run_case tester openclaw-built-in glm-5 scenario-testing
+TIANGONG_AGENTLOOP_ENABLED=1 TIANGONG_AGENTLOOP_CONTENT_CAPTURE=isolated-test TIANGONG_AGENTLOOP_SERVICE_NAME=tiangong-m8-test run_case tester openclaw-built-in glm-5 scenario-testing
+grep -Fq 'TIANGONG_AGENTLOOP_ENABLED=1' "${TEST_ROOT}/env"
+grep -Fq 'TIANGONG_AGENTLOOP_CONTENT_CAPTURE=isolated-test' "${TEST_ROOT}/env"
+grep -Fq 'TIANGONG_AGENTLOOP_SERVICE_NAME=tiangong-m8-test' "${TEST_ROOT}/env"
 run_case developer openclaw-built-in glm-5 test-driven-development,independent-code-review,scenario-testing
 if grep -Eq 'TIANGONG_(CODEX|CANARY)|CODEX_HOME|OPENCLAW_CODEX' "${TEST_ROOT}/env"; then printf 'obsolete runtime environment was injected\n' >&2; exit 1; fi
 grep -Fq 'TIANGONG_MEMBER_COORDINATION_ENABLED=1' "${TEST_ROOT}/env"
