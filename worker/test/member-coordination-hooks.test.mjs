@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createTaskSpec } from "../agent/team/coordination-store.mjs";
+import { createTaskSpec } from "../agent/team/coordination-contracts.mjs";
 import { createMemberCoordinationHooks, registerMemberCoordinationHooks } from "../agent/team/member-coordination-hooks.mjs";
 
 const ENDPOINT = "http://coordination-runtime:8780/v1/coordination/admit";

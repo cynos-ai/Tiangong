@@ -3,7 +3,7 @@ import { resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { canonicalJson, sha256 } from "../canonical-json.mjs";
-import { isMemberConfig } from "../team/coordination-store.mjs";
+import { isMemberConfig } from "../team/coordination-contracts.mjs";
 import { effectiveSkills, loadInstalledSkills } from "../skills/catalog.mjs";
 
 const ID = /^[a-z][a-z0-9-]{0,63}$/u;

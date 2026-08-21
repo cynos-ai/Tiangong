@@ -47,15 +47,10 @@ jobs:
         run: make test-peer-mention-smoke-contract
       - name: Test paused Worker liveness boundary
         run: make test-pause-worker-boundary
-      - name: Test Leader smoke oracle contract
-        run: make test-leader-smoke-contract
-      - name: Test Phase 4 recovery contract
-        run: make test-phase4-recovery
       - name: Validate project Agent Skills and demo contract
         run: |
           node --check scripts/check-skills.mjs
           node --check scripts/check-demo-contract.mjs
-          node --check scripts/verify-professional-state.mjs
           make check-skills
           make check-demo-contract
       - name: Install and run actionlint
@@ -82,17 +77,21 @@ jobs:
         with:
           node-version: 22.23.2
           cache: npm
-          cache-dependency-path: worker/package-lock.json
-      - name: Install locked Worker dependencies
+          cache-dependency-path: |
+            worker/package-lock.json
+            app/package-lock.json
+      - name: Install locked runtime dependencies
         run: |
           npm ci --prefix worker --omit=dev --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/
-      - name: Test Worker runtime
+          npm ci --prefix app --omit=dev --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/
+      - name: Test Worker and PostgreSQL-authority contracts
         run: |
           test ! -e worker/node_modules/@earendil-works/pi-coding-agent
           while IFS= read -r module; do node --check "${module}"; done < <(
             find worker/agent worker/plugin -type f -name '*.mjs' -print | sort
           )
           npm test --prefix worker
+          npm test --prefix app
       - name: Audit production dependencies
         run: |
           set +e

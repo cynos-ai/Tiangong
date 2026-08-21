@@ -6,7 +6,7 @@ import {
   isMemberConfig,
   isTeamConfig,
   isTeamRouteBinding,
-} from "./coordination-store.mjs";
+} from "./coordination-contracts.mjs";
 import { createRemoteCoordinationStore, createRemoteOpenClawLeaderAdmissionHook } from "./coordination-control-client.mjs";
 
 const MAX_BINDING_BYTES = 64 * 1024;

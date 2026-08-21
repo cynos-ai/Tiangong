@@ -3,9 +3,9 @@
 Tiangong is an evidence-backed AI software engineering team built on [AgentTeams](https://github.com/agentscope-ai/AgentTeams).
 
 > [!NOTE]
-> v0.4.1 is the latest source release and records the completed OpenClaw runtime migration. Current development has implemented M0–M3 and M5: the coordination foundation, six long-lived Agent packages, capability-bound portable Skills, a chat-first Matrix workbench, and the OpenClaw built-in execution foundation. A disposable local M6 real-project coding vertical has also completed the WorkSpec → Plan/Challenge → Developer Commit → independent Review/Tester → CloseGuard → clean-rerun path; this does not claim production deployment. See the [v0.4.1 release notes](docs/releases/v0.4.1.md), [product MVP](docs/design/product-mvp.zh.md), and [changelog](CHANGELOG.md).
+> v0.4.1 is the latest source release and records the completed OpenClaw runtime migration. Current development has implemented M0–M3 and M5–M7: the coordination foundation, six long-lived Agent packages, portable Skills, a chat-first Matrix workbench, the OpenClaw built-in execution foundation, a disposable local M6 delivery proof, and the M7 PostgreSQL/legacy-runtime clean-cut. This does not claim production deployment. See the [v0.4.1 release notes](docs/releases/v0.4.1.md), [product MVP](docs/design/product-mvp.zh.md), and [changelog](CHANGELOG.md).
 >
-> The implementation-independent target is defined by the [team-control design](docs/design/evidence-backed-team-control.md) ([中文](docs/design/evidence-backed-team-control.zh.md)). The first public product slice is specified separately in the [product MVP design（中文）](docs/design/product-mvp.zh.md); it does not claim those capabilities already exist.
+> The implementation-independent target is defined by the [team-control design](docs/design/evidence-backed-team-control.md) ([中文](docs/design/evidence-backed-team-control.zh.md)). The first public product slice is specified in the [product MVP design（中文）](docs/design/product-mvp.zh.md), and the current persistence/runtime boundary is recorded in the [M7 product-authority clean-cut](docs/design/m7-product-authority-clean-cut.md).
 
 ## Vision
 
@@ -67,26 +67,18 @@ CONFIRM=delete-tiangong-agentteams-data make uninstall  # Delete the local stack
 
 Run `make help` for the complete command list. Uninstall removes the Tiangong-owned AgentTeams containers, network, Docker volume, and `.runtime/agentteams/` tree after validating their fixed targets; it preserves `.env` and downloaded container images.
 
-### OpenClaw-native Worker image smoke test
+### OpenClaw-native Worker image
 
-The local Worker image extends the public AgentTeams `v1.2.2` Worker image at an immutable digest and retains its pinned Node.js `22.23.2` runtime. All initial professional turns, including Developer coding turns, run through OpenClaw's built-in runtime. Tiangong contributes only its control plugin, Agent/Skill tools, gates, coordination, and direct machine facts.
-
-With AgentTeams running, choose the fast channel smoke or the full approval smoke:
+The local Worker image extends the public AgentTeams `v1.2.2` Worker image at an immutable digest and retains its pinned Node.js `22.23.2` runtime. All six professional Agents use OpenClaw's built-in runtime. Tiangong contributes its control plugin, Agent packages, portable Skills, coordination tools, and bounded ToolResults.
 
 ```bash
-make test-worker-image-basic  # Gateway, Matrix, persistent session, credential boundary
-make test-worker-image        # Also Gate, restart recovery, approval, replay, and Evidence
+make build-worker-image
+npm --prefix worker test
 ```
 
-Both levels build `tg-worker:dev`, create a disposable Worker through the AgentTeams declarative API, and use the real Worker-scoped Gateway and Matrix room. The Basic smoke validates a gated `read` through Matrix, an exact nonce response, matching Evidence, and the credential boundary.
+The active build produces only `tg-worker:dev`. It contains no Codex/OpenCodex, native Runner, deployment service, pending Operation, Approval command, or hash-chain Evidence runtime. External-write Operation and exact Human Approval behavior will be introduced with real Adapters in a later stage rather than retained as inactive placeholders.
 
-The Full smoke additionally exercises a constrained workspace write, approval, Worker restart, replay, and Evidence. Cross-Worker-restart recovery uses a versioned Tiangong pending-operation envelope and does not depend on a Tiangong-owned model transcript.
-
-Cleanup removes the temporary Worker and the exact MinIO prefix owned by the reserved smoke identity. It never operates on another Worker prefix. Provider credentials are not copied into the image, repository, model configuration, session, or Evidence.
-
-The Worker resource retains AgentTeams' supported `openclaw` runtime, Node.js version, entrypoint, and gateway. A narrow `openclaw` command wrapper injects the Tiangong control plugin path into the generated configuration and then delegates to the upstream executable. OpenClaw continues to own Matrix, model turns, configuration retrieval, storage sync, re-login, readiness, channel policy, and reply delivery. Tiangong owns Work/WorkSpec/Plan/Task/Result coordination, bounded execution records, Operation policy, recovery, and its product experience.
-
-Optional, backend-neutral Worker tracing is documented in [`docs/observability.md`](./docs/observability.md). It is disabled by default, exports only allowlisted sanitized OpenTelemetry spans, and remains diagnostic telemetry rather than authorization or hash-chained Evidence. The bounded [`peer transport diagnostic`](./docs/peer-transport-diagnostic.md) keeps exact ping/pong markers in deterministic Worker code while deriving targets only from authenticated effective Matrix allowlists; it is transport-only and is not Team Work or Evidence.
+Optional tracing is documented in [`docs/observability.md`](./docs/observability.md). It is disabled by default and remains diagnostic telemetry rather than authorization or a product fact.
 
 ### Chat-first Matrix workbench
 
@@ -104,59 +96,13 @@ make test-chat-first-web
 
 The current runtime is intentionally constrained:
 
-- it claims only the Worker-scoped `agentteams-gateway` provider and disables OpenClaw's fallback to another agent harness;
-- provider credentials stay deployment-scoped and are injected by the selected OpenClaw runtime only in memory;
-- unapproved OpenClaw extensions, prompt templates, and automatic repository context are disabled;
-- one generic `tg-worker` image is configured by authenticated AgentTeams identity, MemberConfig, ControlProfile, and deployment-owned runtime bindings; image names, prompts, and Task text cannot grant a responsibility or capability;
-- runtime, current AgentTeams Worker model, Agent package, capability profile, and allowed Skill set are fixed by the current MemberConfig revision and checked before OpenClaw configuration mutation and on each new turn; Provider/model changes use AgentTeams administration rather than Task or prompt input;
-- the six initial Agent packages are Leader, Architect, Challenger, Developer, Reviewer, and Tester; Leader uses one logical session per Work and every professional Task receives its own deterministic logical session reference;
-- top-level tools are fail-closed from Agent package `toolGroups`: Leader gets coordination plus Skill runtime, while the five professional members get Skill runtime plus the machine-locked OpenClaw workspace tools; deployments remain responsible for each isolated workspace, credential, and network boundary;
-- product Skill authority is exactly the digest-locked Agent-package installation intersected with `MemberConfig.allowedSkills`; the Agent selects an enabled Skill through `tiangong_use_skill`, and the bounded ToolResult records its ID/version/content digest without granting capabilities;
-- OpenClaw owns its conversation/session persistence; Tiangong coordination and control state uses independent protected storage, so conversation reset cannot erase product facts;
-- restartable writes persist a digest-bound operation envelope and a separate mode-`600` content payload under that state directory; raw write content never enters Evidence, but is visible to principals with Worker storage administration access and follows explicit operation retention;
-- only gated `read` and path-restricted, atomic `write` are active; `write` requires persisted approval from the same authenticated Matrix sender that requested it, ignores upstream owner assertions for authorization, supports restart recovery, and blocks duplicate execution;
-- runtime state, credential-bearing paths, symlink traversal, workspace escape, image input, and unbounded shell access are unavailable to the gated tool surface.
-
-To build and inspect the image without creating a Worker:
-
-```bash
-make build-worker-image
-docker run --rm --entrypoint openclaw tg-worker:dev --version
-```
-
-The active build produces one generic `tg-worker:dev` runtime plus the deployment-owned runner/deployment service images; Codex/OpenCodex auxiliary targets are not built by the product path. It does not build role-specific Worker images. The initial MemberConfig contract routes all six professional Agents through OpenClaw built-in and defaults them to `glm-5`. An administrator may change a specific Worker's Provider/model through AgentTeams; Tiangong accepts the model only when it matches the authenticated Worker projection and records the change as a new MemberConfig revision. A Task, prompt, or Skill cannot change it.
-
-### Interrupted write reconciliation
-
-An interrupted `executing` or `failed` write remains fail-closed until an operator reconciles its observed outcome. The operator-only CLI accepts the user-visible approval identifier or the internal idempotency key:
-
-```bash
-docker exec agentteams-worker-<worker> \
-  tiangong-reconcile inspect <approval-id-or-idempotency-key>
-
-docker exec agentteams-worker-<worker> \
-  tiangong-reconcile resolve <approval-id-or-idempotency-key> \
-  --actor <operator-id> --reason-code STALE_WORKER_EXECUTION
-```
-
-`resolve` defaults to a five-minute minimum age for `executing` state and never blindly retries. It validates the protected pending payload, workspace scope, current target digest, approved precondition, and rollback snapshot. If the approved content is already present, it records the outcome as completed; if the exact precondition remains, it restores approved state so the original requester can explicitly replay `APPROVE <approval-id>`; any other or invalid observation records a conflict and stays blocked. Reconciliation records separate Evidence events rather than claiming that an execution was observed.
-
-Container execution access is the actual authority for this local command; `--actor` is bounded audit attribution, not an authentication mechanism. The CLI is not exposed to the model because `bash` and external tools remain disabled. Lowering `--minimum-age-seconds` is an explicit operator action and is unsafe unless the prior executor is independently known to be dead.
-
-### Runtime retention
-
-Raw pending write payloads are erased after successful completion, rejection, or an applied reconciliation outcome. Tiangong replaces the synchronized payload object with a zero-length file plus a non-sensitive terminal marker, publishes that erasure through AgentTeams' official MinIO credential layer, and then reasserts the local tombstone rather than relying on directory-deletion propagation. This storage adapter is internal runtime plumbing, not a model tool. Raw content remains available for `pending`, `approved`, `executing`, `failed`, and conflict states because recovery still requires it.
-
-Completed and rejected idempotency metadata has a 90-day exactly-once replay window. State transitions append to a hash-chained journal with in-memory key, invocation, and approval indexes; hot-path transitions do not rewrite the full store. Expiration is never automatic: an operator first reports eligible records, then explicitly confirms compaction. Each removed record is summarized in Evidence before deletion, and that explicit maintenance step rewrites only the active journal state.
-
-```bash
-docker exec agentteams-worker-<worker> tiangong-retain report
-
-docker exec agentteams-worker-<worker> tiangong-retain compact \
-  --actor <operator-id> --confirm expire-90-day-replay-window
-```
-
-Evidence rotates at 16 MiB into ordered segments whose ranges and terminal hashes remain linked to the next active segment; it is not automatically deleted. Session transcripts reject new model turns at 10,000 persisted entries or 32 MiB and require an explicit transcript-only reset. Approval/rejection control commands remain available at that capacity so an outstanding operation is not stranded.
+- AgentTeams controls Provider credentials and each Worker's current model; Tiangong accepts only the current authenticated projection and has no fallback runtime;
+- one generic `tg-worker` image is configured by AgentTeams identity, MemberConfig, ControlProfile, Agent package, and deployment-owned bindings;
+- Leader receives coordination and Skill tools; the five professional members receive Skill tools plus the pinned OpenClaw workspace tool set;
+- effective Skills are the digest-locked package installation intersected with `MemberConfig.allowedSkills`;
+- PostgreSQL is the sole Work/Task/Result, Matrix admission, request replay, and wake-outbox authority; Workers access it only through the bounded Control API;
+- Matrix admission backlog and internal wake outbox remain separate tables and processing contracts;
+- no Push, CI dispatch, deployment, production credential, or external-write Adapter is active.
 
 ### Local security model
 

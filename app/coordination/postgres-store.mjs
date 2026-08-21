@@ -10,7 +10,7 @@ import {
   isTeamConfig,
   isTeamRouteBinding,
   isWorkSpec,
-} from "../../worker/agent/team/coordination-store.mjs";
+} from "../../worker/agent/team/coordination-contracts.mjs";
 import { canonicalJson, sha256 } from "../../worker/agent/canonical-json.mjs";
 
 const SCHEMA = "tiangong_coordination";
@@ -98,8 +98,8 @@ async function appendTimeline(client, { workId, type, at, epoch, requestId, acto
 }
 function normalizeGuard(result) {
   const value = result ?? {};
-  for (const field of ["activeExecutions", "unresolvedOperations", "pendingApprovals", "unreadableContentRefs"]) if (!Array.isArray(value[field] ?? [])) throw new Error("CLOSE_GUARD_RESPONSE_INVALID");
-  return { activeExecutions: value.activeExecutions ?? [], unresolvedOperations: value.unresolvedOperations ?? [], pendingApprovals: value.pendingApprovals ?? [], unreadableContentRefs: value.unreadableContentRefs ?? [] };
+  for (const field of ["activeExecutions", "unreadableContentRefs"]) if (!Array.isArray(value[field] ?? [])) throw new Error("CLOSE_GUARD_RESPONSE_INVALID");
+  return { activeExecutions: value.activeExecutions ?? [], unreadableContentRefs: value.unreadableContentRefs ?? [] };
 }
 
 export class PostgresCoordinationStore {
@@ -109,7 +109,7 @@ export class PostgresCoordinationStore {
     if (typeof now !== "function") throw new TypeError("PostgresCoordinationStore now must be a function");
     this.#pool = pool; this.#now = now; this.#maxTimelineEntries = maxTimelineEntries; this.#maxOutboxEntries = maxOutboxEntries;
     this.#closeGuard = closeGuard ?? { async inspect() { return {}; } };
-    this.#cancellationGuard = cancellationGuard ?? { async stopAndInspect() { return { stopped: true, writerReleased: true, unresolvedOperations: [] }; } };
+    this.#cancellationGuard = cancellationGuard ?? { async stopAndInspect() { return { stopped: true, writerReleased: true }; } };
     this.#contentRefResolver = contentRefResolver;
   }
   async migrate({ sql } = {}) {
@@ -237,7 +237,7 @@ export class PostgresCoordinationStore {
       if (stopSourceIfEmpty) {
         if (Number(count.rows[0].count) > 0) throw new Error("MESSAGE_CORRECTION_SOURCE_NOT_EMPTY");
         const guard = normalizeGuard(await this.#closeGuard.inspect({ work: publicWork(await readWork(client, source.work_id)), tasks: [], resultRefs: [], action: "stop" }));
-        if (guard.activeExecutions.length || guard.unresolvedOperations.length || guard.pendingApprovals.length || guard.unreadableContentRefs.length) throw new Error("MESSAGE_CORRECTION_SOURCE_NOT_EMPTY");
+        if (guard.activeExecutions.length || guard.unreadableContentRefs.length) throw new Error("MESSAGE_CORRECTION_SOURCE_NOT_EMPTY");
       }
       await ensureTimelineRoom(client, source.work_id, profile); await ensureTimelineRoom(client, targetId, profile);
       const at = timestamp(this.#now(), "now"); const sourceEpoch = Number(source.epoch) + 1; const targetEpoch = Number(target.epoch) + 1;
@@ -327,7 +327,7 @@ export class PostgresCoordinationStore {
       if (!work || !task || task.work_id !== workId) throw new Error("TASK_NOT_FOUND");
       if (replay) return { replayed: true, task: taskFrom(task) };
       if (!isControlProfile(profile) || work.control_profile_id !== profile.profileId || work.status !== "open" || Number(work.epoch) !== expectedEpoch || task.result_json || task.cancellation_json) throw new Error("TASK_CANCEL_CONFLICT");
-      const guard = await this.#cancellationGuard.stopAndInspect({ workId, taskId }); if (guard?.stopped !== true || guard?.writerReleased !== true || !Array.isArray(guard?.unresolvedOperations) || guard.unresolvedOperations.length) throw new Error("TASK_CANCEL_GUARD_FAILED");
+      const guard = await this.#cancellationGuard.stopAndInspect({ workId, taskId }); if (guard?.stopped !== true || guard?.writerReleased !== true) throw new Error("TASK_CANCEL_GUARD_FAILED");
       await ensureTimelineRoom(client, workId, profile); const at = timestamp(this.#now(), "now"); const epoch = Number(work.epoch) + 1; const cancellation = { actorId, reason: why, at };
       await client.query(`UPDATE ${SCHEMA}.task SET cancellation_json=$2::jsonb,updated_at=$3 WHERE task_id=$1`, [taskId, json(cancellation), at]); await client.query(`UPDATE ${SCHEMA}.work SET epoch=$2,updated_at=$3 WHERE work_id=$1`, [workId, epoch, at]);
       await appendTimeline(client, { workId, type: "task-cancelled", at, epoch, requestId: request, actorId, payload: { workId, taskId, reason: why } }); await saveReplay(client, request, "task.cancel", hash, { cancelled: true }); return { replayed: false, task: taskFrom({ ...task, cancellation_json: cancellation }) };
@@ -363,7 +363,7 @@ export class PostgresCoordinationStore {
       const tasksResult = await client.query(`SELECT t.*,r.result_json FROM ${SCHEMA}.task t LEFT JOIN ${SCHEMA}.result r USING(task_id) WHERE t.work_id=$1 ORDER BY t.task_id FOR UPDATE OF t`, [workId]); const tasks = tasksResult.rows.map(taskFrom);
       if (tasks.some((task) => !task.result && !task.cancellation)) throw new Error("WORK_CLOSE_GUARD_FAILED");
       const refs = tasks.flatMap((task) => task.result?.deliverableRefs ?? []); const guard = normalizeGuard(await this.#closeGuard.inspect({ work: publicWork(await readWork(client, workId)), tasks, resultRefs: clone(refs), action }));
-      if (guard.activeExecutions.length || guard.unresolvedOperations.length || guard.pendingApprovals.length || guard.unreadableContentRefs.length) throw new Error("WORK_CLOSE_GUARD_FAILED");
+      if (guard.activeExecutions.length || guard.unreadableContentRefs.length) throw new Error("WORK_CLOSE_GUARD_FAILED");
       if (refs.length) { if (!this.#contentRefResolver || typeof this.#contentRefResolver.canRead !== "function") throw new Error("WORK_CLOSE_GUARD_FAILED"); for (const ref of refs) if (!await this.#contentRefResolver.canRead(ref)) throw new Error("WORK_CLOSE_GUARD_FAILED"); }
       await ensureTimelineRoom(client, workId, profile); const at = timestamp(this.#now(), "now"); const epoch = Number(work.epoch) + 1; const status = action === "complete" ? "completed" : "stopped";
       await client.query(`UPDATE ${SCHEMA}.work SET status=$2,epoch=$3,updated_at=$4 WHERE work_id=$1`, [workId, status, epoch, at]); await appendTimeline(client, { workId, type: action === "complete" ? "work-completed" : "work-stopped", at, epoch, requestId: request, actorId, payload: { reason: why } }); await saveReplay(client, request, "work.close", hash, { closed: true }); return { replayed: false, action, work: publicWork(await readWork(client, workId)) };

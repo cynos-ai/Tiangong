@@ -1,9 +1,0 @@
-{
-  "schemaVersion": 1,
-  "roleId": "leader",
-  "title": "Tiangong Team Leader",
-  "soulId": "leader-soul-v1",
-  "skillIds": ["leader-coordination-v1"],
-  "toolIds": ["team_create_project", "team_dispatch_task", "team_check_result", "team_decide_task", "team_report"],
-  "gatePolicyId": "leader-tools-v1"
-}

@@ -196,8 +196,8 @@ provider_route() {
       wire_api="provider-managed"
       ;;
     openai-compat:https://api.deepseek.com/v1:deepseek-*)
-      route="codex-native-responses"
-      wire_api="openai-responses"
+      route="agentteams-openclaw-built-in"
+      wire_api="openai-completions"
       ;;
     openai-compat:https://coding.dashscope.aliyuncs.com/v1:glm-*|openai-compat:https://coding.dashscope.aliyuncs.com/v1:qwen*)
       route="agentteams-openclaw-built-in"

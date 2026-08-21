@@ -1,4 +1,4 @@
-import { createResult } from "./coordination-store.mjs";
+import { createResult } from "./coordination-contracts.mjs";
 import { createRemoteCoordinationStore } from "./coordination-control-client.mjs";
 
 const ID = /^[A-Za-z0-9@!#$%&*+./:=?_-]{1,160}$/u;

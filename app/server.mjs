@@ -3,14 +3,12 @@ import { lstat, readFile } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { CoordinationStore } from "../worker/agent/team/coordination-store.mjs";
 import { createCoordinationAdmissionHandler } from "./coordination/control-api.mjs";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8780);
 const FACTS_FILE = process.env.TIANGONG_RUNTIME_FACTS_FILE || "";
 const CAPTURE_FILE = process.env.TIANGONG_TOOL_RESULT_CAPTURE_FILE || "";
-const COORDINATION_FILE = process.env.TIANGONG_COORDINATION_FILE || "";
 const MAX_CAPTURE_BYTES = 256 * 1024;
 const MAX_CAPTURE_RECORDS = 32;
 const MAX_SSE_CLIENTS = 32;
@@ -194,7 +192,7 @@ function projectTask(value) {
   };
 }
 
-async function readCoordination(filePath, coordinationStore) {
+async function readCoordination(coordinationStore) {
   if (coordinationStore && typeof coordinationStore.listWorks === "function" && typeof coordinationStore.listOutbox === "function") {
     try {
       const [works, deliveries, tasks, results, admissions, admissionMetrics] = await Promise.all([
@@ -221,17 +219,7 @@ async function readCoordination(filePath, coordinationStore) {
       return { works: [], workSource: "coordination-store-unavailable", deliveries: [], deliverySource: "coordination-store-unavailable", tasks: [], taskSource: "coordination-store-unavailable", results: [], resultSource: "coordination-store-unavailable", pendingAdmissions: [], admissionMetrics: { pendingCount: 0, oldestReceivedAt: null, lastErrorCode: null } };
     }
   }
-  const empty = (source) => ({ works: [], workSource: source, deliveries: [], deliverySource: source, tasks: [], taskSource: source, results: [], resultSource: source, pendingAdmissions: [], admissionMetrics: { pendingCount: 0, oldestReceivedAt: null, lastErrorCode: null } });
-  if (!filePath) return empty("coordination-store-not-configured");
-  try {
-    const resolvedFile = resolve(filePath);
-    const metadata = await lstat(resolvedFile);
-    if (metadata.isSymbolicLink() || !metadata.isFile()) throw new Error("invalid coordination state");
-    return readCoordination(undefined, new CoordinationStore({ filePath: resolvedFile }));
-  } catch (error) {
-    if (error?.code === "ENOENT") return empty("coordination-store-empty");
-    return empty("coordination-store-unavailable");
-  }
+  return { works: [], workSource: "postgres-not-configured", deliveries: [], deliverySource: "postgres-not-configured", tasks: [], taskSource: "postgres-not-configured", results: [], resultSource: "postgres-not-configured", pendingAdmissions: [], admissionMetrics: { pendingCount: 0, oldestReceivedAt: null, lastErrorCode: null } };
 }
 
 function projectAgents(memberConfigs, tasks, toolResults) {
@@ -249,9 +237,9 @@ function projectAgents(memberConfigs, tasks, toolResults) {
   });
 }
 
-async function runtimeFacts({ factsFile = FACTS_FILE, captureFile = CAPTURE_FILE, coordinationFile = COORDINATION_FILE, coordinationStore, memberConfigs = [] } = {}) {
+async function runtimeFacts({ factsFile = FACTS_FILE, captureFile = CAPTURE_FILE, coordinationStore, memberConfigs = [] } = {}) {
   const capture = await readCapture(captureFile);
-  const coordination = await readCoordination(coordinationFile, coordinationStore);
+  const coordination = await readCoordination(coordinationStore);
   const agents = projectAgents(memberConfigs, coordination.tasks, capture.records);
   if (!factsFile) {
     return {
@@ -291,7 +279,6 @@ function applySecurityHeaders(response) {
 export function createRuntimeConsoleServer(options = {}) {
   const factsFile = options.factsFile ?? FACTS_FILE;
   const captureFile = options.captureFile ?? CAPTURE_FILE;
-  const coordinationFile = options.coordinationFile ?? COORDINATION_FILE;
   const coordinationStore = options.coordinationStore;
   const memberConfigs = Array.isArray(options.memberConfigs) ? options.memberConfigs : [];
   const sseIntervalMs = Number.isSafeInteger(options.sseIntervalMs) && options.sseIntervalMs >= 100 && options.sseIntervalMs <= 60_000 ? options.sseIntervalMs : 1_000;
@@ -349,7 +336,7 @@ export function createRuntimeConsoleServer(options = {}) {
         sending = true;
         try {
           await matrixWebGateway?.authorizeRead(request);
-          const facts = await runtimeFacts({ factsFile, captureFile, coordinationFile, coordinationStore, memberConfigs });
+          const facts = await runtimeFacts({ factsFile, captureFile, coordinationStore, memberConfigs });
           response.write(`event: runtime\ndata: ${JSON.stringify(facts)}\n\n`);
         } catch {
           if (matrixWebGateway) {
@@ -370,7 +357,7 @@ export function createRuntimeConsoleServer(options = {}) {
     }
     if (request.url === "/api/runtime") {
       try { await matrixWebGateway?.authorizeRead(request); } catch { return json(response, 401, { error: "WEB_SESSION_REQUIRED" }); }
-      return json(response, 200, await runtimeFacts({ factsFile, captureFile, coordinationFile, coordinationStore, memberConfigs }));
+      return json(response, 200, await runtimeFacts({ factsFile, captureFile, coordinationStore, memberConfigs }));
     }
     if (request.url === "/" || request.url === "/index.html") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });

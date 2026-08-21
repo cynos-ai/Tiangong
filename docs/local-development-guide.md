@@ -87,7 +87,7 @@ make login       # 打印 Element 地址和凭据文件位置，不打印密码
 make build-worker-image
 ```
 
-active build 产出 4 个镜像：一个通用 `tg-worker:dev` 和三个 runner/deployment 辅助服务镜像。Codex/OpenCodex 辅助 target 不再由产品构建入口构建。角色不再对应镜像；六个 Agent package 和六个产品 Skill 都预装在通用 Worker 中。
+active build 只产出一个通用 `tg-worker:dev`。旧 Runner、Deployment、Codex/OpenCodex target 已在 M7 删除。角色不再对应镜像；六个 Agent package 和六个产品 Skill 都预装在通用 Worker 中。
 
 ### 坑 4：`npm ci` 访问 npmjs.org 超时
 
@@ -99,27 +99,9 @@ TIANGONG_NPM_REGISTRY=https://registry.npmmirror.com make build-worker-image
 
 脚本只允许 npmjs 与 npmmirror，其他 registry 会 fail closed。
 
-### 坑 5：`docker.io` digest 404
+### 坑 5：基础 Worker 镜像拉取失败
 
-如果 Docker 配置的镜像加速器对 `docker.io/library/docker@sha256:...` 返回 404，BuildKit 可能不会自动回退。先按 `worker/Dockerfile` 第 2 行的 digest 预拉取，再用**不带 `--pull`** 的命令构建全部目标：
-
-```bash
-# 必须在仓库根目录执行；digest 以 worker/Dockerfile 第 2 行为准
-DOCKER_CLI_DIGEST=sha256:0135662b510037ea581d99c2e5929c5e01185139c0b86986a418bd4da0b98a44
-docker pull "docker.io/library/docker@${DOCKER_CLI_DIGEST}"
-
-build_target() {
-  docker build \
-    --target "$1" --tag "$2" worker
-}
-
-build_target default tg-worker:dev
-build_target runner-broker tg-runner-broker:dev
-build_target deployment-service tg-deployment-service:dev
-build_target deployment-broker tg-deployment-broker:dev
-```
-
-这里没有 `--pull`；否则仍可能再次触发加速器上的 digest 404。构建目标或 digest 以后发生变化时，以 `scripts/build-worker-image.sh` 和 `worker/Dockerfile` 的当前内容为准。
+Worker 只从 `worker/Dockerfile` 中固定的 AgentTeams Worker digest 构建 `tg-worker`。镜像拉取失败时先检查 Docker registry/代理配置；不要改用未固定 tag，也不要恢复已删除的 Docker CLI、Runner 或 Deployment target。
 
 ## 4. 创建团队（以下手工五角色步骤仅用于 v0.4.1 历史排障）
 
