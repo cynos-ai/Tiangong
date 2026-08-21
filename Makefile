@@ -7,6 +7,7 @@ WORKER_IMAGE_BUILD := ./scripts/build-worker-image.sh
 COORDINATION_IMAGE_BUILD := ./scripts/build-coordination-image.sh
 COORDINATION_RUNTIME_DEPLOY := ./scripts/deploy-coordination-runtime.sh
 AGENTLOOP_COLLECTOR := ./scripts/agentloop-collector.sh
+AGENTLOOP_TRACE_QUERY := ./scripts/agentloop-trace-query.sh
 LEADER_RUNTIME_INJECTION_TEST := ./scripts/test-leader-runtime-injection.sh
 LEADER_RUNTIME_DOCKER_INJECTION_TEST := ./scripts/test-leader-runtime-injection-docker.sh
 MEMBER_RUNTIME_INJECTION_TEST := ./scripts/test-member-runtime-injection-docker.sh
@@ -23,7 +24,7 @@ PRODUCT_AGENT_SKILL_TEST := node --test ./worker/test/agent-packages.test.mjs ./
 CHAT_FIRST_WEB_TEST := node --test --test-concurrency=1 ./app/test/matrix-web-gateway.test.mjs ./app/test/server.test.mjs ./app/test/runtime-server.test.mjs
 B5_RUNTIME_ROUTE_TEST := node ./worker/test/runtime-routing.test.mjs
 
-.PHONY: help init up start stop down status verify config provider-check logs login uninstall test-agentteams test-agentteams-worker-admission-contract check-skills test-product-agent-skills test-chat-first-web check-demo-contract build-worker-image build-coordination-image coordination-runtime-start coordination-runtime-status coordination-runtime-stop test-coordination-runtime-deployment agentloop-collector-start agentloop-collector-status agentloop-collector-stop test-agentloop-contract test-leader-runtime-injection test-leader-runtime-injection-docker test-member-runtime-injection-docker test-b5-runtime-route test-peer-mention-smoke-contract test-peer-mention-smoke test-matrix-browser-smoke-contract matrix-browser-start matrix-browser-status matrix-browser-stop test-specialist-leader-handoff-contract test-specialist-leader-handoff test-p0-identity-pg-contract test-p0-2-mention-contract test-pause-worker-boundary test-openclaw-admission-contract test-openclaw-admission-hooks test-openclaw-admission-replay test-openclaw-tool-result-capture-matrix test-openclaw-admission-context-file test-runtime-console
+.PHONY: help init up start stop down status verify config provider-check logs login uninstall test-agentteams test-agentteams-worker-admission-contract check-skills test-product-agent-skills test-chat-first-web check-demo-contract build-worker-image build-coordination-image coordination-runtime-start coordination-runtime-status coordination-runtime-stop test-coordination-runtime-deployment agentloop-collector-start agentloop-collector-status agentloop-collector-stop agentloop-trace-query test-agentloop-contract test-agentloop-query-contract test-leader-runtime-injection test-leader-runtime-injection-docker test-member-runtime-injection-docker test-b5-runtime-route test-peer-mention-smoke-contract test-peer-mention-smoke test-matrix-browser-smoke-contract matrix-browser-start matrix-browser-status matrix-browser-stop test-specialist-leader-handoff-contract test-specialist-leader-handoff test-p0-identity-pg-contract test-p0-2-mention-contract test-pause-worker-boundary test-openclaw-admission-contract test-openclaw-admission-hooks test-openclaw-admission-replay test-openclaw-tool-result-capture-matrix test-openclaw-admission-context-file test-runtime-console
 
 .PHONY: start-coordination
 
@@ -109,8 +110,14 @@ agentloop-collector-status: ## Show the owned AgentLoop collector status
 agentloop-collector-stop: ## Remove only the owned AgentLoop collector
 	@$(AGENTLOOP_COLLECTOR) stop
 
-test-agentloop-contract: ## Validate AgentLoop credential, OTLP, and correlation boundaries
-	@node --test ./test/agentloop-deployment.test.mjs ./worker/test/agentloop-correlation.test.mjs
+agentloop-trace-query: ## Explicitly query one AgentLoop service through the read-only SLS API (ARGS required)
+	@$(AGENTLOOP_TRACE_QUERY) $(ARGS)
+
+test-agentloop-contract: ## Validate AgentLoop credential, OTLP, query, and correlation boundaries
+	@node --test ./test/agentloop-deployment.test.mjs ./test/agentloop-query.test.mjs ./worker/test/agentloop-correlation.test.mjs
+
+test-agentloop-query-contract: ## Validate fail-closed AgentLoop SLS query boundaries without cloud access
+	@node --test ./test/agentloop-query.test.mjs
 
 test-leader-runtime-injection: ## Validate the live Leader Worker binding/endpoint/token boundary
 	@$(LEADER_RUNTIME_INJECTION_TEST)
