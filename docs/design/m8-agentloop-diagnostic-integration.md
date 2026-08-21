@@ -1,6 +1,6 @@
 # M8 AgentLoop diagnostic integration
 
-Status: implemented locally; real Alibaba Cloud reporting acceptance requires a rotated repository-external credential.
+Status: complete; local contracts and isolated real-service reporting/query acceptance verified.
 
 ## Objective
 
@@ -67,4 +67,4 @@ A real AgentLoop run is a separate external integration check. It must use a new
 5. Content shown is limited to the explicitly approved isolated test fixture.
 6. Collector, Workers, Team, network additions, volumes, and external secret file are cleaned by their owners.
 
-Without these observations, report local integration as validated but cloud delivery as not yet proven.
+M8's isolated real-service run satisfied these observations: a read-only SLS `logstore-tracing` query returned the exact disposable service, the expected OpenClaw lifecycle and business span shape, and real same-run PostgreSQL Work/Task correlation; the owned scope was then proven absent. This historical result closes M8 but does not replace per-run external observation for future environments.

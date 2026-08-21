@@ -73,7 +73,36 @@ Then run the existing Leader/member injection command for the owned disposable W
 make agentloop-collector-stop
 ```
 
-The secret file is validated as a non-symlink regular file, limited to four exact fields, mode `0600` or stricter, and an exact Alibaba Cloud HTTPS OTLP base. The collector is read-only, capability-dropped, resource-bounded, attached only to the AgentTeams network, and ownership-labeled for exact cleanup.
+### Optional read-only SLS trace query
+
+Cloud acceptance and demonstrations can explicitly query the AgentLoop trace Logstore with Alibaba Cloud's public `aliyun-log-python-sdk`. This helper is not run by builds, tests, Worker startup, or Collector startup. It performs a read only and never affects Tiangong authority.
+
+Install the SDK in an operator-controlled virtual environment, then create a repository-external file owned by that operator with mode `0600` and exactly these two fields:
+
+```dotenv
+ALIBABA_CLOUD_ACCESS_KEY_ID=<read-only-ram-access-key-id>
+ALIBABA_CLOUD_ACCESS_KEY_SECRET=<read-only-ram-access-key-secret>
+```
+
+Select the file only for the explicit query and pass all query-defining fields separately:
+
+```bash
+export TIANGONG_AGENTLOOP_QUERY_SECRET_FILE=/absolute/path/outside/Tiangong/aliyun-readonly.env
+make agentloop-trace-query ARGS='\
+  --endpoint https://<project>.<region>.log.aliyuncs.com \
+  --project <project> \
+  --service <exact-service-name> \
+  --from-epoch <start-seconds> \
+  --to-epoch <end-seconds> \
+  --expected-work-id <work-id> \
+  --expected-task-id <task-id>'
+```
+
+The command queries only `logstore-tracing`, post-filters the exact `serviceName`, requires the expected Work/Task pair and `isolated-test` marker, and emits only bounded counts, trace IDs, span names, and the selected service/environment. It never emits credentials, raw span records, prompts, responses, or tool content. Missing or unsafe credential material, an unexpected service, a missing correlation/environment marker, query truncation, SDK errors, and backend errors all fail closed with bounded error codes.
+
+Use a RAM principal limited to the required SLS read APIs. The Collector LicenseKey is write authentication and must never be reused as query authorization. The query creates no cloud resource and needs no cleanup.
+
+The write-side secret file is validated as a non-symlink regular file, limited to four exact fields, mode `0600` or stricter, and an exact Alibaba Cloud HTTPS OTLP base. The collector is read-only, capability-dropped, resource-bounded, attached only to the AgentTeams network, and ownership-labeled for exact cleanup.
 
 ## Correlation model
 
@@ -111,4 +140,4 @@ npm --prefix app test
 make build-worker-image
 ```
 
-A real AgentLoop acceptance run additionally requires a newly issued LicenseKey injected only through the external collector secret file. Success requires machine-observed OTLP export plus a queryable AgentLoop trace correlated to real Work/Task identifiers. Until that run is performed, local plugin loading and collector validation do **not** constitute cloud reporting proof.
+A real AgentLoop acceptance run additionally requires a newly issued LicenseKey injected only through the external collector secret file. Success requires machine-observed OTLP export plus a queryable AgentLoop trace correlated to real Work/Task identifiers. Local plugin loading and collector validation alone do **not** constitute cloud reporting proof. M8's isolated real-service acceptance obtained that external postcondition through a read-only SLS query; future runs must establish it again rather than relying on the historical result.
