@@ -20,7 +20,7 @@ The M8 integration is pinned and verified against:
 - OTLP over HTTP/Protobuf only;
 - OpenTelemetry Collector Core `0.136.0` at an immutable image digest.
 
-The release plugin's original lock selected vulnerable OpenTelemetry/protobuf dependencies. Tiangong replaces only that transport dependency set with locked, audited `@opentelemetry/exporter-trace-otlp-proto@0.221.0` and OpenTelemetry SDK `2.10.0`; the image build fails on a high/critical production audit finding. The complete replacement lock is `worker/agentloop-package-lock.json`.
+The release plugin's original lock selected vulnerable OpenTelemetry/protobuf dependencies. Tiangong replaces only that transport dependency set with locked, audited `@opentelemetry/exporter-trace-otlp-proto@0.221.0` and OpenTelemetry SDK `2.10.0`; CI and the image build query npm's bulk advisory endpoint and fail on any production-lock finding. The complete replacement lock is `worker/agentloop-package-lock.json`.
 
 Official references:
 
