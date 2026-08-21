@@ -13,6 +13,32 @@ const MAX_CAPTURE_BYTES = 256 * 1024;
 const MAX_CAPTURE_RECORDS = 32;
 const MAX_SSE_CLIENTS = 32;
 const DIGEST = /^[a-f0-9]{64}$/u;
+const AGENTLOOP_CONSOLE_URL = process.env.TIANGONG_AGENTLOOP_CONSOLE_URL || "";
+const AGENTLOOP_FILTER_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
+
+export function parseAgentLoopConsoleUrl(value) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string" || value.length > 1024) throw new TypeError("AgentLoop console URL is invalid");
+  let url;
+  try { url = new URL(value); } catch { throw new TypeError("AgentLoop console URL is invalid"); }
+  if (url.protocol !== "https:" || url.hostname !== "agentloop4service.console.aliyun.com" || url.port ||
+      url.username || url.password || url.search || url.hash ||
+      !/^\/agentloop\/region\/[a-z0-9-]+\/agentspace\/[A-Za-z0-9._-]+\/app\/llm_agent\/app-list$/u.test(url.pathname)) {
+    throw new TypeError("AgentLoop console URL must be an exact AgentLoop AI observability entry");
+  }
+  return url.toString();
+}
+
+function agentLoopTrajectoryUrl(baseUrl, field, value) {
+  if (!baseUrl || typeof value !== "string" || !AGENTLOOP_FILTER_ID.test(value)) return null;
+  const url = new URL(baseUrl);
+  url.searchParams.set("targetPage", "session-explorer");
+  url.searchParams.set("filters", `attributes.${field}: "${value}"`);
+  url.searchParams.set("queryTimeType", "99");
+  url.searchParams.set("hiddenSwitch", "true");
+  url.searchParams.set("hiddenBackHome", "true");
+  return url.toString();
+}
 
 function boundedId(value) {
   return typeof value === "string" && value.length > 0 && value.length <= 256 ? value : null;
@@ -237,9 +263,11 @@ function projectAgents(memberConfigs, tasks, toolResults) {
   });
 }
 
-async function runtimeFacts({ factsFile = FACTS_FILE, captureFile = CAPTURE_FILE, coordinationStore, memberConfigs = [] } = {}) {
+async function runtimeFacts({ factsFile = FACTS_FILE, captureFile = CAPTURE_FILE, coordinationStore, memberConfigs = [], agentLoopConsoleUrl = null } = {}) {
   const capture = await readCapture(captureFile);
   const coordination = await readCoordination(coordinationStore);
+  coordination.works = coordination.works.map((work) => ({ ...work, trajectoryUrl: agentLoopTrajectoryUrl(agentLoopConsoleUrl, "tiangong.work.id", work.workId) }));
+  coordination.tasks = coordination.tasks.map((task) => ({ ...task, trajectoryUrl: agentLoopTrajectoryUrl(agentLoopConsoleUrl, "tiangong.task.id", task.taskId) }));
   const agents = projectAgents(memberConfigs, coordination.tasks, capture.records);
   if (!factsFile) {
     return {
@@ -281,6 +309,7 @@ export function createRuntimeConsoleServer(options = {}) {
   const captureFile = options.captureFile ?? CAPTURE_FILE;
   const coordinationStore = options.coordinationStore;
   const memberConfigs = Array.isArray(options.memberConfigs) ? options.memberConfigs : [];
+  const agentLoopConsoleUrl = parseAgentLoopConsoleUrl(options.agentLoopConsoleUrl ?? AGENTLOOP_CONSOLE_URL);
   const sseIntervalMs = Number.isSafeInteger(options.sseIntervalMs) && options.sseIntervalMs >= 100 && options.sseIntervalMs <= 60_000 ? options.sseIntervalMs : 1_000;
   const sseClients = new Map();
   const coordinationControl = options.coordinationControl ? createCoordinationAdmissionHandler(options.coordinationControl) : null;
@@ -336,7 +365,7 @@ export function createRuntimeConsoleServer(options = {}) {
         sending = true;
         try {
           await matrixWebGateway?.authorizeRead(request);
-          const facts = await runtimeFacts({ factsFile, captureFile, coordinationStore, memberConfigs });
+          const facts = await runtimeFacts({ factsFile, captureFile, coordinationStore, memberConfigs, agentLoopConsoleUrl });
           response.write(`event: runtime\ndata: ${JSON.stringify(facts)}\n\n`);
         } catch {
           if (matrixWebGateway) {
@@ -357,7 +386,7 @@ export function createRuntimeConsoleServer(options = {}) {
     }
     if (request.url === "/api/runtime") {
       try { await matrixWebGateway?.authorizeRead(request); } catch { return json(response, 401, { error: "WEB_SESSION_REQUIRED" }); }
-      return json(response, 200, await runtimeFacts({ factsFile, captureFile, coordinationStore, memberConfigs }));
+      return json(response, 200, await runtimeFacts({ factsFile, captureFile, coordinationStore, memberConfigs, agentLoopConsoleUrl }));
     }
     if (request.url === "/" || request.url === "/index.html") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });

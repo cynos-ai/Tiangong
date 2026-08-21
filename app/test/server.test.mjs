@@ -4,13 +4,22 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { createRuntimeConsoleServer } from "../server.mjs";
+import { createRuntimeConsoleServer, parseAgentLoopConsoleUrl } from "../server.mjs";
 import { createControlProfile, createMemberConfig, createTeamConfig } from "../../worker/agent/team/coordination-contracts.mjs";
 
 async function get(server, path = "/api/runtime") { const response = await fetch(`http://127.0.0.1:${server.address().port}${path}`); return { response, body: path.includes("events") ? null : await response.json() }; }
 function storeProjection({ works = [], tasks = [], results = [], admissions = [], metrics = { pendingCount: 0, oldestReceivedAt: null, lastErrorCode: null } } = {}) {
   return { async listWorks() { return works; }, async listOutbox() { return []; }, async listTasks() { return tasks; }, async listResults() { return results; }, async listMessageAdmissions() { return admissions; }, async admissionMetrics() { return metrics; }, async health() { return { ok: true }; } };
 }
+
+test("AgentLoop console links accept only the documented fixed HTTPS route", () => {
+  const base = "https://agentloop4service.console.aliyun.com/agentloop/region/cn-hangzhou/agentspace/demo-space/app/llm_agent/app-list";
+  assert.equal(parseAgentLoopConsoleUrl(base), base);
+  assert.equal(parseAgentLoopConsoleUrl(""), null);
+  for (const invalid of ["not-a-url", "http://agentloop4service.console.aliyun.com/agentloop/region/cn-hangzhou/agentspace/demo/app/llm_agent/app-list", "https://evil.example/agentloop/region/cn-hangzhou/agentspace/demo/app/llm_agent/app-list", `${base}?token=secret`]) {
+    assert.throws(() => parseAgentLoopConsoleUrl(invalid), /AgentLoop console URL/u);
+  }
+});
 
 test("runtime console exposes honest unknown state and message-admission fields", async (t) => {
   const server = createRuntimeConsoleServer().listen(0); t.after(() => server.close()); const { body } = await get(server);
@@ -56,7 +65,9 @@ test("runtime console projects configured Agents, Task sessions, Plan facts, and
   const work = { work: { workId: "work-agents", teamId: team.teamId, routeId: "route-agents", roomId: "!agents:example.test", title: "Agents", actorId: "@human:example.test", sourceEventId: "$agents", leaderSessionId: "leader-session" }, epoch: 3, status: "open", currentWorkSpec: { revision: 1, goal: "Implement", scope: [], constraints: [], doneWhen: ["Result exists"], unresolvedAssumptions: [] }, currentPlanRef: plan2, timeline: [plan1, plan2].map((planRef, index) => ({ sequence: index + 1, type: "work-plan-changed", at: now, actorId: leader.memberId, requestId: `plan-${index}`, epoch: index + 1, payload: { planRef } })) };
   const task = { spec: { taskId: "task-agents", workId: "work-agents", assigneeMemberId: developer.memberId, objective: "Implement", constraints: [], inputs: [], createdAt: now }, sessionRef: "member-session", status: "assigned", result: null, cancellation: null };
   const capture = join(root, "capture.json"); await writeFile(capture, JSON.stringify({ version: 1, results: [{ toolResultId: "c".repeat(64), callKey: "d".repeat(64), workId: "work-agents", taskId: "task-agents", actorId: developer.memberId, runtimeProfile: "openclaw-built-in", tool: "tiangong_use_skill", requestSummary: { toolName: "tiangong_use_skill" }, resultSummary: { outcome: "success", skillId: "test-driven-development", skillVersion: "1.0.0", skillContentDigest: "e".repeat(64) }, outputRef: null, startedAt: now, completedAt: now }], retentionMarks: [] }), { mode: 0o600 });
-  const server = createRuntimeConsoleServer({ coordinationStore: storeProjection({ works: [work], tasks: [task] }), captureFile: capture, memberConfigs: [leader, developer] }).listen(0); t.after(() => server.close()); const { body } = await get(server);
+  const agentLoopConsoleUrl = "https://agentloop4service.console.aliyun.com/agentloop/region/cn-hangzhou/agentspace/demo-space/app/llm_agent/app-list";
+  const server = createRuntimeConsoleServer({ coordinationStore: storeProjection({ works: [work], tasks: [task] }), captureFile: capture, memberConfigs: [leader, developer], agentLoopConsoleUrl }).listen(0); t.after(() => server.close()); const { body } = await get(server);
   assert.equal(body.tasks[0].sessionRef, "member-session"); assert.deepEqual(body.works[0].currentPlanRef, plan2); assert.deepEqual(body.works[0].timeline.map((entry) => entry.payload.planRef.ref), [plan1.ref, plan2.ref]);
+  assert.match(body.works[0].trajectoryUrl, /attributes\.tiangong\.work\.id/iu); assert.match(body.tasks[0].trajectoryUrl, /attributes\.tiangong\.task\.id/iu); assert.equal(body.works[0].trajectoryUrl.includes("secret"), false);
   const projected = body.agents.find((agent) => agent.memberId === developer.memberId); assert.equal(projected.status, "active"); assert.equal(projected.usedSkills[0].skillId, "test-driven-development");
 });
