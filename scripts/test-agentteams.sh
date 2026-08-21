@@ -91,7 +91,7 @@ sed -i \
   -e 's#^AGENTTEAMS_OPENAI_BASE_URL=.*#AGENTTEAMS_OPENAI_BASE_URL=https://api.deepseek.com/v1#' \
   -e 's/^AGENTTEAMS_DEFAULT_MODEL=.*/AGENTTEAMS_DEFAULT_MODEL=deepseek-chat/' .env
 provider_check="$(make provider-check)"
-[[ "${provider_check}" == *'route=codex-native-responses'* ]] || {
+[[ "${provider_check}" == *'route=agentteams-openclaw-built-in'* ]] || {
   printf 'FAIL: DeepSeek Chat provider route was not classified as the native Responses route.\n' >&2
   exit 1
 }

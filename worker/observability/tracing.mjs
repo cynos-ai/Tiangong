@@ -52,7 +52,6 @@ const ATTRIBUTE_KEYS = new Set([
   "gen_ai.operation.name",
   "gen_ai.provider.name",
   "gen_ai.request.model",
-  "tiangong.approval.pending",
   "tiangong.attempt.id",
   "tiangong.gate.outcome",
   "tiangong.control.id",

@@ -53,7 +53,7 @@ run_case() {
 }
 
 run_case leader openclaw-built-in glm-5 work-coordination,work-planning
-grep -Fq 'TIANGONG_CODEX_RUNTIME=0' "${TEST_ROOT}/env"
+if grep -Eq 'TIANGONG_(CODEX|CANARY)|CODEX_HOME|OPENCLAW_CODEX' "${TEST_ROOT}/env"; then printf 'obsolete runtime environment was injected\n' >&2; exit 1; fi
 grep -Fq 'TIANGONG_MEMBER_COORDINATION_ENABLED=0' "${TEST_ROOT}/env"
 run_case architect openclaw-built-in glm-5 work-planning,plan-challenge
 run_case challenger openclaw-built-in glm-5 plan-challenge
@@ -61,12 +61,12 @@ run_case reviewer openclaw-built-in glm-5 independent-code-review
 run_case reviewer openclaw-built-in qwen3.7-plus independent-code-review
 run_case tester openclaw-built-in glm-5 scenario-testing
 run_case developer openclaw-built-in glm-5 test-driven-development,independent-code-review,scenario-testing
-grep -Fq 'TIANGONG_CODEX_RUNTIME=0' "${TEST_ROOT}/env"
+if grep -Eq 'TIANGONG_(CODEX|CANARY)|CODEX_HOME|OPENCLAW_CODEX' "${TEST_ROOT}/env"; then printf 'obsolete runtime environment was injected\n' >&2; exit 1; fi
 grep -Fq 'TIANGONG_MEMBER_COORDINATION_ENABLED=1' "${TEST_ROOT}/env"
 grep -Fq -- '--volume worker-test-auth:/var/run/secrets/agentteams' "${TEST_ROOT}/run.args"
 grep -Fq -- '--cap-drop ALL' "${TEST_ROOT}/run.args"
 
-if PATH="${TEST_ROOT}/bin:${PATH}" TIANGONG_MEMBER_INJECTION_TEST_ROOT="${TEST_ROOT}" TIANGONG_EXPECTED_MODEL=glm-5 TIANGONG_MEMBER_WORKER_CONTAINER=worker-test TIANGONG_MEMBER_RESPONSIBILITY=leader TIANGONG_MEMBER_RUNTIME=codex-app-server TIANGONG_MEMBER_MODEL=glm-5 TIANGONG_MEMBER_REVISION=2 TIANGONG_MEMBER_AGENT_PACKAGE_ID=tiangong-leader TIANGONG_MEMBER_AGENT_PACKAGE_VERSION=1.0.0 TIANGONG_MEMBER_ALLOWED_SKILLS=work-coordination bash "${SCRIPT_DIR}/inject-member-runtime-docker.sh" >"${TEST_ROOT}/invalid.out" 2>&1; then
+if PATH="${TEST_ROOT}/bin:${PATH}" TIANGONG_MEMBER_INJECTION_TEST_ROOT="${TEST_ROOT}" TIANGONG_EXPECTED_MODEL=glm-5 TIANGONG_MEMBER_WORKER_CONTAINER=worker-test TIANGONG_MEMBER_RESPONSIBILITY=leader TIANGONG_MEMBER_RUNTIME=removed-runtime TIANGONG_MEMBER_MODEL=glm-5 TIANGONG_MEMBER_REVISION=2 TIANGONG_MEMBER_AGENT_PACKAGE_ID=tiangong-leader TIANGONG_MEMBER_AGENT_PACKAGE_VERSION=1.0.0 TIANGONG_MEMBER_ALLOWED_SKILLS=work-coordination bash "${SCRIPT_DIR}/inject-member-runtime-docker.sh" >"${TEST_ROOT}/invalid.out" 2>&1; then
   printf 'expected unsupported runtime\n' >&2; exit 1
 fi
 grep -Fq 'code=MEMBER_RUNTIME_INVALID' "${TEST_ROOT}/invalid.out"

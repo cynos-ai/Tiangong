@@ -37,7 +37,7 @@ export function runtimeRouteFromEnvironment(env = process.env) {
   const configuredRuntime = env.TIANGONG_MEMBER_RUNTIME;
   const configuredModel = env.TIANGONG_MEMBER_MODEL;
   if (!configuredRuntime || !configuredModel) fail("MEMBER_CONFIG_MISSING", "Current MemberConfig runtime and model projection are required");
-  const selectedRuntime = env.TIANGONG_CODEX_RUNTIME === "1" ? "codex-app-server" : "openclaw-built-in";
-  const selectedModel = env.AGENTTEAMS_MODEL ?? env.TIANGONG_SELECTED_MODEL ?? env.TIANGONG_CODEX_MODEL;
+  const selectedRuntime = "openclaw-built-in";
+  const selectedModel = env.AGENTTEAMS_MODEL ?? env.TIANGONG_SELECTED_MODEL;
   return assertMemberRuntimeRoute({ responsibility: inputResponsibility, configuredRuntime, configuredModel, selectedRuntime, selectedModel, fallback: env.OPENCLAW_AGENT_HARNESS_FALLBACK ?? "none" });
 }

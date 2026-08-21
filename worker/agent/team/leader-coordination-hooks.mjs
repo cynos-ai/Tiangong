@@ -1,7 +1,4 @@
 import { sha256 } from "../canonical-json.mjs";
-import { EvidenceRecorder } from "../evidence/recorder.mjs";
-import { defaultStateDirectory } from "../persistence/state-directory.mjs";
-import { workerStatePaths } from "../persistence/state-paths.mjs";
 import { createTeamChannel } from "./channel-adapter.mjs";
 import { createRemoteCoordinationStore, createRemoteOpenClawLeaderAdmissionHook } from "./coordination-control-client.mjs";
 
@@ -22,10 +19,8 @@ export function registerLeaderCoordinationHooks(api, { env = process.env, fetchI
   if (typeof api?.on !== "function") throw new Error("OpenClaw Leader coordination hook API is unavailable");
   const endpoint = first(env.TIANGONG_COORDINATION_CONTROL_ENDPOINT); const token = first(env.TIANGONG_COORDINATION_CONTROL_TOKEN); const memberId = first(env.TIANGONG_MEMBER_ID, env.AGENTTEAMS_WORKER_NAME);
   if (!endpoint || !token || !memberId) throw new Error("Leader coordination endpoint, token, and member are required");
-  const workerName = required(env.AGENTTEAMS_WORKER_NAME, "Worker name", /^[A-Za-z0-9._-]{1,128}$/u);
-  const workspace = `/root/agentteams-fs/agents/${workerName}`;
-  const evidence = new EvidenceRecorder({ filePath: workerStatePaths(defaultStateDirectory(workspace)).evidenceFilePath });
-  const channel = suppliedChannel ?? createTeamChannel({ evidence, env, fetchImpl });
+  required(env.AGENTTEAMS_WORKER_NAME, "Worker name", /^[A-Za-z0-9._-]{1,128}$/u);
+  const channel = suppliedChannel ?? createTeamChannel({ env, fetchImpl });
   const admission = admissionHook ?? createRemoteOpenClawLeaderAdmissionHook({ channel, endpoint, token, fetchImpl });
   const store = coordinationStore ?? createRemoteCoordinationStore({ endpoint, token, fetchImpl, memberId });
   const turns = new Map();

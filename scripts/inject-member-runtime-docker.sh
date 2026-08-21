@@ -23,7 +23,6 @@ readonly COORDINATION_ENDPOINT="${TIANGONG_MEMBER_COORDINATION_CONTROL_ENDPOINT:
 readonly COORDINATION_TOKEN="${TIANGONG_MEMBER_COORDINATION_CONTROL_TOKEN:-}"
 readonly ROUTING_REQUIRED="1"
 readonly GATEWAY_URL="${TIANGONG_AGENTTEAMS_AI_GATEWAY_URL:-http://aigw-local.agentteams.io:8080}"
-readonly GATEWAY_HOSTS="${TIANGONG_CODEX_GATEWAY_HOSTS:-agentteams-controller,aigw-local.agentteams.io}"
 
 tmp_dir=''
 inspect_file=''
@@ -78,9 +77,6 @@ valid_token() {
 valid_gateway_url() {
   [[ "$1" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$ ]]
 }
-valid_gateway_hosts() {
-  [[ "$1" =~ ^[A-Za-z0-9.-]+(,[A-Za-z0-9.-]+)*$ ]]
-}
 docker_host_path() {
   local path="$1" docker_binary docker_binary_real
   docker_binary="$(command -v "${DOCKER_COMMAND}" 2>/dev/null || true)"
@@ -122,38 +118,10 @@ fi
 valid_endpoint "${COORDINATION_ENDPOINT}" || fail COORDINATION_ENDPOINT_REQUIRED
 valid_token "${COORDINATION_TOKEN}" || fail COORDINATION_TOKEN_REQUIRED
 valid_gateway_url "${GATEWAY_URL}" || fail GATEWAY_URL_INVALID
-valid_gateway_hosts "${GATEWAY_HOSTS}" || fail GATEWAY_HOSTS_INVALID
 gateway_domain="${GATEWAY_URL#*://}"
 gateway_domain="${gateway_domain%%:*}"
-
-if [[ "${MEMBER_RUNTIME}" == codex-app-server ]]; then
-  readonly CODEX_RUNTIME=1
-  readonly RUNTIME_LANE=openclaw-canary
-  readonly CANARY_REQUIRED=1
-  readonly CANARY_ADMISSION=local
-  readonly OPENCLAW_RUNTIME=codex
-  readonly CODEX_PROVIDER="${TIANGONG_MEMBER_CODEX_PROVIDER:-agentteams-gateway}"
-  readonly CODEX_MODEL="${MEMBER_MODEL}"
-  readonly CODEX_CACHE_URL="${TIANGONG_MEMBER_CODEX_CAPABILITY_CACHE_URL:-http://tiangong-codex-capability-cache:8788}"
-  readonly CODEX_BASE_URL="${TIANGONG_CODEX_BASE_URL:-${GATEWAY_URL%/}/v1}"
-else
-  readonly CODEX_RUNTIME=0
-  readonly RUNTIME_LANE=openclaw-native
-  readonly CANARY_REQUIRED=0
-  readonly CANARY_ADMISSION=''
-  readonly OPENCLAW_RUNTIME=pi
-  readonly CODEX_PROVIDER=''
-  readonly CODEX_MODEL=''
-  readonly CODEX_CACHE_URL=''
-  readonly CODEX_BASE_URL=''
-fi
-
-if [[ "${MEMBER_RUNTIME}" == codex-app-server ]]; then
-  [[ "${CODEX_PROVIDER}" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || fail CODEX_PROVIDER_INVALID
-  [[ "${CODEX_MODEL}" =~ ^[A-Za-z0-9._:/-]{1,128}$ ]] || fail CODEX_MODEL_INVALID
-  [[ "${CODEX_CACHE_URL}" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~:/-]*)?$ ]] || fail CODEX_CACHE_URL_INVALID
-  [[ "${CODEX_BASE_URL}" =~ ^https?://[^@/?#[:space:]]+(/[^?#[:space:]]*)?$ ]] || fail CODEX_BASE_URL_INVALID
-fi
+readonly RUNTIME_LANE=openclaw-native
+readonly OPENCLAW_RUNTIME=pi
 
 if [[ -n "${DOCKER_TEMP_DIR}" ]]; then
   [[ -d "${DOCKER_TEMP_DIR}" && ! -L "${DOCKER_TEMP_DIR}" ]] || fail INVALID_DOCKER_TEMP_DIR
@@ -259,21 +227,14 @@ jq -r '.[0].Config.Env[]?
        $key == "OPENCLAW_AGENT_HARNESS_FALLBACK" or
        ($key | startswith("TIANGONG_CODEX_"))) | not)' "${inspect_file}" >"${env_file}"
 {
-  printf 'TIANGONG_MEMBER_RESPONSIBILITY=%s\nTIANGONG_MEMBER_RUNTIME=%s\nTIANGONG_MEMBER_MODEL=%s\nTIANGONG_MEMBER_REVISION=%s\nTIANGONG_MEMBER_AGENT_PACKAGE_ID=%s\nTIANGONG_MEMBER_AGENT_PACKAGE_VERSION=%s\nTIANGONG_MEMBER_ALLOWED_SKILLS=%s\nTIANGONG_SELECTED_MODEL=%s\nTIANGONG_MEMBER_RUNTIME_ROUTING_REQUIRED=%s\nTIANGONG_CODEX_RUNTIME=%s\nOPENCLAW_AGENT_HARNESS_FALLBACK=none\nOPENCLAW_AGENT_RUNTIME=%s\nOPENCLAW_CODEX_DISCOVERY_LIVE=%s\nCODEX_HOME=/root/.codex\n' \
-    "${RESPONSIBILITY}" "${MEMBER_RUNTIME}" "${MEMBER_MODEL}" "${MEMBER_REVISION}" "${AGENT_PACKAGE_ID}" "${AGENT_PACKAGE_VERSION}" "${ALLOWED_SKILLS}" "${MEMBER_MODEL}" "${ROUTING_REQUIRED}" "${CODEX_RUNTIME}" "${OPENCLAW_RUNTIME}" "${CODEX_RUNTIME}"
+  printf 'TIANGONG_MEMBER_RESPONSIBILITY=%s\nTIANGONG_MEMBER_RUNTIME=%s\nTIANGONG_MEMBER_MODEL=%s\nTIANGONG_MEMBER_REVISION=%s\nTIANGONG_MEMBER_AGENT_PACKAGE_ID=%s\nTIANGONG_MEMBER_AGENT_PACKAGE_VERSION=%s\nTIANGONG_MEMBER_ALLOWED_SKILLS=%s\nTIANGONG_SELECTED_MODEL=%s\nTIANGONG_MEMBER_RUNTIME_ROUTING_REQUIRED=%s\nOPENCLAW_AGENT_HARNESS_FALLBACK=none\nOPENCLAW_AGENT_RUNTIME=%s\n' \
+    "${RESPONSIBILITY}" "${MEMBER_RUNTIME}" "${MEMBER_MODEL}" "${MEMBER_REVISION}" "${AGENT_PACKAGE_ID}" "${AGENT_PACKAGE_VERSION}" "${ALLOWED_SKILLS}" "${MEMBER_MODEL}" "${ROUTING_REQUIRED}" "${OPENCLAW_RUNTIME}"
   printf 'TIANGONG_MEMBER_ID=%s\nTIANGONG_COORDINATION_CONTROL_ENDPOINT=%s\nTIANGONG_COORDINATION_CONTROL_TOKEN=%s\n' \
     "${member_id}" "${COORDINATION_ENDPOINT}" "${COORDINATION_TOKEN}"
   printf 'AGENTTEAMS_AI_GATEWAY_URL=%s\nAGENTTEAMS_AI_GATEWAY_DOMAIN=%s\nTIANGONG_RUNTIME_LANE=%s\n' \
     "${GATEWAY_URL}" "${gateway_domain}" "${RUNTIME_LANE}"
   if [[ "${TIANGONG_ADMISSION_DEBUG:-0}" == 1 ]]; then printf 'TIANGONG_ADMISSION_DEBUG=1\n'; fi
   if [[ "${RESPONSIBILITY}" == leader ]]; then printf 'TIANGONG_MEMBER_COORDINATION_ENABLED=0\n'; else printf 'TIANGONG_MEMBER_COORDINATION_ENABLED=1\n'; fi
-  if [[ "${CODEX_RUNTIME}" == 1 ]]; then
-    printf 'TIANGONG_CANARY_REQUIRED=%s\nTIANGONG_CANARY_ADMISSION=%s\n' "${CANARY_REQUIRED}" "${CANARY_ADMISSION}"
-    printf 'TIANGONG_CODEX_PROVIDER=%s\nTIANGONG_CODEX_MODEL=%s\nTIANGONG_CODEX_CREDENTIAL_SOURCE=agentteams-consumer-token\nTIANGONG_CODEX_TRANSPORT=auto\nTIANGONG_CODEX_BRIDGE=auto\nTIANGONG_CODEX_CAPABILITY_CACHE_PATH=/var/lib/tiangong-capabilities/codex.json\nTIANGONG_CODEX_CAPABILITY_CACHE_URL=%s\nTIANGONG_CODEX_CAPABILITY_CACHE_SHARED=1\n' \
-      "${CODEX_PROVIDER}" "${CODEX_MODEL}" "${CODEX_CACHE_URL}"
-    printf 'TIANGONG_CODEX_GATEWAY_HOSTS=%s\nTIANGONG_CODEX_BASE_URL=%s\nTIANGONG_CANARY_ADMISSION_FILE=%s/tiangong-admission.json\n' \
-      "${GATEWAY_HOSTS}" "${CODEX_BASE_URL}" "${working_dir}"
-  fi
 } >>"${env_file}"
 chmod 600 "${env_file}"
 # Docker Desktop reads the file through the Windows host when this script runs

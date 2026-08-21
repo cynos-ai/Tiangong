@@ -1011,17 +1011,6 @@ assert_no_work_admission() {
       fi
     done
   done
-  local evidence_types
-  evidence_types="$(docker exec -i "${SPECIALIST_CONTAINER}" sh -s -- "${SPECIALIST_NAME}" <<'NO_WORK_EVIDENCE'
-set -eu
-member="$1"
-root="/root/agentteams-fs/agents/${member}/.tiangong/runtime/evidence"
-find "${root}" -type f -name '*.jsonl' -exec jq -r '.type // empty' {} + 2>/dev/null || true
-NO_WORK_EVIDENCE
-  )" || die "Specialist Evidence could not be read for the no-Work assertion."
-  if grep -Eq '^(human-request\.|work\.|team\.task\.|task-run\.)' <<<"${evidence_types}"; then
-    die "Handoff emitted a Human Work or Task fact."
-  fi
   printf 'handoff_agent_communication_not_human_work=pass\n'
 }
 

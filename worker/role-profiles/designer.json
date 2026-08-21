@@ -1,9 +1,0 @@
-{
-  "schemaVersion": 1,
-  "roleId": "designer",
-  "title": "Tiangong Designer",
-  "soulId": "designer-soul-v1",
-  "skillIds": ["designer-design-delivery-v1"],
-  "toolIds": ["team_resolve_task", "team_submit_result"],
-  "gatePolicyId": "professional-tools-v1"
-}

@@ -1,4 +1,0 @@
-#!/usr/bin/env sh
-set -eu
-
-exec node /opt/tiangong-worker/agent/retention/cli.mjs "$@"

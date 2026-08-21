@@ -3,8 +3,8 @@
 // AgentTeams v1.2.0 creates one personal Worker room plus one shared Team
 // room. The adapter discovers the Team room from the authenticated Worker's
 // joined-room set, verifies the intended recipient is a joined member, and
-// uses deterministic Matrix transaction IDs so operation replay cannot emit
-// duplicate events. Tokens and message content never enter Evidence.
+// uses deterministic Matrix transaction IDs so replay cannot emit duplicate
+// events. Matrix event IDs remain the direct delivery observation.
 
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -266,8 +266,7 @@ async function send(config, operation) {
   return { roomId, roomIdDigest: sha256(roomId), transactionId, eventId: response.event_id, eventIdDigest: sha256(response.event_id) };
 }
 
-export function createTeamChannel({ evidence, env = process.env, fetchImpl = globalThis.fetch } = {}) {
-  if (!evidence?.append) throw new TypeError("Team channel requires durable Evidence");
+export function createTeamChannel({ env = process.env, fetchImpl = globalThis.fetch } = {}) {
   if (typeof fetchImpl !== "function") throw new TypeError("Team channel requires a Matrix fetch implementation");
   const workerName = requireString(env.AGENTTEAMS_WORKER_NAME, "AGENTTEAMS_WORKER_NAME", WORKER_NAME);
   const config = Object.freeze({
@@ -280,7 +279,7 @@ export function createTeamChannel({ evidence, env = process.env, fetchImpl = glo
     selfMatrixId: workerMatrixId(workerName, env),
   });
 
-  async function deliver(type, operation) {
+  async function deliver(operation) {
     requireString(operation.recipient, "Matrix recipient", MATRIX_USER_ID);
     if (operation.kind === "specialist-handoff") {
       requireString(operation.workId, "handoff workId", HANDOFF_ID);
@@ -298,25 +297,6 @@ export function createTeamChannel({ evidence, env = process.env, fetchImpl = glo
       requireString(operation.bindingDigest, "bindingDigest", DIGEST);
     }
     const sent = await send(config, operation);
-    await evidence.append({
-      type,
-      projectId: operation.projectId,
-      taskId: operation.taskId,
-      disposition: operation.disposition,
-      workId: operation.kind === "specialist-handoff" || operation.kind === "work-admitted" ? operation.workId : undefined,
-      intentId: operation.intentId,
-      sourceRoomIdDigest: operation.kind === "specialist-handoff" ? sha256(sent.roomId) : undefined,
-      sourceEventIdDigest: operation.kind === "specialist-handoff" || operation.kind === "work-admitted"
-        ? sha256(operation.sourceEventId) : undefined,
-      sourceSenderDigest: operation.kind === "specialist-handoff" ? sha256(operation.sourceSender) : undefined,
-      workIdDigest: operation.kind === "work-admitted" ? sha256(operation.workId) : undefined,
-      recipientDigest: sha256(operation.recipient),
-      bindingDigest: operation.bindingDigest,
-      roomIdDigest: sent.roomIdDigest,
-      transactionId: sent.transactionId,
-      eventIdDigest: sent.eventIdDigest,
-      delivered: true,
-    });
     return {
       queued: false,
       delivered: true,
@@ -394,7 +374,7 @@ export function createTeamChannel({ evidence, env = process.env, fetchImpl = glo
       });
     },
     async notifyWorkAdmitted(recipient, { roomId, workId, sourceEventId, bindingDigest } = {}) {
-      return deliver("team.work.admitted", {
+      return deliver({
         kind: "work-admitted",
         recipient,
         roomId,
@@ -404,7 +384,7 @@ export function createTeamChannel({ evidence, env = process.env, fetchImpl = glo
       });
     },
     async notifyAssignee(assignee, projectId, taskId, bindingDigest) {
-      return deliver("team.mention.delivered", {
+      return deliver({
         kind: "task-assigned",
         recipient: workerMatrixId(assignee, env),
         projectId,
@@ -413,7 +393,7 @@ export function createTeamChannel({ evidence, env = process.env, fetchImpl = glo
       });
     },
     async notifyLeader(leader, projectId, taskId, resultDigest) {
-      return deliver("team.result.notice.delivered", {
+      return deliver({
         kind: "result-submitted",
         recipient: workerMatrixId(leader, env),
         projectId,
@@ -423,7 +403,7 @@ export function createTeamChannel({ evidence, env = process.env, fetchImpl = glo
     },
     async sendSpecialistHandoff(recipient, { workId, intentId, sourceEventId, sourceSender } = {}) {
       requireString(recipient, "handoff recipient", MATRIX_USER_ID);
-      return deliver("team.specialist.handoff.delivered", {
+      return deliver({
         kind: "specialist-handoff",
         recipient,
         workId,
@@ -436,7 +416,7 @@ export function createTeamChannel({ evidence, env = process.env, fetchImpl = glo
       if (typeof summary !== "string" || summary === "" || Buffer.byteLength(summary) > 8192) {
         throw new Error("Requester report summary is missing or exceeds its bound");
       }
-      return deliver("team.requester.report.delivered", {
+      return deliver({
         kind: "project-terminal",
         recipient: requester,
         projectId,

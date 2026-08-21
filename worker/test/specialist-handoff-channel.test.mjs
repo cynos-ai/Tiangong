@@ -43,9 +43,7 @@ const input = {
 
 test("specialist handoff uses authenticated sender, raw reference, and stable replay", async () => {
   const calls = [];
-  const evidence = [];
   const channel = createTeamChannel({
-    evidence: { async append(event) { evidence.push(event); } },
     env: ENV,
     fetchImpl: matrixFetch(calls),
   });
@@ -70,19 +68,12 @@ test("specialist handoff uses authenticated sender, raw reference, and stable re
     sender: "@tiangong-specialist:example.test",
     recipient: "@tiangong-leader:example.test",
   });
-  assert.equal(evidence.length, 2);
-  assert.deepEqual(evidence.map((event) => event.type), [
-    "team.specialist.handoff.delivered",
-    "team.specialist.handoff.delivered",
-  ]);
-  assert.ok(!JSON.stringify(evidence).includes("secret-token"));
+  assert.ok(!JSON.stringify({ first, replay }).includes("secret-token"));
 });
 
 test("specialist handoff rejects malformed source references before Matrix send", async () => {
   const calls = [];
-  const events = [];
   const channel = createTeamChannel({
-    evidence: { async append(event) { events.push(event); } },
     env: ENV,
     fetchImpl: matrixFetch(calls),
   });
@@ -94,5 +85,4 @@ test("specialist handoff rejects malformed source references before Matrix send"
     /source event ID is missing or invalid/u,
   );
   assert.equal(calls.filter((call) => call.options.method === "PUT").length, 0);
-  assert.deepEqual(events, []);
 });
