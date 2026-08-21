@@ -9,6 +9,10 @@ readonly PREFLIGHT="/opt/tiangong-worker/scripts/openclaw-preflight.mjs"
 readonly RUNTIME_ROUTE_PREFLIGHT="/opt/tiangong-worker/scripts/runtime-route-preflight.mjs"
 readonly AGENT_PACKAGE_LOADER="/opt/tiangong-worker/agent/packages/loader.mjs"
 readonly TOOL_ALLOWLIST_RESOLVER="/opt/tiangong-worker/scripts/resolve-openclaw-tool-allowlist.mjs"
+readonly AGENTLOOP_PLUGIN_ID="opentelemetry-instrumentation-openclaw"
+readonly AGENTLOOP_PLUGIN_PATH="/opt/agentloop/opentelemetry-instrumentation-openclaw"
+readonly AGENTLOOP_PROCESSOR_PATH="/opt/tiangong-worker/observability/agentloop-span-processor.mjs"
+readonly AGENTLOOP_COLLECTOR_ENDPOINT="http://tiangong-agentloop-collector:4318"
 
 assert_member_runtime_route() {
   [[ "${TIANGONG_MEMBER_RUNTIME_ROUTING_REQUIRED:-0}" == "1" ]] || return 0
@@ -67,7 +71,7 @@ configure_workspace_boundary() {
   local tool_allowlist
   if [[ "${TIANGONG_MEMBER_RUNTIME_ROUTING_REQUIRED:-0}" == "1" ]]; then tool_allowlist="$(/usr/bin/node "${TOOL_ALLOWLIST_RESOLVER}")"; else tool_allowlist='[]'; fi
   TIANGONG_TOOL_ALLOWLIST="${tool_allowlist}" update_config tiangong-workspace '
-    env.TIANGONG_TOOL_ALLOWLIST | fromjson as $allow
+    (env.TIANGONG_TOOL_ALLOWLIST | fromjson) as $allow
     | .tools = (.tools // {})
     | .tools.fs = ((.tools.fs // {}) + {workspaceOnly: true})
     | .tools.allow = $allow
@@ -86,10 +90,82 @@ configure_tiangong_plugin() {
   '
 }
 
+assert_no_agentloop_credentials() {
+  local name
+  while IFS= read -r name; do
+    case "${name}" in
+      ARMS_*|OTEL_*|OPENCLAW_OTEL_PRELOADED)
+        [[ -z "${!name:-}" ]] || { printf '[tiangong-worker] ERROR: AgentLoop credentials and exporter overrides belong in the collector, not the Worker.\n' >&2; return 1; }
+        ;;
+    esac
+  done < <(compgen -e)
+}
+
+configure_agentloop() {
+  local enabled="${TIANGONG_AGENTLOOP_ENABLED:-0}" service_name="${TIANGONG_AGENTLOOP_SERVICE_NAME:-openclaw}"
+  [[ "${enabled}" == 0 || "${enabled}" == 1 ]] || { printf '[tiangong-worker] ERROR: TIANGONG_AGENTLOOP_ENABLED must be 0 or 1.\n' >&2; return 1; }
+  assert_no_agentloop_credentials
+  if [[ "${enabled}" == 0 ]]; then
+    TIANGONG_AGENTLOOP_PLUGIN_ID="${AGENTLOOP_PLUGIN_ID}" TIANGONG_AGENTLOOP_PLUGIN_PATH="${AGENTLOOP_PLUGIN_PATH}" update_config agentloop-disabled '
+      env.TIANGONG_AGENTLOOP_PLUGIN_ID as $id | env.TIANGONG_AGENTLOOP_PLUGIN_PATH as $path
+      | del(.plugins.entries[$id])
+      | .plugins.entries["diagnostics-otel"] = {enabled: false}
+      | .plugins.allow = [(.plugins.allow // [])[] | select(. != $id and . != "diagnostics-otel")]
+      | .plugins.load.paths = [(.plugins.load.paths // [])[] | select(. != $path)]
+      | .diagnostics = {enabled: false, otel: {enabled: false, traces: false, metrics: false, logs: false}}
+      | .plugins.entries["tiangong-control"].config.observability = {enabled: false}
+    '
+    return 0
+  fi
+  [[ "${TIANGONG_AGENTLOOP_CONTENT_CAPTURE:-}" == isolated-test ]] || { printf '[tiangong-worker] ERROR: AgentLoop requires explicit isolated-test content capture.\n' >&2; return 1; }
+  [[ "${TIANGONG_AGENTLOOP_OTLP_ENDPOINT:-${AGENTLOOP_COLLECTOR_ENDPOINT}}" == "${AGENTLOOP_COLLECTOR_ENDPOINT}" ]] || { printf '[tiangong-worker] ERROR: AgentLoop Worker export must use the fixed credential-isolating collector.\n' >&2; return 1; }
+  [[ "${service_name}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || { printf '[tiangong-worker] ERROR: AgentLoop service name is invalid.\n' >&2; return 1; }
+  TIANGONG_AGENTLOOP_PLUGIN_ID="${AGENTLOOP_PLUGIN_ID}" \
+  TIANGONG_AGENTLOOP_PLUGIN_PATH="${AGENTLOOP_PLUGIN_PATH}" \
+  TIANGONG_AGENTLOOP_PROCESSOR_PATH="${AGENTLOOP_PROCESSOR_PATH}" \
+  TIANGONG_AGENTLOOP_ENDPOINT="${AGENTLOOP_COLLECTOR_ENDPOINT}" \
+  TIANGONG_AGENTLOOP_SERVICE="${service_name}" \
+  TIANGONG_AGENTLOOP_MEMBER_ID="${TIANGONG_MEMBER_ID:-${AGENTTEAMS_WORKER_NAME:-unknown-member}}" \
+  update_config agentloop-enabled '
+    env.TIANGONG_AGENTLOOP_PLUGIN_ID as $id
+    | env.TIANGONG_AGENTLOOP_PLUGIN_PATH as $path
+    | env.TIANGONG_AGENTLOOP_PROCESSOR_PATH as $processor
+    | env.TIANGONG_AGENTLOOP_ENDPOINT as $endpoint
+    | env.TIANGONG_AGENTLOOP_SERVICE as $service
+    | env.TIANGONG_AGENTLOOP_MEMBER_ID as $member
+    | .plugins.load.paths = ([((.plugins.load.paths // [])[]), $path] | unique)
+    | .plugins.allow = ([((.plugins.allow // [])[]), $id, "diagnostics-otel"] | unique)
+    | .plugins.entries[$id] = {enabled: true, config: {
+        endpoint: $endpoint,
+        serviceName: $service,
+        debug: false,
+        batchSize: 10,
+        flushIntervalMs: 1000,
+        enableTracePropagation: false,
+        spanProcessorModule: $processor,
+        globalSpanAttributes: {"tiangong.member.id": $member, "deployment.environment": "isolated-test"}
+      }}
+    | .plugins.entries["diagnostics-otel"] = {enabled: true}
+    | .diagnostics = ((.diagnostics // {}) + {enabled: true})
+    | .diagnostics.otel = ((.diagnostics.otel // {}) + {
+        enabled: true,
+        endpoint: $endpoint,
+        protocol: "http/protobuf",
+        serviceName: $service,
+        traces: false,
+        metrics: true,
+        logs: false
+      } | del(.headers))
+    | .plugins.entries["tiangong-control"].config.observability = {enabled: true, endpoint: ($endpoint + "/v1/traces")}
+  '
+  printf '[tiangong-worker] agentloop=enabled transport=collector content_capture=isolated-test service=%s\n' "${service_name}" >&2
+}
+
 if [[ "${1:-}" == "gateway" && "${2:-}" == "run" ]]; then
   load_agentteams_controller_token
   assert_member_runtime_route
   configure_tiangong_plugin
+  configure_agentloop
   configure_workspace_boundary
   configure_builtin_gateway
   /usr/bin/node "${PREFLIGHT}"

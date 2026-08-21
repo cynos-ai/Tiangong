@@ -78,7 +78,7 @@ npm --prefix worker test
 
 The active build produces only `tg-worker:dev`. It contains no Codex/OpenCodex, native Runner, deployment service, pending Operation, Approval command, or hash-chain Evidence runtime. External-write Operation and exact Human Approval behavior will be introduced with real Adapters in a later stage rather than retained as inactive placeholders.
 
-Optional tracing is documented in [`docs/observability.md`](./docs/observability.md). It is disabled by default and remains diagnostic telemetry rather than authorization or a product fact.
+Optional AgentLoop/OpenTelemetry diagnostics are documented in [`docs/observability.md`](./docs/observability.md) and the [M8 design](./docs/design/m8-agentloop-diagnostic-integration.md). They are disabled by default. Workers carry no AgentLoop credential: an independently managed Collector injects cloud write headers, while traces remain non-authoritative diagnostic telemetry.
 
 ### Chat-first Matrix workbench
 

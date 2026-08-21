@@ -20,6 +20,9 @@ readonly OWNER="${TIANGONG_DEPLOYMENT_OWNER:-tiangong-deployment}"
 readonly COMPONENT="${TIANGONG_LEADER_INJECTION_COMPONENT:-leader-runtime-injection}"
 readonly DOCKER_TEMP_DIR="${TIANGONG_DOCKER_TEMP_DIR:-}"
 readonly GATEWAY_URL="${TIANGONG_AGENTTEAMS_AI_GATEWAY_URL:-http://aigw-local.agentteams.io:8080}"
+readonly AGENTLOOP_ENABLED="${TIANGONG_AGENTLOOP_ENABLED:-0}"
+readonly AGENTLOOP_CONTENT_CAPTURE="${TIANGONG_AGENTLOOP_CONTENT_CAPTURE:-}"
+readonly AGENTLOOP_SERVICE_NAME="${TIANGONG_AGENTLOOP_SERVICE_NAME:-openclaw}"
 
 tmp_dir=''
 inspect_file=''
@@ -90,6 +93,11 @@ valid_token() {
 valid_gateway_url() {
   [[ "$1" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$ ]]
 }
+valid_agentloop() {
+  [[ "$AGENTLOOP_ENABLED" == 0 || "$AGENTLOOP_ENABLED" == 1 ]] || return 1
+  [[ "$AGENTLOOP_SERVICE_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || return 1
+  if [[ "$AGENTLOOP_ENABLED" == 1 ]]; then [[ "$AGENTLOOP_CONTENT_CAPTURE" == isolated-test ]]; else [[ -z "$AGENTLOOP_CONTENT_CAPTURE" ]]; fi
+}
 docker_host_path() {
   # Docker Desktop on Windows cannot resolve a WSL /tmp path through the
   # daemon unless it is converted to a \\wsl.localhost UNC path. Keep native
@@ -130,6 +138,7 @@ fi
 valid_endpoint "${ENDPOINT}" || fail INVALID_CONTROL_ENDPOINT
 valid_token "${CONTROL_TOKEN}" || fail INVALID_CONTROL_TOKEN
 valid_gateway_url "${GATEWAY_URL}" || fail INVALID_GATEWAY_URL
+valid_agentloop || fail AGENTLOOP_CONFIG_INVALID
 gateway_domain="${GATEWAY_URL#*://}"
 gateway_domain="${gateway_domain%%:*}"
 
@@ -223,7 +232,11 @@ jq -r '.[0].Config.Env[]?
   | select(startswith("TIANGONG_COORDINATION_CONTROL_ENDPOINT=") | not)
   | select(startswith("TIANGONG_COORDINATION_CONTROL_TOKEN=") | not)
   | select(startswith("AGENTTEAMS_AI_GATEWAY_URL=") | not)
-  | select(startswith("AGENTTEAMS_AI_GATEWAY_DOMAIN=") | not)' "${inspect_file}" | while IFS= read -r line; do
+  | select(startswith("AGENTTEAMS_AI_GATEWAY_DOMAIN=") | not)
+  | select(startswith("TIANGONG_AGENTLOOP_") | not)
+  | select(startswith("ARMS_") | not)
+  | select(startswith("OTEL_") | not)
+  | select(startswith("OPENCLAW_OTEL_PRELOADED=") | not)' "${inspect_file}" | while IFS= read -r line; do
   line="${line%$'\r'}"
   [[ "${line}" != *$'\r'* ]] || fail WORKER_ENV_NEWLINE
   printf '%s\n' "${line}"
@@ -234,6 +247,8 @@ done >"${env_file}"
   printf 'TIANGONG_COORDINATION_CONTROL_TOKEN=%s\n' "${CONTROL_TOKEN}"
   printf 'AGENTTEAMS_AI_GATEWAY_URL=%s\n' "${GATEWAY_URL}"
   printf 'AGENTTEAMS_AI_GATEWAY_DOMAIN=%s\n' "${gateway_domain}"
+  printf 'TIANGONG_AGENTLOOP_ENABLED=%s\nTIANGONG_AGENTLOOP_SERVICE_NAME=%s\n' "${AGENTLOOP_ENABLED}" "${AGENTLOOP_SERVICE_NAME}"
+  [[ -z "${AGENTLOOP_CONTENT_CAPTURE}" ]] || printf 'TIANGONG_AGENTLOOP_CONTENT_CAPTURE=%s\n' "${AGENTLOOP_CONTENT_CAPTURE}"
 } >>"${env_file}"
 chmod 600 "${env_file}"
 sleep 1

@@ -1,5 +1,6 @@
 import { createResult } from "./coordination-contracts.mjs";
 import { createRemoteCoordinationStore } from "./coordination-control-client.mjs";
+import { registerAgentLoopCorrelation } from "../../observability/correlation.mjs";
 
 const ID = /^[A-Za-z0-9@!#$%&*+./:=?_-]{1,160}$/u;
 const MAX_REPORT_BYTES = 8 * 1024;
@@ -60,6 +61,7 @@ export function createMemberCoordinationHooks({ endpoint, token, memberId, fetch
       if (activeKey && activeKey !== key) throw new Error("TASK_SESSION_ALREADY_ACTIVE");
       activeTaskSessions.set(task.spec.taskId, key);
       assignments.set(key, Object.freeze({ task, workId: assignment.workId, taskId: assignment.taskId, sessionRef: task.sessionRef }));
+      registerAgentLoopCorrelation(ctx, { workId: assignment.workId, taskId: assignment.taskId, memberId: actorId, sessionRef: task.sessionRef });
       const objective = bounded(task.spec.objective, 4096);
       const constraints = Array.isArray(task.spec.constraints) ? bounded(task.spec.constraints.join("; "), 4096) : "";
       return { prependContext: `Authoritative Tiangong TaskSpec (read-only): task=${task.spec.taskId} work=${task.spec.workId} logicalSession=${task.sessionRef} objective=${objective}${constraints ? ` constraints=${constraints}` : ""}` };

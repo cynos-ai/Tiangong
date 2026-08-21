@@ -322,7 +322,7 @@ valid_otlp="${temporary_directory}/valid-otlp.json"
 jq -n '{resourceSpans:[{resource:{attributes:[
   {key:"service.name",value:{stringValue:"tiangong-worker"}},
   {key:"service.namespace",value:{stringValue:"tiangong"}}
-]},scopeSpans:[{scope:{name:"io.cynos-ai.tiangong.worker",version:"0.0.0"},spans:[{
+]},scopeSpans:[{scope:{name:"io.tiangong.worker",version:"0.0.0"},spans:[{
   traceId:"11111111111111111111111111111111",
   spanId:"2222222222222222",
   parentSpanId:null,

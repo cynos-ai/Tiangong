@@ -4,6 +4,10 @@ import {
   createWorkerObservability,
   resolveObservabilityConfig,
 } from "../observability/tracing.mjs";
+import {
+  registerAgentLoopCorrelationHooks,
+  registerTiangongControlSpanHooks,
+} from "../observability/hooks.mjs";
 import { registerAdmissionHooks } from "../agent/gates/admission-hooks.mjs";
 import { createControlAdmissionResolver } from "../agent/gates/admission-context.mjs";
 import { createFileAdmissionResolver } from "../agent/gates/admission-context-file.mjs";
@@ -44,9 +48,15 @@ export default definePluginEntry({
             },
       });
     }
+    const observability = createWorkerObservability({
+      config: resolveObservabilityConfig(api.pluginConfig),
+    });
+    registerAgentLoopCorrelationHooks(api, { env: process.env });
+    const controlSpans = registerTiangongControlSpanHooks(api, { observability, env: process.env });
     registerAgentPackageRuntime(api, { env: process.env });
     api.on("tool_result_persist", createToolResultCaptureHook({
       filePath: defaultToolResultCapturePath(),
+      onRecord: controlSpans.observeToolResult,
     }), { priority: 100 });
     if (process.env.TIANGONG_MEMBER_COORDINATION_ENABLED === "1" && !leaderEnvironment) {
       registerMemberCoordinationHooks(api, {
@@ -59,8 +69,5 @@ export default definePluginEntry({
       registerLeaderCoordinationHooks(api, { env: process.env });
       registerLeaderOpenClawTools(api, { env: process.env });
     }
-    createWorkerObservability({
-      config: resolveObservabilityConfig(api.pluginConfig),
-    });
   },
 });

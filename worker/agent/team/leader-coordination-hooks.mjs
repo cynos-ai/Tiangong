@@ -1,6 +1,7 @@
 import { sha256 } from "../canonical-json.mjs";
 import { createTeamChannel } from "./channel-adapter.mjs";
 import { createRemoteCoordinationStore, createRemoteOpenClawLeaderAdmissionHook } from "./coordination-control-client.mjs";
+import { registerAgentLoopCorrelation } from "../../observability/correlation.mjs";
 
 const MATRIX_EVENT_ID = /^\$[^\s]{1,255}$/u;
 const MATRIX_ROOM_ID = /^![^\s]{1,255}$/u;
@@ -28,6 +29,7 @@ export function registerLeaderCoordinationHooks(api, { env = process.env, fetchI
   async function beforePromptBuild(event, ctx) {
     const current = eventContext(event, ctx); const source = { channel: "matrix", authenticated: true, actorId: current.actorId, messageId: current.eventId, route: "team-room" };
     const result = await admission({ roomId: current.roomId, eventId: current.eventId, source });
+    registerAgentLoopCorrelation(ctx, { memberId, turnId: current.eventId, workId: result.binding?.workId });
     if (result.resumed === true) return undefined;
     if (result.admission?.status !== "pending" && !result.binding) throw new Error("Leader message admission did not produce a durable reference");
     turns.set(current.sessionKey, current);

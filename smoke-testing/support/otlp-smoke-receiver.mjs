@@ -1,6 +1,7 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, resolve } from "node:path";
+import { createRequire } from "node:module";
 
 const port = Number(process.env.TIANGONG_OTLP_RECEIVER_PORT ?? 4318);
 if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
@@ -34,7 +35,64 @@ const ALLOWED_ATTRIBUTE_KEYS = new Set([
   "tiangong.timeout_ms",
   "tiangong.tool.name",
   "tiangong.turn.id",
+  "tiangong.work.id",
+  "tiangong.task.id",
+  "tiangong.member.id",
+  "tiangong.session.ref",
+  "tiangong.skill.id",
+  "tiangong.tool_result.id",
 ]);
+
+const TRACE_PROTO = `
+syntax = "proto3";
+message ExportTraceServiceRequest { repeated ResourceSpans resource_spans = 1; }
+message ResourceSpans { Resource resource = 1; repeated ScopeSpans scope_spans = 2; string schema_url = 3; }
+message Resource { repeated KeyValue attributes = 1; uint32 dropped_attributes_count = 2; }
+message ScopeSpans { InstrumentationScope scope = 1; repeated Span spans = 2; string schema_url = 3; }
+message InstrumentationScope { string name = 1; string version = 2; repeated KeyValue attributes = 3; uint32 dropped_attributes_count = 4; }
+message Span {
+  bytes trace_id = 1; bytes span_id = 2; string trace_state = 3; bytes parent_span_id = 4;
+  string name = 5; int32 kind = 6; fixed64 start_time_unix_nano = 7; fixed64 end_time_unix_nano = 8;
+  repeated KeyValue attributes = 9; uint32 dropped_attributes_count = 10;
+  repeated SpanEvent events = 11; uint32 dropped_events_count = 12;
+  repeated SpanLink links = 13; uint32 dropped_links_count = 14; Status status = 15; fixed32 flags = 16;
+}
+message SpanEvent { fixed64 time_unix_nano = 1; string name = 2; repeated KeyValue attributes = 3; uint32 dropped_attributes_count = 4; }
+message SpanLink { bytes trace_id = 1; bytes span_id = 2; string trace_state = 3; repeated KeyValue attributes = 4; uint32 dropped_attributes_count = 5; fixed32 flags = 6; }
+message Status { string message = 2; int32 code = 3; }
+message KeyValue { string key = 1; AnyValue value = 2; }
+message AnyValue { oneof value { string string_value = 1; bool bool_value = 2; int64 int_value = 3; double double_value = 4; ArrayValue array_value = 5; KeyValueList kvlist_value = 6; bytes bytes_value = 7; } }
+message ArrayValue { repeated AnyValue values = 1; }
+message KeyValueList { repeated KeyValue values = 1; }
+`;
+let traceRequestType;
+
+function decodeProtobufTrace(buffer) {
+  if (!traceRequestType) {
+    const require = createRequire("/opt/openclaw/package.json");
+    const protobuf = require("protobufjs");
+    traceRequestType = protobuf.parse(TRACE_PROTO).root.lookupType("ExportTraceServiceRequest");
+  }
+  const decoded = traceRequestType.toObject(traceRequestType.decode(buffer), {
+    arrays: true,
+    objects: true,
+    longs: Number,
+    bytes: Buffer,
+  });
+  for (const resourceSpan of decoded.resourceSpans ?? []) {
+    for (const scopeSpan of resourceSpan.scopeSpans ?? []) {
+      for (const span of scopeSpan.spans ?? []) {
+        span.traceId = Buffer.from(span.traceId ?? []).toString("hex");
+        span.spanId = Buffer.from(span.spanId ?? []).toString("hex");
+        const parent = Buffer.from(span.parentSpanId ?? []).toString("hex");
+        span.parentSpanId = parent || null;
+        span.events ??= [];
+        span.links ??= [];
+      }
+    }
+  }
+  return decoded;
+}
 const HEX_ID = /^[a-f0-9]{16,32}$/u;
 const SAFE_STATUS_MESSAGE = /^(?:[A-Z][A-Z0-9_]{0,63}|internal_error|timeout|upstream_abort)$/u;
 const REJECTION_CODES = new Map([
@@ -103,7 +161,7 @@ function sanitizedSpans(payload) {
       throw new TypeError("OTLP resource identity is invalid");
     }
     for (const scopeSpan of resourceSpan.scopeSpans ?? []) {
-      if (scopeSpan?.scope?.name !== "io.cynos-ai.tiangong.worker") {
+      if (scopeSpan?.scope?.name !== "io.tiangong.worker") {
         throw new TypeError("OTLP instrumentation scope is invalid");
       }
       if (!Array.isArray(scopeSpan.spans) || scopeSpan.spans.length > 128) {
@@ -143,7 +201,7 @@ async function requestBody(request) {
     if (length > MAX_BODY_BYTES) throw new TypeError("OTLP request body is too large");
     chunks.push(chunk);
   }
-  return Buffer.concat(chunks).toString("utf8");
+  return Buffer.concat(chunks);
 }
 
 await mkdir(dirname(outputPath), { recursive: true, mode: 0o700 });
@@ -165,8 +223,9 @@ const server = createServer(async (request, response) => {
     response.end(`${JSON.stringify({ status: "ready", ...counters, rejectionReasons })}\n`);
     return;
   }
+  const contentType = String(request.headers["content-type"] ?? "").split(";", 1)[0].trim();
   if (request.method !== "POST" || request.url !== "/v1/traces" ||
-      !String(request.headers["content-type"] ?? "").startsWith("application/json")) {
+      !new Set(["application/json", "application/x-protobuf"]).has(contentType)) {
     response.writeHead(404, { "content-type": "application/json" });
     response.end('{"error":"unsupported"}\n');
     return;
@@ -174,8 +233,8 @@ const server = createServer(async (request, response) => {
   let stage = "body";
   try {
     const body = await requestBody(request);
-    stage = "json";
-    const payload = JSON.parse(body);
+    stage = contentType === "application/x-protobuf" ? "protobuf" : "json";
+    const payload = contentType === "application/x-protobuf" ? decodeProtobufTrace(body) : JSON.parse(body.toString("utf8"));
     stage = "validation";
     const spans = sanitizedSpans(payload);
     stage = "persistence";
@@ -183,8 +242,8 @@ const server = createServer(async (request, response) => {
     stage = "complete";
     counters.acceptedRequests += 1;
     counters.acceptedSpans += spans.length;
-    response.writeHead(200, { "content-type": "application/json" });
-    response.end("{}\n");
+    response.writeHead(200, { "content-type": contentType === "application/x-protobuf" ? "application/x-protobuf" : "application/json" });
+    response.end(contentType === "application/x-protobuf" ? undefined : "{}\n");
   } catch (error) {
     counters.rejectedRequests += 1;
     const rejectionCode = REJECTION_CODES.get(error?.message) ?? `${stage}_failure`;

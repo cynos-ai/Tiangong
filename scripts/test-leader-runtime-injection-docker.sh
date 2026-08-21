@@ -45,6 +45,8 @@ cat >"${TEST_ROOT}/inspect.json" <<'JSON'
 ]
 JSON
 
+jq '.[0].Config.Env += ["ARMS_LICENSE_KEY=must-not-survive", "OTEL_EXPORTER_OTLP_HEADERS=must-not-survive"]' "${TEST_ROOT}/inspect.json" >"${TEST_ROOT}/inspect-with-stale-agentloop.json"
+mv "${TEST_ROOT}/inspect-with-stale-agentloop.json" "${TEST_ROOT}/inspect.json"
 jq '. [0].HostConfig.Memory = 1048576' "${TEST_ROOT}/inspect.json" >"${TEST_ROOT}/inspect-limited.json"
 
 cat >"${TEST_ROOT}/inspect-volume.json" <<'JSON'
@@ -140,6 +142,9 @@ TIANGONG_LEADER_WORKER_CONTAINER=leader-test \
 TIANGONG_LEADER_RUNTIME_BINDING_FILE="${binding}" \
 TIANGONG_COORDINATION_CONTROL_ENDPOINT=http://coordination-runtime:8780/v1/coordination/admit \
 TIANGONG_COORDINATION_CONTROL_TOKEN=test-control-token-123456 \
+TIANGONG_AGENTLOOP_ENABLED=1 \
+TIANGONG_AGENTLOOP_CONTENT_CAPTURE=isolated-test \
+TIANGONG_AGENTLOOP_SERVICE_NAME=tiangong-m8-test \
   bash "${SCRIPT_DIR}/inject-leader-runtime-docker.sh" >"${output}"
 
 grep -Fq 'leader_runtime_injection=pass container=leader-test' "${output}"
@@ -153,6 +158,13 @@ grep -Fq -- '--init' "${TEST_ROOT}/run.args"
 grep -Fq -- '--restart unless-stopped' "${TEST_ROOT}/run.args"
 grep -Fq 'AGENTTEAMS_AI_GATEWAY_URL=http://aigw-local.agentteams.io:8080' "${TEST_ROOT}/env"
 grep -Fq 'AGENTTEAMS_AI_GATEWAY_DOMAIN=aigw-local.agentteams.io' "${TEST_ROOT}/env"
+grep -Fq 'TIANGONG_AGENTLOOP_ENABLED=1' "${TEST_ROOT}/env"
+grep -Fq 'TIANGONG_AGENTLOOP_CONTENT_CAPTURE=isolated-test' "${TEST_ROOT}/env"
+grep -Fq 'TIANGONG_AGENTLOOP_SERVICE_NAME=tiangong-m8-test' "${TEST_ROOT}/env"
+if grep -Eq 'ARMS_LICENSE_KEY=|OTEL_EXPORTER_OTLP_HEADERS=' "${TEST_ROOT}/env"; then
+  printf 'FAIL: injection retained Worker-side AgentLoop credentials.\n' >&2
+  exit 1
+fi
 if grep -Fq 'test-control-token-123456' "${output}"; then
   printf 'FAIL: injection diagnostic leaked a control token.\n' >&2
   exit 1

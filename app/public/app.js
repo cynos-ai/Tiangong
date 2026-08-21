@@ -288,6 +288,9 @@ function renderWorkDetail(work) {
   $("#work-epoch").textContent = `epoch ${work.epoch}`;
   $("#work-title").textContent = work.title || work.workId;
   $("#work-activity").textContent = `最近活动 ${formatTime(latestAt(work))} · ${work.workId}`;
+  const trajectory = $("#work-trajectory");
+  trajectory.classList.toggle("hidden", !work.trajectoryUrl);
+  if (work.trajectoryUrl) trajectory.href = work.trajectoryUrl; else trajectory.removeAttribute("href");
   renderSpec(work);
   renderPlan(work);
   renderAgents(work);
@@ -355,6 +358,11 @@ function renderTasks(work) {
     const row = document.createElement("div"); row.className = "card-title-row";
     row.append(text("span", task.objective || task.taskId, "card-title"), statusNode(task.status));
     card.append(row, text("div", `${task.assigneeMemberId} · ${task.sessionRef || "Session 未观察"}`, "card-meta"));
+    if (task.trajectoryUrl) {
+      const link = text("a", "查看 Task 轨迹 ↗", "trajectory-link");
+      link.href = task.trajectoryUrl; link.target = "_blank"; link.rel = "noreferrer noopener";
+      card.append(link);
+    }
     if (task.cancellation) card.append(text("div", task.cancellation.reason || "已取消", "result-block"));
     if (task.result) {
       const result = document.createElement("div"); result.className = "result-block";
