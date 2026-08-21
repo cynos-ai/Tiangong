@@ -12,7 +12,7 @@ LABEL org.opencontainers.image.description="AgentTeams Worker image with the pin
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 LABEL org.opencontainers.image.source="https://github.com/cynos-ai/Tiangong"
 
-COPY agentloop-package-lock.json /tmp/agentloop-package-lock.json
+COPY agentloop-package-lock.json scripts/audit-lockfile.mjs /tmp/
 RUN set -eu; \
     plugin_dir=/opt/agentloop/opentelemetry-instrumentation-openclaw; \
     archive=/tmp/agentloop-openclaw.tar.gz; \
@@ -28,7 +28,7 @@ RUN set -eu; \
     node -e 'const fs=require("node:fs"); const path="package.json"; const value=JSON.parse(fs.readFileSync(path,"utf8")); value.dependencies["@opentelemetry/exporter-trace-otlp-proto"]="0.221.0"; value.dependencies["@opentelemetry/resources"]="2.10.0"; value.dependencies["@opentelemetry/sdk-trace-base"]="2.10.0"; fs.writeFileSync(path, JSON.stringify(value, null, 2)+"\n")'; \
     cp /tmp/agentloop-package-lock.json ./package-lock.json; \
     npm ci --omit=dev --ignore-scripts --no-audit --no-fund --registry="${TIANGONG_NPM_REGISTRY}"; \
-    npm audit --omit=dev --audit-level=high --registry="${TIANGONG_NPM_REGISTRY}"; \
+    node /tmp/audit-lockfile.mjs ./package-lock.json; \
     test "$(node -p 'require("./package.json").version')" = "${AGENTLOOP_OPENCLAW_PLUGIN_VERSION}"; \
     test "$(node -p 'require("./package.json").license')" = "Apache-2.0"; \
     test "$(node -p 'require("@opentelemetry/exporter-trace-otlp-proto/package.json").version')" = "0.221.0"; \

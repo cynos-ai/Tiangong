@@ -93,18 +93,8 @@ jobs:
           )
           npm test --prefix worker
           npm test --prefix app
-      - name: Audit production dependencies
-        run: |
-          set +e
-          npm audit --prefix worker --omit=dev --registry=https://registry.npmjs.org/ --json > /tmp/worker-audit.json
-          audit_status=$?
-          set -e
-          if [[ "${audit_status}" -ne 0 ]]; then
-            jq '{metadata: .metadata.vulnerabilities, vulnerabilities: (.vulnerabilities | keys)}' \
-              /tmp/worker-audit.json >&2 || true
-            exit "${audit_status}"
-          fi
-          jq -e '.metadata.vulnerabilities.total == 0' /tmp/worker-audit.json >/dev/null
+      - name: Audit production dependency locks
+        run: node worker/scripts/audit-lockfile.mjs worker/package-lock.json worker/agentloop-package-lock.json
       - name: Build Worker image
         run: ./scripts/build-worker-image.sh
   dco:
