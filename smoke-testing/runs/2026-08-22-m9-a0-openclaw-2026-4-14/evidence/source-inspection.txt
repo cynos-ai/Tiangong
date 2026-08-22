@@ -1,0 +1,177 @@
+spike_layer=1-source-type-contract
+image=tg-worker:dev
+image_id=sha256:ac1cb183e5b2c82982f6473fef86ccf128763a31192d711526d843a79edb69ff
+image_created=2026-08-21T13:00:21.057325912+08:00
+network=none
+openclaw_version=OpenClaw 2026.4.14 (2f35b6f)
+{
+  "source": {
+    "hookTypes": {
+      "path": "src/plugins/hook-types.ts",
+      "bytes": 18405,
+      "lines": 694,
+      "sha256": "f4ae27785097debeed4e7aba3ee8b88d94e2e97e9d67e4ba39e55deccaf1948a"
+    },
+    "hooks": {
+      "path": "src/plugins/hooks.ts",
+      "bytes": 36561,
+      "lines": 1160,
+      "sha256": "24abd7601d0ef490d43013630d5a8da6b8cd9a4e9e1e2deed1ac6a9b64f646cf"
+    },
+    "hookRunnerGlobal": {
+      "path": "src/plugins/hook-runner-global.ts",
+      "bytes": 3022,
+      "lines": 106,
+      "sha256": "dff10b06b7b726ae353f787f15d3983a2effe3c6e9125d5b1bd0cbf6a87f30b9"
+    },
+    "beforeToolCall": {
+      "path": "src/agents/pi-tools.before-tool-call.ts",
+      "bytes": 15826,
+      "lines": 464,
+      "sha256": "e96a13e0e23b8115087098f23d0e6222527cca98f3fa2e8f1a59b2237c2dc4b8"
+    },
+    "promptHelpers": {
+      "path": "src/agents/pi-embedded-runner/run/attempt.prompt-helpers.ts",
+      "bytes": 8655,
+      "lines": 258,
+      "sha256": "9c9d4c161b5d0338b8fb87ece846f125e904bc967e2ffa29d687d4a14a097758"
+    },
+    "attempt": {
+      "path": "src/agents/pi-embedded-runner/run/attempt.ts",
+      "bytes": 99293,
+      "lines": 2466,
+      "sha256": "1fbc0d09651a7378a0177667a3511c31ead8e87b29db14c8d9dd5cd1f95ba627"
+    },
+    "persistGuard": {
+      "path": "src/agents/session-tool-result-guard.ts",
+      "bytes": 9880,
+      "lines": 271,
+      "sha256": "40a26a7b41ad68dc209727dda9da7e2c92d45df5fbe2f93d19f3f15462b21f43"
+    },
+    "bootstrapFiles": {
+      "path": "src/agents/bootstrap-files.ts",
+      "bytes": 7651,
+      "lines": 243,
+      "sha256": "2f5210d60134de8a3235beb24f7993f11e9acec58ea799abb2e3017d6c5f901d"
+    },
+    "bootstrapHelpers": {
+      "path": "src/agents/pi-embedded-helpers/bootstrap.ts",
+      "bytes": 8985,
+      "lines": 289,
+      "sha256": "46f9223f67612ce49d0d60fb2e2e84d079a7b38ecde314829935d76d0d568bf7"
+    },
+    "workspace": {
+      "path": "src/agents/workspace.ts",
+      "bytes": 20054,
+      "lines": 648,
+      "sha256": "c675c2fc6015ed49fd919add48cefd86c57b8dd4a82c3fb25250ffcd60bff590"
+    }
+  },
+  "before_tool_call": {
+    "typed_async": {
+      "line": 633,
+      "text": ") => Promise<PluginHookBeforeToolCallResult | void> | PluginHookBeforeToolCallResult | void;"
+    },
+    "runner_sequential": {
+      "line": 782,
+      "text": "return runModifyingHook<\"before_tool_call\", PluginHookBeforeToolCallResult>("
+    },
+    "caller_awaits_runner": {
+      "line": 203,
+      "text": "const hookResult = await hookRunner.runBeforeToolCall("
+    },
+    "failure_policy": {
+      "line": 44,
+      "text": "before_tool_call: \"fail-closed\","
+    },
+    "hook_runner_timeout_enforcement": false
+  },
+  "tool_result_persist": {
+    "typed_sync_only": {
+      "line": 638,
+      "text": "tool_result_persist: ("
+    },
+    "runner_sync_only": {
+      "line": 827,
+      "text": "* This hook is intentionally synchronous: it runs in hot paths where session"
+    },
+    "promise_guard": {
+      "line": 852,
+      "text": "`[hooks] tool_result_persist handler from ${hook.pluginId} returned a Promise; ` +"
+    },
+    "promise_error_policy": {
+      "line": 854,
+      "text": "if (shouldCatchHookErrors(\"tool_result_persist\")) {"
+    },
+    "persistence_calls_transform_before_append": {
+      "line": 198,
+      "text": "const persisted = applyBeforeWriteHook("
+    },
+    "append_after_transform": {
+      "line": 208,
+      "text": "return originalAppend(persisted as never);"
+    },
+    "default_failure_policy_expression": {
+      "line": 215,
+      "text": "catchErrors && (failurePolicyByHook[hookName] ?? \"fail-open\") === \"fail-open\";"
+    },
+    "configured_global_policy_only": {
+      "line": 43,
+      "text": "failurePolicyByHook: {"
+    }
+  },
+  "before_prompt_build": {
+    "typed_async": {
+      "line": 576,
+      "text": "before_prompt_build: ("
+    },
+    "runner_sequential": {
+      "line": 534,
+      "text": "return runModifyingHook<\"before_prompt_build\", PluginHookBeforePromptBuildResult>("
+    },
+    "caller_catches_and_continues": {
+      "line": 52,
+      "text": "log.warn(`before_prompt_build hook failed: ${String(hookErr)}`);"
+    },
+    "caller_returns_undefined_after_failure": {
+      "line": 53,
+      "text": "return undefined;"
+    },
+    "missing_hook_returns_no_result": {
+      "line": 43,
+      "text": "? await params.hookRunner"
+    },
+    "final_model_call_uses_effective_prompt": {
+      "line": 2011,
+      "text": "activeSession.prompt(effectivePrompt, { images: imageResult.images }),"
+    }
+  },
+  "bootstrap": {
+    "load_and_hook_override": {
+      "line": 208,
+      "text": "const updated = await applyBootstrapHookOverrides({"
+    },
+    "context_build": {
+      "line": 236,
+      "text": "const contextFiles = buildBootstrapContextFiles(bootstrapFiles, {"
+    },
+    "missing_file_becomes_prompt_text": {
+      "line": 225,
+      "text": "const missingText = `[MISSING] Expected at: ${pathValue}`;"
+    },
+    "truncation_is_allowed": {
+      "line": 251,
+      "text": "`workspace bootstrap file ${file.name} is ${trimmed.originalLength} chars (limit ${trimmed.maxChars}); truncating in injected context`,"
+    },
+    "digest_or_checksum_in_bootstrap_sources": false
+  }
+}
+
+current_tiangong_plugin_contract_lines
+worker/agent/skills/runtime.mjs:34:      return { prependContext: promptContext(runtime, ctx) };
+worker/agent/skills/runtime.mjs:60:export function registerAgentPackageRuntime(api, options = {}) {
+worker/agent/gates/tool-result-capture.mjs:111:    store.appendSync(record);
+worker/plugin/index.mjs:17:import { registerAgentPackageRuntime } from "../agent/skills/runtime.mjs";
+worker/plugin/index.mjs:56:    registerAgentPackageRuntime(api, { env: process.env });
+worker/plugin/index.mjs:57:    api.on("tool_result_persist", createToolResultCaptureHook({
+worker/plugin/index.mjs:60:    }), { priority: 100 });
