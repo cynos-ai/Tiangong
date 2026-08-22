@@ -1,6 +1,6 @@
 # M9 专业 Agent Runtime、Skills 2.0 与项目知识
 
-> 状态：已接受设计；尚未实现。
+> 状态：已接受设计；M9-A0 首次 pinned spike 在 source/contract 层发现阻断；本修订待复核；尚未实现。
 >
 > 本文定义 M9 的目标合同和 clean-cut 修改方案。文中的目录、Schema、工具、控制逻辑、存储与测试均不代表当前 runtime 已经具备对应能力。M9 实施完成并取得直接机器验证前，现有实现仍是唯一可声明的事实。
 
@@ -12,12 +12,12 @@ M9 采用以下核心决定：
 
 1. 不构建角色专用镜像；使用一个通用 control image，并允许一个同样通用、无控制资产的 execution image/rootfs。镜像数量与物理形态服从攻击合同，不作为产品角色或权限边界。
 2. 每个 Agent 独立拥有 `AGENTS.md`、`SOUL.md`、Product Skills 和 controls；runtime helper、类型、Schema 与测试工具可以共享。
-3. `AGENTS.md` 是不可写、可验证且 fail-closed 加载的角色主控；`SOUL.md` 只定义专业立场和表达风格，Skill 只定义按需加载的高内聚专业方法。
+3. `AGENTS.md` 是不可写、可验证且 fail-closed 加载的角色主控；它通过 Tiangong-owned `TrustedModelCallBoundary` 进入最终模型请求，不能依赖原生 `before_prompt_build` 的 best-effort prepend；`SOUL.md` 只定义专业立场和表达风格，Skill 只定义按需加载的高内聚专业方法。
 4. 不引入 Practice、Task kind、固定角色流水线、Team DAG 或 Team 级 Checkpoint。
-5. Concern 只做低频过程提醒；Gate 只在固定 OpenClaw 能同步阻断的边界检查机器事实；工具后的观察先闭合 ToolResult，再由下一动作 Gate 或提交 Checkpoint 阻断。
+5. Concern 只做低频过程提醒；Gate 只在受信的 pre-tool、tool-result 或 model-call 边界检查机器事实；原生 OpenClaw observation/prompt hooks 不自动成为安全控制；工具后的观察先闭合 ToolResult，再由下一动作 Gate 或提交 Checkpoint 阻断。
 6. 一个 Task 可以按实际需要使用多个有序 SkillUse；每个 Task attempt 或 Leader scope 最多同时打开 64 个 SkillUse，SkillUse 不跨 attempt/claim/Leader authority scope。scope replacement 将 open selections 标记 `interrupted` 并要求重新选择，不建立独立 SkillUse ledger。
 7. 每个 Skill 具有 SemVer、内容摘要、受限 JSON Schema 结算合同、调用条件、依赖、失败处理和行为评测；Schema 不假装验证专业 prose 质量。
-8. 所有允许暴露给模型的顶层工具都必须生成最小、工具专属的 ToolResult；引用和未引用 ToolResult 都有 ingest、恢复、幂等与有界 retention 协议。
+8. 所有允许暴露给模型的顶层工具都必须经过 `TrustedToolExecutionBoundary` 生成最小、工具专属的 ToolResult，并在结果交回 OpenClaw 前闭合到 control spool；引用和未引用 ToolResult 都有 ingest、恢复、幂等与有界 retention 协议。
 9. MemberConfig 精确引用 deployment-owned RuntimeCapabilityBinding；M9-A 从其执行子集和 AgentTeams workload generation 派生 ExecutionBinding，M9-C 从其数据子集计算检索准入。
 10. admission 显式分为 Task-scoped member execution 与 Work-scoped Leader coordination：前者必须有 ExecutionBinding/claim，可使用 workspace/Task Skill/submit-result；后者不需要 Task claim，只能使用 coordination 与无 workspace 脚本的 Leader Skill tools。Package-specific Skill settlement 验证留在 Worker controls，Coordination 只验证通用 envelope/identity/idempotency。
 11. Tiangong CoordinationStore/PostgreSQL 是 Task claim/lease、writerRoot lock、Result/cancel race 和 cancel command phase 的唯一事务权威；Worker control runtime 只是 claimant/supervisor，AgentTeams/deployment 只提供 workload generation、prepared workspace 和 runtime binding。
@@ -107,6 +107,8 @@ M9 不实现：
 | Work-scoped Leader Coordination | authenticated Human 消息已创建 Work/session、但不要求 Task 的 Leader 模型路径；只开放 coordination 与 Leader Skill tools，不开放 workspace execution。 |
 | Agent Package | 一个专业 Agent 的受信、版本化运行包，包含主控、风格、私有 Product Skills 和 controls。 |
 | Agent Controller | Package 内通过不可写 bootstrap/system context 始终加载的 `AGENTS.md`，定义职责、边界、总体循环和 Skill 路由。 |
+| TrustedModelCallBoundary | Tiangong control runtime 在调用 OpenClaw provider/session turn 前验证 Package、bootstrap、authority 和 session identity，并形成不可变 model request envelope 的受信 pre-model 边界；它不拥有模型推理，也不能由普通 prompt hook 替代。 |
+| TrustedToolExecutionBoundary | 包裹实际顶层工具执行的受信 control wrapper，在结果交回 OpenClaw 前同步、原子地闭合 ToolResult 到 control spool；它不创建 M10 Operation。 |
 | Skill | Agent 私有、按需加载的专业方法包，不授予工具或权限。 |
 | SkillUse | 对一个确切 Skill 版本的一次选择；Task-scoped 选择由正式 Result 结算，Work-scoped Leader 选择由后续 accepted typed coordination action/ToolResult 结算，不新增独立 ledger。 |
 | ExecutionAttempt | 同一 Task 的一次物理执行代次，只用于 correlation、恢复和诊断，不是 Task 状态或新的权威工作流对象。 |
@@ -122,6 +124,8 @@ M9 不实现：
 | Knowledge Source | ProjectBinding allowlist 允许进入检索的 Git Markdown 来源。 |
 | RAG Index | 从 Knowledge Source 派生的 PostgreSQL 全文与元数据索引，可删除和重建。 |
 | Retrieval Result | 带精确来源、版本、范围和索引 generation 的检索切片；不是授权或机器 Evidence。 |
+
+`TrustedModelCallBoundary` 与 `TrustedToolExecutionBoundary` 是 control runtime 的两个受信调用边界，不是新的模型 runtime、事实库、ledger 或状态机；它们只复用现有 Package/bootstrap、ToolResult spool、CoordinationStore 和 session/turn facts。
 
 必须始终区分：
 
@@ -155,15 +159,17 @@ AgentTeams identity + current Team/MemberConfig/RuntimeCapabilityBinding
      ┌───────────────────┼────────────────────────┐
      │                   │                        │
      ▼                   ▼                        ▼
-immutable Agent      Professional          Tool observation
-bootstrap/package    Controls              pending ledger + spool
+immutable Agent      Professional          TrustedToolExecutionBoundary
+bootstrap/package    Controls              → Tool observation / spool
      │             Concern/Gate/                  │
 AGENTS.md + SOUL.md   Checkpoint                   ├─ bounded batch ingest
 Agent-private Skills      │                        └─ Result inline ingest
      │                    │                                │
      └──────────────┬─────┘                                ▼
                     ▼                       CoordinationStore / PostgreSQL
-            OpenClaw model loop             claim/writer/Result/cancel authority
+        TrustedModelCallBoundary              claim/writer/Result/cancel authority
+                    │
+            OpenClaw model loop
                     │                                      │
            Task path only: workspace tools                 │
                     │                                      │
@@ -271,7 +277,7 @@ Package 的 `AGENTS.md` 是始终加载的角色主控，至少说明：
 
 它不复制项目仓库规则，也不展开每个 Skill 的详细步骤。
 
-Package 的 `AGENTS.md` 不依赖 Agent 可写 workspace，也不以 `before_prompt_build` 的 best-effort prepend 作为安全边界。M9-A 的 pinned hook/bootstrap spike 必须先选择并证明一种机制：优先在 Worker 激活时把选中 Package 预编译为不可写 OpenClaw bootstrap/system context，按摘要验证，并在损坏或缺失时阻止任何模型调用；固定版本无法证明时，先修订设计或明确升级决定，再开始 Package 实现。
+Package 的 `AGENTS.md` 不依赖 Agent 可写 workspace，也不以原生 `before_prompt_build` 或 legacy `before_agent_start` 的 best-effort prepend 作为安全边界。M9-A 的 pinned spike 必须选择并证明 `TrustedModelCallBoundary`：control runtime 在每次 provider/session turn 前验证选中 Package、`AGENTS.md`/`SOUL.md` 的精确版本与摘要、current authority/session identity，并把不可变 bootstrap 放入最终请求的受保护 system context；缺失、损坏、摘要不符、scope stale 或 boundary 失败都必须使 provider request 未发生。该 boundary 只是受信的 pre-model controller，不引入 Tiangong-owned model runtime，OpenClaw 仍拥有 provider turn 和 session state。若固定版本没有可验证的 pre-provider seam，必须先作显式 source patch/upgrade 决定并重新检查，不能退化为 prompt hook 或静默 workaround。
 
 OpenClaw workspace 或项目仓库提供的上下文只能增加项目事实和操作规则，不能替换角色职责或扩大权限。验收必须检查实际最终 LLM input，而不是只检查 hook 返回值或中间字符串。
 
@@ -694,7 +700,7 @@ observeToolResult(context, toolResult)
 checkCompletion(context, resultCandidate, skillUses, toolResults)
 ```
 
-`observeToolResult` 只更新受信观察状态，不能声称撤销已经发生的工具动作。需要阻断的后置事实由下一次同步 `evaluatePreToolGate` 或 `tiangong_submit_result` Checkpoint 消费。最终接口必须服从 M9-A pinned hook spike，不得把 observation-only hook 包装成 fail-closed Gate。
+`observeToolResult` 只更新受信观察状态，不能声称撤销已经发生的工具动作。需要阻断的后置事实由下一次同步 `evaluatePreToolGate` 或 `tiangong_submit_result` Checkpoint 消费。`before_tool_call` 只有在 Tiangong handler 自带有界 deadline、timeout/error 明确 block 且不依赖 OpenClaw runner timeout 时才可作为 enforcement seam；原生 `before_prompt_build` 与 `tool_result_persist` 的观察/变换结果不能包装成 fail-closed Gate。所有最终模型请求仍必须经过 `TrustedModelCallBoundary`。
 
 参与 fail-closed 决定的 Gate/Checkpoint 必须实现为纯、有界、确定性的同步函数；如果需要隔离不受信 parser 或较重计算，只能运行在无共享可变状态的 worker thread/isolate 中，并设置硬 CPU/内存/时间上限。timeout、worker crash、返回畸形或读取越界输入都按稳定错误 fail closed。强制 controls 不得在临界区执行任意网络、文件系统扫描、模型调用或无界 async I/O。
 
@@ -733,7 +739,7 @@ concernMarkerId = stable(executionScope + scopeIdentity + package/control versio
 
 marker 至少保存 `executionScope`、Work、concern identity/version、state fingerprint、injection turn、时间和有界 reason code；Task scope 必须保存 executionAttemptId，Work-scoped Leader 必须保存 `leaderScopeId` 与 `workEpochAtInjection` provenance 且禁止 claim 占位字段。它不复制长 Prompt 或敏感内容，先写入可恢复 control spool；Task marker 按 attempt diagnostic retention ingest，Leader marker 至少保留到 Work retention。Worker 重启后仍可去重，M9-D 只按原 scope 展示 Concern 在哪里影响了执行，不把 Leader marker 归到某个 Task。Marker 是诊断/去重事实，不是 Task 状态、阻断条件或新的 Concern 业务对象。
 
-Concern 在工具结果进入下一次模型上下文前注入。具体使用 `after_tool_call`、`tool_result_persist` 或其他 OpenClaw hook，必须针对镜像固定的 OpenClaw 版本验证调用顺序和失败语义；不能根据最新文档假设 pinned runtime 已具备某个 hook。
+Concern 在工具结果进入下一次模型上下文前注入，但最终注入必须经过 `TrustedModelCallBoundary`。具体使用 `after_tool_call`、`tool_result_persist` 或其他 OpenClaw hook，必须针对镜像固定的 OpenClaw 版本验证调用顺序和失败语义；这些 native hooks 不能替代 Trusted boundary，也不能根据最新文档假设 pinned runtime 已具备某个 hook。
 
 ### 8.3 Gate
 
@@ -1029,7 +1035,7 @@ trusted Worker control spool
                 optional storage-owned outputRef
 ```
 
-每个工具结果必须先在 control domain 同步、原子地闭合到本地 spool，再返回给模型或进入下一动作。执行域不能读取或修改 spool。固定 OpenClaw 是否能通过 `tool_result_persist` 满足这一顺序由 M9-A spike 决定；不能满足时必须在受信工具 wrapper/service 内闭合，不能退化为 `after_tool_call` best-effort 捕获。
+每个工具结果必须先在 control domain 同步、原子地闭合到本地 spool，再返回给模型或进入下一动作。执行域不能读取或修改 spool。对 pinned OpenClaw `2026.4.14`，原生 `tool_result_persist` 是同步、且默认 fail-open 的 transcript transform，不是受信 capture boundary；它只能作为顺序/诊断交叉观察。M9-A 唯一接受的 capture 路径是 `TrustedToolExecutionBoundary` 包裹实际允许的顶层 tool executor，在结果交回 OpenClaw 前同步写入有界本地 spool，成功后才释放普通 tool result。写入失败必须调用受信 turn-abort/recovery-required primitive，禁止把失败降级成普通 ToolResult、继续 provider request 或进入 Result succeeded；如果 pinned runtime 不能证明该 abort 不会被转成下一次模型可见的普通结果，整个 tool path 不受支持。未来原生 hook 只有在 source/type/runner 直接证明写入失败会阻断相同边界时，才能替代该 wrapper；不得退化为 `after_tool_call` best-effort 捕获。
 
 未被 Result 或 accepted Leader action 引用的 ToolResult 也上传 PostgreSQL，以保证 Task failed、Leader/action 被拒绝、Agent 崩溃或忘记结算时仍可调试：
 
@@ -1729,7 +1735,7 @@ Leader 的三个初始 Skills 均为 `settlement: coordination-action` 的 Work-
 
 目标：
 
-- 先验证 pinned OpenClaw hook/bootstrap 语义，再选择 controller、Gate 和 ToolResult capture 的实际接入点；
+- 先验证 pinned OpenClaw native hook 语义，并同时找到可阻断 provider request 的 `TrustedModelCallBoundary`、包裹实际工具执行的 `TrustedToolExecutionBoundary` 和 handler-owned deadline；原生 fail-open prompt/persist hook 不作为受信边界；
 - 不构建角色专用镜像；通用 control image 保留身份、凭据、Package、controls、session 和 spool，可选通用 execution image/rootfs 只获得 ExecutionBinding workspace 与当前 Skill 资源；
 - `read/write/edit/exec/process` 不能绕过 prepared execution environment；
 - MemberConfig 精确引用 deployment-owned RuntimeCapabilityBinding，从其执行子集派生并逐动作核验 ExecutionBinding；
@@ -1739,6 +1745,8 @@ Leader 的三个初始 Skills 均为 `settlement: coordination-action` 的 Work-
 - 增加 workload generation fencing、Worker replacement revoke 和带 requestId/phase 的可恢复 cancellation command；
 - 合成 canary token/path、`/proc`、symlink、父目录、后台进程和其他 Package 攻击成为回归；
 - 不以 rootless 或环境变量过滤代替安全域证明。
+
+本次 M9-A0 复核后的边界决定是：`before_prompt_build` 只负责非安全 prompt context，`tool_result_persist` 只负责同步 transcript transform/diagnostics，`before_tool_call` 只有在 Tiangong handler 自带 deadline 且 timeout/error fail closed 时才可参与 admission。可信 bootstrap、最终 model request 和 ToolResult release 分别必须经过上述两个 Trusted boundary；若 pinned source 没有可验证 seam，spike 继续保持红色，并另开明确的 source patch/upgrade 决定。
 
 ### 15.2 Agent Package 与 Skills 2.0
 
@@ -1774,7 +1782,7 @@ Leader 的三个初始 Skills 均为 `settlement: coordination-action` 的 Work-
 目标：
 
 - 提供 concern、同步 pre-tool gate、tool observation 和 checkpoint 窄接口；
-- 接口和 hook priority 服从 pinned spike 结论；
+- pre-tool admission handler 自带 hard deadline/AbortSignal；timeout、abort、throw、crash 或 malformed result 都返回稳定 deny，不能依赖 OpenClaw runner 自身 timeout；原生 `before_prompt_build`/`tool_result_persist` 只作 observation/transform，不能承载 fail-closed 结论；
 - controls 只从当前受信 Package 加载；Worker Leader action control 负责 Package/Skill version/digest、typed action allowlist、Skill output Schema 与专业前置，Coordination 只验通用 settlement envelope；
 - enforcement control 为纯有界同步函数，或在带硬资源/时间限制的 worker thread/isolate 中执行；timeout/crash/malformed fail closed；
 - Concern 注入写入有 identity 的可恢复持久 marker；
@@ -1795,6 +1803,8 @@ Leader 的三个初始 Skills 均为 `settlement: coordination-action` 的 Work-
 新增：
 
 - 按 `task | work-leader` 两套封闭身份的 pending call ledger，以及可恢复、可 ingest 的 Task ExecutionAttempt/LeaderScope boundary records；
+- `TrustedToolExecutionBoundary` 包裹所有允许的顶层 tool executor，在释放普通结果前同步闭合有界 ToolResult 到 control spool；无法包裹或 capture failure 不能降级为 `tool_result_persist`/`after_tool_call` 观察；
+- `TrustedModelCallBoundary` 在每次 provider/session turn 前验证 Package/bootstrap/authority/session identity，并对最终 provider request 保留可直接检查的 bootstrap digest/provenance；
 - Task ToolResult 必填 `executionClaimId/claimRevisionAtStart/leaseEpochAtStart` 和 `runtimeCapabilityBindingId/runtimeCapabilityBindingRevision`；Work-scoped Leader ToolResult 必填可重算的 `leaderScopeId` 全部 identity fields 和 Work epoch provenance，禁止 claim 占位字段；
 - terminal scope 只在 replay closed records、reconcile action receipts/pending calls、close unresolved calls 和派生 final open set 后，对最多 64 个 open SkillUses 记录 `interrupted` diagnostic dispositions；Leader boundary 使用稳定 ID/canonical digest，计入 spool/Team PG/emergency quota，保留到 Work retention；
 - Leader authority identity 改变或恢复时，由 current trusted control/recovery controller 先 fence 旧 scope 并执行上述有序 terminalization；新 Leader turn 必须等待旧 scope boundary ingest 确认；
@@ -1877,14 +1887,14 @@ M9 保留一个总体设计，但按四个可独立审核的内部阶段实施�
 
 这是整个 M9 的第一项工作，必须独立完成和审核，不能与 execution、Package、controls 或 Result 实现并行。Spike 自身按 verification 成本递增分四层，上一层失败不得跳到下一层：
 
-1. **源码/合同检查：** 对固定 OpenClaw `2026.4.14` 的实际 hook registry、runner、模型调用路径和类型做 source inspection，列出 `before_tool_call`、`tool_result_persist`、`before_prompt_build`、bootstrap 与 observation hooks 的调用点、await/block、throw/timeout、priority 和错误传播合同。
-2. **容器内 hook runner + fake provider：** 在实际构建镜像中运行真实 hook runner，使用无外部网络的 fake provider 捕获最终 LLM request，并使用合成 tool 验证 block、结果持久化顺序、重放、上游截断、Prompt/bootstrap 位置和损坏行为。
-3. **确定性集成：** 运行真实 Tiangong plugin、OpenClaw gateway/session path、合成 MemberConfig/RuntimeCapabilityBinding/ExecutionBinding/claim、Work-scoped Leader session、fake provider、fake coordination endpoint 和 disposable workspace，分别验证 Task 与 Leader turn 到 tool/spool/Result-or-typed-action 的完整确定性合同，不依赖 Matrix 时序或真实模型 prose。
-4. **Basic Matrix turn：** 最后使用官方 Channel Plane、固定安全 fixture 和一次真实 member turn，只确认真实 Matrix 路由确实经过前 3 层已验证的 hook/bootstrap 路径；不使用 Basic turn 证明并发、授权、原子性或恢复。
+1. **源码/合同检查：** 对固定 OpenClaw `2026.4.14` 的实际 hook registry、runner、模型调用路径、tool executor 和类型做 source inspection，分别记录 native hooks 与 Trusted boundaries 的调用点、await/block、throw/timeout、priority、错误传播和最终 provider request seam。Pinned native `before_prompt_build` 或 `tool_result_persist` 若是 fail-open/synchronous-only，只能记录为 observation/transform 事实，不能算作可信边界；必须同时找到可验证的 `TrustedModelCallBoundary`、`TrustedToolExecutionBoundary` 和 handler-owned deadline。没有这些 seam 就在本层停止。
+2. **容器内 hook runner + fake provider：** 在实际构建镜像中运行真实 hook runner、Trusted model/tool wrappers 和 synthetic tool，使用无外部网络的 fake provider 捕获最终 LLM request。必须证明缺失/损坏/摘要不符 bootstrap 时 provider request 未发生；pre-tool handler 超时/throw 时 synthetic tool 未执行；ToolResult 在结果释放前已同步闭合 spool，capture failure 触发 turn abort/recovery-required，而不是普通 ToolResult 或下一次 provider request。原生 `tool_result_persist` 只验证 transcript 顺序/诊断，不承担 capture 成功证明。
+3. **确定性集成：** 运行真实 Tiangong plugin、OpenClaw gateway/session path、Trusted model/tool boundaries、合成 MemberConfig/RuntimeCapabilityBinding/ExecutionBinding/claim、Work-scoped Leader session、fake provider、fake coordination endpoint 和 disposable workspace，分别验证 Task 与 Leader turn 到 provider request/tool/spool/Result-or-typed-action 的完整确定性合同，不依赖 Matrix 时序或真实模型 prose。
+4. **Basic Matrix turn：** 最后使用官方 Channel Plane、固定安全 fixture 和一次真实 member turn，只确认真实 Matrix 路由确实经过前 3 层已验证的 Trusted boundaries；不使用 Basic turn 证明并发、授权、原子性或恢复。
 
-四层共同验证：`before_tool_call` 是否同步阻断，`tool_result_persist` 能否在结果返回模型前可靠闭合，`before_prompt_build` 失败是否 fail open，immutable bootstrap 是否进入最终请求，以及 observation-only hook 不承担 fail-closed control。
+四层共同验证：`before_tool_call` 是否由 Tiangong handler 的有界 deadline 同步作出 fail-closed 决定，`TrustedToolExecutionBoundary` 能否在结果释放前闭合 spool，`TrustedModelCallBoundary` 是否把精确 bootstrap 带入最终 provider request，以及 native observation hooks 不承担同步安全结论。若采用 OpenClaw source patch，必须在 plan/result 中记录 pinned upstream tag、精确 patch ref/digest、许可证和 source inspection；不得静默升级或把 patch 当作未声明的 runtime workaround。
 
-Spike 必须产生逐层直接结果和明确接入决定。它只是研究/接入证据，不启用产品合同，也不让 M9-A 除 spike 条目外变绿。若任一基础假设不成立，先修订本设计并重新审核；不得一边保留不确定合同一边实现 workaround。OpenClaw 升级也必须作为单独决定，不由实现人员静默发生。
+Spike 必须产生逐层直接结果和明确接入决定。它只是研究/接入证据，不启用产品合同，也不让 M9-A 除 spike 条目外变绿。若任一基础假设或 Trusted boundary 不成立，先修订本设计或作明确 source patch/upgrade 决定并重新审核；不得一边保留不确定合同一边实现 workaround。
 
 #### M9-A 实现
 
@@ -1961,12 +1971,12 @@ PROJECT.md Candidate → Developer local Commit delivery candidate
 
 在任何 M9 实现前按四层执行：
 
-1. 固定版本 source/type/contract inspection；
-2. 实际容器内真实 hook runner + fake provider/synthetic tool；
-3. 真实 plugin/gateway/session + fake provider/fake coordination/disposable workspace 的确定性集成；
+1. 固定版本 source/type/contract inspection，同时检查 native hook 和 `TrustedModelCallBoundary`/`TrustedToolExecutionBoundary`/handler deadline seam；
+2. 实际容器内真实 hook runner、Trusted wrappers + fake provider/synthetic tool；
+3. 真实 plugin/gateway/session + Trusted boundaries + fake provider/fake coordination/disposable workspace 的确定性集成；
 4. 最后一个 Basic Matrix member turn 只确认官方 Channel Plane 经过已验证路径。
 
-前 3 层直接验证 `before_tool_call` 的 await/block/throw/timeout/priority、`tool_result_persist` 相对工具/模型/transcript 的顺序与重放/崩溃、`before_prompt_build` 的失败语义和最终 request、immutable bootstrap 损坏行为，以及 observation-only hook 不承担同步安全结论。第 4 层不用于证明状态机、授权、并发或恢复。
+前 3 层直接验证：`before_tool_call` 的 handler-owned await/block/throw/deadline/priority、`TrustedToolExecutionBoundary` 相对工具/模型/transcript 的 spool 顺序与重放/崩溃、`TrustedModelCallBoundary` 的失败语义和最终 request、immutable bootstrap 损坏行为，以及 native observation hook 不承担同步安全结论。第 4 层不用于证明状态机、授权、并发或恢复。Pinned native `before_prompt_build` 的 fail-open 或 native `tool_result_persist` 的 synchronous-only 事实必须在 evidence 中保留为负面合同，不能被包装成通过。
 
 测试必须检查 fake provider 收到的最终模型请求和 synthetic tool 是否真实执行，不能只 mock Tiangong handler。每层失败都停止后续层；Spike 结论经设计复核前，不并行开始实现。
 
@@ -2010,13 +2020,13 @@ PROJECT.md Candidate → Developer local Commit delivery candidate
 
 ### 17.4 ToolResult、恢复与原子提交
 
-对每个顶层工具证明 generic capture，对首批 Adapter 验证参数脱敏、success/error/denied/timeout/cancel/unknown、三种截断、process 聚合、structured reporter 和 unknown command fallback。
+对每个顶层工具证明 `TrustedToolExecutionBoundary` generic capture；对首批 Adapter 验证参数脱敏、success/error/denied/timeout/cancel/unknown、三种截断、process 聚合、structured reporter 和 unknown command fallback。
 
 必须覆盖：
 
 - recoverable opened/terminal/revoked AttemptBoundaryRecords 在 Task 模型/清理前写入并 ingest；Work-scoped Leader 不伪造 attempt/claim；
 - Task ToolResult 的 `executionClaimId/claimRevisionAtStart/leaseEpochAtStart` 与 `runtimeCapabilityBindingId/runtimeCapabilityBindingRevision` 必填并区分 revoke/reacquire；Leader ToolResult 必填可重算的 `leaderScopeId` identity fields 与 Work epoch provenance，claim/Task 字段必须缺失；
-- closed record 先入 control spool，再返回模型；
+- `TrustedToolExecutionBoundary` 先把 closed record 同步写入 control spool，再释放普通结果；native `tool_result_persist` 只作为 transcript 顺序/诊断观察；
 - 32 条/5 秒 batch，以及 submit/attempt-terminal/Leader-scope-terminal/shutdown flush；
 - 未引用 ToolResult 在 failed/crashed/unsubmitted Task 中仍可从 PostgreSQL 查询；
 - 每个 Leader authority revision 变化或 crash recovery 都严格观察 fence → closed-record replay → action receipt/pending reconciliation → unresolved unknown closure → final open-set derivation → boundary CAS → ingest confirmation；失效 principal 写入被拒绝，只有 recovery controller 可创建/重放旧 scope boundary；
@@ -2084,7 +2094,7 @@ Freeze 专项必须覆盖 active background process：仍活动时 submit 拒绝
 
 按阶段和成本递增：
 
-1. pinned hook spike 的 source → container fake-provider → deterministic integration → Basic Matrix 四层；
+1. pinned hook spike 的 source/Trusted-boundary inspection → container fake-provider → deterministic integration → Basic Matrix 四层；
 2. M9-A schema/unit/attack/container/focused smoke；
 3. M9-B Package/controls/Architect/Developer focused smoke；
 4. 六角色 clean-cut Basic；
@@ -2209,7 +2219,7 @@ Canonical 同步按相关阶段完成，不允许本文与产品主设计长期�
 | MemberConfig data scope 只存在于 prose | MemberConfig 精确引用版本化 RuntimeCapabilityBinding；data/network/resource refs 进入 contract validator 和 stale/revocation fixture。 |
 | 索引跨项目泄漏 | principal ∩ effective RuntimeCapabilityBinding data scope ∩ ProjectBinding realm/source policy，使用合成泄漏 fixture。 |
 | M9 范围过大 | A/B/C/D stop line；A+B 解除 M10 前置，C/D 可延期且不反向污染。 |
-| 与 OpenClaw hook 版本不一致 | M9 第一步串行验证 pinned 2026.4.14；结论不成立先改设计，不与实现并行。 |
+| pinned OpenClaw native hook 是 fail-open/synchronous-only，无法承担可信边界 | native `before_prompt_build`/`tool_result_persist` 只作 observation/transform；由 source inspection 找到并验证 `TrustedModelCallBoundary`、`TrustedToolExecutionBoundary` 和 handler-owned deadline；找不到就停止并另作明确 source patch/upgrade 决定。 |
 | 镜像数量被误当成执行隔离 | 不构建角色镜像；control/execution 可同 rootfs 或两个通用 image，但一律以 Agent 发起的攻击回归验收。 |
 
 ## 20. 分阶段验收与 M9-A stop line
@@ -2218,7 +2228,7 @@ Canonical 同步按相关阶段完成，不允许本文与产品主设计长期�
 
 以下条件必须全部有直接机器证据，任何一项失败都保持 M9-A 红色并禁止开始 M9-B 实现：
 
-1. pinned OpenClaw spike 已依次通过 source/contract、容器 hook runner + fake provider、包含 Task/Leader 两条 admission 的确定性集成和最后 Basic Matrix turn；每层只证明其合同。
+1. pinned OpenClaw spike 已依次通过 source/contract、`TrustedModelCallBoundary`/`TrustedToolExecutionBoundary`、容器 fake provider、包含 Task/Leader 两条 admission 的确定性集成和最后 Basic Matrix turn；每层只证明其合同，native fail-open/synchronous-only hooks 不得作为可信边界通过。
 2. 没有角色专用镜像；通用 control image 与可选通用 execution image/rootfs 的任一实际部署形态都通过相同攻击合同。
 3. Agent 发起的 `exec/process` 读取普通环境、`/proc/self/environ`、`/proc/1/environ` 和可枚举 `/proc/*/environ`，均得不到合成 Coordination/control token。
 4. `exec/process` 不能读取 controls、OpenClaw session state、ToolResult spool、其他 Agent Package 或 control socket/endpoint；父目录、symlink/hardlink、rename race、异常 cwd、文件描述符和后台/孙进程不能逃逸。
@@ -2232,7 +2242,7 @@ Canonical 同步按相关阶段完成，不允许本文与产品主设计长期�
 12. Result 与 cancel transaction 1 在同一 PostgreSQL Task/claim revision 原子竞争，双写者、迟到 Result/cancel 和 Worker replacement 最近竞态有确定性回归。
 13. control endpoint 使用 member/workload-bound principal，服务端不信任 body actor；execution domain、模型上下文、ToolResult 和 debug projection 都没有 bearer。
 14. 每个 Task execution 在模型/工具前持久化 recoverable opened AttemptBoundaryRecord，并能关联 execution claim、Member、逻辑/物理 session、turn、toolCall 和 ToolResult；claim 终止后新 attempt 不复用旧 boundary。Work-scoped Leader 使用绑定 Work/principal-route/Team-ControlProfile-MemberConfig revisions/Agent Package binding/workload generation/logical session 的独立 `leaderScopeId` 与稳定 LeaderScopeBoundaryRecord，不伪造 Attempt/claim。
-15. Task ToolResult 必填 `executionClaimId/claimRevisionAtStart/leaseEpochAtStart` 和 `runtimeCapabilityBindingId/runtimeCapabilityBindingRevision`；Work-scoped Leader ToolResult 必填可重算 `leaderScopeId` 的全部 identity fields 和 Work epoch provenance，并使用封闭无 Task/claim Schema；所有允许的顶层工具在返回模型前闭合有界 record 到 control spool。
+15. Task ToolResult 必填 `executionClaimId/claimRevisionAtStart/leaseEpochAtStart` 和 `runtimeCapabilityBindingId/runtimeCapabilityBindingRevision`；Work-scoped Leader ToolResult 必填可重算 `leaderScopeId` 的全部 identity fields 和 Work epoch provenance，并使用封闭无 Task/claim Schema；所有允许的顶层工具必须经过 `TrustedToolExecutionBoundary`，在返回普通结果前闭合有界 record 到 control spool；所有 provider/session turn 必须经过 `TrustedModelCallBoundary`，native prompt/persist hooks 不得替代。
 16. Task 与 Work-scoped records 都按 32 条/5 秒上限及 submit/typed-action/attempt-or-Leader-scope-terminal/shutdown 触发 ingest；任一 Leader authority identity 变化都在新 turn 前确认旧 boundary ingest，只有 recovery controller 可写失效 scope；LeaderScopeBoundaryRecord 至少保留到 Work retention，未确认前不得清理 spool。
 17. 单条、attempt/scope、64 个 open SkillUse、Worker 产品硬预算和 deployment PostgreSQL static global/per-Team partition/fixed-emergency quota 有边界测试；Leader boundary 计入 spool/Team PG/emergency reserve。Result/Leader action 引用 records 和 LeaderScopeBoundaryRecords 至少保留到 Work retention。耗尽时禁新普通工具和 succeeded，仍允许 process kill、boundary、cancel 及一个成功 blocked/failed settlement；Schema/action reject 对每个 Task 或 Work 最多三个不同 requestIds，相同 requestId replay 不重复计数。
 18. Worker restart 在接受新 turn 前先 fence stale Leader scope，再依次 replay closed records、按 requestId 恢复 action receipts 并 reconcile pending、闭合 unresolved unknown、派生 final open SkillUse set、CAS 创建并确认 boundary ingest；未 ingest selection 与 action-committed-before-response 两个 crash 点有回归。稳定 ID/canonical digest replay 幂等、冲突 fail closed，cleanup 不删除 pending/未确认 boundary/引用/未到期 records。
@@ -2246,7 +2256,7 @@ Canonical 同步按相关阶段完成，不允许本文与产品主设计长期�
 ### 20.2 M9-B 验收：Professional Agent Runtime
 
 1. 通用 control image 可运行六个 Agent Package；模型与 execution domain 只看到当前 controller/soul/catalog/Skill resources，不新增角色镜像。
-2. `AGENTS.md`/`SOUL.md` 通过 spike 选定的 immutable bootstrap/system 路径进入实际最终 LLM input；缺失、损坏或摘要错误时模型调用未发生。
+2. `AGENTS.md`/`SOUL.md` 通过 spike 选定的 `TrustedModelCallBoundary` immutable bootstrap/system 路径进入实际最终 provider request；缺失、损坏、摘要错误或 boundary failure 时 provider call 未发生。
 3. 全局 Product Skill 根目录和跨 Agent lock 已删除，ADR-M9-001 的 Package 私有和共享 helper 边界有静态/运行时测试。
 4. contract validator 限制 JSON Schema 子集和资源；output 只约束结算字段，不把 prose 形状当作专业质量。
 5. 每个 Task attempt/Leader scope 最多 64 个 open SkillUses。Task Result 只结算 current attempt/claim SkillUses；claim 或任一 Leader authority identity 变化时，open SkillUses 由 Attempt/LeaderScope boundary 标记唯一 `interrupted` disposition，新 scope 重新选择。Work epoch 单独推进不结束 scope：同一 scope 重读 current Work 后可用原 selection、新 requestId 和 current expected epoch 结算。历史 dispositions 可调试但不阻塞关单、不能跨 scope 引用，且无独立 ledger。
@@ -2287,7 +2297,7 @@ M9-A/B/C/D 各自验收通过、canonical checklist 已完成、固定基线 Ful
 
 审核者应挑战以下合同是否可由直接机器事实判定：
 
-1. pinned hook/bootstrap spike 是否严格按 source/contract → container fake-provider → deterministic integration → Basic Matrix 四层递增，并分别覆盖 Task/Leader admission；
+1. pinned hook/bootstrap spike 是否严格按 source/Trusted-boundary contract → container fake-provider → deterministic integration → Basic Matrix 四层递增，并分别覆盖 Task/Leader admission；native fail-open/synchronous-only hooks 是否明确保持 observation-only；
 2. 是否没有角色专用镜像，control/execution 使用一个或两个通用 image/rootfs 时都服从相同攻击合同；
 3. execution boundary 是否从 Agent 可调用 `exec/process` 攻击 `/proc`、token、controls/session/spool、其他 Package、symlink/traversal 和后台进程，并同时证明授权路径可用；
 4. Human message 是否先创建/定位 Work 与 Leader session，使 Leader 无 Task 时能协调但不能 workspace/retrieval/submit-result；
@@ -2301,14 +2311,14 @@ M9-A/B/C/D 各自验收通过、canonical checklist 已完成、固定基线 Ful
 12. cancel requestId/phase 是否能从每个 crash 点继续，最终事务前是否保持 fence 且不报告 cancelled；
 13. Result 是否与 cancel transaction 1 在同一 PostgreSQL claim revision 原子竞争；
 14. control principal 是否绑定 Member/workload，服务端是否仍可被 body actor 冒充，凭据是否真正不进入 execution domain；
-15. `AGENTS.md` 是否进入实际最终 LLM input，损坏时模型调用是否确实未发生；
+15. `AGENTS.md`/`SOUL.md` 是否经 `TrustedModelCallBoundary` 进入实际最终 provider request，损坏、摘要不符或 boundary failure 时 provider call 是否确实未发生；
 16. ADR-M9-001 是否如实记录构建期共享源码、运行时独立锁定备选；
 17. Package-specific version/action allowlist/output Schema 是否只在 Worker control 执行，Coordination 是否不加载 Package contract 且只验证通用 settlement/identity/idempotency；两类 SkillUse 是否避免第三份 ledger；
-18. enforcement controls 是否为纯有界同步函数或受限 worker/isolate，timeout/crash 是否 fail closed；
+18. enforcement controls、Trusted tool/model wrappers 是否为纯有界同步函数或受限 worker/isolate，handler timeout/crash/malformed 是否 fail closed，且不依赖 OpenClaw native runner 的隐含 timeout；
 19. M9-A baseline Checkpoint 是否只验 Schema/refs/pending/ownership/claim，M9-B 专业 Checkpoint 是否通过同一 invoker 清晰替换；
 20. Task AttemptBoundaryRecords 是否在模型/工具前可恢复持久化；LeaderScopeBoundaryRecord 是否使用稳定 ID/digest、只由 current control 或 recovery controller 写入、计入 spool/Team PG/emergency quota，并保留到 Work retention，且 Leader Work path 不伪造 attempt；
 21. Concern 是否使用持久 marker 跨重启去重，并保持非阻断、非业务对象；
-22. Task ToolResult 是否必填 claim identity 和 runtimeCapabilityBinding identity，Work Leader ToolResult 是否必填可重算的 leaderScope identity 且禁止 claim；未引用 records 与 scope boundaries 是否按明确 owner/frequency ingest；
+22. Task ToolResult 是否必填 claim identity 和 runtimeCapabilityBinding identity，Work Leader ToolResult 是否必填可重算的 leaderScope identity 且禁止 claim；所有允许工具是否通过 `TrustedToolExecutionBoundary` 在结果释放前闭合，未引用 records 与 scope boundaries 是否按明确 owner/frequency ingest；
 23. 单条/attempt/spool 产品预算与 deployment static global/per-Team PG quota/fixed emergency reserve 是否可判定，ControlProfile 是否不能提高全局 quota；
 24. Result/Leader action 引用 records 是否至少保留到 Work retention，budget exhausted 的一次 settlement/三次 requestId 语义是否明确；
 25. spool 与 incomplete cancel command 的 startup recovery、pending → unknown、幂等 replay、conflict 和 cleanup 是否闭合；
