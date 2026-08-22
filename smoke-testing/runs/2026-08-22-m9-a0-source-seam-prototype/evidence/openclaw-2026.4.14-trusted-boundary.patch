@@ -1,0 +1,162 @@
+--- a/src/plugins/hook-types.ts
++++ b/src/plugins/hook-types.ts
+@@ -56,0 +57 @@
++  | "before_model_call"
+@@ -70,0 +72 @@
++  | "before_tool_result_release"
+@@ -87,0 +90 @@
++  "before_model_call",
+@@ -101,0 +105 @@
++  "before_tool_result_release",
+@@ -281,0 +286,14 @@
++export type PluginHookBeforeModelCallEvent = {
++  prompt: string;
++  systemPrompt?: string;
++  messages: unknown[];
++  provider: string;
++  model: string;
++  runId?: string;
++};
++
++export type PluginHookBeforeModelCallResult = {
++  block?: boolean;
++  blockReason?: string;
++};
++
+@@ -323,0 +342,13 @@
++export type PluginHookBeforeToolResultReleaseEvent = {
++  toolName: string;
++  params: unknown;
++  toolCallId?: string;
++  runId?: string;
++  result: unknown;
++};
++
++export type PluginHookBeforeToolResultReleaseResult = {
++  block?: boolean;
++  blockReason?: string;
++};
++
+@@ -575,0 +607,4 @@
++  before_model_call: (
++    event: PluginHookBeforeModelCallEvent,
++    ctx: PluginHookAgentContext,
++  ) => Promise<PluginHookBeforeModelCallResult | void> | PluginHookBeforeModelCallResult | void;
+@@ -633,0 +669,4 @@
++  before_tool_result_release: (
++    event: PluginHookBeforeToolResultReleaseEvent,
++    ctx: PluginHookToolContext,
++  ) => Promise<PluginHookBeforeToolResultReleaseResult | void> | PluginHookBeforeToolResultReleaseResult | void;
+--- a/src/plugins/hooks.ts
++++ b/src/plugins/hooks.ts
+@@ -26,0 +27 @@
++  PluginHookBeforeModelCallEvent,
+@@ -27,0 +29 @@
++  PluginHookBeforeModelCallResult,
+@@ -37,0 +40 @@
++  PluginHookBeforeToolResultReleaseEvent,
+@@ -38,0 +42 @@
++  PluginHookBeforeToolResultReleaseResult,
+@@ -83,0 +88 @@
++  PluginHookBeforeModelCallEvent,
+@@ -84,0 +90 @@
++  PluginHookBeforeModelCallResult,
+@@ -102,0 +109 @@
++  PluginHookBeforeToolResultReleaseEvent,
+@@ -103,0 +111 @@
++  PluginHookBeforeToolResultReleaseResult,
+@@ -526,0 +535,19 @@
++   * Run before_model_call hook.
++   * Allows a fail-closed plugin to block the final provider/session request.
++   */
++  async function runBeforeModelCall(
++    event: PluginHookBeforeModelCallEvent,
++    ctx: PluginHookAgentContext,
++  ): Promise<PluginHookBeforeModelCallResult | undefined> {
++    return runModifyingHook<"before_model_call", PluginHookBeforeModelCallResult>(
++      "before_model_call",
++      event,
++      ctx,
++      {
++        shouldStop: (result) => result.block === true,
++        terminalLabel: "block=true",
++      },
++    );
++  }
++
++  /**
+@@ -813,0 +841,19 @@
++   * Run before_tool_result_release hook.
++   * Allows a fail-closed plugin to close a bounded result before it is released.
++   */
++  async function runBeforeToolResultRelease(
++    event: PluginHookBeforeToolResultReleaseEvent,
++    ctx: PluginHookToolContext,
++  ): Promise<PluginHookBeforeToolResultReleaseResult | undefined> {
++    return runModifyingHook<"before_tool_result_release", PluginHookBeforeToolResultReleaseResult>(
++      "before_tool_result_release",
++      event,
++      ctx,
++      {
++        shouldStop: (result) => result.block === true,
++        terminalLabel: "block=true",
++      },
++    );
++  }
++
++  /**
+@@ -1111,0 +1158 @@
++    runBeforeModelCall,
+@@ -1131,0 +1179 @@
++    runBeforeToolResultRelease,
+--- a/src/plugins/hook-runner-global.ts
++++ b/src/plugins/hook-runner-global.ts
+@@ -44,0 +45,2 @@
++      before_model_call: "fail-closed",
++      before_tool_result_release: "fail-closed",
+--- a/src/agents/pi-tools.before-tool-call.ts
++++ b/src/agents/pi-tools.before-tool-call.ts
+@@ -414,0 +415,23 @@
++        const hookRunner = getGlobalHookRunner();
++        const release = hookRunner?.hasHooks("before_tool_result_release")
++          ? await hookRunner.runBeforeToolResultRelease(
++              {
++                toolName: normalizedToolName,
++                params: outcome.params,
++                toolCallId,
++                runId: ctx?.runId,
++                result,
++              },
++              {
++                agentId: ctx?.agentId,
++                sessionKey: ctx?.sessionKey,
++                sessionId: ctx?.sessionId,
++                runId: ctx?.runId,
++                toolName: normalizedToolName,
++                toolCallId,
++              },
++            )
++          : undefined;
++        if (release?.block) {
++          throw new Error(release.blockReason || "Tool result release blocked by plugin hook");
++        }
+--- a/src/agents/pi-embedded-runner/run/attempt.ts
++++ b/src/agents/pi-embedded-runner/run/attempt.ts
+@@ -2006,0 +2007,17 @@
++            const modelCallHookResult = hookRunner?.hasHooks("before_model_call")
++              ? await hookRunner.runBeforeModelCall(
++                  {
++                    prompt: effectivePrompt,
++                    systemPrompt: systemPromptText,
++                    messages: activeSession.messages,
++                    provider: params.provider,
++                    model: params.modelId,
++                    runId: params.runId,
++                  },
++                  hookCtx,
++                )
++              : undefined;
++            if (modelCallHookResult?.block) {
++              throw new Error(modelCallHookResult.blockReason || "Model call blocked by plugin hook");
++            }
++

@@ -1,0 +1,33 @@
+spike_phase=source-seam-prototype
+baseline=1c1534f
+image=tg-worker:dev
+image_id=sha256:ac1cb183e5b2c82982f6473fef86ccf128763a31192d711526d843a79edb69ff
+image_created=2026-08-21T13:00:21.057325912+08:00
+network=none
+openclaw_version=OpenClaw 2026.4.14 (2f35b6f)
+openclaw_package={   "name": "openclaw",   "version": "2026.4.14",   "license": "MIT" }
+patch_file=evidence/openclaw-2026.4.14-trusted-boundary.patch
+patch_sha256=ff58803f3497c4aa67f40c32cf72a63508dfb992aa87d037eda8b85146d3723f
+patch_bytes=5150
+patch_dry_run=pass
+
+focused_test_1=src/plugins/hooks.before-tool-call.test.ts src/plugins/hooks.security.test.ts src/plugins/hooks.sync-only.test.ts
+focused_test_1_result=3 files passed, 25 tests passed
+focused_test_2=src/plugins/m9-a0-source-seam.test.ts
+focused_test_2_result=1 file passed, 3 tests passed
+focused_test_3=src/agents/pi-embedded-runner/run/attempt.test.ts src/agents/pi-tools.before-tool-call.integration.e2e.test.ts
+focused_test_3_result=2 files passed, 116 tests passed
+focused_test_4=src/agents/pi-embedded-runner/run/attempt.spawn-workspace.bootstrap-warning.test.ts src/agents/pi-embedded-runner/run/attempt.spawn-workspace.context-engine.test.ts
+focused_test_4_result=2 files passed, 16 tests passed
+
+prototype_observations=before_model_call block keeps fake provider request count at zero; thrown model gate fails closed; before_tool_result_release runs after execute and before ordinary release; capture throw rejects release; handler-owned deadline returns block within bounded time
+full_project_tsc=blocked_by_container_oom_not_used_as_pass_evidence
+product_runtime_changed=false
+matrix_started=false
+external_resources_created=false
+
+actual_attempt_model_gate_wiring=blocked_by_existing_harness_timeout
+actual_attempt_diagnostic=custom runEmbeddedAttempt harness timed out before any hook/provider event was observed
+clean_image_baseline=the same attempt.spawn-workspace.timeout.test timed out on unpatched tg-worker:dev
+classification=test-driver-or-image-readiness, not a passing provider-boundary result
+layer2_fake_provider_status=not_started
