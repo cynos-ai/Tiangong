@@ -15,13 +15,13 @@ M9 采用以下核心决定：
 3. `AGENTS.md` 是不可写、可验证且 fail-closed 加载的角色主控；`SOUL.md` 只定义专业立场和表达风格，Skill 只定义按需加载的高内聚专业方法。
 4. 不引入 Practice、Task kind、固定角色流水线、Team DAG 或 Team 级 Checkpoint。
 5. Concern 只做低频过程提醒；Gate 只在固定 OpenClaw 能同步阻断的边界检查机器事实；工具后的观察先闭合 ToolResult，再由下一动作 Gate 或提交 Checkpoint 阻断。
-6. 一个 Task 可以按实际需要使用多个有序 SkillUse；SkillUse 不跨 attempt/claim/Leader workload scope，scope replacement 将 open selections 标记 interrupted/abandoned 并要求重新选择，不建立独立 SkillUse ledger。
+6. 一个 Task 可以按实际需要使用多个有序 SkillUse；每个 Task attempt 或 Leader scope 最多同时打开 64 个 SkillUse，SkillUse 不跨 attempt/claim/Leader authority scope。scope replacement 将 open selections 标记 `interrupted` 并要求重新选择，不建立独立 SkillUse ledger。
 7. 每个 Skill 具有 SemVer、内容摘要、受限 JSON Schema 结算合同、调用条件、依赖、失败处理和行为评测；Schema 不假装验证专业 prose 质量。
 8. 所有允许暴露给模型的顶层工具都必须生成最小、工具专属的 ToolResult；引用和未引用 ToolResult 都有 ingest、恢复、幂等与有界 retention 协议。
 9. MemberConfig 精确引用 deployment-owned RuntimeCapabilityBinding；M9-A 从其执行子集和 AgentTeams workload generation 派生 ExecutionBinding，M9-C 从其数据子集计算检索准入。
 10. admission 显式分为 Task-scoped member execution 与 Work-scoped Leader coordination：前者必须有 ExecutionBinding/claim，可使用 workspace/Task Skill/submit-result；后者不需要 Task claim，只能使用 coordination 与无 workspace 脚本的 Leader Skill tools。Package-specific Skill settlement 验证留在 Worker controls，Coordination 只验证通用 envelope/identity/idempotency。
 11. Tiangong CoordinationStore/PostgreSQL 是 Task claim/lease、writerRoot lock、Result/cancel race 和 cancel command phase 的唯一事务权威；Worker control runtime 只是 claimant/supervisor，AgentTeams/deployment 只提供 workload generation、prepared workspace 和 runtime binding。
-12. M9-A 复用 M8 correlation 字段，并增加 executionAttempt 代次和物理 OpenClaw session 到逻辑 Task 的映射；只增加关联字段和可恢复 attempt boundary，不建立第二份事实库或状态机。
+12. M9-A 复用 M8 correlation 字段，并增加 executionAttempt 代次、`leaderScopeId` 和物理 OpenClaw session 到逻辑 Task/Work scope 的映射；只增加关联字段和可恢复 Attempt/LeaderScope boundaries，不建立第二份事实库或状态机。
 13. Agent 通过 `tiangong_submit_result` 提交带 `reportedOutcome` 的 Result Candidate；提交临界区冻结新工具和后台进程，在一次受控协议中完成 Checkpoint、ToolResult ingest 和正式 Result 原子创建。
 14. 完整 Task 调试由 Coordination facts、远端 OpenClaw session transcript、ToolResults、持久 Concern markers 和可选 AgentLoop spans 组成派生视图；attempt 关联属于 M9-A，Concern markers 属于 M9-B，UI/导出属于 M9-D。
 15. 项目核心记忆只使用 Git 项目根目录的一份精炼 `PROJECT.md`。Architect 形成 Candidate；Developer local Commit 只是 delivery candidate，只有 authenticated deployment/admin principal 通过 expected-revision CAS 推进 ProjectBinding 后才能激活记忆和索引。
@@ -68,7 +68,7 @@ M9 应交付：
 - 每个试点 Agent 少量、确定性的 Concern、Gate 和 Checkpoint；
 - 对所有顶层工具无遗漏的 ToolResult 捕获及高价值工具的语义提取；
 - 有界、脱敏、可说明截断方式的最小 ToolResult，以及未引用记录的 batch ingest、崩溃恢复和 retention；
-- Work/Task/executionAttempt 到 Member/session/turn/toolCall 的稳定关联字段和可恢复 attempt boundary；
+- Work/Task/executionAttempt/Leader scope 到 Member/session/turn/toolCall 的稳定关联字段和可恢复 Attempt/LeaderScope boundaries；
 - stale principal、Worker replacement、双 writer、Result/cancel 的 claim/lease 竞态控制；
 - 成员绑定、冻结执行、Checkpoint 前置且事务闭合的正式 Result 提交；
 - 与 ExecutionBinding 分离的最小、部署拥有 ProjectBinding；
@@ -145,7 +145,7 @@ AgentTeams identity + current Team/MemberConfig/RuntimeCapabilityBinding
                 ┌─────────────┴──────────────┐
                 ▼                            ▼
  Work-scoped Leader coordination      Task-scoped member execution
- Work + Leader session/epoch          Task + ExecutionBinding + claim
+ Work + leaderScopeId/expected epoch    Task + ExecutionBinding + claim
  no workspace execution               prepared workspace allowed
  coordination + Leader Skills         Task Skills + workspace + submit
                 │                            │
@@ -302,15 +302,17 @@ Task-scoped member execution
   + current Package/model/tool binding
 
 Work-scoped Leader coordination
-  current authenticated Leader principal/route + Team/ControlProfile/MemberConfig revisions
-  + current workload generation + Work + Leader logical/physical session + expected Work epoch
-  + current Leader Package/model/tool binding
+  leaderScopeId = canonical(workId + authenticated principal/route
+    + Team/ControlProfile/MemberConfig revisions + Agent Package binding revision
+    + workload generation + Leader logical session)
+  + Leader physical session + current expected Work epoch
+  + current Leader model/tool binding
   - no Task / ExecutionAttempt / ExecutionBinding / execution claim
 ```
 
 Task-scoped 路径适用于任何 ordinary Task assignee，允许当前 Package 的 Task Skills、knowledge reads、workspace tools 和 `tiangong_submit_result`。Work-scoped Leader 路径只允许有界 coordination tools 与当前 Leader Package 中标记为 `settlement: coordination-action` 的纯方法 Skill；禁止 `read/write/edit/exec/process`、workspace/repository/knowledge retrieval、Task Result submit 和带 workspace 脚本的 Skill。需要项目读取或本地执行时，Leader 必须创建 ordinary Task 并走 Task-scoped 路径，不能临时为 Work session 伪造 Task/claim。
 
-Leader session 只用于 turn 串行与 correlation，不授予 authority；current principal/route、Team/ControlProfile/MemberConfig 和 Work epoch 才决定 admission。两条路径的 pending ledger、ToolResult 必填字段、SkillUse 结算和 ingest 校验不同，不能用可选字段把一条路径降格为另一条。只向模型投影选中 Package 的主控、风格和对应路径允许的 Skill catalog/tool surface。Package 解析、摘要检查、controller bootstrap、当前配置或 control 加载失败时必须在模型调用前 fail closed。
+Leader session 只用于 turn 串行与 correlation，不单独授予 authority；`leaderScopeId` 封闭绑定 current principal/route、Team/ControlProfile/MemberConfig revisions、Agent Package binding revision、workload generation、Work 和 Leader logical session。Work epoch 是每个 action 的 optimistic-concurrency precondition，不进入 scope identity。两条路径的 pending ledger、ToolResult 必填字段、SkillUse 结算和 ingest 校验不同，不能用可选字段把一条路径降格为另一条。只向模型投影选中 Package 的主控、风格和对应路径允许的 Skill catalog/tool surface。Package 解析、摘要检查、controller bootstrap、当前配置或 control 加载失败时必须在模型调用前 fail closed。
 
 ### 6.6 Execution domain 安全合同
 
@@ -580,12 +582,26 @@ Task
 
 Task SkillUse selection ToolResult 必须带 Task/attempt/claim identity。Result Candidate 说明每个已选择 `skillUseId` 的 status 和 output；专业 Checkpoint 校验 output Schema、直接引用和未结 SkillUse。正式 Result 是 Task SkillUse status/output 的唯一结算事实。
 
-Work-scoped Leader coordination 没有 Task Result。Leader Package 只有在 Skill contract 声明 `settlement: "coordination-action"`、列出允许的 typed action kinds，且 Skill 不包含需要 workspace/execution domain 的 script 时，才可在该路径选择 Skill。选择 ToolResult 绑定 Work、authenticated Leader principal、workload generation、Leader session/turn 和 Work epoch，但省略 Task/attempt/claim/ExecutionBinding 字段。
+Work-scoped Leader coordination 没有 Task Result。Leader Package 只有在 Skill contract 声明 `settlement: "coordination-action"`、列出允许的 typed action kinds，且 Skill 不包含需要 workspace/execution domain 的 script 时，才可在该路径选择 Skill。选择 ToolResult 绑定受信 runtime 签发的 `leaderScopeId`、turn 和 `workEpochAtSelection`，但省略 Task/attempt/claim/ExecutionBinding 字段。
+
+`leaderScopeId = digest("leader-scope-v1", canonicalTuple)`；`canonicalTuple` 是以下 authority identity，不是模型输入：
+
+```text
+workId
++ authenticated principalId + principalRouteRef
++ teamRevision + controlProfileRevision + memberConfigRevision
++ agentPackageBindingRevision
++ workloadGeneration
++ leaderSessionRef
+```
+
+任一 authority identity 字段变化都终止旧 Leader scope。control runtime 或 recovery controller 必须在新 Leader turn 前，把旧 scope 的 replacement/terminal boundary 持久化并确认 ingest，再打开新 `leaderScopeId`；旧 scope 不能继续选 Skill、结算或发起 action。Work epoch 不属于 `leaderScopeId`：`workEpochAtSelection` 只保存选择时 provenance。accepted action 必须携带 current `expectedWorkEpoch`；同一 scope 内 Work epoch 因成员 Result 或其他已接受事实推进时，Worker 可以在重新读取 current Work、重验 Skill 专业前置和 action output 后，使用旧 selection 发起带 current epoch 的 action。stale expected epoch 被拒绝且不结算；Worker 在同一 scope 重读后必须使用反映新 canonical request 的新 requestId 重试，selection 保持 open 而不会永久悬空。
 
 下一次被 CoordinationStore 接受的 typed Leader action 必须在其有界请求中携带结算：
 
 ```json
 {
+  "expectedWorkEpoch": 4,
   "skillUseSettlements": [
     {
       "skillUseId": "leader-skill-use",
@@ -604,16 +620,18 @@ Work-scoped Leader coordination 没有 Task Result。Leader Package 只有在 Sk
 
 Worker Leader action control 在调用 Coordination 前加载当前 Package contract，并 fail closed 验证 Package/Skill version 与 digest、typed action kind allowlist、Skill output Schema 和专业前置条件。它只向 Coordination 发送已经通过 Worker control 的 bounded settlement envelope。
 
-CoordinationStore 不加载 Agent Package 或 Skill contract，也不重新判断专业 output。它在同一 action transaction 中只执行通用验证：按 `selectionToolResultId` 载入 selection ToolResult；比较 action 中的 `skillUseId/skillId/skillVersion/skillContentDigest` 与 selection 记录完全一致；验证 bounded settlement envelope、`succeeded | blocked | failed` enum、大小和 refs；验证相同 Work、current Leader actor、workload/session/epoch、accepted action ownership；并保证每个 `skillUseId` 最多被一个 accepted action 结算及 requestId 幂等。Coordination 接受只证明通用 actor/ownership/引用/一次性结算合同成立，不证明专业输出充分。
+CoordinationStore 不加载 Agent Package 或 Skill contract，也不重新判断专业 output。它在同一 action transaction 中只执行通用验证：按 `selectionToolResultId` 载入 selection ToolResult；比较 action 中的 `skillUseId/skillId/skillVersion/skillContentDigest` 与 selection 记录完全一致；验证 bounded settlement envelope、`succeeded | blocked | failed` enum、大小和 refs；验证相同 Work、current `leaderScopeId`/actor/route/authority revisions、action 的 `expectedWorkEpoch` 等于 current Work epoch，以及 accepted action ownership；并保证每个 `skillUseId` 最多被一个 accepted action 结算及 requestId 幂等。它不要求 `expectedWorkEpoch == workEpochAtSelection`。Coordination 接受只证明通用 actor/ownership/引用/一次性结算合同成立，不证明专业输出充分。
 
 accepted `update-work-spec`、`publish-plan`、`create-task`、`cancel-task`、`complete-work` 或 `stop-work` 的 Work timeline fact 与 coordination ToolResult 共同构成唯一结算事实；action ToolResult 引用 selection `skillUseId/toolResultId`。被通用 envelope、epoch、actor 或 ownership 检查拒绝的 action 不结算 SkillUse；`cancel-task` 的 transaction 1/pending phases 也不结算：初始 tool call 只闭合一个报告 current phase 的 ToolResult，canonical settlement request 随 bounded cancel command 保存；只有 transaction 2 cancellation fact 与 server-side terminal receipt 可原子结算。相同 action requestId 重放返回同一结算，不重复创建。
 
 SkillUse 的 scope 生命周期是恢复合同，不是新的业务 ledger：
 
-- Task SkillUse 只属于创建它的 `executionAttemptId + executionClaimId + leaseEpoch`。claim 丢失、Worker replacement 或 crash recovery 终止该 scope 时，terminal/revoked/crashed AttemptBoundaryRecord 以 `interrupted | abandoned` disposition 列出仍打开的 `skillUseId`；该 disposition 是诊断终态，不是 `succeeded | blocked | failed` 正式结算；
+- 每个 Task attempt scope 和 `leaderScopeId` 最多同时存在 64 个 open SkillUses。control runtime 在 per-scope lock 内以 selection minus formal settlement/boundary 直接事实计数并串行创建 selection；`tiangong_use_skill` admission 在第 65 个 record 创建前 fail closed。已结算 Leader SkillUse 不再计入 open 数，boundary 因而最多携带 64 个 `skillUseId`；
+- Task SkillUse 只属于创建它的 `executionAttemptId + executionClaimId + leaseEpoch`。claim 丢失、Worker replacement 或 crash recovery 终止该 scope 时，terminal/revoked/crashed AttemptBoundaryRecord 以唯一 diagnostic disposition `interrupted` 列出仍打开的 `skillUseId`；它不是 `succeeded | blocked | failed` 正式结算；
 - claim 终止后重新领取必须创建新的 `executionAttemptId`、claim ID 和 lease epoch，并重新选择所需 Skill。当前 Task Result 只结算和引用当前 attempt/claim 的 SkillUses/ToolResults；
-- Work-scoped Leader SkillUse 只属于创建它的 Leader principal、workload generation 和 Leader session scope。Leader workload/session replacement 时，受信 control/recovery runtime 写 `LeaderScopeBoundaryRecord(replaced|terminal)`，以 `interrupted | abandoned` disposition 终止旧 scope 的 open SkillUses；新 Leader 必须重新选择；
-- Work complete/stop 只要求 current active Leader scope 没有未结 SkillUse。历史 interrupted/abandoned selections 进入调试视图和 Work retention，不阻塞关单，也不能成为专业输出或 accepted action settlement；
+- Work-scoped Leader SkillUse 只属于创建它的 `leaderScopeId`。principal/route、`teamRevision/controlProfileRevision/memberConfigRevision`、`agentPackageBindingRevision`、workload generation 或 Leader logical session 任一变化时，受信 control/recovery runtime 写 `LeaderScopeBoundaryRecord(replaced|terminal)`，以唯一 diagnostic disposition `interrupted` 终止旧 scope 的 open SkillUses；新 Leader scope 必须重新选择；
+- `interrupted` 只有一个确定性机器转换：scope boundary 创建时，将该 scope 所有尚无正式 Result 或 accepted action settlement 的 SkillUses 以 `skillUseId + disposition + reasonCode` 列入 boundary。`reasonCode` 来自有界机器事件 enum（claim lost、worker/authority/session replaced、crash recovery 或 terminal scope）；已正式结算的 SkillUse 不列入，M9 只定义这一种未结 diagnostic disposition；
+- Work complete/stop 只要求 current active Leader scope 没有未结 SkillUse。历史 interrupted selections 进入调试视图和 Work retention，不阻塞关单，也不能成为专业输出或 accepted action settlement；
 - M9 不提供跨 attempt/claim/Leader scope 的 ToolResult 或 SkillUse carry-forward。需要旧事实时必须重新观察；已进入 Work timeline、正式 Result 或 exact ContentRef 的独立直接事实仍按其自身合同使用，但不会把旧 SkillUse 变成已结算。
 
 两类 SkillUse 都不建立独立表或 ledger：selection、scope boundary、Task Result 或 accepted Leader typed action 是直接事实。Worker 崩溃后从这些事实重建 current-scope 未结集合；不能用聊天记忆或 controller prose 声称已经结算。
@@ -709,11 +727,11 @@ Concern 的目标是在仍有机会调整时提供短提示，不做最终裁决
 每次实际注入产生一个有界 `ConcernMarker`：
 
 ```text
-scopeIdentity = task executionAttemptId | work-leader(workId + leaderSessionRef)
+scopeIdentity = task executionAttemptId | work-leader(leaderScopeId)
 concernMarkerId = stable(executionScope + scopeIdentity + package/control version + concernId + stateFingerprint)
 ```
 
-marker 至少保存 `executionScope`、Work、concern identity/version、state fingerprint、injection turn、时间和有界 reason code；Task scope 必须保存 executionAttemptId，Work-scoped Leader 必须保存 Leader sessionRef/Work epoch 且禁止 claim 占位字段。它不复制长 Prompt 或敏感内容，先写入可恢复 control spool；Task marker 按 attempt diagnostic retention ingest，Leader marker 至少保留到 Work retention。Worker 重启后仍可去重，M9-D 只按原 scope 展示 Concern 在哪里影响了执行，不把 Leader marker 归到某个 Task。Marker 是诊断/去重事实，不是 Task 状态、阻断条件或新的 Concern 业务对象。
+marker 至少保存 `executionScope`、Work、concern identity/version、state fingerprint、injection turn、时间和有界 reason code；Task scope 必须保存 executionAttemptId，Work-scoped Leader 必须保存 `leaderScopeId` 与 `workEpochAtInjection` provenance 且禁止 claim 占位字段。它不复制长 Prompt 或敏感内容，先写入可恢复 control spool；Task marker 按 attempt diagnostic retention ingest，Leader marker 至少保留到 Work retention。Worker 重启后仍可去重，M9-D 只按原 scope 展示 Concern 在哪里影响了执行，不把 Leader marker 归到某个 Task。Marker 是诊断/去重事实，不是 Task 状态、阻断条件或新的 Concern 业务对象。
 
 Concern 在工具结果进入下一次模型上下文前注入。具体使用 `after_tool_call`、`tool_result_persist` 或其他 OpenClaw hook，必须针对镜像固定的 OpenClaw 版本验证调用顺序和失败语义；不能根据最新文档假设 pinned runtime 已具备某个 hook。
 
@@ -725,7 +743,7 @@ Gate 可检查：
 
 - 当前 admission scope、Agent、Work、Session 与对应的 Team/ControlProfile/MemberConfig/runtime-binding revisions；
 - Task-scoped 路径的 Task、ExecutionAttempt、ExecutionBinding 和 active claim/lease；
-- Work-scoped Leader 路径的 current Leader principal、Work epoch 和 coordination-only tool surface；
+- Work-scoped Leader 路径的 current `leaderScopeId` authority identity、typed action `expectedWorkEpoch` 和 coordination-only tool surface；
 - Task 已取消、已提交 Result、principal/workload generation stale、execution claim 已失效或 submit freeze 已进入；
 - 工具是否属于当前 Package 有效工具表面；
 - 请求路径、cwd 和 exact target ref 是否位于授权 workspace binding；
@@ -762,7 +780,7 @@ Leader 的常规协调走 Work-scoped admission，不提交 Task Result，也不
 - 发布 Plan 或创建 Task 前检查来源、当前 WorkSpec、objective、assignee、inputs 和完成条件，并结算对应 decomposition SkillUse；
 - `complete-work`/`stop-work` 前形成对 `doneWhen`、直接 Results/ToolResults 和限制的有界综合，结算 result-synthesis 与任何仍打开的 Leader SkillUse。
 
-Worker Leader action Gate 从当前 Package 加载 contract，验证 current Leader principal、Work/session/epoch、typed action allowlist、Skill version/digest、selection 和 output Schema/专业前置；CoordinationStore 不加载 Package contract，只对 accepted action 验证通用 settlement envelope、actor/ownership/refs/idempotency，并写 Work timeline fact 与 ToolResult，不把专业内容提升为 Kernel 判定。被拒绝的动作不会结算 SkillUse。需要 workspace/project retrieval 的 Leader 工作必须委托 ordinary Task；这些规则不新增 Team Checkpoint、CoordinationDecision 或固定流程。
+Worker Leader action Gate 从当前 Package 加载 contract，验证 current `leaderScopeId` 全部 authority revisions、重新读取的 Work、action `expectedWorkEpoch`、typed action allowlist、Skill version/digest、selection 和 output Schema/专业前置；CoordinationStore 不加载 Package contract，只对 accepted action 验证通用 settlement envelope、actor/ownership/refs/idempotency，并写 Work timeline fact 与 ToolResult，不把专业内容提升为 Kernel 判定。被拒绝的动作不会结算 SkillUse。需要 workspace/project retrieval 的 Leader 工作必须委托 ordinary Task；这些规则不新增 Team Checkpoint、CoordinationDecision 或固定流程。
 
 ## 9. Tool Observation Runtime 与 ToolResult 2.0
 
@@ -822,7 +840,7 @@ ToolResult 只使用一个扁平、稳定的公共 Envelope；`request` 和 `res
 
 `executionScope` 只有 `task | work-leader`。所有 Task-scoped 顶层工具，包括 coordination、Skill、retrieval 和 submit，都必须具有 Work/Task/ExecutionAttempt/session/turn、ControlProfile/MemberConfig revisions、`runtimeCapabilityBindingId/runtimeCapabilityBindingRevision` 以及 `executionClaimId/claimRevisionAtStart/leaseEpochAtStart`；workspace 工具还必须有 ExecutionBinding refs。`executionClaimId + leaseEpochAtStart` 精确区分同一 workload/attempt 内的 revoke/reacquire，`claimRevisionAtStart` 记录工具 admission 时通过的 PostgreSQL claim revision。
 
-Work-scoped Leader coordination ToolResult 必须具有 Work、current Leader principal、workload generation、current ControlProfile/MemberConfig revisions、`workEpoch`、logical/physical session、turn 和 toolCall identity，`executionScope` 为 `work-leader`：
+Work-scoped Leader coordination ToolResult 必须具有 `leaderScopeId` 及其 Work、authenticated principal/route、Team/ControlProfile/MemberConfig revisions、Agent Package binding revision、workload generation 和 `leaderSessionRef` identity；`openclawSessionId` 仅作 physical correlation，不进入 scope digest。record 同时保存 `workEpochAtStart`、turn 和 toolCall，`executionScope` 为 `work-leader`。Skill selection Adapter 另把同一值保存为 `workEpochAtSelection` provenance；typed action request 必须携带独立的 current `expectedWorkEpoch`：
 
 ```json
 {
@@ -831,13 +849,17 @@ Work-scoped Leader coordination ToolResult 必须具有 Work、current Leader pr
   "toolCallId": "openclaw-call-id",
   "executionScope": "work-leader",
   "workId": "...",
-  "workEpoch": 3,
+  "leaderScopeId": "trusted-scope-id",
+  "workEpochAtStart": 3,
   "workloadGeneration": 12,
+  "teamRevision": 4,
   "controlProfileRevision": 5,
   "memberConfigRevision": 7,
+  "agentPackageBindingRevision": 2,
   "principalId": "...",
+  "principalRouteRef": "...",
   "actorId": "...",
-  "sessionRef": "leader-work-session",
+  "leaderSessionRef": "leader-work-session",
   "openclawSessionId": "...",
   "turnId": "...",
   "tool": "tiangong_update_work_spec",
@@ -851,7 +873,7 @@ Work-scoped Leader coordination ToolResult 必须具有 Work、current Leader pr
 }
 ```
 
-它必须省略 Task/attempt/claim/ExecutionBinding/writerRoot 字段，而不是使用伪造占位 ID。Schema 以 `executionScope` 使用两个封闭字段集合，不能接受任意可选混合形态。
+它必须省略 Task/attempt/claim/ExecutionBinding/writerRoot 字段，而不是使用伪造占位 ID。Schema 以 `executionScope` 使用两个封闭字段集合，不能接受任意可选混合形态。`leaderScopeId` 必须由其 identity fields 重算一致；`workEpochAtStart/workEpochAtSelection` 不参与该摘要。
 
 公共 Envelope 不保存：
 
@@ -876,9 +898,10 @@ Task-scoped:
   + turn + toolCallId + normalized tool identity
 
 Work-scoped Leader:
-  current Leader principal + Team/ControlProfile/MemberConfig revisions
-  + workload generation + work + expected Work epoch + logical/physical Leader session
-  + turn + toolCallId + allowed coordination/Leader-Skill identity
+  leaderScopeId + work + principal/route + Team/ControlProfile/MemberConfig revisions
+  + Agent Package binding revision + workload generation + logical/physical Leader session
+  + workEpochAtStart + turn + toolCallId + allowed coordination/Leader-Skill identity
+  + typed action request 的 current expectedWorkEpoch（如适用）
 ```
 
 Gate 允许时将其记为 pending 并调用工具；Gate 拒绝时直接以 denied ToolResult 闭合。工具执行后的成功、错误、超时或取消由结果 hook 闭合。同一调用重复投递必须幂等；同一调用产生冲突结果必须 fail closed。Work-scoped identity 不能进入 workspace wrapper，Task-scoped identity 缺 claim fields 时也不能降级为 Leader path。
@@ -992,14 +1015,15 @@ Generic capture 对所有工具必选，只负责公共 Envelope、ownership、o
 
 ```text
 trusted Worker control spool
-  pending calls + bounded ToolResults + attempt boundaries + Concern markers
+  pending calls + bounded ToolResults
+  + AttemptBoundaryRecords + LeaderScopeBoundaryRecords + ConcernMarkers
                  │
                  ├─ periodic bounded batch ingest
-                 └─ Result/Leader-action inline ingest
+                 └─ Result/Leader-action/scope-boundary inline ingest
                               │
                               ▼
-                 PostgreSQL bounded ToolResults
-                 attempt / Work / Result retention
+                 PostgreSQL bounded execution records
+                 attempt / Leader scope / Work / Result retention
                               │
                               ▼
                 optional storage-owned outputRef
@@ -1010,23 +1034,25 @@ trusted Worker control spool
 未被 Result 或 accepted Leader action 引用的 ToolResult 也上传 PostgreSQL，以保证 Task failed、Leader/action 被拒绝、Agent 崩溃或忘记结算时仍可调试：
 
 - 所有者是 control domain 中的 `ToolResultIngestor`，不是模型、Skill 或 execution process；
-- 默认在 32 条记录或最迟 5 秒时 batch ingest，并在 Result submit、带 Leader SkillUse settlement 的 typed coordination action、ExecutionAttempt 终止和受控 Worker shutdown 前强制 flush；部署可降低批量和间隔，不能放宽硬上限；
+- 默认在 32 条记录或最迟 5 秒时 batch ingest，并在 Result submit、带 Leader SkillUse settlement 的 typed coordination action、ExecutionAttempt 终止、Leader scope replacement/terminal 和受控 Worker shutdown 前强制 flush；部署可降低批量和间隔，不能放宽硬上限；
 - Task-scoped ingest 校验原 `executionClaimId/claimRevisionAtStart/leaseEpochAtStart`、ControlProfile/MemberConfig revisions、`runtimeCapabilityBindingId/runtimeCapabilityBindingRevision` 和 attempt。renewal 导致 current claim revision 增大不否定已 admission 的调用，但原 start revision 必须当时有效且 claim ID/lease epoch 相同；revoke/reacquire 不能复用旧 identity；
-- Work-scoped Leader ingest 校验原 Work、Leader principal、workload generation、ControlProfile/MemberConfig revisions、session、Work epoch 和 tool allowlist，不要求也不允许 claim fields。与 typed action 一起提交的 Skill selection/settlement records 在 action transaction 内 inline upsert；
-- claim 被 replacement/revoke 后，旧 principal 不能发起 ingest；只有受信 recovery controller 可按原 attempt/claim identity 重放已闭合 Task records。Leader 被替换后同样只有 recovery controller 可保存已闭合历史 Work records，旧 Leader 不能结算或发起新 action；
-- PostgreSQL 以 `toolResultId` 和 canonical content digest 幂等 upsert；相同 ID/相同内容是 replay，相同 ID/不同内容是 conflict，隔离当前 attempt 并 fail closed；
+- Work-scoped Leader ingest 校验原 `leaderScopeId` 可由 Work、principal/route、Team/ControlProfile/MemberConfig revisions、Agent Package binding revision、workload generation 和 `leaderSessionRef` 重算，并验证 physical session、`workEpochAtStart/workEpochAtSelection` provenance 和 coordination-only generic tool surface；不要求也不允许 claim fields。与 typed action 一起提交的 Skill selection/settlement records 在 action transaction 内 inline upsert；
+- 任一 Leader authority identity 变化时，受信 control runtime 必须先在 control spool 原子闭合旧 `LeaderScopeBoundaryRecord(replaced|terminal)`，列出最多 64 个 open SkillUses 的 `interrupted` dispositions，强制 ingest 并获得确认，然后才能打开新 scope 或接受新 Leader turn；
+- claim 被 replacement/revoke 后，旧 principal 不能发起 ingest；只有受信 recovery controller 可按原 attempt/claim identity 重放已闭合 Task records。Leader scope 失效后同样只有 recovery controller 可保存旧 scope 已闭合 records、创建或重放其 boundary；旧 Leader 不能写 boundary、结算或发起新 action；
+- PostgreSQL 对 ToolResult 使用稳定 `toolResultId`，对 boundary 使用稳定 `attemptBoundaryRecordId | leaderScopeBoundaryRecordId`，并以 canonical content digest 幂等 upsert；相同 ID/相同内容是 replay，相同 ID/不同内容是 conflict，隔离相关 attempt/scope 并 fail closed；
 - Result submit 再携带所有 cited records。已 ingest 的相同记录只验证并提升 retention，未 ingest 的记录在 Result 事务内 upsert；
-- 未引用 Task records 使用短期 attempt retention；被正式 Result 引用的 ToolResult 至少保留到所属 Work retention 结束。Leader SkillUse selection、accepted typed action settlement records 和 Work-scoped ConcernMarkers 同样至少保留到 Work retention 结束；ControlProfile 只能延长，不能缩短这些引用保留期。删除只能发生在 attempt/Work action 已终止、ingest 已确认、没有 pending、适用 retention 已到期且没有 Result/Leader action 引用之后。
+- 未引用 Task records 使用短期 attempt retention；被正式 Result 引用的 ToolResult 至少保留到所属 Work retention 结束。Leader SkillUse selection、accepted typed action settlement records、LeaderScopeBoundaryRecords 和 Work-scoped ConcernMarkers 同样至少保留到 Work retention 结束；ControlProfile 只能延长，不能缩短这些引用保留期。删除只能发生在 attempt/Leader scope/Work action 已终止、ingest 已确认、没有 pending、适用 retention 已到期且没有 Result/Leader action 引用之后。旧 Leader scope spool 未确认 boundary 与全部已闭合 records ingest 前不得清理。
 
 Worker 崩溃恢复：
 
-1. control runtime/recovery controller 在接受新 turn 或新 claim 前，先从 CoordinationStore 查询并恢复当前 workload/writerRoot 关联的 incomplete cancel commands；
-2. 扫描本地 spool，已闭合但未确认 ingest 的记录按原 ID batch replay；
-3. pending call 先结合 OpenClaw transcript、tool service receipt 和 processRef 调和；
-4. 能确定终态时正常闭合；无法确定是否执行或副作用是否完成时，在恢复截止点闭合为 `outcome: "unknown"`，保留 reason 和可用 refs，不删除或伪装成功；
-5. 后台进程无法重新取得可信 ownership 时先终止并确认完整进程树，再闭合为 cancelled/unknown；
-6. 推进 cancel command 的 process/records/writer phases；未到 transaction 2 不报告 cancelled，也不解除 PostgreSQL fence；
-7. 所有恢复记录 ingest 成功、attempt terminal 且相关 cancel phase 已提交或保持 recovery-required 后，才允许清理本地 spool。
+1. control runtime/recovery controller 在接受新 turn 或新 claim 前，先从 CoordinationStore 查询并恢复当前 workload/writerRoot 关联的 incomplete cancel commands，并比较本地 Leader scope identity 与 current authority revisions；
+2. 若旧 Leader scope 已失效且没有 terminal boundary，只有 recovery controller 按旧 identity 创建稳定 `leaderScopeBoundaryRecordId`，把其最多 64 个 open SkillUses 标记 `interrupted`；
+3. 扫描本地 spool，已闭合但未确认 ingest 的 ToolResult、AttemptBoundaryRecord、LeaderScopeBoundaryRecord 和 ConcernMarker 按原 ID/canonical digest batch replay；
+4. pending call 先结合 OpenClaw transcript、tool service receipt 和 processRef 调和；
+5. 能确定终态时正常闭合；无法确定是否执行或副作用是否完成时，在恢复截止点闭合为 `outcome: "unknown"`，保留 reason 和可用 refs，不删除或伪装成功；
+6. 后台进程无法重新取得可信 ownership 时先终止并确认完整进程树，再闭合为 cancelled/unknown；
+7. 推进 cancel command 的 process/records/writer phases；未到 transaction 2 不报告 cancelled，也不解除 PostgreSQL fence；
+8. 所有恢复 records 和旧 Leader scope boundary 均确认 ingest、attempt/scope terminal，且相关 cancel phase 已提交或保持 recovery-required 后，才允许清理本地 spool 或接受对应新 Leader turn。
 
 `pending` 是 spool 状态，不是可以无限保留的 ToolResult outcome。正常结果、拒绝、timeout/cancel、attempt 终止或崩溃恢复都会将其闭合；`unknown` 是不可静默覆盖的保守终态。后续迟到 receipt 只能作为同一 attempt 的关联诊断被展示，或通过新的显式工具调用产生新 ToolResult，不能改写已 ingest 的 unknown；任何同 ID 不同内容都进入冲突诊断并 fail closed。
 
@@ -1034,20 +1060,22 @@ Task assignee controls 可以读取 Task-local 详细 ToolResult；Leader contro
 
 ### 9.8 容量预算与耗尽
 
-M9 按 canonical bounded projection 计量。单条、attempt 和 Worker 是产品硬预算；ControlProfile 可在经过容量测试后降低或在产品上限内调整它们，但不能提高部署 PostgreSQL quota：
+M9 按 canonical bounded projection 计量。单条、attempt/scope 和 Worker 是产品硬预算；ControlProfile 可在经过容量测试后降低或在产品上限内调整它们，但不能提高部署 PostgreSQL quota：
 
 | 范围 | 产品硬上限 |
 |---|---:|
 | 单条 ToolResult | 64 KiB |
+| 单 Attempt/Leader scope open SkillUses | 64；第 65 个 selection admission fail closed |
+| 单条 Attempt/LeaderScope boundary | 64 KiB，最多 64 个 `interrupted` dispositions |
 | 单 ExecutionAttempt 正常 execution records | 4,096 条或 16 MiB，先到者为准 |
-| 单 attempt 应急保留区 | 64 条或 256 KiB，仅用于 boundary、pending 闭合、process kill、blocked/failed submit 和 cancel |
+| 单 ExecutionAttempt/Leader scope 应急保留区 | 64 条或 256 KiB，仅用于 boundary、pending 闭合、process kill、blocked/failed settlement 和 cancel |
 | budget-exhausted terminal settlement calls | 每个 Task 或 Work 最多 3 个不同 requestId；相同 requestId replay 不重复计数 |
 | 单 Worker control spool 正常 execution records | 16,384 条或 64 MiB，先到者为准 |
 | 单 Worker spool 应急保留区 | 256 条或 1 MiB |
 | PostgreSQL 普通 records/bytes | authenticated deployment quota，必须设置全局上限与每 Team hard partition |
 | PostgreSQL emergency records/bytes | authenticated deployment reserve，必须设置每 Team floor，普通 ingest 不可消费 |
 
-execution records 包括 ToolResults、AttemptBoundaryRecords 和 ConcernMarkers，后两者使用更小的固定 Schema 并计入 attempt/spool/PG quota。单条结果先执行工具专属确定性投影、截断和可选 `outputRef`；仍超过 64 KiB 时只在应急区闭合最小 error/unknown ToolResult，并把决定性内容缺失写入 reason。不能丢弃调用或把超限正文拆成无限多 ToolResults。
+execution records 包括 ToolResults、AttemptBoundaryRecords、LeaderScopeBoundaryRecords 和 ConcernMarkers；boundary/marker 使用更小的固定 Schema。Task records 计入 attempt/spool/Team PG quota；LeaderScopeBoundaryRecords 计入 Worker spool、Team PG quota 和固定 emergency boundary reserve，但不伪造 ExecutionAttempt 计量。单条结果先执行工具专属确定性投影、截断和可选 `outputRef`；仍超过 64 KiB 时只在应急区闭合最小 error/unknown ToolResult，并把决定性内容缺失写入 reason。不能丢弃调用或把超限正文拆成无限多 ToolResults。
 
 PostgreSQL quota 由 deployment/admin 配置拥有，不属于 ControlProfile。M9 第一版只实现静态 records/bytes global quota、静态 per-Team normal hard partition 和固定 per-Team emergency floor/总 reserve；validator 拒绝分区之和超过物理 quota。Team 不动态借用其他 partition 或 emergency floor，ControlProfile 也不能提高全局/Team 配额。M9 不建设动态权重、借用或公平调度器；quota revision、partition 和当前使用量只进入 operator 诊断。
 
@@ -1057,10 +1085,10 @@ PostgreSQL quota 由 deployment/admin 配置拥有，不属于 ControlProfile。
 - 继续允许 ToolResult ingest/recovery、现有 process tree 的 kill/terminal confirmation、Task cancel；
 - Task path 不允许 succeeded，只允许最终提交一个 `reportedOutcome: "blocked" | "failed"` 的正式 Result；Work-scoped Leader 只允许必要 cancel actions 和一个通过 CloseGuard 的 `stop-work`，并把打开的 Leader SkillUses 结算为 blocked/failed；
 - “一个”指一个成功提交的 Task Result 或 Work stop settlement，不是第一次调用尝试。Schema/Checkpoint/action reject 不消耗 settlement，但消耗一个新的 emergency requestId；同一 requestId 的 transport/replay 只返回同一结果。每个 Task 或 Work 最多 3 个不同 emergency settlement requestIds，仍未提交时只保留 operator cancellation/recovery；
-- 使用预留应急区闭合已经 pending 的调用和上述控制动作；
+- 使用预留应急区闭合已经 pending 的调用、Attempt/LeaderScope boundaries 和上述控制动作；
 - 在 budget/retention reconciliation 前不得通过删除未 ingest、pending、被 Result/Leader action 引用或未到期记录解除耗尽。
 
-PostgreSQL 普通 quota 耗尽时，Coordination 拒绝新的普通 execution-record ingest，Worker 进入同一耗尽模式；deployment/Team emergency reserve 继续接受 pending terminal、process kill、cancel 和上述 bounded Task/Work terminal settlement。被 Result 或 accepted Leader action 引用的 ToolResults 至少保留到 Work retention 结束，不能由短期 attempt cleanup 删除。若该 Team emergency floor 也不可用，系统停止新 turn，保持 claim fenced，并只允许不依赖模型的 operator cancellation/recovery 路径；不得伪造 blocked Result。
+PostgreSQL 普通 quota 耗尽时，Coordination 拒绝新的普通 execution-record ingest，Worker 进入同一耗尽模式；deployment/Team emergency reserve 继续接受 pending terminal、Attempt/LeaderScope boundary、process kill、cancel 和上述 bounded Task/Work terminal settlement。被 Result 或 accepted Leader action 引用的 ToolResults 至少保留到 Work retention 结束，不能由短期 attempt cleanup 删除。若该 Team emergency floor 也不可用，系统停止新 turn，保持 claim fenced，并只允许不依赖模型的 operator cancellation/recovery 路径；不得伪造 blocked Result。
 
 测试必须覆盖每个层级的边界值、Team 静态 partition 隔离、quota revision、并发争用、reserved capacity、Work-retention promotion、Schema/action reject 后合法重试、相同 requestId replay、每 Task/Work 三个不同失败 requestIds 后终止、清理后恢复，以及 exhausted 状态下“禁新工具、允许 bounded blocked/failed settlement 与 cancel”。
 
@@ -1087,11 +1115,11 @@ M9-A 复用 M8 已有 Work、Task、Member、Session、turn、tool call、ToolRe
 - `openclawSessionId`：物理 OpenClaw session；
 - `turnId` 和 `toolCallId` 的父子关联。
 
-attempt 打开前，control runtime 先把有界 `AttemptBoundaryRecord(opened)` 原子写入可恢复受信 spool，至少包含 Task/attempt、member、workload generation、ExecutionBinding 与 runtime-capability-binding refs、`executionClaimId/claimRevision/leaseEpoch`、逻辑/物理 session 和时间。没有 opened record 不允许模型 turn 或工具执行。terminal/revoked/crashed 边界使用同一 attempt identity 追加记录；若存在未结 SkillUse，边界按 `skillUseId + interrupted|abandoned + reasonCode` 保存有界 diagnostic dispositions，并在清理前 batch ingest 到 PostgreSQL attempt-retention projection。AgentLoop trace 只投影其 identity，不是唯一来源。
+attempt 打开前，control runtime 先把有界 `AttemptBoundaryRecord(opened)` 原子写入可恢复受信 spool，至少包含 Task/attempt、member、workload generation、ExecutionBinding 与 runtime-capability-binding refs、`executionClaimId/claimRevision/leaseEpoch`、逻辑/物理 session 和时间。没有 opened record 不允许模型 turn 或工具执行。terminal/revoked/crashed 边界使用同一 attempt identity 追加记录；若存在未结 SkillUse，boundary 以唯一 `interrupted` disposition 和 reasonCode 保存最多 64 个 `skillUseId`，并在清理前 ingest 到 PostgreSQL attempt-retention projection。AgentLoop trace 只投影其 identity，不是唯一来源。
 
 恢复时先读取 boundary records 与 claim/lease，再决定 replay、revoke、process termination 和新 attemptNo。claim 终止后重新领取总是打开新的 executionAttemptId/attemptNo；旧 attempt 不会被新 claim 重新激活。物理 session 可承载多个逻辑 Task 时，每个 turn 必须绑定唯一 active Task/attempt；无法唯一绑定时不得执行工具或提交 Result。
 
-Work-scoped Leader coordination 不创建 ExecutionAttempt 或伪造 Task boundary；其关联由 Work、Leader logical/physical session、Work epoch、turn/toolCall 和 Work-scoped ToolResult 直接表达。M9-A diagnostic-marker substrate 另提供有界 `LeaderScopeBoundaryRecord(opened|replaced|terminal)`，绑定 Work、Leader principal、workload generation、session 与 config revisions；replaced/terminal 记录旧 scope open SkillUses 的 interrupted/abandoned dispositions。该记录只用于恢复、去重和调试，不是 Work 状态或 SkillUse ledger。
+Work-scoped Leader coordination 不创建 ExecutionAttempt 或伪造 Task boundary；其关联由 `leaderScopeId`、Work、Leader logical/physical session、Work epoch provenance、turn/toolCall 和 Work-scoped ToolResult 直接表达。M9-A diagnostic-marker substrate 另提供有界 `LeaderScopeBoundaryRecord(opened|replaced|terminal)`。opened record 必须在该 scope 首个模型 turn 前持久化到受信 spool；replacement/terminal 还必须在后继 scope turn 前确认 ingest。稳定 `leaderScopeBoundaryRecordId = digest("leader-scope-boundary-v1" + leaderScopeId + boundaryKind)` 与 canonical content digest 绑定 `leaderScopeId` 及 Work、principal/route、Team/ControlProfile/MemberConfig revisions、Agent Package binding revision、workload generation、`leaderSessionRef`、physical session correlation 和时间。每个 scope 至多一个 opened record，`replaced | terminal` 通过 scope-state CAS 互斥且只能成功一个；终止记录保存旧 scope 最多 64 个 open SkillUses 的唯一 `interrupted` disposition。authority identity 任一变化时，旧 boundary 必须在新 turn 前持久化并确认 ingest；失效后只有 recovery controller 可写或重放。该记录至少保留到 Work retention 结束，只用于恢复、去重和调试，不是 Work 状态或 SkillUse ledger。
 
 这些记录不创建新的权威 association table、Task 状态机或第二份 transcript。`attemptNo` 与 boundary records 只用于诊断、幂等 ingest、lease reconciliation 和恢复；Work/Task/Result 仍由 Coordination facts 定义。M9-D 只消费这些关联生成 UI/导出，不反向修改它们。
 
@@ -1174,7 +1202,7 @@ Result 提交与 cancel command 的 transaction 1 在同一 PostgreSQL Task/clai
 
 - 当前 Task/ExecutionAttempt 持有唯一 active `executionClaimId`，principal、claim revision/lease epoch、ControlProfile/MemberConfig/runtime-binding revisions、workload generation、ExecutionBinding 和 writerRoot 均匹配；
 - 除当前 submit call 外没有 pending call、运行中进程或未对账写入；writer ownership 仍由当前 claim fenced；
-- cited ToolResults 和 SkillUses 只属于当前 Work/Task/executionAttempt/member、runtime capability binding 和同一 execution claim/lease epoch；旧 attempt 的 interrupted/abandoned SkillUses/ToolResults 不能跨 claim 引用，canonical digest 无冲突；
+- cited ToolResults 和 SkillUses 只属于当前 Work/Task/executionAttempt/member、runtime capability binding 和同一 execution claim/lease epoch；旧 attempt 的 interrupted SkillUses/ToolResults 不能跨 claim 引用，canonical digest 无冲突；
 - cited outputRefs 当前可解析；
 - ToolResult capture/ingest 没有 gap；
 - 最终验证 generation 晚于最后一次相关修改。
@@ -1195,7 +1223,7 @@ M9-A baseline Checkpoint 与 M9-B 专业 Checkpoint 都通过同一受信 `Check
 
 - authenticated principal、admission scope、current config revisions、workload generation 和 actor binding；
 - Task path 的 ExecutionBinding、active executionClaimId/leaseEpoch、Task ownership 和 uniqueness；
-- Work-scoped Leader path 的 Leader/Work/session/epoch 与 coordination-only tool surface；
+- Work-scoped Leader path 的 current `leaderScopeId` authority fields、action `expectedWorkEpoch` 与 coordination-only tool surface；
 - settlement 的通用 bounded envelope、status enum、selection identity/version/digest 一致性、refs、一次性结算与 requestId idempotency；
 - bounded Schema；
 - stable refs；
@@ -1215,7 +1243,7 @@ Coordination facts
   Work / Task / Result / timeline / logical sessionRef
 
 M9-A/B recoverable diagnostics
-  execution claim / attempt boundaries / Concern markers
+  execution claim / Attempt + LeaderScope boundaries / Concern markers
   physical session / turn / toolCall
 
 OpenClaw session transcript
@@ -1295,7 +1323,7 @@ task-debug-<task-id>/
 - Result submit 尝试和 Checkpoint 缺口；
 - 正式 Result，或 failed/crashed/unsubmitted attempt 的 terminal/unknown 状态；
 - 未引用但已 ingest 的 ToolResults；
-- opened/terminal/revoked AttemptBoundaryRecords、claim transitions 和 bounded cancel command phases；
+- opened/terminal/revoked AttemptBoundaryRecords、opened/replaced/terminal LeaderScopeBoundaryRecords、claim transitions 和 bounded cancel command phases；
 - 可选 AgentLoop span references。
 
 事件保留各自来源 identity。调试导出不能把近似时间排序伪装成一个新的权威全序。
@@ -1704,7 +1732,7 @@ Leader 的三个初始 Skills 均为 `settlement: coordination-action` 的 Work-
 - 不构建角色专用镜像；通用 control image 保留身份、凭据、Package、controls、session 和 spool，可选通用 execution image/rootfs 只获得 ExecutionBinding workspace 与当前 Skill 资源；
 - `read/write/edit/exec/process` 不能绕过 prepared execution environment；
 - MemberConfig 精确引用 deployment-owned RuntimeCapabilityBinding，从其执行子集派生并逐动作核验 ExecutionBinding；
-- admission 分为有 Task claim 的 member execution 和无 workspace/claim 的 Work-scoped Leader coordination；
+- admission 分为有 Task claim 的 member execution 和无 workspace/claim 的 Work-scoped Leader coordination；后者以包含全部 authority revisions 的 `leaderScopeId` admission，Work epoch 仅作为 action CAS；
 - control API 使用 member/workload-bound principal，服务端推导 actor；
 - 以 Tiangong CoordinationStore/PostgreSQL 作为 Task/attempt claim/lease、writerRoot lock、Result/cancel race 的唯一权威；
 - 增加 workload generation fencing、Worker replacement revoke 和带 requestId/phase 的可恢复 cancellation command；
@@ -1729,9 +1757,9 @@ Leader 的三个初始 Skills 均为 `settlement: coordination-action` 的 Work-
 - loader 从选中 Package 解析私有 Product Skills 和 controls；
 - catalog 支持受限 `contract.json`、Package-local Skill ID 和完整摘要；
 - runtime 只投影当前 Package catalog；
-- `tiangong_use_skill` 校验 admission scope/input Schema、生成 `skillUseId` 并闭合选择 ToolResult；
+- `tiangong_use_skill` 校验 admission scope/input Schema、生成 `skillUseId` 并闭合选择 ToolResult；每个 Task attempt/Leader scope 最多 64 个 open SkillUses；
 - Task SkillUse 由当前 attempt 的正式 Result 结算；Work-scoped Leader SkillUse 由当前 Leader scope 后续 accepted typed coordination action/ToolResult 结算；
-- attempt/claim 或 Leader workload/session 终止时，把 open SkillUses 以 interrupted/abandoned diagnostic disposition 闭合；新 scope 必须重新选择，不做跨 scope carry-forward；
+- attempt/claim 或任一 Leader authority identity 变化时，把 open SkillUses 以唯一 `interrupted` diagnostic disposition 闭合；新 scope 必须重新选择，不做跨 scope carry-forward；
 - 删除全局 Skill resolution 和跨 Agent lock，保留可审核的普通共享 helper。
 
 ### 15.3 Professional controls
@@ -1766,8 +1794,9 @@ Leader 的三个初始 Skills 均为 `settlement: coordination-action` 的 Work-
 新增：
 
 - 按 `task | work-leader` 两套封闭身份的 pending call ledger，以及可恢复、可 ingest 的 Task ExecutionAttempt/LeaderScope boundary records；
-- Task ToolResult 必填 `executionClaimId/claimRevisionAtStart/leaseEpochAtStart` 和 `runtimeCapabilityBindingId/runtimeCapabilityBindingRevision`；Work-scoped Leader ToolResult 禁止 claim 占位字段；
-- terminal scope 对 open SkillUses 记录 interrupted/abandoned diagnostic dispositions；
+- Task ToolResult 必填 `executionClaimId/claimRevisionAtStart/leaseEpochAtStart` 和 `runtimeCapabilityBindingId/runtimeCapabilityBindingRevision`；Work-scoped Leader ToolResult 必填可重算的 `leaderScopeId` 全部 identity fields 和 Work epoch provenance，禁止 claim 占位字段；
+- terminal scope 对最多 64 个 open SkillUses 记录 `interrupted` diagnostic dispositions；Leader boundary 使用稳定 ID/canonical digest，计入 spool/Team PG/emergency quota，保留到 Work retention；
+- Leader authority identity 改变或恢复时，由 current trusted control/recovery controller 在新 Leader turn 前持久化并确认旧 scope boundary ingest；
 - logical Task/Work session 到 physical OpenClaw session/turn/toolCall 的关联字段；
 - generic normalizer 和首批 read/write/edit/exec/process/coordination/skill/retrieval/result adapters；
 - `ToolResultIngestor`、周期/终止/提交 flush、spool startup recovery；
@@ -1814,7 +1843,7 @@ M9 不新增 Architect repository publisher、shared-storage canonical memory、
 
 ### 15.7 Task 调试视图
 
-M9-A 已建立 recoverable attempt boundaries、diagnostic-marker substrate、correlation 和失败 attempt 的 ToolResult ingest；M9-B 在该 substrate 写入 Concern markers。M9-D 再新增：
+M9-A 已建立 recoverable Attempt/LeaderScope boundaries、diagnostic-marker substrate、correlation 和失败 attempt/scope 的 ToolResult ingest；M9-B 在该 substrate 写入 Concern markers。M9-D 再新增：
 
 - operator-only Task debug exporter；
 - 通过 AgentTeams authenticated diagnostics transport 获取 active Worker 或 retained session-store 的远端 `TranscriptSource`；
@@ -1864,7 +1893,7 @@ Spike 通过后按顺序实现：
 2. 通用 control image + 可选通用 execution image/rootfs 的攻击性隔离测试；
 3. CoordinationStore/PostgreSQL 权威的 Task/attempt claim/lease、writerRoot lock、Worker replacement revoke、reacquire 新 executionAttemptId 和双 writer 互斥；
 4. actor-scoped requestId、bounded phases、startup resume 和 Result transaction race 闭合的 cancellation command；
-5. 可恢复 AttemptBoundaryRecords、logical/physical Task/Work session、turn/toolCall correlation 和供 M9-B 使用的 diagnostic-marker substrate；
+5. 可恢复 AttemptBoundaryRecords、绑定完整 authority identity 的 LeaderScopeBoundaryRecords、logical/physical Task/Work session、turn/toolCall correlation 和供 M9-B 使用的 diagnostic-marker substrate；
 6. ToolResult v2 两套 pending identity、claim identity、容量/quota、batch ingest、startup recovery 和首批 Adapter；
 7. 稳定 `CheckpointInvoker` 与只验 Schema/refs/pending/ownership/claim 的合成 baseline Checkpoint；
 8. `tiangong_submit_result` freeze、inline ingest、server-side submit ToolResult 和 Result/cancel transaction race；
@@ -1881,7 +1910,7 @@ M9-A 不能依赖 storage-owned `outputRef`，除非公开 ContentRef writer/rea
 - Developer：bug triage → TDD → regression 多 SkillUse、修改/验证 generation、Commit 和原子 Result；
 - 两个试点各遵守首批 controls 数量预算；
 - Leader Work-scoped Skills 只由 accepted typed coordination action/ToolResult 结算，Package-specific validation 留在 Worker controls，禁止 workspace execution 或伪造 Task Result；
-- Task/Leader scope replacement 对 open SkillUses 写 interrupted/abandoned boundary dispositions，新 scope 重新选择且不做 carry-forward；
+- Task/Leader scope replacement 对 open SkillUses 写 `interrupted` boundary dispositions，新 scope 重新选择且不做 carry-forward；
 - 行为评测与确定性 Gate/Checkpoint 测试分开报告。
 
 试点稳定后一次性迁移 Leader、Challenger、Reviewer 和 Tester，删除全局 Product Skills、薄 instructions 和旧 catalog/runtime。M9-B 只有六个角色全部 clean-cut 且 controller 最终输入验证通过才完成。
@@ -1903,7 +1932,7 @@ M9-C 不包含 shared-storage memory、PDF/HTML/OCR、pgvector 或 embedding。�
 
 ### 16.4 M9-D：Task Debug View
 
-M9-D 复用 M9-A recoverable attempt boundaries/correlation/unreferenced ToolResult ingest 与 M9-B Concern markers，通过 AgentTeams authenticated diagnostics transport 读取 active/retained remote OpenClaw transcript，并增加 operator-only exporter、脱敏 manifest/timeline、`isolated-test` 内容模式和 cleanup。它不新增事实库，也不参与 Result、CloseGuard 或授权。
+M9-D 复用 M9-A recoverable Attempt/LeaderScope boundaries、correlation、unreferenced ToolResult ingest 与 M9-B Concern markers，通过 AgentTeams authenticated diagnostics transport 读取 active/retained remote OpenClaw transcript，并增加 operator-only exporter、脱敏 manifest/timeline、`isolated-test` 内容模式和 cleanup。它不新增事实库，也不参与 Result、CloseGuard 或授权。
 
 M9-D 可以延期；M9-A 的失败 attempt 记录与 correlation 不能因此延期。
 
@@ -1967,8 +1996,10 @@ PROJECT.md Candidate → Developer local Commit delivery candidate
 - JSON Schema 子集、remote `$ref` 拒绝、bytes/depth/regex/array 上限；
 - Skill output 只验证结算字段，不把专业 prose Schema 通过当作质量通过；
 - Task SkillUse → Result 与 Leader Work-scoped SkillUse → accepted typed coordination action/ToolResult 两种结算，拒绝 action、重放和关单场景不产生双结算；`cancel-task` transaction 1 不结算、transaction 2 只结算一次；
-- claim/attempt 终止把旧 Task open SkillUses 标记 interrupted/abandoned，reacquire 创建新 executionAttemptId 并重新选择；Leader workload/session replacement 通过 LeaderScopeBoundaryRecord 做同样处理；历史 disposition 不阻塞关单且不能跨 scope 引用；
-- Worker Package control 拒绝错误 Skill version/digest、typed action kind 和 output Schema；Coordination fixture 在不加载任何 Package contract 时只验证通用 envelope、selection identity 一致性、actor/Work/session/epoch、refs、唯一结算与 requestId replay；
+- 每个 Task attempt/Leader scope 第 65 个 SkillUse selection 被拒绝；63 个 open 时两个并发 selection 经 per-scope lock 只接受一个；claim/attempt 终止把旧 Task open SkillUses 标记唯一 `interrupted` disposition，reacquire 创建新 executionAttemptId 并重新选择；
+- principal/route、`teamRevision/controlProfileRevision/memberConfigRevision`、`agentPackageBindingRevision`、workload generation 和 Leader logical session 逐项变化都会终止旧 `leaderScopeId`，旧 open SkillUses 进入 LeaderScopeBoundaryRecord，新 turn 只能使用新 scope；历史 disposition 不阻塞关单且不能跨 scope 引用；
+- Work epoch 单独推进不改变 `leaderScopeId`：stale action 不结算，同一 scope 重读 current Work 并重验专业前置后可用原 selection、新 requestId 和 current `expectedWorkEpoch` 结算；
+- Worker Package control 拒绝错误 Skill version/digest、typed action kind 和 output Schema；Coordination fixture 在不加载任何 Package contract 时只验证通用 envelope、selection identity 一致性、current leaderScope authority、current expected Work epoch、refs、唯一结算与 requestId replay；
 - Work-scoped Leader tool surface 拒绝 workspace/retrieval/submit-result 和带脚本 Skill，首个 Human 消息创建 Work/session 后可在无 Task 情况形成 WorkSpec；
 - controls 数量预算和 Package 间隔离；
 - enforcement control 是纯有界同步函数，或受硬 timeout/resource 限制的 worker thread/isolate；
@@ -1983,18 +2014,19 @@ PROJECT.md Candidate → Developer local Commit delivery candidate
 必须覆盖：
 
 - recoverable opened/terminal/revoked AttemptBoundaryRecords 在 Task 模型/清理前写入并 ingest；Work-scoped Leader 不伪造 attempt/claim；
-- Task ToolResult 的 `executionClaimId/claimRevisionAtStart/leaseEpochAtStart` 与 `runtimeCapabilityBindingId/runtimeCapabilityBindingRevision` 必填并区分 revoke/reacquire；Leader ToolResult 的 claim/Task 字段必须缺失；
+- Task ToolResult 的 `executionClaimId/claimRevisionAtStart/leaseEpochAtStart` 与 `runtimeCapabilityBindingId/runtimeCapabilityBindingRevision` 必填并区分 revoke/reacquire；Leader ToolResult 必填可重算的 `leaderScopeId` identity fields 与 Work epoch provenance，claim/Task 字段必须缺失；
 - closed record 先入 control spool，再返回模型；
-- 32 条/5 秒 batch、submit/attempt-terminal/shutdown flush；
+- 32 条/5 秒 batch，以及 submit/attempt-terminal/Leader-scope-terminal/shutdown flush；
 - 未引用 ToolResult 在 failed/crashed/unsubmitted Task 中仍可从 PostgreSQL 查询；
-- crash 后 replay closed records、reconcile pending、终止失去 ownership 的进程、写 SkillUse interrupted/abandoned scope boundary 并闭合 unknown；
-- 相同 ID/相同 digest 幂等，相同 ID/不同内容 conflict/fail closed；
-- cited records 在 Result 事务内 upsert 并提升 retention；
-- retention 前置条件和本地 spool 精确清理；
+- 每个 Leader authority revision 变化或 crash recovery 都在新 Leader turn 前持久化并确认旧 LeaderScopeBoundaryRecord ingest；失效 principal 写入被拒绝，只有 recovery controller 可创建/重放旧 scope boundary；
+- crash 后 replay closed records、reconcile pending、终止失去 ownership 的进程、写 SkillUse `interrupted` scope boundary 并闭合 unknown；
+- ToolResult/boundary 使用稳定 ID；相同 ID/相同 canonical digest 幂等，相同 ID/不同内容 conflict/fail closed；
+- cited records 在 Result 事务内 upsert 并提升 retention；LeaderScopeBoundaryRecords 无论是否被 action 引用都保留到 Work retention；
+- 未确认旧 scope records/boundary ingest 前不清理 spool 或接受新 Leader turn；
 - member-bound principal，伪造 body actor 被拒绝，execution domain 没有 bearer；
 - cancel transaction 1 与 Result 的竞态、每个 command phase 崩溃恢复、same/different requestId replay 和 transaction 2 唯一 cancellation fact；
 - response 前崩溃后使用 requestId 恢复同一 Result/submit ToolResult；
-- 单条、单 attempt、spool 产品硬预算和 deployment PostgreSQL static global/per-Team partition quota、并发计量、emergency reserve 与 retention cleanup；
+- 单条、单 attempt/scope、64 个 open SkillUse、spool 产品硬预算和 deployment PostgreSQL static global/per-Team partition quota、并发计量、Leader boundary emergency reserve 与 retention cleanup；
 - Result/Leader action 引用 records 至少保留到 Work retention；
 - 每种 budget exhausted 都拒绝新普通工具且拒绝 succeeded，同时允许 process kill/cancel、一个 Task blocked/failed Result 或一个 Work `stop-work` settlement；Schema/action reject 可在每 Task/Work 最多三个不同 requestIds 内重试，相同 requestId replay 不重复计数。
 
@@ -2078,7 +2110,7 @@ M10 增加独立 Effect Gate：
 ```text
 Professional Gate (M9)
   admission scope / principal / current config revisions
-  / Task claim + ExecutionBinding, or Leader Work/session/epoch
+  / Task claim + ExecutionBinding, or Leader leaderScopeId + expected Work epoch
   / role / path / evidence order / professional preconditions
 
 Effect Gate (M10)
@@ -2127,8 +2159,8 @@ M9 因此减少 M10 以后对自然语言解析和隐式上下文的依赖，但
 
 Canonical 同步按相关阶段完成，不允许本文与产品主设计长期矛盾。Skills 私有化、`reportedOutcome`、两条 admission 和执行/claim 权威必须在 M9-A/B 解除 M10 前同步；ProjectBinding 项在 M9-C 实现前同步，本身不构成 M10 前置：
 
-- [ ] **Skills 私有化与结算：** 把“Skills 可跨专业角色复用”更新为 ADR-M9-001；Task SkillUse 由 current-attempt Result 结算，Work-scoped Leader SkillUse 由 current-scope accepted typed action/ToolResult 结算；replacement 写 interrupted/abandoned boundary disposition；Package-specific validation 留在 Worker，不新增 ledger。
-- [ ] **Leader admission：** Human message 先创建 Work/Leader session；无 Task 时只开放 coordination/Leader Skill tools，禁止 workspace/retrieval/submit-result，不伪造 Task claim。
+- [ ] **Skills 私有化与结算：** 把“Skills 可跨专业角色复用”更新为 ADR-M9-001；Task SkillUse 由 current-attempt Result 结算，Work-scoped Leader SkillUse 由 current-scope accepted typed action/ToolResult 结算；每 scope 最多 64 个 open SkillUses，replacement 写唯一 `interrupted` boundary disposition；Package-specific validation 留在 Worker，不新增 ledger。
+- [ ] **Leader admission：** Human message 先创建 Work/Leader session；`leaderScopeId` 绑定 Work/principal-route/Team-ControlProfile-MemberConfig revisions/Package binding/workload generation/logical session，Work epoch 只作 action CAS；无 Task 时只开放 coordination/Leader Skill tools，禁止 workspace/retrieval/submit-result，不伪造 Task claim。
 - [ ] **`reportedOutcome`：** 更新 Result 合同，明确它是 Agent 声明，Task 只表示已有正式报告，Kernel/CloseGuard 不据此判断专业成功。
 - [ ] **Runtime capability 与 claim 权威：** MemberConfig 精确引用 deployment-owned RuntimeCapabilityBinding；CoordinationStore/PostgreSQL 唯一拥有 claim/lease、writerRoot lock、Result/cancel race 和 phased cancel command。
 - [ ] **ProjectBinding：** 增加 deployment-owned、非工作流的最小 `projectBindingId`/repository/exact source/realm/source-policy 绑定；只有 authenticated deployment/admin expected-revision CAS 可推进，接口缺失时只消费只读 projection。
@@ -2150,13 +2182,16 @@ Canonical 同步按相关阶段完成，不允许本文与产品主设计长期�
 | Checkpoint 重复 Gate | 定义 control responsibility table；专业 Checkpoint 信任当前版本 Gate 事实，只检查剩余交付完整性。 |
 | terminal settlement 死循环 | 返回稳定缺口码和有界重试；budget exhaustion 下每 Task/Work 最多三个新 requestIds，但只有成功 Task blocked/failed Result 或 Work stop 才消耗 settlement。 |
 | Leader 无 Task 却被 claim 合同阻塞 | 独立 Work-scoped admission；只开放 coordination/纯方法 Leader Skills，accepted typed action 结算 SkillUse，workspace 工作必须创建 Task。 |
-| Worker/Leader replacement 留下永久 open SkillUse | claim/Leader scope terminal boundary 以 interrupted/abandoned 结束旧 selection；新 attempt/scope 必须重新选择，历史诊断不阻塞关单。 |
+| Worker/Leader replacement 留下永久 open SkillUse | claim/Leader authority scope terminal boundary 以唯一 `interrupted` 结束最多 64 个旧 open selections；新 attempt/scope 必须重新选择，历史诊断不阻塞关单。 |
+| Leader authority revision 改变但旧 scope 继续运行 | `leaderScopeId` 封闭全部 authority fields；新 turn 前由 current control/recovery controller 持久化并确认旧 boundary ingest。 |
+| Work epoch 并发推进使旧 selection 永久悬空 | epoch 不进入 scope identity；stale action 不结算，同 scope 重读 current Work、重验专业前置并以新 requestId 携带 current expected epoch 后可重试。 |
+| Leader boundary 仅在本地或耗尽时丢失 | 稳定 record ID/canonical digest、强制 ingest、Work retention、spool/Team PG/emergency reserve 计量；未确认前不清理或开启新 turn。 |
 | Coordination 重新加载 Package contract | Package-specific version/allowlist/output Schema 留在 Worker control；Kernel 只验通用 settlement envelope 和 selection identity 一致性。 |
 | claim 在 runtime service、Task 在 PG 形成 split authority | CoordinationStore/PostgreSQL 唯一拥有 claim/writer lock/Result/cancel；AgentTeams 提供 binding，Worker 仅 claimant/supervisor。 |
 | stale Worker/双 writer 继续写 | claim/lease 绑定 workload generation、principal、workspaceBindingRef 和 writerRoot；逐动作重验，replacement 先撤权。 |
 | submit freeze 卡死或遗留进程 | freeze 状态可恢复；失败时明确解除；active process tree 专项覆盖拒绝、终止、确认和重放。 |
 | cancel 中途失败后 Task 错报 cancelled 或恢复 | requestId + 单向 command phases；transaction 1 fence，transaction 2 才写 cancellation fact；失败保持 fenced 并由 recovery controller 续跑。 |
-| ToolResult 无法区分 revoke/reacquire | Task records 强制 `executionClaimId/claimRevisionAtStart/leaseEpochAtStart`；Work-scoped Leader records 使用封闭无 claim Schema。 |
+| ToolResult 无法区分 revoke/reacquire 或 Leader authority replacement | Task records 强制 `executionClaimId/claimRevisionAtStart/leaseEpochAtStart`；Work-scoped records 强制可重算 `leaderScopeId` identity fields 并使用封闭无 claim Schema。 |
 | ToolResult 输出或总量过大 | 单条/attempt/spool 产品硬预算、deployment/Team PG quota、应急 reserve、工具专属 excerpts 和可选受信 storage refs。 |
 | ToolResult 截断丢失决定性内容 | 标记 upstream truncation；要求结构化 reporter 或完整 Artifact；未知不满足 Checkpoint。 |
 | 任意脚本内部效果不可见 | 在工具专属 result 中保持 unknown；关键动作使用可观察工具/Adapter；不伪造 syscall 事实。 |
@@ -2195,11 +2230,11 @@ Canonical 同步按相关阶段完成，不允许本文与产品主设计长期�
 11. cancel 使用 authenticated actor-scoped requestId 和 `fenced → process-quiesced → records-closed → writer-released → cancelled` 单向 phases；每个 crash 点可继续，相同 requestId 幂等、不同 requestId 冲突，queued/unclaimed Task 以直接空集事实推进，最终事务前 UI 不得报告 cancelled 且 fence 不解除。
 12. Result 与 cancel transaction 1 在同一 PostgreSQL Task/claim revision 原子竞争，双写者、迟到 Result/cancel 和 Worker replacement 最近竞态有确定性回归。
 13. control endpoint 使用 member/workload-bound principal，服务端不信任 body actor；execution domain、模型上下文、ToolResult 和 debug projection 都没有 bearer。
-14. 每个 Task execution 在模型/工具前持久化 recoverable opened AttemptBoundaryRecord，并能关联 execution claim、Member、逻辑/物理 session、turn、toolCall 和 ToolResult；claim 终止后新 attempt 不复用旧 boundary；Work-scoped Leader 使用独立 LeaderScope boundary substrate，不伪造 Attempt/claim。
-15. Task ToolResult 必填 `executionClaimId/claimRevisionAtStart/leaseEpochAtStart` 和 `runtimeCapabilityBindingId/runtimeCapabilityBindingRevision`；Work-scoped Leader ToolResult 使用封闭无 Task/claim Schema；所有允许的顶层工具在返回模型前闭合有界 record 到 control spool。
-16. Task 与 Work-scoped records 都按 32 条/5 秒上限及 submit/typed-action/terminal/shutdown 触发 ingest；failed/crashed/unsubmitted Task 和历史 Leader action 的已闭合记录可查询，revoke/reacquire 不串线。
-17. 单条、attempt、Worker 产品硬预算和 deployment PostgreSQL static global/per-Team partition/fixed-emergency quota 有边界测试；Result/Leader action 引用 records 至少保留到 Work retention。耗尽时禁新普通工具和 succeeded，仍允许 process kill、cancel 及一个成功 blocked/failed settlement；Schema/action reject 对每个 Task 或 Work 最多三个不同 requestIds，相同 requestId replay 不重复计数。
-18. Worker restart 在接受新 turn 前按 boundary/claim replay closed records、reconcile pending、恢复 incomplete cancel command、终止失去 ownership 的进程并闭合 unknown；相同 replay 幂等、冲突 fail closed，cleanup 不删除 pending/引用/未到期 records。
+14. 每个 Task execution 在模型/工具前持久化 recoverable opened AttemptBoundaryRecord，并能关联 execution claim、Member、逻辑/物理 session、turn、toolCall 和 ToolResult；claim 终止后新 attempt 不复用旧 boundary。Work-scoped Leader 使用绑定 Work/principal-route/Team-ControlProfile-MemberConfig revisions/Agent Package binding/workload generation/logical session 的独立 `leaderScopeId` 与稳定 LeaderScopeBoundaryRecord，不伪造 Attempt/claim。
+15. Task ToolResult 必填 `executionClaimId/claimRevisionAtStart/leaseEpochAtStart` 和 `runtimeCapabilityBindingId/runtimeCapabilityBindingRevision`；Work-scoped Leader ToolResult 必填可重算 `leaderScopeId` 的全部 identity fields 和 Work epoch provenance，并使用封闭无 Task/claim Schema；所有允许的顶层工具在返回模型前闭合有界 record 到 control spool。
+16. Task 与 Work-scoped records 都按 32 条/5 秒上限及 submit/typed-action/attempt-or-Leader-scope-terminal/shutdown 触发 ingest；任一 Leader authority identity 变化都在新 turn 前确认旧 boundary ingest，只有 recovery controller 可写失效 scope；LeaderScopeBoundaryRecord 至少保留到 Work retention，未确认前不得清理 spool。
+17. 单条、attempt/scope、64 个 open SkillUse、Worker 产品硬预算和 deployment PostgreSQL static global/per-Team partition/fixed-emergency quota 有边界测试；Leader boundary 计入 spool/Team PG/emergency reserve。Result/Leader action 引用 records 和 LeaderScopeBoundaryRecords 至少保留到 Work retention。耗尽时禁新普通工具和 succeeded，仍允许 process kill、boundary、cancel 及一个成功 blocked/failed settlement；Schema/action reject 对每个 Task 或 Work 最多三个不同 requestIds，相同 requestId replay 不重复计数。
+18. Worker restart 在接受新 turn 前按 boundary/claim/Leader authority identity replay closed records、补写并确认失效 Leader scope boundary、reconcile pending、恢复 incomplete cancel command、终止失去 ownership 的进程并闭合 unknown；稳定 ID/canonical digest replay 幂等、冲突 fail closed，cleanup 不删除 pending/未确认 boundary/引用/未到期 records。
 19. M9-A 已提供稳定 `CheckpointInvoker` 和合成 deterministic baseline，只验证 Schema、refs、pending/process、ToolResult/attempt/principal/claim ownership；它不加载或声称专业 Checkpoint。
 20. `tiangong_submit_result` 只允许 Task-scoped 当前 submit call pending；freeze、baseline reject/unfreeze、cited ToolResult/Work retention/Result/server-side receipt 原子事务、响应前崩溃重放和成功后 claim 退休均有回归。
 21. `agent_end` 不再把 prose 创建为正式 Result；三个 `reportedOutcome` 都是 Agent 声明，Kernel/CloseGuard 不据此判断专业成功。
@@ -2213,7 +2248,7 @@ Canonical 同步按相关阶段完成，不允许本文与产品主设计长期�
 2. `AGENTS.md`/`SOUL.md` 通过 spike 选定的 immutable bootstrap/system 路径进入实际最终 LLM input；缺失、损坏或摘要错误时模型调用未发生。
 3. 全局 Product Skill 根目录和跨 Agent lock 已删除，ADR-M9-001 的 Package 私有和共享 helper 边界有静态/运行时测试。
 4. contract validator 限制 JSON Schema 子集和资源；output 只约束结算字段，不把 prose 形状当作专业质量。
-5. Task Result 只结算 current attempt/claim SkillUses；claim 或 Leader workload/session scope 终止时，open SkillUses 由 Attempt/LeaderScope boundary 标记 interrupted/abandoned，新 scope 重新选择。历史 dispositions 可调试但不阻塞关单、不能跨 scope 引用，且无独立 ledger。
+5. 每个 Task attempt/Leader scope 最多 64 个 open SkillUses。Task Result 只结算 current attempt/claim SkillUses；claim 或任一 Leader authority identity 变化时，open SkillUses 由 Attempt/LeaderScope boundary 标记唯一 `interrupted` disposition，新 scope 重新选择。Work epoch 单独推进不结束 scope：同一 scope 重读 current Work 后可用原 selection、新 requestId 和 current expected epoch 结算。历史 dispositions 可调试但不阻塞关单、不能跨 scope 引用，且无独立 ledger。
 6. M9-B 已在 Task-scoped 路径用同一 `CheckpointInvoker` 接入 assignee Package 专业 Checkpoint；Leader Worker control 验证 Package-specific version/digest、action allowlist、output Schema 和专业前置。Coordination 在不加载 Package contract 的情况下只验通用 settlement envelope、identity/actor/refs/唯一结算/idempotency；enforcement controls timeout/crash fail closed。
 7. Architect、Developer 试点遵守 controls 数量预算并通过确定性与行为评测；Gate 不判断专业语义充分性；Concern 使用 Task/Work-Leader scope-aware 持久 marker 跨重启去重。
 8. Leader、Challenger、Reviewer、Tester 已 clean-cut 迁移；Leader coordination path 无 workspace/Task claim，Leader Skills 无 execution scripts 且由 typed action 结算，没有长期混合 Package/Skill/control 架构。
@@ -2237,9 +2272,9 @@ Canonical 同步按相关阶段完成，不允许本文与产品主设计长期�
 
 ### 20.4 M9-D 验收：Task Debug View
 
-1. operator 能按 Task/ExecutionAttempt 导出 Coordination、recoverable attempt boundaries、Concern markers、ToolResults、远端 OpenClaw transcript 和可选 AgentLoop spans。
+1. operator 能按 Task/ExecutionAttempt 或 Work/Leader scope 导出 Coordination、recoverable Attempt/LeaderScope boundaries、Concern markers、ToolResults、远端 OpenClaw transcript 和可选 AgentLoop spans。
 2. remote transcript 只通过 authenticated diagnostics resolver 从 active Worker 或 retained session-store 获取；只接受 boundary 记录的 exact workload generation，越权/generation substitution/session mismatch 被拒绝，来源不可用明确标记。
-3. failed、crashed、unsubmitted attempt 仍显示未引用但已 ingest 的 ToolResults、unknown/gap 和 interrupted/abandoned SkillUses；历史 LeaderScope dispositions 保留原 scope，不串入当前 Task/Leader settlement。
+3. failed、crashed、unsubmitted attempt 仍显示未引用但已 ingest 的 ToolResults、unknown/gap 和 interrupted SkillUses；历史 LeaderScope dispositions 保留原 scope，不串入当前 Task/Leader settlement。
 4. 多 Task、多 turn、恢复和共用物理 session 不串线；各来源保留 identity 和不确定性。
 5. 默认与 `isolated-test` 内容边界、retention 和精确 cleanup 通过，Debug View 不参与 Result、CloseGuard、授权或恢复事实写入。
 
@@ -2256,7 +2291,7 @@ M9-A/B/C/D 各自验收通过、canonical checklist 已完成、固定基线 Ful
 3. execution boundary 是否从 Agent 可调用 `exec/process` 攻击 `/proc`、token、controls/session/spool、其他 Package、symlink/traversal 和后台进程，并同时证明授权路径可用；
 4. Human message 是否先创建/定位 Work 与 Leader session，使 Leader 无 Task 时能协调但不能 workspace/retrieval/submit-result；
 5. Task-scoped 与 Work-scoped Leader pending/ToolResult Schema 是否封闭分离，不能以可选字段或占位 ID 相互降级；
-6. Leader SkillUse 是否由 accepted typed coordination action/ToolResult 结算；claim/Leader scope replacement 是否把旧 open SkillUses 标记 interrupted/abandoned、要求新 scope 重新选择且不阻塞关单；
+6. Leader SkillUse 是否由 accepted typed coordination action/ToolResult 结算；`leaderScopeId` 是否封闭全部 authority revisions，任一变化是否在新 turn 前确认旧 boundary ingest，并把最多 64 个 open SkillUses 标记唯一 `interrupted` disposition；Work epoch 单独推进时是否可重读后用 current expected epoch 结算；
 7. MemberConfig 是否精确引用 versioned RuntimeCapabilityBinding，其 data/network/resource scope 是否有 validator 与 stale/revocation 合同；
 8. ExecutionBinding 是否只物化执行能力，ProjectBinding 是否只控制 source revision/realm/source policy；
 9. CoordinationStore/PostgreSQL 是否是 claim/lease、writerRoot lock、Result/cancel 和 command phase 的唯一事务权威，Worker 是否仅为 claimant/supervisor；
@@ -2270,9 +2305,9 @@ M9-A/B/C/D 各自验收通过、canonical checklist 已完成、固定基线 Ful
 17. Package-specific version/action allowlist/output Schema 是否只在 Worker control 执行，Coordination 是否不加载 Package contract 且只验证通用 settlement/identity/idempotency；两类 SkillUse 是否避免第三份 ledger；
 18. enforcement controls 是否为纯有界同步函数或受限 worker/isolate，timeout/crash 是否 fail closed；
 19. M9-A baseline Checkpoint 是否只验 Schema/refs/pending/ownership/claim，M9-B 专业 Checkpoint 是否通过同一 invoker 清晰替换；
-20. Task AttemptBoundaryRecords 是否在模型/工具前可恢复持久化，Leader Work path 是否不伪造 attempt；
+20. Task AttemptBoundaryRecords 是否在模型/工具前可恢复持久化；LeaderScopeBoundaryRecord 是否使用稳定 ID/digest、只由 current control 或 recovery controller 写入、计入 spool/Team PG/emergency quota，并保留到 Work retention，且 Leader Work path 不伪造 attempt；
 21. Concern 是否使用持久 marker 跨重启去重，并保持非阻断、非业务对象；
-22. Task ToolResult 是否必填 claim identity 和 runtimeCapabilityBinding identity，Work Leader ToolResult 是否禁止 claim；未引用 records 是否按明确 owner/frequency ingest；
+22. Task ToolResult 是否必填 claim identity 和 runtimeCapabilityBinding identity，Work Leader ToolResult 是否必填可重算的 leaderScope identity 且禁止 claim；未引用 records 与 scope boundaries 是否按明确 owner/frequency ingest；
 23. 单条/attempt/spool 产品预算与 deployment static global/per-Team PG quota/fixed emergency reserve 是否可判定，ControlProfile 是否不能提高全局 quota；
 24. Result/Leader action 引用 records 是否至少保留到 Work retention，budget exhausted 的一次 settlement/三次 requestId 语义是否明确；
 25. spool 与 incomplete cancel command 的 startup recovery、pending → unknown、幂等 replay、conflict 和 cleanup 是否闭合；
