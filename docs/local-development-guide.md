@@ -8,7 +8,7 @@
 ```text
 make init → 配 .env → make up → make verify → 验证 Dashboard → make login
     ↓
-make build-worker-image（构建 1 个通用 Worker 和 3 个 runner/deployment 辅助镜像）
+make build-worker-image（只构建 1 个通用 `tg-worker:dev` 镜像）
     ↓
 agt apply 创建 6 Worker → 等 Team Active
     ↓
