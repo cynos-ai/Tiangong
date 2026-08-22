@@ -1,0 +1,81 @@
+spike_layer=1-source-type-contract-rerun
+baseline=1c1534f
+image=tg-worker:dev
+image_id=sha256:ac1cb183e5b2c82982f6473fef86ccf128763a31192d711526d843a79edb69ff
+image_created=2026-08-21T13:00:21.057325912+08:00
+network=none
+openclaw_version=OpenClaw 2026.4.14 (2f35b6f)
+{
+  "native_boundaries": {
+    "trusted_model_call_symbol": false,
+    "trusted_tool_execution_symbol": false,
+    "provider_call_seam": {
+      "line": 2011,
+      "text": "activeSession.prompt(effectivePrompt, { images: imageResult.images }),"
+    },
+    "tool_executor_wrapper_candidate": {
+      "line": 380,
+      "text": "export function wrapToolWithBeforeToolCallHook("
+    }
+  },
+  "native_prompt_hook": {
+    "error_log": {
+      "line": 52,
+      "text": "log.warn(`before_prompt_build hook failed: ${String(hookErr)}`);"
+    },
+    "error_returns_undefined": {
+      "line": 53,
+      "text": "return undefined;"
+    },
+    "model_request": {
+      "line": 2011,
+      "text": "activeSession.prompt(effectivePrompt, { images: imageResult.images }),"
+    }
+  },
+  "native_tool_result_hook": {
+    "sync_contract": {
+      "line": 827,
+      "text": "* This hook is intentionally synchronous: it runs in hot paths where session"
+    },
+    "promise_guard": {
+      "line": 852,
+      "text": "`[hooks] tool_result_persist handler from ${hook.pluginId} returned a Promise; ` +"
+    },
+    "default_failure_policy": {
+      "line": 215,
+      "text": "catchErrors && (failurePolicyByHook[hookName] ?? \"fail-open\") === \"fail-open\";"
+    },
+    "persistence_after_transform": {
+      "line": 208,
+      "text": "return originalAppend(persisted as never);"
+    }
+  },
+  "pre_tool_deadline": {
+    "runner_timeout_enforcement": false,
+    "fail_closed_policy": {
+      "line": 44,
+      "text": "before_tool_call: \"fail-closed\","
+    },
+    "caller_awaits_hook": {
+      "line": 203,
+      "text": "const hookResult = await hookRunner.runBeforeToolCall("
+    }
+  },
+  "model_hook_alternatives": {
+    "before_model_resolve_type": {
+      "line": 7,
+      "text": "export type PluginHookBeforeModelResolveResult = {"
+    },
+    "before_model_resolve_block_field": false
+  }
+}
+
+current_tiangong_runtime_symbols
+none
+
+current_tiangong_capture_lines
+worker/plugin/index.mjs:57:    api.on("tool_result_persist", createToolResultCaptureHook({
+worker/agent/skills/runtime.mjs:34:      return { prependContext: promptContext(runtime, ctx) };
+worker/agent/team/member-coordination-hooks.mjs:67:      return { prependContext: `Authoritative Tiangong TaskSpec (read-only): task=${task.spec.taskId} work=${task.spec.workId} logicalSession=${task.sessionRef} objective=${objective}${constraints ? ` constraints=${constraints}` : ""}` };
+worker/agent/team/leader-coordination-hooks.mjs:36:    return { prependContext: `Tiangong routing reference (not message authority): room=${current.roomId} event=${current.eventId}. Before Work action, call tiangong_route_message or tiangong_correct_message_association. Web selection is irrelevant.` };
+worker/agent/gates/tool-result-capture.mjs:111:    store.appendSync(record);
